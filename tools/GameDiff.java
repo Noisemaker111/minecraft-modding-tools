@@ -5103,7 +5103,10 @@ public final class GameDiff {
                 Cls now = h.cAB.get(x.owner);
                 if (now == null || x.isStatic() || y.isStatic() || x.special() || (x.flags & (ACC_PUBLIC | 0x0004)) == 0 || (y.flags & ACC_PUBLIC) == 0
                     || y.owner == now || have.contains(x.sig()) || !h.descBA(y.desc).equals(x.desc)
-                    || Exposure.assignable(h.b, dotted(now.name), dotted(y.owner.name))) {
+                    || Exposure.assignable(h.b, dotted(now.name), dotted(y.owner.name))
+                    // Moved down to a subclass (1.20.5's Entity.getAllSlots() is LivingEntity's): only some receivers have
+                    // it, and no part of the old one holds it (getControllingPassenger() gives another entity).
+                    || Exposure.assignable(h.b, dotted(y.owner.name), dotted(now.name))) {
                     continue;
                 }
                 String held = "L" + y.owner.name + ";";

@@ -20,7 +20,8 @@ import org.objectweb.asm.*;
  *
  * Gui.getChat() moved to Hud in 2.0, and a Gui holds its Hud in its one public field of that type (Gui.hud): the mod's
  * gui.getChat() is gui.hud.getChat(). Gui.beat() moved to Clock, which no Gui holds: the call is reported, never made on a
- * Gui, which the verifier would refuse.
+ * Gui, which the verifier would refuse. Gui.tint() moved down to its subclass Fancy, and a Gui's next() gives a Fancy: another
+ * object, not a part of this one, so nothing is learned for it.
  *
  *   java -cp asm.jar:CLASSES GameTypesTest SCRATCH   (in the jar-port check of bench/run_tests.py)
  */
@@ -107,6 +108,7 @@ final class GameTypesTest {
         List<Map<String, Object>> results = new ArrayList<>();
         JarPortTest.expect("$0.hud.getChat()".equals(learned.get(y + "Gui.getChat()L" + U + "Chat;")),
             "a method moved to a class the old one holds is called on what holds it: " + learned.get(y + "Gui.getChat()L" + U + "Chat;"));
+        JarPortTest.expect(!learned.containsKey(y + "Gui.tint()I"), "a method moved down to a subclass is not asked of another object of it: " + learned.get(y + "Gui.tint()I"));
         Map<String, byte[]> ported = JarPortTest.entries(new JarPort(a, b, map).port(JarPortTest.jar(Map.of("m8/Run.class", w.toByteArray(), "m8/Beat.class", beat())),
             "types.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
@@ -134,7 +136,7 @@ final class GameTypesTest {
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
-        System.out.println("game-types: 10 checks passed");
+        System.out.println("game-types: 11 checks passed");
     }
 
     /**
@@ -483,11 +485,25 @@ final class GameTypesTest {
             bt.visitMaxs(0, 0);
             bt.visitEnd();
         };
+        java.util.function.Consumer<ClassWriter> tints = w -> {
+            MethodVisitor t = w.visitMethod(Opcodes.ACC_PUBLIC, "tint", "()I", null, null);
+            t.visitCode();
+            t.visitLdcInsn("tint");
+            t.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "length", "()I", false);
+            for (int i = 0; i < 3; i++) {
+                t.visitLdcInsn("hue");
+                t.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "hashCode", "()I", false);
+                t.visitInsn(Opcodes.POP);
+            }
+            t.visitInsn(Opcodes.IRETURN);
+            t.visitMaxs(0, 0);
+            t.visitEnd();
+        };
         java.util.function.BiConsumer<ClassWriter, String> made = (w, self) -> {
             MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
             c.visitCode();
             c.visitVarInsn(Opcodes.ALOAD, 0);
-            c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            c.visitMethodInsn(Opcodes.INVOKESPECIAL, self.equals("Fancy") ? U + "Gui" : "java/lang/Object", "<init>", "()V", false);
             if (two && self.equals("Gui")) {
                 c.visitVarInsn(Opcodes.ALOAD, 0);
                 c.visitTypeInsn(Opcodes.NEW, U + "Hud");
@@ -503,9 +519,16 @@ final class GameTypesTest {
             made.accept(w, "Gui");
             if (two) {
                 w.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "hud", "L" + U + "Hud;", null, null).visitEnd();
+                MethodVisitor n = w.visitMethod(Opcodes.ACC_PUBLIC, "next", "()L" + U + "Fancy;", null, null);
+                n.visitCode();
+                n.visitInsn(Opcodes.ACONST_NULL);
+                n.visitInsn(Opcodes.ARETURN);
+                n.visitMaxs(0, 0);
+                n.visitEnd();
             } else {
                 keeps.accept(w);
                 beats.accept(w);
+                tints.accept(w);
             }
         }));
         if (two) {
@@ -513,6 +536,11 @@ final class GameTypesTest {
                 made.accept(w, "Hud");
                 keeps.accept(w);
                 main(w, "Hud");
+            }));
+            out.put(U + "Fancy", cls("Fancy", 0, U + "Gui", null, w -> {
+                made.accept(w, "Fancy");
+                tints.accept(w);
+                main(w, "Fancy");
             }));
             out.put(U + "Clock", cls("Clock", 0, null, null, w -> {
                 made.accept(w, "Clock");
@@ -523,7 +551,7 @@ final class GameTypesTest {
         // The game's own caller links each move (it asks the same thing at the same place) and reads a shared instance in
         // 2.0, which a mod's call has no use for: nothing of its code says how a Gui reaches the method now.
         out.put(U + "Show", cls("Show", 0, null, null, w -> {
-            String[][] calls = { { "chat", "getChat", "()" + chat, "Hud" }, { "tick", "beat", "()I", "Clock" } };
+            String[][] calls = { { "chat", "getChat", "()" + chat, "Hud" }, { "tick", "beat", "()I", "Clock" }, { "hue", "tint", "()I", "Fancy" } };
             for (String[] c : calls) {
                 MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, c[0], "(L" + U + "Gui;)" + c[2].substring(2), null, null);
                 m.visitCode();
