@@ -2,10 +2,10 @@
  "loader": "neoforge",
  "from": "1.21.1",
  "to": "26.3",
- "mods": 10,
- "loaded": 9,
- "linkedAndLoaded": 9,
- "linked": 10,
+ "mods": 11,
+ "loaded": 10,
+ "linkedAndLoaded": 10,
+ "linked": 11,
  "failedButLinked": [],
  "clashOnly": [],
  "failedDataOnly": [
@@ -14,6 +14,7 @@
  "verdicts": {
   "dungeons-and-taverns--dungeons-and-taverns-v4.4.4.jar": "failed: the loader names it: java.lang.IllegalStateException: Failed to parse nova_structures:antidote from pack mod/mr_dungeons_andtaverns; the loader names it: java.lang.IllegalStateException: Failed to parse nova_structures:boss_behaviour from pack mod/mr_dungeons_andtaverns; the loader names it: java.lang.IllegalStateException: Failed to parse nova_structures:conductivity_curse from pack mod/mr_dungeo",
   "coroutil--coroutil-neoforge-1.21.0-1.3.8.jar": "loaded",
+  "e4mc--e4mc-neoforge-6.2.3.jar": "loaded",
   "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.21.1-neoforge.jar": "loaded",
   "forge-config-api-port--ForgeConfigAPIPort-v21.1.6-1.21.1-NeoForge.jar": "loaded",
   "melody--melody_neoforge_1.0.10_MC_1.21.jar": "loaded",
@@ -24,11 +25,12 @@
   "yeetus-experimentus--yeetusexperimentus-neoforge-87.0.0.jar": "loaded"
  },
  "client": {
-  "mods": 9,
-  "loaded": 8,
+  "mods": 10,
+  "loaded": 9,
   "verdicts": {
-   "mouse-tweaks--MouseTweaks-neoforge-mc1.21-2.26.1.jar": "failed: the loader names it: [08:21:53] [modloading-worker-4/ERROR] [ne.ne.fm.ja.FMLModContainer/LOADING]: Failed to create mod instance. ModID: mousetweaks, class yalter.mousetweaks.neoforge.MouseTweaksNeo; its code (yalter.mousetweaks.Main) is in the stack: at TRANSFORMER/mousetweaks@2.26.1/yalter.mousetweaks.Main.initialize(Main.java:45) ~[mouse-tweaks--MouseTweaks-neoforge-mc1.21-2.26.1.jar:?] {} | the loader reported a failed start: [08:21:53] [main/FATAL] [ne.ne.fm.ModLoader/LOADING]: Failed to wait for future Mod Construction, 1 errors found",
+   "mouse-tweaks--MouseTweaks-neoforge-mc1.21-2.26.1.jar": "failed: the loader names it: [11:36:45] [modloading-worker-4/ERROR] [ne.ne.fm.ja.FMLModContainer/LOADING]: Failed to create mod instance. ModID: mousetweaks, class yalter.mousetweaks.neoforge.MouseTweaksNeo; its code (yalter.mousetweaks.Main) is in the stack: at TRANSFORMER/mousetweaks@2.26.1/yalter.mousetweaks.Main.initialize(Main.java:45) ~[mouse-tweaks--MouseTweaks-neoforge-mc1.21-2.26.1.jar:?] {} | the loader reported a failed start: [11:36:45] [main/FATAL] [ne.ne.fm.ModLoader/LOADING]: Failed to wait for future Mod Construction, 1 errors found",
    "coroutil--coroutil-neoforge-1.21.0-1.3.8.jar": "loaded",
+   "e4mc--e4mc-neoforge-6.2.3.jar": "loaded",
    "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.21.1-neoforge.jar": "loaded",
    "forge-config-api-port--ForgeConfigAPIPort-v21.1.6-1.21.1-NeoForge.jar": "loaded",
    "melody--melody_neoforge_1.0.10_MC_1.21.jar": "loaded",
