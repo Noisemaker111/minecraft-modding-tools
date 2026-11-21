@@ -162,7 +162,8 @@ public final class JarPort {
                 removals.computeIfAbsent(owner + "." + from + desc, k -> new ArrayList<>()).add(w);
             } else if (majority(w) && named && covers(Json.text(w, "step", ""), "")) {
                 fixes.computeIfAbsent(owner, k -> new ArrayList<>()).add(new Fix("game " + Json.text(w, "step", ""),
-                    Pattern.compile(Pattern.quote(from)), desc.isEmpty() ? null : desc.substring(0, desc.indexOf(')') + 1), Json.text(w, "expr", "")));
+                    Pattern.compile(Pattern.quote(from)), desc.isEmpty() ? null : desc.substring(0, desc.indexOf(')') + 1), Json.text(w, "expr", ""),
+                    w.get("when") == null ? null : Json.text(w, "when", "")));
             }
         }
     }
@@ -5025,25 +5026,83 @@ public final class JarPort {
     }
 
     /**
-     * The stack as the JVM's verifier sees it (asm-commons' AnalyzerAdapter), where a moved method's old parameters keep
-     * who they are: each load of one pushes a mark, so a call can tell which of its arguments is which old parameter.
+     * Which of a type's own constants each call of a method passes: a static field of its class's type read (an enum's
+     * constant, or HoverEvent.Action.SHOW_TEXT) and passed on, as the verifier tracks the stack, across jumps where every
+     * way in passes the same one.
      */
-    static final class Track extends org.objectweb.asm.commons.AnalyzerAdapter {
-        final Map<Integer, Object> marks = new HashMap<>(); // slot -> mark
-        final Map<Object, Integer> params = new IdentityHashMap<>(); // mark -> old parameter
+    static final class Constants extends Marked {
+        final Map<Integer, Map<Integer, String>> at = new HashMap<>();
+        final Map<Object, String> marks = new IdentityHashMap<>();
+        int calls = -1;
 
-        Track(String owner, int access, String name, String desc, MethodVisitor mv) {
+        Constants(String owner, int access, String name, String desc) {
+            super(owner, access, name, desc, null);
+        }
+
+        @Override
+        boolean marked(Object value) {
+            return marks.containsKey(value);
+        }
+
+        @Override
+        public void visitFieldInsn(int opcode, String owner, String name, String desc) {
+            super.visitFieldInsn(opcode, owner, name, desc);
+            if (opcode == Opcodes.GETSTATIC && desc.equals("L" + owner + ";") && stack != null && !stack.isEmpty()) {
+                Object mark = new String(owner);
+                stack.set(stack.size() - 1, mark);
+                marks.put(mark, name);
+            }
+        }
+
+        @Override
+        public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
+            calls++;
+            if (stack != null) {
+                Type[] args = Type.getArgumentTypes(desc);
+                int pos = stack.size();
+                for (int i = args.length - 1; i >= 0 && pos > 0; i--) {
+                    pos -= args[i].getSize();
+                    String c = pos >= 0 ? marks.get(stack.get(pos)) : null;
+                    if (c != null) {
+                        at.computeIfAbsent(calls, z -> new HashMap<>()).put(i, c);
+                    }
+                }
+            }
+            super.visitMethodInsn(opcode, owner, name, desc, itf);
+        }
+
+        static Map<Integer, Map<Integer, String>> of(byte[] bytes, String name, String desc) {
+            if (bytes == null) {
+                return Map.of();
+            }
+            ClassReader reader = new ClassReader(bytes);
+            Constants[] found = new Constants[1];
+            reader.accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                    if (!n.equals(name) || !d.equals(desc) || (access & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0) {
+                        return null;
+                    }
+                    return found[0] = new Constants(reader.getClassName(), access, n, d);
+                }
+            }, ClassReader.EXPAND_FRAMES);
+            return found[0] == null ? Map.of() : found[0].at;
+        }
+    }
+
+    /**
+     * The stack as the JVM's verifier sees it (asm-commons' AnalyzerAdapter), where values a subclass marks keep who they
+     * are across jumps: a frame gives the stack as types, so the marks a jump carries ("a ? b : c" as an argument) are kept
+     * per label, where every way in agrees, and put back when the label's frame comes.
+     */
+    abstract static class Marked extends org.objectweb.asm.commons.AnalyzerAdapter {
+
+        Marked(String owner, int access, String name, String desc, MethodVisitor mv) {
             super(Opcodes.ASM9, owner, access, name, desc, mv);
         }
 
-        void mark(int slot, int param, Type t) {
-            Object mark = t.getSort() == Type.OBJECT ? new String(t.getInternalName()) : t.getSort() == Type.ARRAY ? new String(t.getDescriptor()) : new Object();
-            marks.put(slot, mark);
-            params.put(mark, param);
-        }
+        abstract boolean marked(Object value);
 
-        // A frame gives the stack as types, so the marks on values a jump carries ("a ? b : c" as an argument) are kept
-        // here per label, where every way in agrees, and put back when the label's frame comes.
         final Map<Label, Object[]> carried = new HashMap<>();
         final List<Label> arrived = new ArrayList<>();
 
@@ -5051,7 +5110,7 @@ public final class JarPort {
             if (stack == null) {
                 return;
             }
-            Object[] now = stack.stream().map(v -> params.containsKey(v) ? v : null).toArray();
+            Object[] now = stack.stream().map(v -> marked(v) ? v : null).toArray();
             carried.merge(label, now, (had, add) -> {
                 if (had.length != add.length) {
                     return new Object[0];
@@ -5137,6 +5196,35 @@ public final class JarPort {
         @Override
         public void visitVarInsn(int opcode, int var) {
             arrived.clear();
+            super.visitVarInsn(opcode, var);
+        }
+    }
+
+    /**
+     * The stack as the JVM's verifier sees it (asm-commons' AnalyzerAdapter), where a moved method's old parameters keep
+     * who they are: each load of one pushes a mark, so a call can tell which of its arguments is which old parameter.
+     */
+    static final class Track extends Marked {
+        final Map<Integer, Object> marks = new HashMap<>(); // slot -> mark
+        final Map<Object, Integer> params = new IdentityHashMap<>(); // mark -> old parameter
+
+        Track(String owner, int access, String name, String desc, MethodVisitor mv) {
+            super(owner, access, name, desc, mv);
+        }
+
+        void mark(int slot, int param, Type t) {
+            Object mark = t.getSort() == Type.OBJECT ? new String(t.getInternalName()) : t.getSort() == Type.ARRAY ? new String(t.getDescriptor()) : new Object();
+            marks.put(slot, mark);
+            params.put(mark, param);
+        }
+
+        @Override
+        boolean marked(Object value) {
+            return params.containsKey(value);
+        }
+
+        @Override
+        public void visitVarInsn(int opcode, int var) {
             super.visitVarInsn(opcode, var);
             Object mark = marks.get(var);
             // A long or double is two entries, its value first.
@@ -5817,8 +5905,9 @@ public final class JarPort {
                 return;
             }
             call(opcode, owner, name, desc, itf);
-            if (closing != null) {
-                news.remove(closing);
+            if (closing != null && news.remove(closing) && "null".equals(closing[2])) {
+                // Nothing replaced it: the class cannot be made in the new release.
+                mod.unlinked.add("new of a class the new release cannot make: " + Exposure.dotted(owner) + " (in " + where + ")");
             }
         }
 
@@ -6348,7 +6437,7 @@ public final class JarPort {
             for (String owner : new LinkedHashSet<>(owners)) {
                 for (Fix f : book.getOrDefault(owner, List.of())) {
                     Matcher n = f.name().matcher(name);
-                    if (!n.matches() || f.args() != null && (args == null || !args.startsWith(f.args()))) {
+                    if (!n.matches() || f.args() != null && (args == null || !args.startsWith(f.args())) || !holds(f)) {
                         continue;
                     }
                     try {
@@ -6406,7 +6495,7 @@ public final class JarPort {
             for (String o : new LinkedHashSet<>(List.of(owner, declOwner))) {
                 for (Fix f : fixes.getOrDefault(o, List.of())) {
                     Matcher n = f.name().matcher("<init>");
-                    if (!n.matches() || f.args() != null && !desc.startsWith(f.args())) {
+                    if (!n.matches() || f.args() != null && !desc.startsWith(f.args()) || !holds(f)) {
                         continue;
                     }
                     try {
@@ -6432,6 +6521,22 @@ public final class JarPort {
                 }
             }
             return false;
+        }
+
+        Map<Integer, Map<Integer, String>> constants; // call number -> argument (0 the first) -> the constant passed there
+
+        /** A rule for one constant holds here when the call being written passes that constant as its operand. */
+        boolean holds(Fix f) {
+            if (f.when() == null) {
+                return true;
+            }
+            if (constants == null) {
+                int dot = key.indexOf('.'), paren = key.indexOf('(');
+                constants = paren < 0 ? Map.of() : Constants.of(mod.bytes.get(key.substring(0, dot)), key.substring(dot + 1, paren), key.substring(paren));
+            }
+            int colon = f.when().indexOf(':');
+            int k = Integer.parseInt(f.when().substring(0, colon));
+            return f.when().substring(colon + 1).equals(constants.getOrDefault(callsSeen, Map.of()).get(k - 1));
         }
 
         void invokeAdded(String[] added) {
@@ -6827,16 +6932,56 @@ public final class JarPort {
         @Override
         public void visitTypeInsn(int opcode, String type) {
             types(mod, type.startsWith("[") ? type : "L" + type + ";", where);
-            super.visitTypeInsn(opcode, type);
+            GameDiff.Cls now = opcode == Opcodes.NEW ? b.classes.get(cls(type)) : null;
+            if (now != null && (now.flags & (Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT)) != 0) {
+                // A class the new release made an interface or abstract (1.21.5's ClickEvent) is never made here: a
+                // replacement gives the value (made()), so a null holds the object's place until then, and the frames
+                // that named the object not yet constructed name the null.
+                super.visitInsn(Opcodes.ACONST_NULL);
+                if (lastLabel != null) {
+                    nulled.add(lastLabel);
+                }
+            } else {
+                super.visitTypeInsn(opcode, type);
+            }
+            lastLabel = null;
             if (opcode == Opcodes.NEW) {
-                news.push(new String[] { type, null });
+                news.push(new String[] { type, null, now != null && (now.flags & (Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT)) != 0 ? "null" : null });
                 fresh = true;
             } else {
                 fresh = false;
             }
         }
 
-        // Objects made with new and not yet constructed, innermost first: {class, "dup" when new was followed by dup}.
+        Label lastLabel; // the label just before the next instruction, where a new's frames find it
+        final Set<Label> nulled = new HashSet<>(); // the labels of news written as null
+
+        @Override
+        public void visitLabel(Label label) {
+            super.visitLabel(label);
+            lastLabel = label;
+        }
+
+        @Override
+        public void visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack) {
+            super.visitFrame(type, numLocal, nulls(local, numLocal), numStack, nulls(stack, numStack));
+        }
+
+        Object[] nulls(Object[] items, int n) {
+            if (items == null || nulled.isEmpty()) {
+                return items;
+            }
+            Object[] out = items.clone();
+            for (int i = 0; i < n && i < out.length; i++) {
+                if (out[i] instanceof Label l && nulled.contains(l)) {
+                    out[i] = Opcodes.NULL;
+                }
+            }
+            return out;
+        }
+
+        // Objects made with new and not yet constructed, innermost first: {class, "dup" when new was followed by dup,
+        // "null" when written as a null}.
         final Deque<String[]> news = new ArrayDeque<>();
         boolean fresh; // the last instruction was a new
 
@@ -6926,7 +7071,13 @@ public final class JarPort {
     // ---- Port rules applied in the class.
 
     /** A port rule's replacement for game members of one old class ("inClass"): name is a regex, args a descriptor's start or null. */
-    record Fix(String rule, Pattern name, String args, String expr) {}
+    /** when: null, or "k:NAME": the rule holds only for a call whose operand $k is its type's constant NAME (GameDiff's per-constant readings). */
+    record Fix(String rule, Pattern name, String args, String expr, String when) {
+
+        Fix(String rule, Pattern name, String args, String expr) {
+            this(rule, name, args, expr, null);
+        }
+    }
 
     final Map<String, List<Fix>> fixes = new HashMap<>(); // old owner (internal) -> replacements its rules give
 
