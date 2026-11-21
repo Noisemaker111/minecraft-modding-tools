@@ -172,6 +172,7 @@ final class SourceAnswers {
         int files = 0, replaced = 0;
         List<String> examples = new ArrayList<>();
         List<Object> written = new ArrayList<>(); // each outer site as written: file, its lines in the new text, the text it replaced
+        Map<String, Object> importsByFile = new LinkedHashMap<>();
         try (StandardJavaFileManager fm = compiler.getStandardFileManager(ignored, Locale.ROOT, StandardCharsets.UTF_8)) {
             StringBuilder cp = new StringBuilder();
             for (Path jar : classpath) {
@@ -199,11 +200,15 @@ final class SourceAnswers {
                 List<int[]> placed = new ArrayList<>();
                 String body = rewrite(text, finder.sites, trees.getSourcePositions(), unit, imports, placed);
                 String out = imports.add(body);
+                if (!imports.added.isEmpty()) {
+                    importsByFile.put(Path.of(unit.getSourceFile().toUri()).toString(), new ArrayList<>(imports.added));
+                }
                 int shift = out.length() - body.length(); // the added imports sit above every site
                 for (int[] p : placed) {
                     int from = p[2] + shift, to = p[3] + shift;
                     written.add(Json.map("file", Path.of(unit.getSourceFile().toUri()).toString(), "start", from, "end", to,
-                        "line", lineOf(out, from), "endLine", lineOf(out, Math.max(from, to - 1)), "original", text.substring(p[0], p[1]), "text", out.substring(from, to)));
+                        "line", lineOf(out, from), "endLine", lineOf(out, Math.max(from, to - 1)), "original", text.substring(p[0], p[1]), "text", out.substring(from, to),
+                        "originalLine", lineOf(text, p[0])));
                 }
                 if (out.equals(text)) {
                     continue;
@@ -232,6 +237,7 @@ final class SourceAnswers {
         report.put("bySource", bySource);
         report.put("examples", examples);
         report.put("written", written);
+        report.put("imports", importsByFile);
         return report;
     }
 
