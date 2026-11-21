@@ -1230,7 +1230,8 @@ def client_starts(loader, to, server_pack, names, platform=()):
     (pack / "mods").mkdir(parents=True)
     (pack / "dropped").mkdir()
     for name in list(names) + list(platform):
-        source = next((d / name for d in (server_pack / "mods", server_pack / "dropped") if (d / name).is_file()), None)
+        # A mod the server left out as client-only may be in dropped/; a library there failed and stays out.
+        source = next((d / name for d in (server_pack / "mods", server_pack / "dropped")[:1 if name in platform else 2] if (d / name).is_file()), None)
         if source:
             shutil.copy2(source, pack / "mods" / name)
     mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
@@ -1289,7 +1290,8 @@ def starts_alone(loader, to, pack, name, platform):
     (alone / "mods").mkdir(parents=True)
     shutil.copy(pack / "dropped" / name, alone / "mods" / name)
     for jar in platform:
-        shutil.copy(pack / "mods" / jar, alone / "mods" / jar)
+        if (pack / "mods" / jar).is_file():  # a library that failed was dropped with the mods that need it
+            shutil.copy(pack / "mods" / jar, alone / "mods" / jar)
     mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     done = subprocess.run([mmt, "pack-check", "--pack", str(alone), "--minecraft", to, "--loader", loader, "--json"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
