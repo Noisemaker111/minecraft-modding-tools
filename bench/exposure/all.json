@@ -342,7 +342,7 @@
    "modsRead": 147,
    "modsThatLink": 28,
    "modsThatLinkAndData": 27,
-   "brokenUses": 1647,
+   "brokenUses": 1650,
    "loaderUses": 410,
    "modsHeldOnlyByLoader": 1,
    "big": true
@@ -390,7 +390,7 @@
    "modsRead": 147,
    "modsThatLink": 36,
    "modsThatLinkAndData": 35,
-   "brokenUses": 2271,
+   "brokenUses": 2303,
    "loaderUses": 98,
    "modsHeldOnlyByLoader": 0,
    "big": true
@@ -594,7 +594,7 @@
    "modsRead": 148,
    "modsThatLink": 20,
    "modsThatLinkAndData": 19,
-   "brokenUses": 2545,
+   "brokenUses": 2544,
    "loaderUses": 1220,
    "modsHeldOnlyByLoader": 13,
    "big": true
@@ -920,7 +920,7 @@
    "modsRead": 147,
    "modsThatLink": 28,
    "modsThatLinkAndData": 27,
-   "brokenUses": 1653,
+   "brokenUses": 1656,
    "loaderUses": 416,
    "modsHeldOnlyByLoader": 1,
    "updatesCrossed": 2
@@ -944,7 +944,7 @@
    "modsRead": 147,
    "modsThatLink": 36,
    "modsThatLinkAndData": 35,
-   "brokenUses": 2255,
+   "brokenUses": 2287,
    "loaderUses": 84,
    "modsHeldOnlyByLoader": 1,
    "updatesCrossed": 2
@@ -992,7 +992,7 @@
    "modsRead": 147,
    "modsThatLink": 6,
    "modsThatLinkAndData": 4,
-   "brokenUses": 15531,
+   "brokenUses": 15524,
    "loaderUses": 1602,
    "modsHeldOnlyByLoader": 1,
    "updatesCrossed": 22
@@ -1954,7 +1954,7 @@
    "type": "call, game: not read",
    "finishes": 0,
    "mods": 26,
-   "references": 17,
+   "references": 16,
    "updates": 10,
    "examples": [
     "fabric 1.15.2 -> 1.16: call: net.minecraft.network.chat.Component.withStyle+withStyle+late(Lnet/minecraft/network/chat/Component;Lnet/minecraft/ChatFormatting;Lnet/minecraft/ChatFormatting;)Lnet/minecraft/network/chat/Component;",
@@ -2164,6 +2164,17 @@
     "fabric 1.19.4 -> 1.20: inherited from a removed superclass: net.minecraft.client.gui.GuiComponent.blit(Lcom/mojang/blaze3d/vertex/PoseStack;IIIIII)V",
     "fabric 26.2 -> 26.3: inherited from a removed superclass: com.mojang.blaze3d.preprocessor.GlslPreprocessor.process(Ljava/lang/String;)Ljava/util/List;",
     "neoforge 26.2 -> 26.3: inherited from a removed superclass: com.mojang.blaze3d.preprocessor.GlslPreprocessor.process(Ljava/lang/String;)Ljava/util/List;"
+   ]
+  },
+  {
+   "type": "method name lost in the Fabric hand-back, game: not read",
+   "finishes": 0,
+   "mods": 3,
+   "references": 35,
+   "updates": 2,
+   "examples": [
+    "fabric 1.20.4 -> 1.20.5: method name lost in the Fabric hand-back: fuzs.visualworkbench.world.level.block.entity.CraftingTableBlockEntity.load(Lnet/minecraft/nbt/CompoundTag;)V (through fuzs.puzzleslib.api.block.v1.entity.TickingBlockEntity)",
+    "fabric 1.21.1 -> 1.21.2: method name lost in the Fabric hand-back: net.mehvahdjukaar.supplementaries.common.block.blocks.AbstractRopeBlock.updateShape(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/Direction;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/LevelAccessor;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState; (through net.mehvahdjukaar.moonlight.api.block.WaterBlock)"
    ]
   },
   {
