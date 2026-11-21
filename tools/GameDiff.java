@@ -3657,6 +3657,7 @@ public final class GameDiff {
                 Ref old = keys.get(e.getKey());
                 int[] tally = new int[2];
                 Map<Node, Set<String>> uses = withoutOtherValues(old, e.getValue());
+                int otherValues = e.getValue().size() - uses.size();
                 String best = vote(uses.values(), tally);
                 String bestNow = best;
                 java.util.function.Predicate<Node> same = u -> bestNow != null && aside.containsKey(u) && bestNow.endsWith("." + aside.get(u));
@@ -3703,9 +3704,20 @@ public final class GameDiff {
                         uses = kept;
                     }
                 }
-                int top = tally[0], of = tally[1] - sameCallUnread(best, uses) - insisting(best, old, uses);
-                boolean agreed = top >= 2 && top * 10 >= of * 8 || top == 1 && of == 1 && usesAll(best, old, operands(old));
-                agreed = agreed && beyondLiterals(best, uses);
+                int sameOrInsisting = sameCallUnread(best, uses) + insisting(best, old, uses);
+                int abstained = sameOrInsisting + otherValues;
+                int top = tally[0], of = tally[1] - sameOrInsisting;
+                // A single use agrees alone only where it is the only one: uses that abstained are not evidence for it.
+                boolean agreed = top >= 2 && top * 10 >= of * 8 || top == 1 && of == 1 && abstained == 0 && usesAll(best, old, operands(old));
+                int ofAll = tally[1] + otherValues;
+                boolean plain = top >= 2 && top * 10 >= ofAll * 8 || top == 1 && ofAll == 1 && usesAll(best, old, operands(old));
+                if (agreed && !plain && (top < 3 || !keepsOperands(best, old) || declared(old) != null && !compiles(best, declared(old), old))) {
+                    // Only uses that abstained carried it over the bar: it needs three uses that agree, and may not also leave an operand out (permute(axis) as
+                    // axis, PerlinSimplexNoise(random, octaves) without the octaves), unless the old member only tested it,
+                    // and it must compile for the declared types (Builder.add(attribute, v) where 1.20.5 takes a Holder).
+                    agreed = false;
+                }
+                agreed = agreed && beyondLiterals(best, uses, false, k -> onlyTested(old, k));
                 if (!agreed && best != null) {
                     // The game wrote different things by what it passed (1.21's new ResourceLocation(s): withDefaultNamespace
                     // where s was a path it could see, parse where s came from data). A mod's argument is a value no one
@@ -4753,10 +4765,15 @@ public final class GameDiff {
          * game passed as a literal at every use it read.
          */
         static boolean beyondLiterals(String best, Map<Node, Set<String>> uses) {
-            return beyondLiterals(best, uses, false);
+            return beyondLiterals(best, uses, false, k -> false);
         }
 
         static boolean beyondLiterals(String best, Map<Node, Set<String>> uses, boolean ownEdits) {
+            return beyondLiterals(best, uses, ownEdits, k -> false);
+        }
+
+        /** tested: whether the old member's own body only tests operand $k (see onlyTested). */
+        static boolean beyondLiterals(String best, Map<Node, Set<String>> uses, boolean ownEdits, java.util.function.IntPredicate tested) {
             List<Set<String>> computed = new ArrayList<>();
             Node any = null;
             for (var u : uses.entrySet()) {
@@ -4778,9 +4795,11 @@ public final class GameDiff {
                 int k = i;
                 boolean used = Pattern.compile("\\$" + (i + first) + "(?!\\d)").matcher(best).find();
                 List<Node> read = uses.entrySet().stream().filter(u -> !u.getValue().isEmpty()).map(Map.Entry::getKey).toList();
-                // Unless the game passed different values there and every one read the same: the new call does not
-                // look at it (1.21.5's getList(key, type) is getListOrEmpty(key) for types 6, 8 and 10).
-                if (!used && read.stream().allMatch(u -> u.kids[k].op == 'k') && read.stream().map(u -> String.valueOf(u.kids[k].value)).distinct().count() < 2) {
+                // Unless the game passed different values there, every one read the same, and the old member only tested
+                // it, never passed it on, kept or gave it back: 1.21.5's getList(key, type) is getListOrEmpty(key) for
+                // types 6, 8 and 10, and the old getList only compared the type with the list's.
+                if (!used && read.stream().allMatch(u -> u.kids[k].op == 'k')
+                    && (read.stream().map(u -> String.valueOf(u.kids[k].value)).distinct().count() < 2 || !tested.test(i + first))) {
                     return false;
                 }
             }
@@ -4935,11 +4954,18 @@ public final class GameDiff {
                 return uses;
             }
             String want = Carry.descAB(h, gave);
+            // What the uses that read give now: an unread use giving the same is the same rewrite and counts.
+            Set<String> readTypes = new HashSet<>();
+            uses.forEach((u, r) -> {
+                if (!r.isEmpty() && lined.get(u) != null) {
+                    lined.get(u).forEach(m -> readTypes.add(m.type));
+                }
+            });
             Map<Node, Set<String>> kept = new IdentityHashMap<>();
             uses.forEach((u, r) -> {
                 Set<Node> now = lined.get(u);
                 boolean other = r.isEmpty() && now != null && !now.isEmpty() && now.stream().allMatch(m -> m.type != null && (m.type.startsWith("L") || m.type.startsWith("["))
-                    && !m.type.equals(want) && !Exposure.assignable(h.b, SameCall.dot(m.type), SameCall.dot(want)) && !Exposure.assignable(h.b, SameCall.dot(want), SameCall.dot(m.type)));
+                    && !m.type.equals(want) && !readTypes.contains(m.type) && !Exposure.assignable(h.b, SameCall.dot(m.type), SameCall.dot(want)) && !Exposure.assignable(h.b, SameCall.dot(want), SameCall.dot(m.type)));
                 if (!other) {
                     kept.put(u, r);
                 }
@@ -4957,6 +4983,9 @@ public final class GameDiff {
                 return 0;
             }
             Pattern insist = Pattern.compile("\\." + Pattern.quote(old.name()) + "\\(.*\\)\\.(orElseThrow|get)\\(\\)$");
+            if (insist.matcher(best).find()) {
+                return 0; // the reading insists too: those uses are its own
+            }
             int n = 0;
             for (Set<String> r : uses.values()) {
                 if (!r.isEmpty() && !r.contains(best) && r.stream().allMatch(one -> insist.matcher(one.replace(String.valueOf(OPEN), "").replace(String.valueOf(CLOSE), "")).find())) {
@@ -4987,6 +5016,10 @@ public final class GameDiff {
             }
             int first = call.target() instanceof FixExpr.Path ? 0 : 1;
             int operands = call.args().size() + first;
+            if (call.args().stream().allMatch(arg -> !FixExpr.operands(arg).isEmpty())) {
+                // No fixed value in the reading: what such a use passes differently is a value the reading cannot write.
+                return 0;
+            }
             int n = 0;
             for (var u : uses.entrySet()) {
                 Set<Node> now = lined.get(u.getKey());
@@ -5022,6 +5055,72 @@ public final class GameDiff {
                 }
             }
             return true;
+        }
+
+        /** best uses each of old's operands ($0 the receiver unless static), or leaves out only ones old's own body only tests. */
+        boolean keepsOperands(String best, Ref old) {
+            Meth m = old.kind() == 'm' ? h.a.method(old.owner(), old.name(), old.desc()) : null;
+            if (m == null) {
+                return true;
+            }
+            int n = MethodTypeDesc.ofDescriptor(old.desc()).parameterCount();
+            for (int k = m.isStatic() || m.special() ? 1 : 0; k <= n; k++) {
+                if (!Pattern.compile("\\$" + k + "(?!\\d)").matcher(best).find() && !onlyTested(old, k)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** Whether the old member's own body reads operand $k only in a condition: never passes it on, stores or returns it. */
+        boolean onlyTested(Ref old, int k) {
+            Meth m = old.kind() == 'm' ? h.a.method(old.owner(), old.name(), old.desc()) : null;
+            if (m == null || !m.hasCode) {
+                return false;
+            }
+            // $k is the k-th parameter ($0 the receiver, never only tested here); its slot follows the receiver's.
+            List<ClassDesc> ps = MethodTypeDesc.ofDescriptor(old.desc()).parameterList();
+            if (k < 1 || k > ps.size()) {
+                return false;
+            }
+            int slot = m.isStatic() ? 0 : 1;
+            for (int i = 0; i < k - 1; i++) {
+                String d = ps.get(i).descriptorString();
+                slot += d.equals("J") || d.equals("D") ? 2 : 1;
+            }
+            Body body;
+            try {
+                body = decode(h.a, old.owner(), old.name() + old.desc(), false);
+            } catch (RuntimeException unreadable) {
+                return false;
+            }
+            if (body == null || !body.whole) {
+                return false;
+            }
+            boolean seen = false;
+            for (Node st : body.statements) {
+                boolean test = st.op == 'S' && String.valueOf(st.value).startsWith("if:");
+                for (Node kid : st.kids) {
+                    if (test && kid.op == 'p' && Integer.valueOf(slot).equals(kid.value)) {
+                        seen = true;
+                    } else if (reads(kid, slot)) {
+                        return false;
+                    }
+                }
+            }
+            return seen;
+        }
+
+        static boolean reads(Node n, int slot) {
+            if (n.op == 'p' && Integer.valueOf(slot).equals(n.value)) {
+                return true;
+            }
+            for (Node k : n.kids) {
+                if (reads(k, slot)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         final List<Learned> byConstant = new ArrayList<>();
