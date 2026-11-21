@@ -73,7 +73,7 @@ final class Port {
                 String written = Json.text(w, "text", "");
                 int start = ((Number) w.get("start")).intValue();
                 if (written.isEmpty()) continue;
-                if (!text.startsWith(written, start)) {
+                if (start < 0 || !text.startsWith(written, start)) {
                     int found = text.indexOf(written);
                     if (found < 0 || text.indexOf(written, found + 1) >= 0) continue;
                     start = found;
@@ -104,11 +104,78 @@ final class Port {
         Files.deleteIfExists(report);
         var run = tools.run("SourceAnswers", List.of("--map", map.toString(), "--fixes", build.harness.resolve("knowledge/fixes.json").toString(),
             "--from", from, "--to", to, "--loader", MixinCheck.loader(model), "--sources", sourcesFile.toString(), "--classpath", classpathFile.toString(),
-            "--report", report.toString()), "port-source-answers");
+            "--report", report.toString(), "--dry-run"), "port-source-answers");
         if (run.exit() != 0 || !Files.isRegularFile(report)) throw new IOException("Source answers stopped: " + Run.tail(run.log()));
-        var written = Json.read(report);
-        for (Object w : Json.array(written.getOrDefault("written", List.of()))) answersWritten.add(Json.object(w));
-        build.report.stages.add(Json.map("name", "source-answers", "replaced", written.get("replaced"), "files", written.get("files"), "bySource", written.get("bySource")));
+        answerPlan = Json.read(report);
+    }
+
+    /** The source answers planned on the sources as written, waiting for the preflight (SourceAnswers --dry-run's report). */
+    Map<String, Object> answerPlan;
+
+    /**
+     * Writes the planned answers into the sources as they are after the preflight: each where its original text still
+     * stands near its line (the one such text within a few lines), so a place the preflight renamed inside is left to
+     * the typed fixer and rules; each file gets the imports its answers name.
+     */
+    void applyAnswerPlan() throws IOException {
+        if (answerPlan == null) return;
+        Map<String, List<Map<String, Object>>> byFile = new LinkedHashMap<>();
+        for (Object o : Json.array(answerPlan.getOrDefault("written", List.of()))) {
+            var w = Json.object(o);
+            byFile.computeIfAbsent(Json.text(w, "file", ""), k -> new ArrayList<>()).add(w);
+        }
+        var imports = Json.object(answerPlan.getOrDefault("imports", Map.of()));
+        int placed = 0, skipped = 0;
+        for (var e : byFile.entrySet()) {
+            Path file = Path.of(e.getKey());
+            if (!Files.isRegularFile(file)) continue;
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            List<int[]> spots = new ArrayList<>(); // start, end, index
+            List<Map<String, Object>> sites = e.getValue();
+            for (int k = 0; k < sites.size(); k++) {
+                String original = Json.text(sites.get(k), "original", "");
+                int line = ((Number) sites.get(k).get("originalLine")).intValue(), found = -1, count = 0;
+                for (int at = text.indexOf(original); at >= 0 && !original.isEmpty(); at = text.indexOf(original, at + 1)) {
+                    int l = 1 + (int) text.substring(0, at).chars().filter(c -> c == '\n').count();
+                    if (Math.abs(l - line) <= 12) {
+                        found = at;
+                        count++;
+                    }
+                }
+                int f = found;
+                if (count == 1 && spots.stream().noneMatch(s -> f < s[1] && s[0] < f + original.length())) spots.add(new int[] { found, found + original.length(), k });
+                else skipped++;
+            }
+            if (spots.isEmpty()) continue;
+            spots.sort(Comparator.comparingInt((int[] s) -> s[0]).reversed());
+            for (int[] s : spots) text = text.substring(0, s[0]) + Json.text(sites.get(s[2]), "text", "") + text.substring(s[1]);
+            // The imports the answers name, after the file's last import (or its package line); the answers sit below them.
+            List<String> lines = new ArrayList<>(Arrays.asList(text.split("\n", -1)));
+            int after = -1;
+            for (int i = 0; i < lines.size(); i++) {
+                String l = lines.get(i).strip();
+                if (l.startsWith("import ") || l.startsWith("package ")) after = i;
+                else if (!l.isEmpty() && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*") && after >= 0) break;
+            }
+            String eol = text.contains("\r\n") ? "\r" : "";
+            List<String> fresh = new ArrayList<>();
+            for (Object q : Json.array(imports.getOrDefault(e.getKey(), List.of()))) {
+                if (lines.stream().noneMatch(l -> l.strip().equals("import " + q + ";"))) fresh.add("import " + q + ";" + eol);
+            }
+            lines.addAll(after + 1, fresh);
+            text = String.join("\n", lines);
+            Files.writeString(file, text, StandardCharsets.UTF_8);
+            for (int[] s : spots) {
+                var w = new LinkedHashMap<>(sites.get(s[2]));
+                w.put("file", file.toString());
+                w.put("start", -1); // found by its text when it is checked
+                answersWritten.add(w);
+                placed++;
+            }
+        }
+        build.report.stages.add(Json.map("name", "source-answers", "planned", answerPlan.get("replaced"), "written", placed, "leftForRules", skipped,
+            "bySource", answerPlan.get("bySource")));
+        answerPlan = null;
     }
 
     void saveInProgress() throws IOException {
@@ -1563,6 +1630,8 @@ final class Port {
                 Target.apply(target);
                 build.refreshJdk();
             }
+            // Planned on the sources as written (javac against the mod's own release); written after the preflight below,
+            // which renames by text in the old names and would take an answer's new names for old ones.
             if (ownBuild != null) sourceAnswers(tools, model, map, from, to, ownBuild);
             for (Path file : excluded) {
                 Path owned = file.toRealPath();
@@ -1583,6 +1652,7 @@ final class Port {
                 "port-preflight"
             );
             if (preflight.exit() != 0) throw new IOException("Typed preflight stopped: " + Run.tail(preflight.log()));
+            applyAnswerPlan();
             boolean explicitTask = options.values.containsKey("task");
             List<String> tasks = new ArrayList<>(
                 explicitTask ? List.of(options.get("task", "")) : build.tasks(model, "build")
