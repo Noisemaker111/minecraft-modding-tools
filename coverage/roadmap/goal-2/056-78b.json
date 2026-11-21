@@ -1,0 +1,13 @@
+{
+ "id": "78b",
+ "title": "Porting PRs merge without rebasing, run one sweep, and start mods that need libraries",
+ "part": "Port by type of break",
+ "status": "done",
+ "done": "2026-11-21",
+ "text": "Three things slowed every porting PR. Each merge conflicted the next open PR on shared lists (main's scoreboard, the jar-links points, the roadmap's steps array, the skill's table, the hand list of tests); each PR ran the 1-2 hour cloud sweep on main as well as on its branch; and the real-game load step left out every linked mod that needs a library mod (Kotlin for Forge, Balm, Puzzles Lib, Cloth Config ...). Now tests are found from their files, each step is its own file, main's scoreboard and jar-links points are written on main by the sweep every push to main starts, tools/cloud-run exposure finds main's sweep for a branch's base and runs only the branch, and the load step adds the libraries each mod's Modrinth version lists as required.",
+ "start": "2026-11-21",
+ "target": "2026-11-22",
+ "finish": "two PRs that each add a test and a step merge with no conflict; a branch's comparison finds main's saved sweep without running main; a NeoForge mod that needs Kotlin for Forge starts on a real server in the load step",
+ "wrongIf": "a third PR still conflicts on a shared line, or a mod that links is started without a library it needs",
+ "result": "Two simulated PRs adding JarPort*Test files and goal-2 steps merge clean (the same edits conflicted on every pair #160-#163). tools/cloud-run.py --run 44943699703 (#163's branch sweep) found main's run 44943506509 for its base 62e789da with no dispatch and printed every update 6,132 -> 6,145, big updates 1,966 -> 1,979, newest 21, as #163 recorded. NeoForge 1.21.10 -> 1.21.11 load: 57 of 58 linked mods started (was 29), 47 load on a real 1.21.11 server (was 26), among them Inventory Profiles Next and Particle Core on Kotlin for Forge, with 11 libraries at their 1.21.11 releases (bench/exposure/load-neoforge-1.21.10-1.21.11-e15ee907f4.json); 4 that link fail in game: Better Stats' mixin calls a TCDCommons accessor its 1.21.11 release no longer has, and three mods built on Puzzles Lib throw from their own start code against Puzzles Lib 21.11; the 1.21.11 client is not driven (0 of 29 before this too)."
+}
