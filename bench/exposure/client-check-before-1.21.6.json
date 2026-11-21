@@ -1,0 +1,271 @@
+{
+ "what": "pack-check --side client on an empty pack: title, world, inventory, creative tabs",
+ "passed": 44,
+ "of": 44,
+ "releases": [
+  {
+   "loader": "fabric",
+   "minecraft": "1.14.4",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-32-04.511942200Z-89d794ae\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.15",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-33-32.467685900Z-5f0b524e\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.15.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-34-03.879535900Z-eb289475\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.15.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-34-35.315990400Z-c8729f51\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.16",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-32-32.920907800Z-be0e7add\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.16.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-35-04.549455400Z-b20644d4\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.16.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-35-30.970142100Z-a23926a0\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.16.3",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-36-00.945056700Z-67747e08\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.16.4",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-36-30.425127800Z-861e9ecf\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.16.5",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-32-59.040928700Z-c75300f2\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.17",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-41-29.593982100Z-41c159b7\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.17.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-43-12.938212300Z-ca1a1d42\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.18",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-44-35.220493Z-a6c6966f\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.18.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-46-05.948914400Z-ec3e3959\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.18.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-47-30.315549500Z-37f6ce5b\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.19",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-48-21.251096300Z-27ebbb45\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.19.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-49-24.228467400Z-b135de73\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.19.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-51-05.227365600Z-1f2edbc0\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.19.3",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-52-41.670528300Z-c2526566\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.19.4",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-53-48.998835300Z-632063c0\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.20",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-55-08.230390900Z-576b4456\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.20.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-55-56.595368400Z-7ea4045e\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.20.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-57-14.961171400Z-3f9e53ab\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.20.3",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-19-41.937358800Z-7c6a9fb7\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.20.4",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-58-48.765510400Z-1d9a2ee4\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.20.5",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-59-40.214383600Z-b01d61ac\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.20.6",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-00-33.656547900Z-003a8bca\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.21",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-02-04.657871700Z-198413ac\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.21.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-02-55.603266500Z-445a4563\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.21.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-04-03.200365200Z-8014f2b3\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.21.3",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-04-55.689336500Z-a58927ae\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.21.4",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-06-08.331940700Z-a3db596a\\result.json"
+  },
+  {
+   "loader": "fabric",
+   "minecraft": "1.21.5",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-07-34.941384Z-85b51cff\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.20.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-09-01.951746700Z-51a1bbd1\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.20.3",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T21-20-37.408100600Z-95c7a189\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.20.4",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-10-49.410557600Z-3af9fecf\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.20.5",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-13-08.931241300Z-a2e0592d\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.20.6",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-14-13.733029700Z-7b4cacdd\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.21",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-16-39.607117600Z-f6dbfdad\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.21.1",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-17-42.415668800Z-1981de1b\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.21.2",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-18-38.977194700Z-6a5091ea\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.21.3",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-19-37.318928400Z-5b96595e\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.21.4",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-20-41.855449500Z-4def7a67\\result.json"
+  },
+  {
+   "loader": "neoforge",
+   "minecraft": "1.21.5",
+   "ok": true,
+   "receipt": "C:\\Users\\Jk101\\.mmt\\packs\\.runs\\portable\\2026-11-21T22-23-08.312066100Z-f7eaced4\\result.json"
+  }
+ ]
+}

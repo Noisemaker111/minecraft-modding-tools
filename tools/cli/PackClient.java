@@ -431,14 +431,15 @@ final class PackClient {
             Game.request(session, Json.map("command", "open-world", "world", "lab"));
             Game.request(session, Json.map("command", "ready", "expectWorld", true));
             reached.add("world");
-            snippet(session, "var game = net.minecraft.client.Minecraft.getInstance();\nshow(game, new net.minecraft.client.gui.screens.inventory.InventoryScreen(game.player));\nreturn true;");
+            // Snippets compile for the Java the game runs on, 8 before 1.17: no var.
+            snippet(session, "net.minecraft.client.Minecraft game = net.minecraft.client.Minecraft.getInstance();\nshow(game, new net.minecraft.client.gui.screens.inventory.InventoryScreen(game.player));\nreturn true;");
             Game.request(session, Json.map("command", "ready", "requireScreen", true));
             reached.add("inventory");
             Object tabs;
             try {
                 tabs = snippet(session, String.join("\n",
-                    "var game = net.minecraft.client.Minecraft.getInstance();",
-                    "var screen = new net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen(game.player, game.player.connection.enabledFeatures(), true);",
+                    "net.minecraft.client.Minecraft game = net.minecraft.client.Minecraft.getInstance();",
+                    "net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen screen = new net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen(game.player, game.player.connection.enabledFeatures(), true);",
                     "show(game, screen);",
                     "vars.put(\"tabs\", net.minecraft.world.item.CreativeModeTabs.allTabs());",
                     "return ((java.util.List<?>) vars.get(\"tabs\")).size();"));
@@ -446,7 +447,7 @@ final class PackClient {
                 if (!String.valueOf(before1193.getMessage()).contains("Snippet did not compile")) throw before1193;
                 // Before 1.19.3 the tabs were the array CreativeModeTab.TABS and the screen took only the player.
                 tabs = snippet(session, String.join("\n",
-                    "var game = net.minecraft.client.Minecraft.getInstance();",
+                    "net.minecraft.client.Minecraft game = net.minecraft.client.Minecraft.getInstance();",
                     "show(game, new net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen(game.player));",
                     "vars.put(\"tabs\", java.util.Arrays.asList(net.minecraft.world.item.CreativeModeTab.TABS));",
                     "return ((java.util.List<?>) vars.get(\"tabs\")).size();"));
@@ -456,8 +457,8 @@ final class PackClient {
             for (int i = 0; i < count; i++) {
                 // A tab is drawn on the frame after it is chosen; the next request is answered after that frame.
                 snippet(session, String.join("\n",
-                    "var game = net.minecraft.client.Minecraft.getInstance();",
-                    "var tab = ((java.util.List<?>) vars.get(\"tabs\")).get(" + i + ");",
+                    "net.minecraft.client.Minecraft game = net.minecraft.client.Minecraft.getInstance();",
+                    "Object tab = ((java.util.List<?>) vars.get(\"tabs\")).get(" + i + ");",
                     // call() finds the private method by Mojang's name in the names the game runs.
                     "call(screen(game), \"selectTab\", tab);",
                     "return true;"));

@@ -282,14 +282,7 @@ public final class PortableAgent {
             catch (NoSuchMethodException before119) { flows = null; }
             // Before openWorld: it holds this thread until the built-in server has started, and by then it has ticked.
             if (Boolean.TRUE.equals(request.get("freeze"))) freezeAtLoad();
-            try {
-                // Before 1.19 the game opened a save itself: Minecraft.loadLevel(name) (Yarn: startIntegratedServer).
-                if (flows == null) invoke(client, new String[]{"loadLevel", "startIntegratedServer"}, world);
-                else invoke(flows, new String[]{"openWorld", "start"}, world, (Runnable)() -> {});
-            } catch (NoSuchMethodException older) {
-                // Before 1.20.3 a world opens from the screen it is chosen on: loadLevel(screen, name).
-                invoke(flows, new String[]{"loadLevel", "start"}, screen(), world);
-            }
+            openWorld(client, flows, world, PortableAgent::screen);
             confirmWithoutBackup();
             done.complete(Json.map("ok", true, "requestedWorld", world));
         } else if (command.equals("connect")) {
@@ -698,6 +691,25 @@ public final class PortableAgent {
         throw new NoSuchFieldException(owner.getClass().getName() + " " + Arrays.toString(names));
     }
     private static Object call(Object owner, String... names) throws Exception { return invoke(owner, names, new Object[0]); }
+
+    /**
+     * Opens an existing save as each release's own world list does. flows is the game's WorldOpenFlows (1.19 on), or null
+     * before it; screen gives the screen a world is chosen on, which 1.19 to 1.20.2 open it from.
+     */
+    static void openWorld(Object client, Object flows, String world, java.util.concurrent.Callable<Object> screen) throws Exception {
+        try {
+            // Before 1.19 the game opened a save itself: Minecraft.loadLevel(name) (Yarn: startIntegratedServer).
+            if (flows == null) invoke(client, new String[]{"loadLevel", "startIntegratedServer"}, world);
+            // 1.20.3 and 1.20.4 named it checkForBackupAndLoad(name, onCancel); 1.20.5 on, openWorld.
+            else invoke(flows, new String[]{"openWorld", "checkForBackupAndLoad", "start"}, world, (Runnable)() -> {});
+        } catch (NoSuchMethodException older) {
+            // Before 1.16 the game opened a save by its folder and shown name, no settings for one that exists:
+            // selectLevel(folder, name, null) (Yarn: startIntegratedServer).
+            if (flows == null) invoke(client, new String[]{"selectLevel", "startIntegratedServer"}, world, world, null);
+            // Before 1.20.3 a world opens from the screen it is chosen on: loadLevel(screen, name).
+            else invoke(flows, new String[]{"loadLevel", "start"}, screen.call(), world);
+        }
+    }
     private static Object invoke(Object owner, String[] names, Object... arguments) throws Exception {
         Class<?> type = owner instanceof Class ? (Class<?>)owner : owner.getClass();
         for (String name : names) for (String n : Names.candidates(type, name)) for (Method method : type.getMethods()) {
