@@ -2,20 +2,46 @@ name: Cloud jar scoreboard
 # The jar scoreboard (python bench/exposure.py all) on GitHub's runners: one ubuntu-latest job per update and loader
 # (python bench/exposure.py updates), each downloading its release's pinned mods (bench/exposure/mods/), porting them
 # with JarPort and linking them against the next release; the summary job joins them into the all-updates table
-# (python bench/exposure.py join). Dispatch with tools/cloud-run exposure [-f only=fabric:1.21.1,neoforge:1.21.1].
-# No caches: a job downloads about 1 GB (the game twice, its loader, 150 mods) in under a minute.
-run-name: "Cloud jar scoreboard: ${{ inputs.only || 'every update' }} ${{ inputs.request }}"
+# (python bench/exposure.py join). No caches: a job downloads about 1 GB (the game twice, its loader, 150 mods) in under a minute.
+#
+# Main's table is made once per commit: every push to main runs this, and the record job saves the table as
+# bench/exposure/all.json on main with the port.jar-links measures (python bench/exposure.py record-main), pushed with the
+# DOCS_DEPLOY_KEY deploy key as generated.yml does. A pull request runs only its own branch: tools/cloud-run exposure
+# finds this run's table for the branch's base, or dispatches one for that commit (-f commit=SHA) when none ran.
+# paths-ignore lists what cannot change the table; tools/cloud-run reads it to treat a commit that only changed those
+# files as the same table as its parent. A push that changes only them (the record job's own) starts no sweep.
+run-name: "Cloud jar scoreboard: ${{ inputs.only || 'every update' }}${{ inputs.commit && format(' at {0}', inputs.commit) || '' }} ${{ inputs.request }}"
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "bench/exposure/all.json"
+      - "bench/exposure/jars-*.json"
+      - "bench/exposure/load-*.json"
+      - "coverage/measures.json"
+      - "coverage/roadmap.json"
+      - "coverage/roadmap/**"
+      - "coverage/ledger.json"
+      - "app/**"
   workflow_dispatch:
     inputs:
       only:
         description: LOADER:FROM updates, comma-separated (empty for every update of both loaders)
+        default: ''
+      commit:
+        description: The commit to run (default the branch's head); tools/cloud-run sets it to a branch's base on main
         default: ''
       request:
         description: Set by tools/cloud-run to find the run it started
         default: ''
 permissions:
   contents: read
+# One sweep of main at a time, the newest waiting: each records over the one before it, in order.
+concurrency:
+  group: ${{ github.event_name == 'push' && 'cloud-exposure-main' || format('cloud-exposure-{0}', github.run_id) }}
+  cancel-in-progress: false
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -24,6 +50,8 @@ jobs:
       updates: ${{ steps.plan.outputs.updates }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
       - id: plan
         env:
           ONLY: ${{ inputs.only }}
@@ -42,6 +70,8 @@ jobs:
       UPDATE: ${{ matrix.update }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -68,18 +98,60 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: exposure-*
           path: artifacts
       - name: Join every update into one table
+        env:
+          COMMIT: ${{ inputs.commit || github.sha }}
         run: |
-          python3 bench/exposure.py join artifacts --save | tee summary.md >> "$GITHUB_STEP_SUMMARY"
-          cp bench/exposure/all.json all.json
+          python3 bench/exposure.py join artifacts --out all.json | tee summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "$COMMIT" > commit.txt
       - uses: actions/upload-artifact@v4
         with:
           name: summary
           path: |
             summary.md
             all.json
-          retention-days: 14
+            commit.txt
+          retention-days: 90
+  record:
+    # Only a whole sweep of a push to main is main's table; a partial one (an update failed) is not recorded.
+    needs: [update, summary]
+    if: github.event_name == 'push' && needs.update.result == 'success' && needs.summary.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 50
+          ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: summary
+          path: ${{ runner.temp }}/summary
+      - name: Save main's table and measures
+        env:
+          TABLE: ${{ runner.temp }}/summary/all.json
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Another merge may land while this runs: take it and record again on top.
+          for attempt in 1 2 3 4 5; do
+            python bench/exposure.py record-main "$TABLE" --commit "$GITHUB_SHA" --run "$RUN"
+            git add bench/exposure/all.json coverage/measures.json
+            git commit -m "Main's jar scoreboard at ${GITHUB_SHA::10}"
+            if git push; then exit 0; fi
+            git fetch origin main
+            git reset --hard origin/main
+          done
+          echo "::error::Could not push main's table. Check that DOCS_DEPLOY_KEY holds a write deploy key the main ruleset lets bypass it."
+          exit 1

@@ -208,7 +208,7 @@ with tempfile.TemporaryDirectory() as tmp:
         (runs / f"{s['loader']}-{s['from']}-{s['to']}.json").write_text(json.dumps(s), encoding="utf-8")
     sys.stdout = io.StringIO()
     try:
-        table = E.join(runs, False)
+        table = E.join(runs)
     finally:
         sys.stdout = sys.__stdout__
     total = table["total"]
@@ -225,11 +225,50 @@ with tempfile.TemporaryDirectory() as tmp:
     (runs / "fabric-1.0-1.1.json").write_text(json.dumps(typed), encoding="utf-8")
     sys.stdout = io.StringIO()
     try:
-        table = E.join(runs, False)
+        table = E.join(runs)
     finally:
         sys.stdout = sys.__stdout__
     check(table["typesNotRead"] == ["fabric 1.1 -> 2.0"] and [(t["type"], t["finishes"], t["updates"]) for t in table["types"]] == [("call, game: linked", 2, 1)],
           f"types are summed over the updates that list them: {table['types']} {table['typesNotRead']}")
+
+    # Main's table is recorded on main, once per commit: the table with the commit and run it came from, and a point on
+    # each port.jar-links measure whose note says what moved against the table it replaces. A branch's table is compared
+    # against it the same way.
+    before = table
+    (runs / "fabric-1.1-2.0.json").write_text(json.dumps(summary("fabric", "1.1", "2.0", 6)), encoding="utf-8")
+    sys.stdout = io.StringIO()
+    try:
+        after = E.join(runs)
+        lines = E.compare(before, after)
+        same = E.compare(after, after)
+    finally:
+        sys.stdout = sys.__stdout__
+    check(lines[0] == "every update: 14 -> 16 of 20 (+2)" and lines[1] == "big updates: 4 -> 6 of 10 (+2)" and "updates higher: fabric 1.1 -> 2.0 4 -> 6" in lines,
+          f"compare names the counts and the update that moved: {lines}")
+    check(same[3:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
+    measures = Path(tmp) / "measures.json"
+    measures.write_text(json.dumps({"measures": [{"id": m, "points": [{"date": "2026-01-01", "value": 14 if m.endswith("every-update") else 4 if m.endswith("big-updates") else 1, "source": "x"}]}
+                                                 for m in E.MAIN_MEASURES]}), encoding="utf-8")
+    main_table = Path(tmp) / "all.json"
+    main_table.write_text(json.dumps(before), encoding="utf-8")
+    (Path(tmp) / "sweep.json").write_text(json.dumps(after), encoding="utf-8")
+    repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
+    head = os.popen(f'git -C "{E.ROOT}" rev-parse HEAD').read().strip()
+    sys.stdout = io.StringIO()
+    try:
+        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/1", measures, main_table, "2026-02-01")
+        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/2", measures, main_table, "2026-02-02")
+    finally:
+        sys.stdout = sys.__stdout__
+        E.ROOT = repo
+    saved = json.loads(main_table.read_text(encoding="utf-8"))
+    points = {m["id"]: m["points"] for m in json.loads(measures.read_text(encoding="utf-8"))["measures"]}
+    every = points["port.jar-links.every-update"]
+    check(saved["commit"] == head and saved["run"].endswith("/runs/2") and saved["total"]["link"] == 16, "main's table says the commit and run it came from")
+    check([p["value"] for p in every] == [14, 16, 16] and every[1]["n"] == 20 and every[1]["note"].startswith("+2 on 14: ") and "fabric 1.1 -> 2.0 4 -> 6" in every[1]["note"]
+          and head[:10] in every[1]["source"], f"each sweep of main adds a point saying what moved: {every}")
+    check(every[2]["note"] == "the same", f"a sweep that moved nothing says so: {every[2]}")
+    check([p["value"] for p in points["port.jar-links.newest"]] == [1, 1, 1] and points["port.jar-links.big-updates"][1]["value"] == 6, "each measure reads its own total")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:

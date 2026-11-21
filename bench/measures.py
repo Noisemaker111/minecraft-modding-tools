@@ -381,6 +381,9 @@ def main(argv=None):
         if m.get("computed"):
             print(f"{args.id} is computed from {m['computed']}; record the run there instead.", file=sys.stderr)
             return 1
+        if m.get("recordedBy"):
+            print(f"{args.id} is recorded on main by {m['recordedBy']} after each merge; a pull request does not add its points.", file=sys.stderr)
+            return 1
         p = {"date": args.date, "value": int(args.value) if args.value.is_integer() and m["unit"] != "s" else args.value}
         if args.n:
             p["n"] = args.n

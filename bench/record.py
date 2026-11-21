@@ -127,6 +127,8 @@ def add_point(measure, value, source, date=None, note=None, dry=False):
     m = next((x for x in data["measures"] if x["id"] == measure), None)
     if not m:
         raise ValueError(f"No measure {measure}. Add its entry to coverage/measures.json first.")
+    if m.get("recordedBy"):
+        raise ValueError(f"{measure} is recorded on main by {m['recordedBy']} after each merge; a pull request does not add its points.")
     p = {"date": date or today(), "value": value}
     if note:
         p["note"] = note

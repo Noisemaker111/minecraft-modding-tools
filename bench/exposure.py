@@ -1,11 +1,13 @@
 """What real mods reference of the game, ported as jars and linked against the next release: the porter's scoreboard and its to-do list.
 
-    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--save NAME] [--out FILE]
-    python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--save]
-    python bench/exposure.py join DIR [--save]
+    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--save] [--out FILE]
+    python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--out FILE]
+    python bench/exposure.py join DIR [--out FILE]
+    python bench/exposure.py compare BEFORE.json AFTER.json
+    python bench/exposure.py record-main TABLE.json --commit SHA --run URL
     python bench/exposure.py fetch --loader neoforge|fabric --version 1.21.1 [--repin]
     python bench/exposure.py pin [--loader neoforge|fabric] [--version 1.21.1] [--repin]
-    python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--save NAME]
+    python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--save]
     python bench/exposure.py steps [--from 1.14.4] [--to 26.3]
 
 The mods are the 150 most downloaded of one loader and release on Modrinth, each in its newest file for that release,
@@ -22,7 +24,15 @@ before 26.1; tools/ModNames.java reads them in Mojang's names first, through the
 all runs jars for every update a loader's jars can be read across (Fabric from 1.14.4, NeoForge from its first release,
 1.20.2; its mods before 1.20.5 are read through NeoForm's SRG names) and joins them: per update the share of mods that link, in total, and the references that
 hold the most mods back across every update. join does the joining for summaries made elsewhere (the cloud run,
-tools/cloud-run exposure). --save keeps the table in bench/exposure/all.json.
+tools/cloud-run exposure). --out writes the table to a file.
+
+bench/exposure/all.json is main's table, written only on main: every push to main runs the cloud sweep
+(.github/workflows/cloud-exposure.yml), and record-main saves its table there, with the commit it ran, and adds its
+totals to the port.jar-links measures. A pull request never writes either, so two never conflict on them; compare
+prints what a branch's table changes against main's (tools/cloud-run exposure finds main's for the branch's base).
+
+--save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
+requests proving the same update keep two receipts instead of conflicting on one.
 
 load is the proof that the list predicts the game: the mods jars says link that need no other mod are ported and
 started together on a real server of the new release (mmt pack-check), then in a real client of it (pack-check --side
@@ -679,7 +689,13 @@ def shown(member):
     return f"{member['member']}  ({member.get('part', 'game')}: {member.get('game', '?')})"
 
 
-def jars(loader, frm, to, save=None, out=None, quiet=False):
+def receipt(kind, loader, frm, to):
+    """Where --save keeps a run's summary: named for the update and the commit, so no two pull requests write one file."""
+    commit = subprocess.run(["git", "rev-parse", "--short=10", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip() or "unknown"
+    return ROOT / "bench" / "exposure" / f"{kind}-{loader}-{frm}-{to}-{commit}.json"
+
+
+def jars(loader, frm, to, save=False, out=None, quiet=False):
     """The jar scoreboard: what every top mod's classes and mixins reference, linked against the new release as the JVM and Mixin do."""
     seconds = {}
 
@@ -750,7 +766,7 @@ def jars(loader, frm, to, save=None, out=None, quiet=False):
         print("\nShared by the most mods (a fix to how the porter learns reaches these in every update; alone they free few mods):")
         for row in summary["top"][:10]:
             print(f"  {row['mods']:>4} mods  {shown(row)}")
-    for path in [p for p in (out, ROOT / "bench" / "exposure" / f"{save}.json" if save else None) if p]:
+    for path in [p for p in (out, receipt("jars", loader, frm, to) if save else None) if p]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
         if not quiet:
@@ -758,7 +774,7 @@ def jars(loader, frm, to, save=None, out=None, quiet=False):
     return summary
 
 
-def every_update(loaders, only, jobs, save):
+def every_update(loaders, only, jobs, out_file=None):
     """jars for every update and every jump of each loader, side by side; joined into one table."""
     todo = [(lo, a, b) for lo in loaders for a, b in updates(lo) + jumps(lo) if not only or f"{lo}:{a}" in only]
     jar_tools()
@@ -795,10 +811,10 @@ def every_update(loaders, only, jobs, save):
         for t in far:
             if t not in warm:
                 one(t)
-    return join(out, save)
+    return join(out, out_file)
 
 
-def join(folder, save):
+def join(folder, out=None):
     """One table from per-update summaries: the mods that link across each update and each jump, the totals, and the mods nearest to done."""
     found = []
     for f in sorted(Path(folder).rglob("*.json")):
@@ -903,10 +919,81 @@ def join(folder, save):
     print("\nShared by the most mods, every update:")
     for r in top[:10]:
         print(f"  {r['mods']:>4} mods  {r['loader']} {r['update']}  {shown(r)}")
-    if save:
-        path = ROOT / "bench" / "exposure" / "all.json"
-        path.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
-        print(f"saved {path}")
+    if out:
+        Path(out).write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
+        print(f"saved {out}")
+    return table
+
+
+MAIN_TABLE = ROOT / "bench" / "exposure" / "all.json"
+# The measures main's table is recorded in, each with the totals it reads: (link, mods).
+MAIN_MEASURES = {
+    "port.jar-links.every-update": lambda t: (t["total"]["link"], t["total"]["mods"]),
+    "port.jar-links.big-updates": lambda t: (t["total"]["big"]["link"], t["total"]["big"]["mods"]),
+    "port.jar-links.newest": lambda t: (t["total"]["newest"]["link"], t["total"]["newest"]["mods"]),
+}
+
+
+def compare(before, after):
+    """What one table changes against another, as lines: the three headline counts, each update and jump whose count
+    moved, and each type of break whose finishes moved, the lower ones named first."""
+    def num(n):
+        return f"{n:,}"
+
+    def heads(t):
+        return {"every update": (t["total"]["link"], t["total"]["mods"]), "big updates": (t["total"]["big"]["link"], t["total"]["big"]["mods"]),
+                "newest game": (t["total"]["newest"]["link"], t["total"]["newest"]["mods"])}
+
+    lines = []
+    for name, (b, a) in ((k, (heads(before)[k], v)) for k, v in heads(after).items()):
+        delta = a[0] - b[0]
+        lines.append(f"{name}: {num(b[0])} -> {num(a[0])} of {num(a[1])}" + (f" ({delta:+,})" if delta else "") + ("" if b[1] == a[1] else f" (was of {num(b[1])})"))
+    for kind in ("updates", "jumps"):
+        old = {(r["loader"], r["from"], r["to"]): r for r in before.get(kind, [])}
+        moved = [(r["modsThatLink"] - old[k]["modsThatLink"], f"{r['loader']} {r['from']} -> {r['to']} {old[k]['modsThatLink']} -> {r['modsThatLink']}")
+                 for r in after.get(kind, []) for k in [(r["loader"], r["from"], r["to"])] if k in old and r["modsThatLink"] != old[k]["modsThatLink"]]
+        lower = [text for d, text in moved if d < 0]
+        higher = [text for d, text in sorted(moved, key=lambda m: -m[0]) if d > 0]
+        if lower:
+            lines.append(f"{kind} lower: " + "; ".join(lower))
+        if higher:
+            lines.append(f"{kind} higher: " + "; ".join(higher))
+    old = {t["type"]: t for t in before.get("types", [])}
+    new = {t["type"]: t for t in after.get("types", [])}
+    types = [(new.get(k, {}).get("finishes", 0) - old.get(k, {}).get("finishes", 0), k) for k in sorted(set(old) | set(new))]
+    moved = [f"'{k}' finishes {old.get(k, {}).get('finishes', 0)} -> {new.get(k, {}).get('finishes', 0)}, mods {old.get(k, {}).get('mods', 0)} -> {new.get(k, {}).get('mods', 0)}"
+             for d, k in sorted(types, key=lambda t: t[0]) if d]
+    if moved:
+        lines.append("types: " + "; ".join(moved))
+    if not lines[3:]:
+        lines.append("no update, jump or type of break moved")
+    return lines
+
+
+def record_main(table_path, commit, run, measures_path=None, main_table=MAIN_TABLE, day=None):
+    """Saves a sweep of a main commit as main's table and adds its totals to the port.jar-links measures, each point's
+    note saying what moved against the table it replaces. Run by the cloud sweep a push to main started, never by hand."""
+    sys.path.insert(0, str(ROOT / "bench"))
+    import measures as M
+    measures_path = Path(measures_path or M.MEASURES)
+    table = json.loads(Path(table_path).read_text(encoding="utf-8"))
+    table = {"commit": commit, "run": run, **{k: v for k, v in table.items() if k not in ("commit", "run")}}
+    previous = json.loads(main_table.read_text(encoding="utf-8")) if main_table.is_file() else None
+    data = json.loads(measures_path.read_text(encoding="utf-8"))
+    by_id = {m["id"]: m for m in data["measures"]}
+    subject = subprocess.run(["git", "log", "-1", "--format=%s", commit], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    pr = re.search(r"\(#(\d+)\)\s*$", subject)
+    at = f"main at {commit[:10]}" + (f" (#{pr.group(1)})" if pr else "")
+    moved = [line for line in compare(previous, table)[3:] if not line.startswith("no update")] if previous else []
+    for mid, read in MAIN_MEASURES.items():
+        link, mods = read(table)
+        points = by_id[mid].setdefault("points", [])
+        last = points[-1] if points else None
+        note = (f"{link - last['value']:+,} on {last['value']:,}" if last and last["value"] != link else "the same") + (": " + "; ".join(moved) if moved else "")
+        points.append({"date": day or date.today().isoformat(), "value": link, "n": mods, "note": note[:600], "source": f"tools/cloud-run exposure {run} on {at}"})
+    measures_path.write_text(M.dump(data), encoding="utf-8", newline="\n")
+    main_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
+    print(f"main's table is {at}: " + "; ".join(compare(previous, table)[:3] if previous else [f"{read(table)[0]:,}" for read in MAIN_MEASURES.values()]))
     return table
 
 
@@ -1246,7 +1333,7 @@ def load(loader, frm, to, save):
           + (f"; failed on their data, with no game code: {summary['failedDataOnly']}" if summary["failedDataOnly"] else "")
           + (f"; load alone but fail next to the others: {summary['clashOnly']}" if summary["clashOnly"] else ""))
     if save:
-        path = ROOT / "bench" / "exposure" / f"{save}.json"
+        path = receipt("load", loader, frm, to)
         path.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
         print(f"saved {path}")
     return summary
@@ -1307,7 +1394,7 @@ def main():
         j.add_argument("--loader", required=True, choices=sorted(FIRST))
         j.add_argument("--from", dest="frm", required=True)
         j.add_argument("--to", required=True)
-        j.add_argument("--save")
+        j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
         if name == "jars":
             j.add_argument("--out", type=Path, help="write the summary to this file")
     ls = sub.add_parser("updates", help="every LOADER:FROM:TO all runs, updates and jumps, as JSON (the cloud run's matrix)")
@@ -1321,10 +1408,17 @@ def main():
     al.add_argument("--loader", choices=sorted(FIRST), help="one loader (default both)")
     al.add_argument("--only", help="LOADER:FROM,... the updates to run (default every one)")
     al.add_argument("--jobs", type=int, default=4, help="updates run side by side (each JarPort takes up to 10 GB)")
-    al.add_argument("--save", action="store_true", help="keep the table in bench/exposure/all.json")
+    al.add_argument("--out", type=Path, help="write the table to this file (bench/exposure/all.json is main's, written on main)")
     jo = sub.add_parser("join")
     jo.add_argument("folder")
-    jo.add_argument("--save", action="store_true")
+    jo.add_argument("--out", type=Path, help="write the table to this file")
+    co = sub.add_parser("compare", help="what one table (a branch's) changes against another (main's)")
+    co.add_argument("before", type=Path)
+    co.add_argument("after", type=Path)
+    rm = sub.add_parser("record-main", help="save a main commit's sweep as main's table and measures (the cloud sweep on main runs this)")
+    rm.add_argument("table", type=Path)
+    rm.add_argument("--commit", required=True)
+    rm.add_argument("--run", required=True, help="the sweep's run URL")
     st = sub.add_parser("steps")
     st.add_argument("--from", dest="frm", default="1.14.4")
     st.add_argument("--to", default="26.3")
@@ -1341,14 +1435,18 @@ def main():
         load(a.loader, a.frm, a.to, a.save)
     elif a.command == "all":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
-        every_update([a.loader] if a.loader else sorted(FIRST), only, a.jobs, a.save)
+        every_update([a.loader] if a.loader else sorted(FIRST), only, a.jobs, a.out)
     elif a.command == "pin":
         for lo in [a.loader] if a.loader else sorted(FIRST):
             for v in [a.version] if a.version else [frm for frm, _ in updates(lo)]:
                 if a.repin or not (PINS / f"{lo}-{v}.json").is_file():
                     pin(lo, v)
     elif a.command == "join":
-        join(a.folder, a.save)
+        join(a.folder, a.out)
+    elif a.command == "compare":
+        print("\n".join(compare(*(json.loads(f.read_text(encoding="utf-8")) for f in (a.before, a.after)))))
+    elif a.command == "record-main":
+        record_main(a.table, a.commit, a.run)
     else:
         print(f"{len(fetch(a.loader, a.version, a.repin))} {a.loader} mods for {a.version} in {HOME / 'jars' / f'{a.loader}-{a.version}'}")
 
