@@ -42,19 +42,22 @@ final class JarPortFinalTest {
 
         List<Map<String, Object>> runs = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n11/MyButton.class", around("n11/MyButton", "u9/Button", false),
-            "n11/OwnHook.class", around("n11/OwnHook", "u9/Widget", true), "n11/Fancy.class", fancy(), "n11/Caller.class", caller())), "final.jar", runs));
+            "n11/OwnHook.class", around("n11/OwnHook", "u9/Widget", true), "n11/Fancy.class", fancy(), "n11/Caller.class", caller(),
+            "n11/PassBase.class", JarPortRetypeTest.writer("n11/PassBase", "u9/Button").toByteArray(), "n11/PassChild.class", around("n11/PassChild", "n11/PassBase", false),
+            "n11/HelperFancy.class", helperFancy(), "n11/Refs.class", refs())), "final.jar", runs));
         List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(unlinked.isEmpty(), "overrides of methods the update made final move to the hooks those call: " + unlinked);
 
         List<Map<String, Object>> refused = new ArrayList<>();
-        port.port(JarPortTest.jar(Map.of("n11/Again.class", again())), "again.jar", refused);
-        List<String> left = Json.array(refused.get(0).get("unlinked")).stream().map(String::valueOf).toList();
-        JarPortTest.expect(left.equals(List.of("final method overridden: u9.Widget.render(I)V (in n11.Again)")),
-            "an override calling the final method on itself again stays reported: " + left);
+        port.port(JarPortTest.jar(Map.of("n11/Again.class", again(), "n11/OverlayBase.class", around("n11/OverlayBase", "u9/Button", false),
+            "n11/IconChild.class", iconChild())), "again.jar", refused);
+        List<String> left = Json.array(refused.get(0).get("unlinked")).stream().map(String::valueOf).sorted().toList();
+        JarPortTest.expect(left.equals(List.of("final method overridden: u9.Widget.render(I)V (in n11.Again)", "final method overridden: u9.Widget.render(I)V (in n11.OverlayBase)")),
+            "an override calling the final method on itself again, and one a mod subclass's own hook would hide, stay reported: " + left);
 
         Map<String, byte[]> classes = new HashMap<>(JarPortTest.newGame());
         classes.putAll(game);
-        for (String c : List.of("n11/MyButton", "n11/OwnHook", "n11/Fancy", "n11/Caller")) {
+        for (String c : List.of("n11/MyButton", "n11/OwnHook", "n11/Fancy", "n11/Caller", "n11/PassBase", "n11/PassChild", "n11/HelperFancy", "n11/Refs")) {
             classes.put(c, ported.get(c + ".class"));
         }
         ClassLoader loader = new ClassLoader(null) {
@@ -73,12 +76,15 @@ final class JarPortFinalTest {
             caller.getMethod("draw", loader.loadClass("n11.MyButton")).invoke(null, loader.loadClass("n11.MyButton").getConstructor().newInstance());
             w.getMethod("render", int.class).invoke(loader.loadClass("n11.OwnHook").getConstructor().newInstance(), 6);
             w.getMethod("render", int.class).invoke(loader.loadClass("n11.Fancy").getConstructor().newInstance(), 7);
+            w.getMethod("render", int.class).invoke(loader.loadClass("n11.PassChild").getConstructor().newInstance(), 8);
+            w.getMethod("render", int.class).invoke(loader.loadClass("n11.HelperFancy").getConstructor().newInstance(), 9);
+            loader.loadClass("n11.Refs").getMethod("draw", loader.loadClass("n11.MyButton")).invoke(null, loader.loadClass("n11.MyButton").getConstructor().newInstance());
             trace = String.valueOf(loader.loadClass("g2.Log").getField("out").get(null));
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(trace.equals("frame5;pre5;button5;frame6;pre6;hook6;frame7;sprite7;label7;extra7;"),
-            "the moved overrides run inside the final methods, their super calls reaching the hook, the class's own hook and the split parts: " + trace);
+        JarPortTest.expect(trace.equals("frame5;pre5;button5;frame6;pre6;hook6;frame7;sprite7;label7;extra7;frame8;pre8;button8;frame9;sprite9;label9;extra9;frame4;pre4;button4;"),
+            "the moved overrides run inside the final methods, their super calls (through a mod parent, from a helper) reaching the hook, the class's own hook and the split parts, a method reference going through the final method: " + trace);
     }
 
     static void method(GameDiff.Cls c, String name, String desc, int flags) {
@@ -126,6 +132,52 @@ final class JarPortFinalTest {
             superCall(m, "u9/Btn", "renderWidget");
             draw(m, "extra");
         });
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** n11.HelperFancy extends u9.Btn: renderWidget(x) = back(x); extra(x), its private back(x) = super.renderWidget(x). */
+    static byte[] helperFancy() {
+        ClassWriter w = JarPortRetypeTest.writer("n11/HelperFancy", "u9/Btn");
+        method(w, "renderWidget", m -> {
+            m.visitVarInsn(Opcodes.ALOAD, 0);
+            m.visitVarInsn(Opcodes.ILOAD, 1);
+            m.visitMethodInsn(Opcodes.INVOKESPECIAL, "n11/HelperFancy", "back", "(I)V", false);
+            draw(m, "extra");
+        });
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, "back", "(I)V", null, null);
+        m.visitCode();
+        superCall(m, "u9/Btn", "renderWidget");
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** n11.IconChild extends n11.OverlayBase: renderWidget(x) = hook(x). */
+    static byte[] iconChild() {
+        ClassWriter w = JarPortRetypeTest.writer("n11/IconChild", "n11/OverlayBase");
+        method(w, "renderWidget", m -> draw(m, "hook"));
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** n11.Refs.draw(button): IntConsumer c = button::render; c.accept(4). */
+    static byte[] refs() {
+        ClassWriter w = JarPortRetypeTest.writer("n11/Refs", "java/lang/Object");
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "draw", "(Ln11/MyButton;)V", null, null);
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        Handle meta = new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory", "metafactory",
+            "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;", false);
+        m.visitInvokeDynamicInsn("accept", "(Ln11/MyButton;)Ljava/util/function/IntConsumer;", meta, Type.getType("(I)V"),
+            new Handle(Opcodes.H_INVOKEVIRTUAL, "n11/MyButton", "render", "(I)V", false), Type.getType("(I)V"));
+        m.visitInsn(Opcodes.ICONST_4);
+        m.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/IntConsumer", "accept", "(I)V", true);
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
         w.visitEnd();
         return w.toByteArray();
     }
