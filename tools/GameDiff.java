@@ -3656,7 +3656,7 @@ public final class GameDiff {
             for (var e : sites.entrySet()) {
                 Ref old = keys.get(e.getKey());
                 int[] tally = new int[2];
-                Map<Node, Set<String>> uses = e.getValue();
+                Map<Node, Set<String>> uses = withoutOtherValues(old, e.getValue());
                 String best = vote(uses.values(), tally);
                 String bestNow = best;
                 java.util.function.Predicate<Node> same = u -> bestNow != null && aside.containsKey(u) && bestNow.endsWith("." + aside.get(u));
@@ -3703,7 +3703,7 @@ public final class GameDiff {
                         uses = kept;
                     }
                 }
-                int top = tally[0], of = tally[1];
+                int top = tally[0], of = tally[1] - sameCallUnread(best, uses) - insisting(best, old, uses);
                 boolean agreed = top >= 2 && top * 10 >= of * 8 || top == 1 && of == 1 && usesAll(best, old, operands(old));
                 agreed = agreed && beyondLiterals(best, uses);
                 if (!agreed && best != null) {
@@ -4777,7 +4777,10 @@ public final class GameDiff {
             for (int i = 0; i < any.kids.length; i++) {
                 int k = i;
                 boolean used = Pattern.compile("\\$" + (i + first) + "(?!\\d)").matcher(best).find();
-                if (!used && uses.entrySet().stream().filter(u -> !u.getValue().isEmpty()).allMatch(u -> u.getKey().kids[k].op == 'k')) {
+                List<Node> read = uses.entrySet().stream().filter(u -> !u.getValue().isEmpty()).map(Map.Entry::getKey).toList();
+                // Unless the game passed different values there and every one read the same: the new call does not
+                // look at it (1.21.5's getList(key, type) is getListOrEmpty(key) for types 6, 8 and 10).
+                if (!used && read.stream().allMatch(u -> u.kids[k].op == 'k') && read.stream().map(u -> String.valueOf(u.kids[k].value)).distinct().count() < 2) {
                     return false;
                 }
             }
@@ -4918,6 +4921,107 @@ public final class GameDiff {
         static int operandIndex(String option) {
             Matcher m = Pattern.compile("\\$(\\d+)").matcher(option);
             return m.find() ? Integer.parseInt(m.group(1)) : -1;
+        }
+
+        /**
+         * uses without the unread ones where the new code put a value of an unrelated type: 1.21.5 reads a whole Vec3 or
+         * EntityType with a codec where the old code read a ListTag or a String and built it. That rewrote the code around
+         * the call, not the call, so it says nothing for or against a reading of it (an unread use with a value of the
+         * member's type, another parameter or a local, still counts against every reading).
+         */
+        Map<Node, Set<String>> withoutOtherValues(Ref old, Map<Node, Set<String>> uses) {
+            String gave = old.kind() == 'f' ? old.desc() : old.name().equals("<init>") ? "L" + old.owner() + ";" : MethodTypeDesc.ofDescriptor(old.desc()).returnType().descriptorString();
+            if (!gave.startsWith("L")) {
+                return uses;
+            }
+            String want = Carry.descAB(h, gave);
+            Map<Node, Set<String>> kept = new IdentityHashMap<>();
+            uses.forEach((u, r) -> {
+                Set<Node> now = lined.get(u);
+                boolean other = r.isEmpty() && now != null && !now.isEmpty() && now.stream().allMatch(m -> m.type != null && (m.type.startsWith("L") || m.type.startsWith("["))
+                    && !m.type.equals(want) && !Exposure.assignable(h.b, SameCall.dot(m.type), SameCall.dot(want)) && !Exposure.assignable(h.b, SameCall.dot(want), SameCall.dot(m.type)));
+                if (!other) {
+                    kept.put(u, r);
+                }
+            });
+            return kept.size() == uses.size() ? uses : kept;
+        }
+
+        /**
+         * Uses the new code wrote as the member's own successor with the value insisted on, not defaulted (1.21.5's
+         * getCompound(key).orElseThrow() where the game knows the tag is there): for a value that is there they agree
+         * with any reading, and where it is not, the game chose to fail at that one place. They abstain.
+         */
+        int insisting(String best, Ref old, Map<Node, Set<String>> uses) {
+            if (best == null) {
+                return 0;
+            }
+            Pattern insist = Pattern.compile("\\." + Pattern.quote(old.name()) + "\\(.*\\)\\.(orElseThrow|get)\\(\\)$");
+            int n = 0;
+            for (Set<String> r : uses.values()) {
+                if (!r.isEmpty() && !r.contains(best) && r.stream().allMatch(one -> insist.matcher(one.replace(String.valueOf(OPEN), "").replace(String.valueOf(CLOSE), "")).find())) {
+                    n++;
+                }
+            }
+            return n;
+        }
+
+        /**
+         * Unread uses where the new code makes the reading's own call, on the same number of operands (1.21.5's
+         * getFloatOr(tag, "walkSpeed", 0.1F) on a tag getCompoundOrEmpty gave, getFloatOr(tag, "Health", getMaxHealth())):
+         * what it passes there, a default of the place's own or a receiver another change rewrote, could not be written
+         * over the old operands. Like a use that chose its own fixed default, it abstains.
+         */
+        int sameCallUnread(String best, Map<Node, Set<String>> uses) {
+            if (best == null) {
+                return 0;
+            }
+            FixExpr.Node read;
+            try {
+                read = FixExpr.parse(best.replace(OPEN, ' ').replace(CLOSE, ' '));
+            } catch (IllegalArgumentException unreadable) {
+                return 0;
+            }
+            if (!(read instanceof FixExpr.Invoke call)) {
+                return 0;
+            }
+            int first = call.target() instanceof FixExpr.Path ? 0 : 1;
+            int operands = call.args().size() + first;
+            int n = 0;
+            for (var u : uses.entrySet()) {
+                Set<Node> now = lined.get(u.getKey());
+                if (u.getValue().isEmpty() && now != null && now.stream().anyMatch(m -> (m.op == 'v' || m.op == 's') && m.ref != null
+                    && m.ref.name().equals(call.name()) && m.kids.length == operands && fixedWhereFixed(call, m, first))) {
+                    n++;
+                }
+            }
+            return n;
+        }
+
+        /**
+         * Where the reading passes a fixed value, the use passes one too: a constant or a static, nothing of its own method
+         * (find(o, this) where the reading has find(o, Pal.none()) says the call needs what only that method has).
+         */
+        static boolean fixedWhereFixed(FixExpr.Invoke call, Node m, int first) {
+            for (int i = 0; i < call.args().size(); i++) {
+                if (FixExpr.operands(call.args().get(i)).isEmpty() && !fixed(m.kids[i + first])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** A value made of constants and statics only. */
+        static boolean fixed(Node n) {
+            if (n.op == 'p' || n.op == 'l' || n.op == 'o') {
+                return false;
+            }
+            for (Node k : n.kids) {
+                if (!fixed(k)) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         final List<Learned> byConstant = new ArrayList<>();
@@ -5954,6 +6058,12 @@ public final class GameDiff {
          */
         void late(Node y, Node m) {
             if (y.op != 'v' || !hole(y) || y.kids.length < 2 || y.type.equals("V") || !y.type.equals(y.kids[0].type)) {
+                return;
+            }
+            // The setter is gone: its value has nowhere to go but X's new call. One the update kept under a new signature
+            // (1.21.5's getCompound(key) on a tag another getCompound gave) is its own reading, not a value that moved.
+            Meth setter = h.a.method(y.ref.owner(), y.ref.name(), y.ref.desc());
+            if (setter != null && h.mAB.containsKey(setter)) {
                 return;
             }
             Node x = y.kids[0], now = m;
