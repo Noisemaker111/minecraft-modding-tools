@@ -13,6 +13,12 @@ import org.objectweb.asm.*;
  */
 final class JarPortFixesTest {
 
+    public static void main(String[] args) throws Exception {
+        Path scratch = Files.createDirectories(Path.of(args[0]));
+        check(scratch);
+        JarPortTest.finish("JarPortFixesTest");
+    }
+
     static final String STR = "Ljava/lang/String;";
     static final String CI = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
     static final String INJECT = "Lorg/spongepowered/asm/mixin/injection/Inject;";

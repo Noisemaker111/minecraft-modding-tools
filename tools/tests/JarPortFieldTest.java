@@ -11,6 +11,12 @@ import org.objectweb.asm.*;
  */
 final class JarPortFieldTest {
 
+    public static void main(String[] args) throws Exception {
+        Path scratch = Files.createDirectories(Path.of(args[0]));
+        check(scratch);
+        JarPortTest.finish("JarPortFieldTest");
+    }
+
     static final String RANDOM = "Ljava/util/Random;", RAND = "Lf9/Rand;", SOUND = "Lf9/Sound;", HOLDER = "Lf9/Holder;";
 
     static void check(Path scratch) throws Exception {

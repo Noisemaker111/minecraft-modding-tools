@@ -11,6 +11,12 @@ import org.objectweb.asm.*;
  */
 final class JarPortFabricTest {
 
+    public static void main(String[] args) throws Exception {
+        Path scratch = Files.createDirectories(Path.of(args[0]));
+        check(scratch);
+        JarPortTest.finish("JarPortFabricTest");
+    }
+
     static final String MIXIN = "Lorg/spongepowered/asm/mixin/Mixin;";
 
     static void check(Path scratch) throws Exception {

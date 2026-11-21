@@ -14,6 +14,12 @@ import org.objectweb.asm.*;
  */
 final class JarPortFinalTest {
 
+    public static void main(String[] args) throws Exception {
+        Path scratch = Files.createDirectories(Path.of(args[0]));
+        check(scratch);
+        JarPortTest.finish("JarPortFinalTest");
+    }
+
     static void check(Path scratch) throws Exception {
         GameDiff.Snap a = new GameDiff.Snap("1.0"), b = new GameDiff.Snap("2.0");
         for (GameDiff.Snap s : List.of(a, b)) {

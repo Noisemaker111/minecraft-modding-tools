@@ -100,19 +100,15 @@ public final class JarPortTest {
         relocatedCalls(scratch);
         mixinFields(scratch);
         oldFieldTypes(scratch);
-        JarPortRulesTest.check(scratch);
-        JarPortRulesTest.buses(scratch);
-        JarPortRulesTest.foreignMixin(scratch);
-        JarPortFixesTest.check(scratch);
-        JarPortFabricTest.check(scratch);
-        JarPortRetypeTest.check(scratch);
-        JarPortFieldTest.check(scratch);
-        JarPortTakeoverTest.check(scratch);
-        JarPortFinalTest.check(scratch);
+        finish("JarPortTest");
+    }
+
+    /** Ends a test class's main: exit 1 when any check failed. */
+    static void finish(String name) {
         if (failures > 0) {
             System.exit(1);
         }
-        System.out.println("jar-port: 72 checks passed");
+        System.out.println(name + ": checks passed");
     }
 
     /**

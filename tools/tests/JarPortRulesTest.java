@@ -13,6 +13,14 @@ import org.objectweb.asm.*;
  */
 final class JarPortRulesTest {
 
+    public static void main(String[] args) throws Exception {
+        Path scratch = Files.createDirectories(Path.of(args[0]));
+        check(scratch);
+        buses(scratch);
+        foreignMixin(scratch);
+        JarPortTest.finish("JarPortRulesTest");
+    }
+
     static void check(Path scratch) throws Exception {
         String str = "Ljava/lang/String;";
         String supplier = "Ljava/util/function/Supplier;";
