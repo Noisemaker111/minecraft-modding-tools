@@ -5986,9 +5986,13 @@ public final class JarPort {
                 return;
             }
             String[] t = target(mod, callers, owner, 'm', name, desc, decl);
-            if (t != null && (opcode == Opcodes.INVOKEVIRTUAL || opcode == Opcodes.INVOKEINTERFACE) && !t[0].equals(cls(owner)) && !isA(cls(owner), t[0])) {
-                // A method the game moved to another class (26.2's Gui.getChat() is Hud.getChat()) is not called on the
-                // old receiver, which the verifier refuses: a rule says how to reach the new one (gui.hud.getChat()).
+            String declNow = cls(decl.owner()), named = cls(owner);
+            if (t != null && (opcode == Opcodes.INVOKEVIRTUAL || opcode == Opcodes.INVOKEINTERFACE) && !t[0].equals(named) && !isA(named, t[0])
+                && !t[0].equals(declNow) && !isA(declNow, t[0])) {
+                // A method the game moved to a class that neither the call's class nor the one declaring it is (26.2's
+                // Gui.getChat() is Hud.getChat()) is not called on the old receiver, which the verifier refuses: a rule
+                // says how to reach the new one (gui.hud.getChat()). Either class will do: a call on 1.18's TextComponent
+                // (gone in 1.19) names MutableComponent's withStyle, which its ported value is.
                 t = null;
             }
             String key = decl.owner() + "." + name + desc;
@@ -6937,8 +6941,8 @@ public final class JarPort {
         @Override
         public void visitTypeInsn(int opcode, String type) {
             types(mod, type.startsWith("[") ? type : "L" + type + ";", where);
-            GameDiff.Cls now = opcode == Opcodes.NEW ? b.classes.get(cls(type)) : null;
-            if (now != null && (now.flags & (Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT)) != 0) {
+            boolean unmakeable = opcode == Opcodes.NEW && becameUnmakeable(type);
+            if (unmakeable) {
                 // A class the new release made an interface or abstract (1.21.5's ClickEvent) is never made here: a
                 // replacement gives the value (made()), so a null holds the object's place until then, and the frames
                 // that named the object not yet constructed name the null.
@@ -6951,11 +6955,21 @@ public final class JarPort {
             }
             lastLabel = null;
             if (opcode == Opcodes.NEW) {
-                news.push(new String[] { type, null, now != null && (now.flags & (Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT)) != 0 ? "null" : null });
+                news.push(new String[] { type, null, unmakeable ? "null" : null });
                 fresh = true;
             } else {
                 fresh = false;
             }
+        }
+
+        /** A game class the old release could make and the new one cannot: an interface or abstract now. Not the mod's own copy. */
+        boolean becameUnmakeable(String type) {
+            if (mod.classes.containsKey(type)) {
+                return false;
+            }
+            GameDiff.Cls was = a.classes.get(type), now = b.classes.get(cls(type));
+            int never = Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT;
+            return was != null && now != null && (was.flags & never) == 0 && (now.flags & never) != 0;
         }
 
         Label lastLabel; // the label just before the next instruction, where a new's frames find it
