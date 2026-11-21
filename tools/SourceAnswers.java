@@ -203,7 +203,7 @@ final class SourceAnswers {
                 for (int[] p : placed) {
                     int from = p[2] + shift, to = p[3] + shift;
                     written.add(Json.map("file", Path.of(unit.getSourceFile().toUri()).toString(), "start", from, "end", to,
-                        "line", lineOf(out, from), "endLine", lineOf(out, Math.max(from, to - 1)), "original", text.substring(p[0], p[1])));
+                        "line", lineOf(out, from), "endLine", lineOf(out, Math.max(from, to - 1)), "original", text.substring(p[0], p[1]), "text", out.substring(from, to)));
                 }
                 if (out.equals(text)) {
                     continue;
