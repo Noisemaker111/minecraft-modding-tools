@@ -8043,12 +8043,13 @@ public final class JarPort {
         if (meta.get("depends") instanceof Map<?, ?> depends && depends.containsKey("minecraft")) {
             Json.object(depends).put("minecraft", to);
         }
-        // A version of a nested platform module the mod asks for is the old release's; the new release's platform has its own.
         // A name the old platform answered to and the new one does not is asked of the module that gave it.
         if (meta.get("depends") instanceof Map<?, ?> depends) {
             Map<String, Object> asks = Json.object(depends);
-            for (String id : platformNested) {
-                if (asks.containsKey(id)) {
+            // A version of the platform (or one of its modules) the mod asks for is numbered as the old release's platform
+            // was (Konkrete for 1.20.2 asks Fabric API 0.91.6, while 1.20.3's is 0.91.1): the new release's platform is its own.
+            for (String id : List.copyOf(asks.keySet())) {
+                if (platformNested.contains(id) || platformIds.contains(id)) {
                     asks.put(id, "*");
                 }
             }
