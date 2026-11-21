@@ -20,6 +20,13 @@ public class SourceAnswersTest {
         for (GameDiff.Snap s : List.of(a, b)) {
             GameDiff.Cls tag = new GameDiff.Cls("g/Tag", Opcodes.ACC_PUBLIC, "java/lang/Object", List.of(), false);
             tag.fields.put("SIZE", new GameDiff.Fld(tag, "SIZE", "I", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
+            if (s == a) {
+                tag.fields.put("OLD", new GameDiff.Fld(tag, "OLD", "I", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
+            } else {
+                GameDiff.Cls holder = new GameDiff.Cls("g/sub/Holder", Opcodes.ACC_PUBLIC, "java/lang/Object", List.of(), false);
+                holder.fields.put("COUNT", new GameDiff.Fld(holder, "COUNT", "I", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
+                s.classes.put(holder.name, holder);
+            }
             String getter = s == a ? "getInt(Ljava/lang/String;)I" : "getIntOr(Ljava/lang/String;I)I";
             tag.methods.put(getter, new GameDiff.Meth(tag, getter.substring(0, getter.indexOf('(')), getter.substring(getter.indexOf('(')), Opcodes.ACC_PUBLIC));
             GameDiff.Cls old = new GameDiff.Cls("g/Old", Opcodes.ACC_PUBLIC, "java/lang/Object", List.of(), false);
@@ -34,12 +41,13 @@ public class SourceAnswersTest {
             {"classes": [], "methods": [], "fields": [], "rewrites": [],
              "methodsRemoved": [{"owner": "g.Tag", "from": "getInt", "desc": "(Ljava/lang/String;)I"}, {"owner": "g.Old", "from": "make", "desc": "()V"}],
              "learned": [{"step": "1.0 -> 2.0", "owner": "g.Tag", "from": "getInt", "desc": "(Ljava/lang/String;)I", "field": false, "linked": false, "expr": "$0.getIntOr($1, 0)", "votes": 3, "of": 3},
-                         {"step": "1.0 -> 2.0", "owner": "g.Old", "from": "make", "desc": "()V", "field": false, "linked": false, "expr": "g.Missing.make()", "votes": 2, "of": 2}]}
+                         {"step": "1.0 -> 2.0", "owner": "g.Old", "from": "make", "desc": "()V", "field": false, "linked": false, "expr": "g.Missing.make()", "votes": 2, "of": 2},
+                         {"step": "1.0 -> 2.0", "owner": "g.Tag", "from": "OLD", "desc": "", "field": true, "linked": false, "expr": "g.sub.Holder.COUNT", "votes": 2, "of": 2}]}
             """);
         // The old release's classes, which the mod's own compile was given.
         Path game = scratch.resolve("game-src"), classes = scratch.resolve("game-classes");
         Files.createDirectories(game.resolve("g"));
-        Files.writeString(game.resolve("g/Tag.java"), "package g; public class Tag { public static int SIZE; public int getInt(String k) { return 0; } }");
+        Files.writeString(game.resolve("g/Tag.java"), "package g; public class Tag { public static int SIZE, OLD; public int getInt(String k) { return 0; } }");
         Files.writeString(game.resolve("g/Old.java"), "package g; public class Old { public static void make() {} }");
         expect(ToolProvider.getSystemJavaCompiler().run(null, null, null, "-d", classes.toString(), game.resolve("g/Tag.java").toString(), game.resolve("g/Old.java").toString()) == 0,
             "the stand-in old release compiles");
@@ -51,6 +59,7 @@ public class SourceAnswersTest {
                 int read(g.Tag tag) { return tag.getInt("count") + g.Tag.SIZE; }
                 int twice(g.Tag tag) { return Math.max(tag.getInt("a" + tag.getInt("b")), 1); }
                 void build() { g.Old.make(); }
+                int old() { return g.Tag.OLD; }
             }
             """);
         SourceAnswers answers = new SourceAnswers();
@@ -61,8 +70,10 @@ public class SourceAnswersTest {
         expect(ported.contains("return tag.getIntOr(\"count\", 0) + g.Tag.SIZE;"), "a call to a dropped member gets the learned answer with its own receiver and argument; a kept field stays: " + ported);
         expect(ported.contains("Math.max(tag.getIntOr(\"a\" + tag.getIntOr(\"b\", 0), 0), 1)"), "a use inside another use is written as its answer there too: " + ported);
         expect(ported.contains("g.Old.make();"), "an answer that does not compile against the new release is not written: " + ported);
-        expect(Integer.valueOf(3).equals(report.get("replaced")), "three uses replaced: " + report);
-        System.out.println("source-answers: 4 checks passed");
+        expect(ported.contains("import g.sub.Holder;") && ported.contains("return Holder.COUNT;"),
+            "an answer naming a class in full is written with the simple name and an import, as authors write it: " + ported);
+        expect(Integer.valueOf(4).equals(report.get("replaced")), "four uses replaced: " + report);
+        System.out.println("source-answers: 5 checks passed");
     }
 
     static void expect(boolean ok, String what) {
