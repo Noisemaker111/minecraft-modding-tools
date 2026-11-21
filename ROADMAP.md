@@ -6,14 +6,14 @@
 
 **The goal:** Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, and a modpack user never diagnoses a conflict by hand. Four goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, and move a project between loaders and platforms. Every result is proven in the real game or on a real server.
 
-**49 of 77 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
+**50 of 78 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
 
 ## Where each goal stands
 
 | Goal | Steps done | Now |
 |---|---|---|
 | **[1. Test a mod in seconds](#goal-1--test-a-mod-in-seconds)** | `██████░░░░`&nbsp;7&nbsp;of&nbsp;11 | ⚪ 27 · The bot joins a modded server<br>⚪ 26 · The bot on older Paper versions, on demand |
-| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `███████░░░`&nbsp;37&nbsp;of&nbsp;51 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
+| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `███████░░░`&nbsp;38&nbsp;of&nbsp;52 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
 | **[3. Make modpacks work together](#goal-3--make-modpacks-work-together)** | `██░░░░░░░░`&nbsp;1&nbsp;of&nbsp;4 | 🔵 29 · Reproduce Sismeel's Forge 1.20.1 pack problems<br>🔵 30 · Detect and repair the failure, checked in the game<br>🔵 31 · Any installed pack or export as input |
 | **[4. Change loader or platform](#goal-4--change-loader-or-platform)** | `████░░░░░░`&nbsp;4&nbsp;of&nbsp;11 | ⚪ 48 · What the most-downloaded mods need from the bridge, most-used first<br>⚪ 19 · Forge → NeoForge, proven on DragonMine Z |
 
@@ -122,8 +122,8 @@ An author changes code and gets an answer about the mod's real behaviour in seco
 One command moves a mod's source from any version to any other, forward or back, with no hand edits, and the result is checked in the real game. Every edit can be undone; what cannot be ported is named, never guessed or dropped. Commands: `port`, `explain`, `dependencies`.
 
 - **Today:** Fabric and NeoForge mods as .jar or source, any version from 1.14.4 to 26.3, in about ten seconds a jar. What comes back working is the gap: of the 150 most-downloaded mods of the most-used release (Fabric 1.20.1, NeoForge 1.21.1), ported as jars to the newest game and linked against it, 11 of 294 link. One update at a time, 36% link across the 35 big updates and 93% across the 29 small ones (62% together). What does not link is named, never guessed. 16 of the 126 corpus ports build with no hand edits.
-- **The number that says most:** Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge is **18 mods**
-- **Also:** Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge is **1,958 mods**
+- **The number that says most:** Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge is **19 mods**
+- **Also:** Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge is **1,968 mods**
 - **Also:** Corpus ports that build with no hand edits is **16 updates**, target 60 updates by Dec 22, step 44
 - **Also:** Real mods with a port that works in the game is **9 mods**, target 6 mods by Dec 18, step 12
 
@@ -227,6 +227,12 @@ One command moves a mod's source from any version to any other, forward or back,
 | 72 | Calls to a method no game code used: the type, handled | 🟢 done | Nov 21 |
 | 73 | Mixin @Shadow fields: the type, handled | 🟢 done | Nov 21 |
 | 74 | Game fields the update retyped: read as the new type or through its holder | 🟢 done | Nov 21 |
+
+### Port by changed game part
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 75 | A removed method answered from the new release's own types, and a removed member read where the game's uses were narrower | 🟢 done | Nov 21 |
 
 <details><summary>What each step is, and how far it got</summary>
 
@@ -332,6 +338,8 @@ One command moves a mod's source from any version to any other, forward or back,
 
 **74 · Game fields the update retyped: read as the new type or through its holder** (done). The type `field, game: linked`, after #156 left reads of another type than the old release's as written. A read of a field the update retyped is taken as the new type where every use of its value means the same of it (calls the new type has with the same arguments, game calls whose parameter changed with it, typed arguments, null tests; not ==, instanceof, stores, values a jump carries, or Object arguments), as Level.random became a RandomSource. Otherwise it is turned into the old type as the game's own code gets what a holder of the new type holds (holder.value(), option.get() unboxed), learned from the new release's classes. A nested platform module's version and a name the old platform answered to (Fabric API's 'fabric', dropped in 26.3) are asked of the new platform, read by the port itself from the two Fabric API jars. *So far:* On main at #156: type finishes 19 -> 13, mods 536 -> 392 (references 791 -> 567). Every update 6,118 -> 6,124, big updates 1,952 -> 1,958, newest 17 -> 18 (AttributeFix on Fabric 1.20.1 -> 26.3), none lower. AttributeFix ported to 26.3 loads on a real server and client and applies its 40 attributes; Comforts ported to 1.19 (Level.random) loads on a real server.
 
+**75 · A removed method answered from the new release's own types, and a removed member read where the game's uses were narrower** (done). Two learner pieces for 'call, game: template', both read from the new release's own classes. (1) A removed public method of one argument with nothing of the game's code to read is asked of the class itself or of the one object a public no-argument getter of it hands out, with its argument made from the old one by the new release's public constructors and factories (a factory only from a primitive or a String, and only its class's one; no maker or method taking any object), each the only way at every step (1.21.11: CommandSourceStack.hasPermission(int) is $0.permissions().hasPermission(new Permission.HasCommandLevel(PermissionLevel.byId($1)))). It runs last, for what nothing else answered. (2) Where the game's own uses of a removed one-argument member passed narrower values than it declares and some were rewritten in ways that compile only for the narrower type, only readings that compile for the declared type count (26.3: new BlockPos(Vec3i), written v or v.immutable() where v was a BlockPos, is new BlockPos(v.getX(), v.getY(), v.getZ())). *So far:* 2026-11-21 (on #157): newest 18 -> 19 (NeoForge jump 12 -> 13: Coroutil); every update 6,124 -> 6,134, big updates 1,958 -> 1,968 (1.21.10 -> 1.21.11 Fabric 40 -> 43, NeoForge 50 -> 56; 26.2 -> 26.3 NeoForge 46 -> 47), none lower; 'call, game: template' finishes 32 -> 28, mods 1,100 -> 1,085. Real NeoForge 26.3: Coroutil loads on the server and in the client. Ten releases' learned lines diffed against main's learner: no reading lost, and two wrong old ones replaced (setLootTable(ResourceKey.createRegistryKey(id)) is now ResourceKey.create(Registries.LOOT_TABLE, id); several null arguments are now the argument).
+
 </details>
 
 <details><summary>Every number for this goal (26)</summary>
@@ -355,9 +363,9 @@ One command moves a mod's source from any version to any other, forward or back,
 | NeoForm steps a second mod on the same NeoForge version runs again, warm | 16 steps (Nov 8) | 0 steps (Nov 8) | 0 steps by Nov 8, step 10b | Met |
 | Most-downloaded NeoForge mods with nothing left to port by hand, 1.21.1 to 1.21.2 | — | 58 mods (Nov 18) | 100 mods by Dec 22, step 46 | Baseline |
 | Most-downloaded mods whose ported jar links, NeoForge 1.21.1 to 1.21.2 | 32 mods (Nov 18) | 45 mods (Nov 19) | 50 mods by Dec 8, step 47 | 72% of the way |
-| Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge | 11 mods (Nov 20) | 18 mods (Nov 21) | — | Fact |
-| Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge | 1,861 mods (Nov 20) | 1,958 mods (Nov 21) | — | Fact |
-| Most-downloaded mods whose ported jar links, every update, Fabric and NeoForge | 5,018 mods (Nov 19) | 6,124 mods (Nov 21) | — | Fact |
+| Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge | 11 mods (Nov 20) | 19 mods (Nov 21) | — | Fact |
+| Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge | 1,861 mods (Nov 20) | 1,968 mods (Nov 21) | — | Fact |
+| Most-downloaded mods whose ported jar links, every update, Fabric and NeoForge | 5,018 mods (Nov 19) | 6,134 mods (Nov 21) | — | Fact |
 | Scoreboard-cleared standalone mods whose ported jar loads on a real server, NeoForge 1.21.1 to 1.21.2 | 28 mods (Nov 18) | 34 mods (Nov 19) | 33 mods by Dec 8, step 47 | Met |
 | Standalone mods the jar scoreboard says link whose ported jar loads on a real server, NeoForge 1.21.1 to 1.21.2 | — | 23 mods (Nov 19) | — | Fact |
 | Ported mods that load in a real game client, NeoForge 1.21.1 to 1.21.2 | — | 23 mods (Nov 19) | — | Fact |
@@ -499,7 +507,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 
 | Measure | First | Now | Target | Status |
 |---|---|---|---|---|
-| Roadmap steps done | 5 steps (Oct 24) | 49 steps (Nov 21) | 77 steps by Mar 26, 2027 | 61% of the way |
+| Roadmap steps done | 5 steps (Oct 24) | 50 steps (Nov 21) | 78 steps by Mar 26, 2027 | 62% of the way |
 | PR checks, start to finish | 2.0 min (Oct 27) | 3.9 min (Nov 5) | 5.0 min (hold) by Nov 5 | Met |
 | Multi-version Stonecutter run, start to finish (nightly until Nov 7, on demand since) | 45.9 min (Oct 28) | 41.7 min (Nov 6) | — | Fact |
 
