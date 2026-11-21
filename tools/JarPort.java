@@ -5986,6 +5986,11 @@ public final class JarPort {
                 return;
             }
             String[] t = target(mod, callers, owner, 'm', name, desc, decl);
+            if (t != null && (opcode == Opcodes.INVOKEVIRTUAL || opcode == Opcodes.INVOKEINTERFACE) && !t[0].equals(cls(owner)) && !isA(cls(owner), t[0])) {
+                // A method the game moved to another class (26.2's Gui.getChat() is Hud.getChat()) is not called on the
+                // old receiver, which the verifier refuses: a rule says how to reach the new one (gui.hud.getChat()).
+                t = null;
+            }
             String key = decl.owner() + "." + name + desc;
             boolean superCall = opcode == Opcodes.INVOKESPECIAL;
             if (t == null && moved != null) {

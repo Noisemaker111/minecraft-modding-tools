@@ -3797,6 +3797,7 @@ public final class GameDiff {
                 && c.y().desc().equals(l.desc())));
             out.addAll(sameMeaning(out, log));
             out.addAll(throughAccessor(out));
+            out.addAll(throughHolder(out));
             out.addAll(throughClassMap(out));
             out.addAll(renamedFamily(out));
             // A chain both of whose members are learned alone is already ported member by member.
@@ -5084,6 +5085,61 @@ public final class GameDiff {
             List<String> plain = ways.stream().filter(w -> !w.substring(w.indexOf('(') + 1).matches(".*[(].*")).toList();
             List<String> pick = plain.size() == 1 ? plain : ways;
             return pick.size() == 1 && compiles(pick.get(0), declared, old) ? pick.get(0) : null;
+        }
+
+        /**
+         * An instance method the game moved to another class the old one is not (26.2's Gui.getChat() is Hud.getChat()):
+         * called on the class's one public field or getter that holds that class (Gui.hud), $0.hud.getChat(). The map alone
+         * would call it on the old receiver, which the verifier refuses.
+         */
+        List<Learned> throughHolder(List<Learned> found) {
+            Set<String> have = new HashSet<>();
+            for (Learned l : found) {
+                have.add(l.owner().replace('.', '/') + "." + l.name() + l.desc());
+            }
+            List<Learned> out = new ArrayList<>();
+            for (var e : h.mAB.entrySet()) {
+                Meth x = e.getKey(), y = e.getValue();
+                Cls now = h.cAB.get(x.owner);
+                if (now == null || x.isStatic() || y.isStatic() || x.special() || (x.flags & (ACC_PUBLIC | 0x0004)) == 0 || (y.flags & ACC_PUBLIC) == 0
+                    || y.owner == now || have.contains(x.sig()) || !h.descBA(y.desc).equals(x.desc)
+                    || Exposure.assignable(h.b, dotted(now.name), dotted(y.owner.name))) {
+                    continue;
+                }
+                String held = "L" + y.owner.name + ";";
+                List<String> ways = new ArrayList<>();
+                Set<String> seen = new HashSet<>();
+                Deque<String> todo = new ArrayDeque<>(List.of(now.name));
+                while (!todo.isEmpty()) {
+                    Cls k = h.b.classes.get(todo.poll());
+                    if (k == null || !seen.add(k.name)) {
+                        continue;
+                    }
+                    for (Fld f : k.fields.values()) {
+                        if ((f.flags & (ACC_PUBLIC | ACC_STATIC)) == ACC_PUBLIC && f.desc.equals(held)) {
+                            ways.add(f.name);
+                        }
+                    }
+                    for (Meth g : k.methods.values()) {
+                        if (!g.isStatic() && !g.special() && (g.flags & ACC_PUBLIC) != 0 && (g.flags & ACC_SYNTHETIC) == 0 && g.desc.equals("()" + held)) {
+                            ways.add(g.name + "()");
+                        }
+                    }
+                    if (k.sup != null) {
+                        todo.add(k.sup);
+                    }
+                    todo.addAll(k.ifaces);
+                }
+                if (new HashSet<>(ways).size() != 1) {
+                    continue;
+                }
+                StringBuilder args = new StringBuilder();
+                for (int i = 1; i <= MethodTypeDesc.ofDescriptor(x.desc).parameterCount(); i++) {
+                    args.append(i == 1 ? "" : ", ").append("$").append(i);
+                }
+                out.add(new Learned(dotted(x.owner.name), x.name, x.desc, false, true, "$0." + ways.get(0) + "." + y.name + "(" + args + ")", 1, 1));
+            }
+            return out;
         }
 
         /** The old member's operand types by $N in a's names ($0 its receiver, null where there is none); null if unknown. */

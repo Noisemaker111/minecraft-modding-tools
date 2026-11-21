@@ -18,6 +18,10 @@ import org.objectweb.asm.*;
  * Pos(m.getX(), m.getY()). A mod's argument is only known to be a Vec, and of those only the last compiles for a Vec, so
  * that is what Pos(Vec) is; the mod's new Pos(new Vec(3, 4)) gives a Pos at 3, 4.
  *
+ * Gui.getChat() moved to Hud in 2.0, and a Gui holds its Hud in its one public field of that type (Gui.hud): the mod's
+ * gui.getChat() is gui.hud.getChat(). Gui.beat() moved to Clock, which no Gui holds: the call is reported, never made on a
+ * Gui, which the verifier would refuse.
+ *
  *   java -cp asm.jar:CLASSES GameTypesTest SCRATCH   (in the jar-port check of bench/run_tests.py)
  */
 final class GameTypesTest {
@@ -49,7 +53,11 @@ final class GameTypesTest {
             "of the game's rewrites of a narrower value, the one that compiles for the declared type: " + learned.get(y + "Pos.<init>(L" + U + "Vec;)V"));
 
         Path map = scratch.resolve("route-types.json");
-        Files.writeString(map, "{\"learned\": [" + String.join(",\n", lines) + "]}");
+        // The update's own record of each move, as a route map lists it: what the call would follow with nothing else.
+        String moves = "\"methodsMoved\": [{\"owner\": \"net.minecraft.y8.Gui\", \"from\": \"beat\", \"desc\": \"()I\", \"to\": \"beat\", \"newDesc\": \"()I\","
+            + " \"newOwner\": \"net.minecraft.y8.Clock\"}, {\"owner\": \"net.minecraft.y8.Gui\", \"from\": \"getChat\", \"desc\": \"()L" + U + "Chat;\", \"to\": \"getChat\","
+            + " \"newDesc\": \"()L" + U + "Chat;\", \"newOwner\": \"net.minecraft.y8.Hud\"}]";
+        Files.writeString(map, "{" + moves + ", \"learned\": [" + String.join(",\n", lines) + "]}");
         ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "m8/Run", null, "java/lang/Object", null);
         MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "go", "(L" + U + "Src;)" + STR, null, null);
@@ -65,6 +73,11 @@ final class GameTypesTest {
         }
         m.visitMethodInsn(Opcodes.INVOKESTATIC, "m8/Run", "spot", "()I", false);
         m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(I)Ljava/lang/StringBuilder;", false);
+        m.visitTypeInsn(Opcodes.NEW, U + "Gui");
+        m.visitInsn(Opcodes.DUP);
+        m.visitMethodInsn(Opcodes.INVOKESPECIAL, U + "Gui", "<init>", "()V", false);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Gui", "getChat", "()L" + U + "Chat;", false);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(" + OBJ + ")Ljava/lang/StringBuilder;", false);
         m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()" + STR, false);
         m.visitInsn(Opcodes.ARETURN);
         m.visitMaxs(0, 0);
@@ -92,7 +105,12 @@ final class GameTypesTest {
         spot.visitEnd();
         w.visitEnd();
         List<Map<String, Object>> results = new ArrayList<>();
-        Map<String, byte[]> ported = JarPortTest.entries(new JarPort(a, b, map).port(JarPortTest.jar(Map.of("m8/Run.class", w.toByteArray())), "types.jar", results));
+        JarPortTest.expect("$0.hud.getChat()".equals(learned.get(y + "Gui.getChat()L" + U + "Chat;")),
+            "a method moved to a class the old one holds is called on what holds it: " + learned.get(y + "Gui.getChat()L" + U + "Chat;"));
+        Map<String, byte[]> ported = JarPortTest.entries(new JarPort(a, b, map).port(JarPortTest.jar(Map.of("m8/Run.class", w.toByteArray(), "m8/Beat.class", beat())),
+            "types.jar", results));
+        List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        JarPortTest.expect(unlinked.equals(List.of("call: net.minecraft.y8.Gui.beat()I")), "a method moved where nothing holds it is reported, not called on the old receiver: " + unlinked);
         Map<String, byte[]> classes = new HashMap<>(newGame);
         classes.put("m8/Run", ported.get("m8/Run.class"));
         ClassLoader loader = new ClassLoader(null) {
@@ -112,11 +130,11 @@ final class GameTypesTest {
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause()) + " " + Json.array(results.get(0).get("unlinked"));
         }
-        JarPortTest.expect(trace.equals("truefalse34"), "the mod's level checks and its Pos run on the new game as before: " + trace);
+        JarPortTest.expect(trace.equals("truefalse34chat"), "the mod's level checks, its Pos and its chat run on the new game as before: " + trace);
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
-        System.out.println("game-types: 8 checks passed");
+        System.out.println("game-types: 10 checks passed");
     }
 
     /**
@@ -170,6 +188,7 @@ final class GameTypesTest {
             }
         }));
         positions(out, two);
+        huds(out, two);
         out.put(U + "Pair", cls("Pair", 0, null, null, w -> {
             constructor(w, "java/lang/Object");
             for (String side : two ? new String[] { "left", "right" } : new String[] { "allowed" }) {
@@ -400,6 +419,140 @@ final class GameTypesTest {
                 m.visitEnd();
             }
         }));
+    }
+
+    /** m8/Beat.go(gui): gui.beat(). */
+    static byte[] beat() {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "m8/Beat", null, "java/lang/Object", null);
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "go", "(L" + U + "Gui;)I", null, null);
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Gui", "beat", "()I", false);
+        m.visitInsn(Opcodes.IRETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /**
+     * Chat (toString "chat"). 1.0: Gui.getChat() makes a Chat; Gui.beat() gives 9. 2.0: Hud has getChat(); Gui's one public
+     * field is its Hud; Clock has beat(), and no Gui holds a Clock.
+     */
+    static void huds(Map<String, byte[]> out, boolean two) {
+        String chat = "L" + U + "Chat;";
+        out.put(U + "Chat", cls("Chat", 0, null, null, w -> {
+            constructor(w, "java/lang/Object");
+            MethodVisitor t = w.visitMethod(Opcodes.ACC_PUBLIC, "toString", "()" + STR, null, null);
+            t.visitCode();
+            t.visitLdcInsn("chat");
+            t.visitInsn(Opcodes.ARETURN);
+            t.visitMaxs(0, 0);
+            t.visitEnd();
+        }));
+        // Each moved body is the same on both sides and refers to something, so the update links it as a move.
+        java.util.function.Consumer<ClassWriter> keeps = w -> {
+            MethodVisitor g = w.visitMethod(Opcodes.ACC_PUBLIC, "getChat", "()" + chat, null, null);
+            g.visitCode();
+            g.visitTypeInsn(Opcodes.NEW, U + "Chat");
+            g.visitInsn(Opcodes.DUP);
+            g.visitMethodInsn(Opcodes.INVOKESPECIAL, U + "Chat", "<init>", "()V", false);
+            for (int i = 0; i < 3; i++) {
+                g.visitInsn(Opcodes.DUP);
+                g.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "hashCode", "()I", false);
+                g.visitInsn(Opcodes.POP);
+            }
+            g.visitInsn(Opcodes.ARETURN);
+            g.visitMaxs(0, 0);
+            g.visitEnd();
+        };
+        java.util.function.Consumer<ClassWriter> beats = w -> {
+            MethodVisitor bt = w.visitMethod(Opcodes.ACC_PUBLIC, "beat", "()I", null, null);
+            bt.visitCode();
+            bt.visitLdcInsn("beat");
+            bt.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "length", "()I", false);
+            bt.visitInsn(Opcodes.ICONST_5);
+            bt.visitInsn(Opcodes.IADD);
+            for (int i = 0; i < 3; i++) {
+                bt.visitLdcInsn("tick");
+                bt.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "isEmpty", "()Z", false);
+                bt.visitInsn(Opcodes.POP);
+            }
+            bt.visitInsn(Opcodes.IRETURN);
+            bt.visitMaxs(0, 0);
+            bt.visitEnd();
+        };
+        java.util.function.BiConsumer<ClassWriter, String> made = (w, self) -> {
+            MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+            c.visitCode();
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            if (two && self.equals("Gui")) {
+                c.visitVarInsn(Opcodes.ALOAD, 0);
+                c.visitTypeInsn(Opcodes.NEW, U + "Hud");
+                c.visitInsn(Opcodes.DUP);
+                c.visitMethodInsn(Opcodes.INVOKESPECIAL, U + "Hud", "<init>", "()V", false);
+                c.visitFieldInsn(Opcodes.PUTFIELD, U + "Gui", "hud", "L" + U + "Hud;");
+            }
+            c.visitInsn(Opcodes.RETURN);
+            c.visitMaxs(0, 0);
+            c.visitEnd();
+        };
+        out.put(U + "Gui", cls("Gui", 0, null, null, w -> {
+            made.accept(w, "Gui");
+            if (two) {
+                w.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, "hud", "L" + U + "Hud;", null, null).visitEnd();
+            } else {
+                keeps.accept(w);
+                beats.accept(w);
+            }
+        }));
+        if (two) {
+            out.put(U + "Hud", cls("Hud", 0, null, null, w -> {
+                made.accept(w, "Hud");
+                keeps.accept(w);
+                main(w, "Hud");
+            }));
+            out.put(U + "Clock", cls("Clock", 0, null, null, w -> {
+                made.accept(w, "Clock");
+                beats.accept(w);
+                main(w, "Clock");
+            }));
+        }
+        // The game's own caller links each move (it asks the same thing at the same place) and reads a shared instance in
+        // 2.0, which a mod's call has no use for: nothing of its code says how a Gui reaches the method now.
+        out.put(U + "Show", cls("Show", 0, null, null, w -> {
+            String[][] calls = { { "chat", "getChat", "()" + chat, "Hud" }, { "tick", "beat", "()I", "Clock" } };
+            for (String[] c : calls) {
+                MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, c[0], "(L" + U + "Gui;)" + c[2].substring(2), null, null);
+                m.visitCode();
+                if (two) {
+                    m.visitFieldInsn(Opcodes.GETSTATIC, U + c[3], "MAIN", "L" + U + c[3] + ";");
+                    m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + c[3], c[1], c[2], false);
+                } else {
+                    m.visitVarInsn(Opcodes.ALOAD, 0);
+                    m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Gui", c[1], c[2], false);
+                }
+                m.visitInsn(c[2].endsWith("I") ? Opcodes.IRETURN : Opcodes.ARETURN);
+                m.visitMaxs(0, 0);
+                m.visitEnd();
+            }
+        }));
+    }
+
+    /** A public static MAIN of the class, made in its static initialiser. */
+    static void main(ClassWriter w, String self) {
+        w.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL, "MAIN", "L" + U + self + ";", null, null).visitEnd();
+        MethodVisitor s = w.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        s.visitCode();
+        s.visitTypeInsn(Opcodes.NEW, U + self);
+        s.visitInsn(Opcodes.DUP);
+        s.visitMethodInsn(Opcodes.INVOKESPECIAL, U + self, "<init>", "()V", false);
+        s.visitFieldInsn(Opcodes.PUTSTATIC, U + self, "MAIN", "L" + U + self + ";");
+        s.visitInsn(Opcodes.RETURN);
+        s.visitMaxs(0, 0);
+        s.visitEnd();
     }
 
     static void constructor(ClassWriter w, String sup) {
