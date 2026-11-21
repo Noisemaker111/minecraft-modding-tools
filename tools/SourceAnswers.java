@@ -194,14 +194,15 @@ final class SourceAnswers {
                 if (finder.sites.isEmpty()) {
                     continue;
                 }
-                String out = rewrite(text, finder.sites, trees.getSourcePositions(), unit);
+                Imports imports = new Imports(unit);
+                String out = imports.add(rewrite(text, finder.sites, trees.getSourcePositions(), unit, imports));
                 if (out.equals(text)) {
                     continue;
                 }
                 files++;
                 for (Site s : finder.sites) {
                     // An answer that writes the use as it was (a field whose type changed, read the same way) changes nothing.
-                    if (render(text, s, finder.sites, trees.getSourcePositions(), unit).equals(text.substring(s.start(), s.end()))) {
+                    if (render(text, s, finder.sites, trees.getSourcePositions(), unit, new Imports(unit)).equals(text.substring(s.start(), s.end()))) {
                         continue;
                     }
                     replaced++;
@@ -225,7 +226,7 @@ final class SourceAnswers {
     }
 
     /** The source with every site replaced, inner sites first: an operand that is itself a site is written as its replacement. */
-    static String rewrite(String text, List<Site> sites, SourcePositions positions, CompilationUnitTree unit) {
+    static String rewrite(String text, List<Site> sites, SourcePositions positions, CompilationUnitTree unit, Imports imports) {
         List<Site> outer = new ArrayList<>();
         for (Site s : sites) {
             if (sites.stream().noneMatch(o -> o != s && o.start() <= s.start() && s.end() <= o.end())) {
@@ -236,20 +237,20 @@ final class SourceAnswers {
         StringBuilder out = new StringBuilder();
         int at = 0;
         for (Site s : outer) {
-            out.append(text, at, s.start()).append(render(text, s, sites, positions, unit));
+            out.append(text, at, s.start()).append(render(text, s, sites, positions, unit, imports));
             at = s.end();
         }
         return out.append(text.substring(at)).toString();
     }
 
-    static String render(String text, Site site, List<Site> sites, SourcePositions positions, CompilationUnitTree unit) {
-        String expr = site.expr().replaceAll("(?<=[\\w])\\$(?=[A-Za-z_])", "."); // nested classes as source names them
+    static String render(String text, Site site, List<Site> sites, SourcePositions positions, CompilationUnitTree unit, Imports imports) {
+        String expr = imports.shorten(site.expr()).replaceAll("(?<=[\\w])\\$(?=[A-Za-z_])", "."); // nested classes as source names them
         Matcher m = Pattern.compile("\\$(\\d+)").matcher(expr);
         StringBuilder out = new StringBuilder();
         while (m.find()) {
             int i = Integer.parseInt(m.group(1));
             Tree t = i < site.operands().size() ? site.operands().get(i) : null;
-            String operand = t == null ? (i == 0 ? "this" : "null") : span(text, (int) positions.getStartPosition(unit, t), (int) positions.getEndPosition(unit, t), sites, positions, unit);
+            String operand = t == null ? (i == 0 ? "this" : "null") : span(text, (int) positions.getStartPosition(unit, t), (int) positions.getEndPosition(unit, t), sites, positions, unit, imports);
             // An operand needs parentheses only where the expression goes on from it ($0.m(), $1[i]); as an argument it stands alone.
             boolean continued = m.end() < expr.length() && (expr.charAt(m.end()) == '.' || expr.charAt(m.end()) == '[');
             if (t != null && continued && !simple(t)) {
@@ -262,7 +263,7 @@ final class SourceAnswers {
     }
 
     /** The text of start..end with the sites inside it replaced. */
-    static String span(String text, int start, int end, List<Site> sites, SourcePositions positions, CompilationUnitTree unit) {
+    static String span(String text, int start, int end, List<Site> sites, SourcePositions positions, CompilationUnitTree unit, Imports imports) {
         List<Site> inside = new ArrayList<>();
         for (Site s : sites) {
             if (start <= s.start() && s.end() <= end) {
@@ -282,10 +283,82 @@ final class SourceAnswers {
         StringBuilder out = new StringBuilder();
         int at = start;
         for (Site s : top) {
-            out.append(text, at, s.start()).append(render(text, s, sites, positions, unit));
+            out.append(text, at, s.start()).append(render(text, s, sites, positions, unit, imports));
             at = s.end();
         }
         return out.append(text, at, end).toString();
+    }
+
+    /**
+     * Class names as the mod's author writes them: an answer names classes in full (a.b.C.m()), which is written C.m()
+     * with an import, unless the file already gives C another meaning (an import of another C, or a C of its own). Text
+     * rules that run after this read the source as authors write it (convertTo(EntityTypes.X, ...)).
+     */
+    static final class Imports {
+        static final Pattern QUALIFIED = Pattern.compile("\\b((?:[a-z_][\\w]*\\.)+)([A-Z][\\w]*)");
+        final Map<String, String> known = new HashMap<>(); // simple name -> qualified name the file means by it
+        final Set<String> added = new LinkedHashSet<>();
+        final String pkg;
+
+        Imports(CompilationUnitTree unit) {
+            pkg = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+            for (ImportTree i : unit.getImports()) {
+                String q = i.getQualifiedIdentifier().toString();
+                if (!i.isStatic() && !q.endsWith(".*")) {
+                    known.put(q.substring(q.lastIndexOf('.') + 1), q);
+                }
+            }
+            for (Tree t : unit.getTypeDecls()) {
+                if (t instanceof ClassTree c) {
+                    known.put(c.getSimpleName().toString(), pkg.isEmpty() ? c.getSimpleName().toString() : pkg + "." + c.getSimpleName());
+                }
+            }
+        }
+
+        String shorten(String expr) {
+            Matcher m = QUALIFIED.matcher(expr);
+            StringBuilder out = new StringBuilder();
+            while (m.find()) {
+                String qualified = m.group(1) + m.group(2).replaceAll("\\$.*", ""), simple = m.group(2).replaceAll("\\$.*", "");
+                String meant = known.get(simple);
+                if (meant == null && !simple.equals("Object") && !simple.equals("String")) {
+                    known.put(simple, qualified);
+                    meant = qualified;
+                }
+                if (qualified.equals(meant)) {
+                    if (!qualified.equals(pkg + "." + simple) && !qualified.startsWith("java.lang." + simple)) {
+                        added.add(qualified);
+                    }
+                    m.appendReplacement(out, Matcher.quoteReplacement(m.group(2)));
+                } else {
+                    m.appendReplacement(out, Matcher.quoteReplacement(m.group()));
+                }
+            }
+            return m.appendTail(out).toString();
+        }
+
+        /** The text with the imports the answers needed, after the file's last import (or its package line). */
+        String add(String text) {
+            List<String> lines = new ArrayList<>(Arrays.asList(text.split("\\n", -1)));
+            int after = -1;
+            for (int i = 0; i < lines.size(); i++) {
+                String l = lines.get(i).strip();
+                if (l.startsWith("import ") || l.startsWith("package ")) {
+                    after = i;
+                } else if (!l.isEmpty() && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*") && after >= 0) {
+                    break;
+                }
+            }
+            String eol = text.contains("\r\n") ? "\r" : "";
+            List<String> fresh = new ArrayList<>();
+            for (String q : added) {
+                if (lines.stream().noneMatch(l -> l.strip().equals("import " + q + ";"))) {
+                    fresh.add("import " + q + ";" + eol);
+                }
+            }
+            lines.addAll(after + 1, fresh);
+            return String.join("\n", lines);
+        }
     }
 
     /** An operand that needs no parentheses wherever an expression puts it. */
