@@ -201,6 +201,57 @@ with tempfile.TemporaryDirectory() as tmp:
     blamed = E.named_in_errors(Path(tmp) / "result.json", mods, ["hud.jar", "stats.jar"])
 check(list(blamed) == ["stats.jar"] and "stats.mixins.json:B" in blamed["stats.jar"], f"the mixin that stopped the start names its mod: {blamed}")
 
+# A log names a mod nested in a library (Forgified Fabric API's data attachment module); the library that ships it is
+# the jar to drop, not a start that "named no mod".
+with tempfile.TemporaryDirectory() as tmp:
+    mods = Path(tmp) / "mods"
+    mods.mkdir()
+    toml_of = lambda i: f'modLoader="javafml"\n[[mods]]\nmodId="{i}"\n'.encode()  # noqa: E731
+    (mods / "top.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": toml_of("top")}))
+    (mods / "ffapi.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": toml_of("fabric_api"),
+                                          "META-INF/jars/attach.jar": jar({"META-INF/neoforge.mods.toml": toml_of("fabric_data_attachment_api_v1")})}))
+    (Path(tmp) / "result.json").write_text("{}", encoding="utf-8")
+    (Path(tmp) / "3-server-place.log").write_text(
+        "Caused by: org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [fabric-data-attachment-api-v1.mixins.json:BaseMappedRegistryAccessor "
+        "from mod fabric_data_attachment_api_v1] from phase [DEFAULT] FAILED during APPLY", encoding="utf-8")
+    check(E.mod_ids(mods / "ffapi.jar") == {"fabric_api", "fabric_data_attachment_api_v1"}, "a jar's mod ids include those of the jars it nests")
+    blamed = E.named_in_errors(Path(tmp) / "result.json", mods, ["top.jar", "ffapi.jar"])
+check(list(blamed) == ["ffapi.jar"], f"a failing nested mod blames the jar that ships it: {blamed}")
+
+# A game proof runs the updates asked for, LOADER:FROM taking the next release; --mods picks pinned mods by slug, and one
+# that does not link is left out, as the whole run leaves it out.
+check(E.load_plan("neoforge:1.21.1:1.21.2, fabric:1.21.1") == ["neoforge:1.21.1:1.21.2", "fabric:1.21.1:1.21.2"], "an update is LOADER:FROM:TO, or LOADER:FROM for the next release")
+for bad in ("forge:1.21.1", "neoforge", "fabric:0.1"):
+    try:
+        E.load_plan(bad)
+        check(False, f"{bad} is refused")
+    except SystemExit:
+        pass
+pinned = [{"slug": "chunky", "file": "Chunky.jar"}, {"slug": "clumps", "file": "Clumps.jar"}, {"slug": "jei", "file": "jei.jar"}]
+sys.stdout = io.StringIO()
+try:
+    picked = E.only_mods(["chunky--Chunky.jar", "jei--jei.jar"], pinned, ["chunky", "clumps"])
+    said = sys.stdout.getvalue()
+finally:
+    sys.stdout = sys.__stdout__
+check(picked == ["chunky--Chunky.jar"] and "clumps: does not link" in said, f"--mods starts the asked mods that link and names the rest: {picked} {said!r}")
+try:
+    E.only_mods([], pinned, ["nonesuch"])
+    check(False, "a slug that is not pinned stops the run")
+except SystemExit:
+    pass
+
+# Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
+main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,
+            "verdicts": {"a.jar": "loaded", "b.jar": "failed: its mixin x", "c.jar": "client-only: y"},
+            "client": {"verdicts": {"a.jar": "loaded", "c.jar": "failed: z"}}}
+branch_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 2,
+              "verdicts": {"a.jar": "loaded", "b.jar": "loaded"}, "client": {"verdicts": {"a.jar": "failed: crash", "b.jar": "loaded"}}}
+lines = E.compare_loads(main_run, branch_run)
+check("server: 1/2 the same; loaded 1 -> 2" in lines and "  b.jar: failed -> loaded" in lines and "  a.jar: loaded -> failed (failed: crash)" in lines
+      and "  b.jar: not started -> loaded" in lines and not any("c.jar" in x for x in lines), f"compare names each verdict that moved, on the mods both ran: {lines}")
+check(E.compare_loads(main_run, main_run)[-1] == "no verdict moved", "a proof against itself moves nothing")
+
 # The to-do list finishes mods. The reference the most mods share (g.Shared.one, 2 mods) finishes none of them.
 rows = [
     {"mod": "a.jar", "unlinked": ["a.jar: call: g.Shared.one()V (in a.A)", "a.jar!in.jar: call: g.Shared.one()V (in a.B)", "a.jar: call: g.A.x()V", "a.jar: call: g.A.y()V"]},
