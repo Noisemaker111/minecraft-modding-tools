@@ -1155,6 +1155,55 @@ def library(project, loader, version):
     return None
 
 
+def ranges(jar, loader):
+    """The version ranges a NeoForge mod's metadata asks of each mod it requires ({mod id: "[21.1,21.2)"}); none for Fabric."""
+    import zipfile
+    if loader == "fabric":
+        return {}
+    with zipfile.ZipFile(jar) as z:
+        meta = metadata(z, loader) or {}
+    return {d.get("modId"): d.get("versionRange") for blocks in meta.get("dependencies", {}).values() for d in (blocks if isinstance(blocks, list) else [])
+            if d.get("versionRange") and str(d.get("type", "required" if d.get("mandatory", True) else "optional")).lower() == "required"}
+
+
+def versions(jar, loader):
+    """{mod id: version} a jar declares, its manifest's Implementation-Version where the metadata leaves it to the build."""
+    import zipfile
+    if loader == "fabric":
+        return {}
+    with zipfile.ZipFile(jar) as z:
+        meta = metadata(z, loader) or {}
+        manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace") if "META-INF/MANIFEST.MF" in z.namelist() else ""
+    built = next((line.split(":", 1)[1].strip() for line in manifest.splitlines() if line.startswith("Implementation-Version:")), None)
+    return {m.get("modId"): (built if str(m.get("version", "")).startswith("$") else m.get("version")) for m in meta.get("mods", [])}
+
+
+def in_range(version, spec):
+    """Whether a version is inside a Maven range as NeoForge reads one ("[21.1,21.2)", "[1.0,)", "1.2" for at least 1.2)."""
+    def key(v):
+        return [int(p) if p.isdigit() else p for p in re.split(r"[.\-+]", str(v)) if p]
+
+    def cmp(x, y):
+        for p, q in zip(key(x), key(y)):
+            if p != q:
+                return (p > q) - (p < q) if type(p) is type(q) else (isinstance(p, str)) - (isinstance(q, str))
+        return 0
+
+    if not version or not spec or spec.strip() == "*":
+        return True
+    for part in re.findall(r"[\[(][^\])]*[\])]|[^,\s]+", spec):
+        if part[0] not in "[(":
+            if cmp(version, part) >= 0:
+                return True
+            continue
+        low, _, high = part[1:-1].partition(",") if "," in part else (part[1:-1], None, part[1:-1])
+        ok_low = not low.strip() or (cmp(version, low.strip()) >= 0 if part[0] == "[" else cmp(version, low.strip()) > 0)
+        ok_high = high is None or not high.strip() or (cmp(version, high.strip()) <= 0 if part[-1] == "]" else cmp(version, high.strip()) < 0)
+        if ok_low and ok_high:
+            return True
+    return False
+
+
 def choose(loader, frm, to, linked, folder, pins, platform):
     """The linked mods to start, and the library mods they need. A mod starts when what it needs is provided: by the
     platform, by another chosen mod, or by a library. A library is a project the mod's Modrinth version lists as
@@ -1189,6 +1238,9 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                         continue
                     got = library(project, loader, to)
                     where = ready
+                    asked_range = {mid: r for w in waiting for mid, r in ranges(w, loader).items()}
+                    if got and any(not in_range(v, asked_range[mid]) for mid, v in versions(got[0], loader).items() if mid in asked_range):
+                        got = None  # its release for the new version is outside the range the mod asks for: the old one, ported
                     if not got:
                         got, where = library(project, loader, frm), to_port
                     if got and provides(got[0], loader) & own - {"loader:*"}:

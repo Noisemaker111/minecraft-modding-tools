@@ -202,6 +202,26 @@ with tempfile.TemporaryDirectory() as tmp:
         E.required_projects, E.library = real
     check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
           f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
+    # A library's release for the new version outside the range the mod asks for is not taken: its old release is ported.
+    check(E.in_range("21.1.9", "[21.1,21.2)") and not E.in_range("21.2.3", "[21.1,21.2)") and E.in_range("1.3", "1.2") and not E.in_range("1.21.2", "[1.21.1]"),
+          "versions are read against Maven ranges as NeoForge reads them")
+    strict = Path(tmp) / "strict.jar"
+    strict.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("strict") + '[[dependencies.strict]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,2.0)"\n'}))
+    (folder / "strict--strict.jar").write_bytes(strict.read_bytes())
+    lib_new = Path(tmp) / "libipn-2.jar"
+    lib_new.write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="libipn"\nversion="2.0.1"\n'}))
+    lib_old = Path(tmp) / "libipn-1.jar"
+    lib_old.write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="libipn"\nversion="1.4"\n'}))
+    pins.append({"slug": "strict", "file": "strict.jar", "project": "P-strict", "version": "v-strict"})
+    listed["v-strict"] = ["P-libipn"]
+    files = {("P-libipn", "2.0"): (lib_new, "v-libipn"), ("P-libipn", "1.0"): (lib_old, "v-libipn-old")}
+    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["strict--strict.jar"], folder, pins, set())
+    finally:
+        E.required_projects, E.library = real
+    check([j.name for j in chosen] == ["strict--strict.jar"] and not ready and list(to_port) == ["libipn-1.jar"],
+          f"a library outside the mod's range for the new version is ported from the old one: {ready} {to_port}")
 
 # A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
 # server lacks, from another mod, does not.
