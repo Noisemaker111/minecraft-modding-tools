@@ -9,6 +9,8 @@ name: Cloud game proof
 # failure; a job fails only when its run could not finish. Started only by dispatch. No caches, no retries.
 run-name: "Cloud game proof: ${{ inputs.updates }} ${{ inputs.mods }} ${{ inputs.request }}"
 on:
+  push:
+    branches: [t3/cloud-game-port-proof]
   workflow_dispatch:
     inputs:
       updates:
@@ -24,6 +26,7 @@ permissions:
   contents: read
 jobs:
   plan:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
