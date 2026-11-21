@@ -137,14 +137,69 @@ with tempfile.TemporaryDirectory() as tmp:
     capes.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "capes", "depends": {"fabricloader": "*", "fabric-api": "*", "minecraft": "1.19.4"}})}))
     other = Path(tmp) / "other.jar"
     other.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "o", "depends": {"cloth-config": "*"}})}))
-    check(E.standalone(capes, {"fabric-api", "fabric-api-base"}) and not E.standalone(capes) and not E.standalone(other, {"fabric-api"}),
-          "a mod that needs only Fabric API is started with the platform; one that needs another mod is not")
+    fa = lambda jar: E.unmet(E.needs(jar, "fabric"), {"fabric-api", "fabric-api-base"})  # noqa: E731
+    check(fa(capes) == set() and E.needs(capes, "fabric") == {"fabric-api"} and fa(other) == {"cloth-config"},
+          "a mod that needs only Fabric API is started with the platform; one that needs another mod waits for it")
     kotlin = Path(tmp) / "kt.jar"
     kotlin.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "kt", "depends": {"fabric-language-kotlin": "*"},
                                                            "entrypoints": {"main": [{"adapter": "kotlin", "value": "a.B"}]}})}))
-    check(E.standalone(kotlin, {"fabric-language-kotlin"}, {"kotlin"}) and not E.standalone(kotlin, {"fabric-language-kotlin"})
-          and E.standalone(other, {"cloth-config"}),
-          "a mod whose dependencies and language adapter come with mods started beside it is started with them")
+    flk = Path(tmp) / "flk.jar"
+    flk.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "fabric-language-kotlin", "languageAdapters": {"kotlin": "a.Adapter"}})}))
+    check(E.unmet(E.needs(kotlin, "fabric"), E.provides(flk, "fabric")) == set() and E.unmet(E.needs(kotlin, "fabric"), {"fabric-language-kotlin"}) == {"adapter:kotlin"},
+          "a mod whose language adapter comes with a mod started beside it is started with it")
+    # NeoForge: a mod written for a language loader that comes in a library (nested several jars deep, with no metadata
+    # of its own at the top) and a required library mod; a jar made for both loaders is read as the pack's loader.
+    toml = lambda mod_id, loader="javafml", deps=(): ('modLoader="%s"\n[[mods]]\nmodId="%s"\n' % (loader, mod_id)  # noqa: E731
+                                                     + "".join('[[dependencies.%s]]\nmodId="%s"\ntype="required"\n' % (mod_id, d) for d in deps))
+    kt_mod = Path(tmp) / "ktmod.jar"
+    kt_mod.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("ipn", "kotlinlang", ["neoforge", "minecraft", "libipn"])}))
+    lang = Path(tmp) / "lang-all.jar"
+    lang.write_bytes(jar({"META-INF/jarjar/lang.jar": jar({"META-INF/services/net.neoforged.neoforgespi.language.IModLanguageLoader": "a.L"}),
+                          "META-INF/jarjar/mod.jar": jar({"META-INF/neoforge.mods.toml": toml("kotlinlangmod", "kotlinlang")})}))
+    lib = Path(tmp) / "libipn.jar"
+    lib.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("libipn")}))
+    both = Path(tmp) / "both.jar"
+    both.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "b", "depends": {"fabric-api": "*"}}), "META-INF/neoforge.mods.toml": toml("b", "lowcodefml", ["neoforge"])}))
+    check(E.needs(kt_mod, "neoforge") == {"loader:kotlinlang", "libipn"} and E.needs(lang, "neoforge") == set() and "loader:*" in E.provides(lang, "neoforge"),
+          "a NeoForge mod needs its library mods and its language loader; a library with only nested metadata needs nothing")
+    check(E.unmet(E.needs(kt_mod, "neoforge"), E.provides(lang, "neoforge")) == {"libipn"}
+          and E.unmet(E.needs(kt_mod, "neoforge"), E.provides(lang, "neoforge") | E.provides(lib, "neoforge")) == set(),
+          "the language loader is answered by the jar that carries one, the library by its mod id")
+    check(E.needs(both, "neoforge") == set() and E.needs(both, "fabric") == {"fabric-api"}, "a jar for both loaders is read as the pack's loader")
+    check(E.needs(Path(tmp) / "other.jar", "neoforge") is None, "a jar with no metadata for the loader is nothing the loader starts")
+    # The libraries come from what each mod's Modrinth version lists as required, and from what those list in turn; the
+    # release for the new version first, the old one (ported) when the project has none.
+    folder = Path(tmp) / "top"
+    folder.mkdir()
+    (folder / "ipn--ktmod.jar").write_bytes(kt_mod.read_bytes())
+    (folder / "lone--lone.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": toml("lone", deps=["nowhere"])}))
+    pins = [{"slug": "ipn", "file": "ktmod.jar", "project": "P-ipn", "version": "v-ipn"}, {"slug": "lone", "file": "lone.jar", "project": "P-lone", "version": "v-lone"}]
+    listed = {"v-ipn": ["P-libipn"], "v-libipn": ["P-lang"], "v-lone": []}
+    files = {("P-libipn", "2.0"): (lib, "v-libipn"), ("P-lang", "1.0"): (lang, "v-lang")}
+    real = E.required_projects, E.library
+    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["ipn--ktmod.jar", "lone--lone.jar"], folder, pins, set())
+    finally:
+        E.required_projects, E.library = real
+    check([j.name for j in chosen] == ["ipn--ktmod.jar"] and list(ready) == ["libipn.jar"] and list(to_port) == ["lang-all.jar"],
+          f"a mod is started with the libraries it needs, each library's own found through it: {chosen} {ready} {to_port}")
+    check(left == {"lone--lone.jar": ["nowhere"]}, f"a mod whose need nothing answers is named with what it needs: {left}")
+
+# A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
+# server lacks, from another mod, does not.
+with tempfile.TemporaryDirectory() as tmp:
+    mods = Path(tmp) / "mods"
+    mods.mkdir()
+    for mod_id in ("stats", "hud"):
+        (mods / f"{mod_id}.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": f'modLoader="javafml"\n[[mods]]\nmodId="{mod_id}"\n'}))
+    (Path(tmp) / "result.json").write_text("{}", encoding="utf-8")
+    (Path(tmp) / "3-server-place.log").write_text("\n".join([
+        "[main/WARN] [mixin/]: @Mixin target net.minecraft.client.Minecraft was not found hud.mixins.json:client.A from mod hud",
+        "Caused by: org.spongepowered.asm.mixin.transformer.throwables.MixinPreProcessorException: Attach error for stats.mixins.json:B from mod stats during activity: [x]",
+        "\tat org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinProcessor.java:392) hud.mixins.json:client.A from mod hud"]), encoding="utf-8")
+    blamed = E.named_in_errors(Path(tmp) / "result.json", mods, ["hud.jar", "stats.jar"])
+check(list(blamed) == ["stats.jar"] and "stats.mixins.json:B" in blamed["stats.jar"], f"the mixin that stopped the start names its mod: {blamed}")
 
 # The to-do list finishes mods. The reference the most mods share (g.Shared.one, 2 mods) finishes none of them.
 rows = [

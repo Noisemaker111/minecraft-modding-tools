@@ -27,7 +27,7 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   2 minutes; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
   read in Mojang's names through intermediary first (tools/ModNames.java).
-- `python bench/exposure.py load ...` is the proof: the standalone mods `jars` says link are ported and started on a
+- `python bench/exposure.py load ...` is the proof: the mods `jars` says link, with the libraries they require, are ported and started on a
   real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side client`), each mod's two verdicts side by
   side. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads
   on the server and links but fails in the client, because its injection point (a call 1.21.2's loading overlay no

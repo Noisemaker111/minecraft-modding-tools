@@ -34,7 +34,8 @@ prints what a branch's table changes against main's (tools/cloud-run exposure fi
 --save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
 requests proving the same update keep two receipts instead of conflicting on one.
 
-load is the proof that the list predicts the game: the mods jars says link that need no other mod are ported and
+load is the proof that the list predicts the game: the mods jars says link, with the library mods each one's Modrinth
+version lists as required (their release for the new version, else their old one ported along), are ported and
 started together on a real server of the new release (mmt pack-check), then in a real client of it (pack-check --side
 client: the title screen, a world, the inventory and every creative tab), since a server never runs client code; a
 failed start drops the mod its log names and starts again. It reports each mod's server and client verdicts side by
@@ -1031,53 +1032,179 @@ def fabric_api(version):
     return publish(part, target)
 
 
-def standalone(jar, platform=frozenset(), adapters=frozenset()):
-    """A mod whose metadata asks for no other mod and no other language loader (NeoForge, Forge or Fabric) beyond the
-    platform the pack runs on: for Fabric, Fabric API's modules (platform), which a pack starts with as it would for players,
-    and the language adapters (adapters) the mods started with it provide."""
+# The loaders and the game a mod may ask for, which every pack has.
+BUILT_IN = {"minecraft", "java", "neoforge", "forge", "fabricloader", "mixinextras"}
+# NeoForge's own language loaders; another (kotlinforforge) comes with a mod.
+OWN_LOADERS = {"javafml", "lowcodefml"}
+LANGUAGE_SERVICES = ("META-INF/services/net.neoforged.neoforgespi.language.IModLanguageLoader",
+                     "META-INF/services/net.minecraftforge.forgespi.language.IModLanguageProvider")
+
+
+def metadata(z, loader):
+    """A jar's own metadata for the loader the pack runs: fabric.mod.json for Fabric, else neoforge.mods.toml or mods.toml.
+    A jar made for several loaders carries each; reading another loader's would ask for that loader's mods. None if none."""
     import tomllib
+    names = z.namelist()
+    try:
+        if loader == "fabric":
+            return json.loads(z.read("fabric.mod.json").decode("utf-8", "replace"), strict=False) if "fabric.mod.json" in names else None
+        entry = next((n for n in ("META-INF/neoforge.mods.toml", "META-INF/mods.toml") if n in names), None)
+        return tomllib.loads(z.read(entry).decode("utf-8", "replace")) if entry else None
+    except (ValueError, tomllib.TOMLDecodeError):
+        return None
+
+
+def needs(jar, loader):
+    """What a mod asks for beyond the game and the loader: mod ids its metadata requires, "adapter:K" for a Fabric language
+    adapter its entrypoints use, "loader:K" for a NeoForge language loader that is not NeoForge's own. None when neither the
+    jar nor a jar nested in it has metadata for the loader (nothing the loader would start)."""
+    import io
     import zipfile
-    meta = fabric_meta(jar)
-    if meta is not None:
-        own = {meta.get("id")} | set(meta.get("provides") or [])
-        if any(e.get("adapter", "default") not in adapters | {"default"} for es in (meta.get("entrypoints") or {}).values() for e in es if isinstance(e, dict)):
-            return False
-        # Fabric Loader provides MixinExtras itself (since 0.15), as it does the game, itself and Java.
-        return all(d in ("minecraft", "fabricloader", "java", "mixinextras") or d in own or d in platform for d in (meta.get("depends") or {}))
     with zipfile.ZipFile(jar) as z:
-        names = [n for n in ("META-INF/neoforge.mods.toml", "META-INF/mods.toml") if n in z.namelist()]
-        if not names:
-            return False
-        try:
-            meta = tomllib.loads(z.read(names[0]).decode("utf-8", "replace"))
-        except tomllib.TOMLDecodeError:
-            return False
-    if meta.get("modLoader", "javafml") not in ("javafml", "lowcodefml"):
-        return False
-    own = {m.get("modId") for m in meta.get("mods", [])}
-    for blocks in meta.get("dependencies", {}).values():
-        for d in blocks if isinstance(blocks, list) else []:
-            kind = str(d.get("type", "required" if d.get("mandatory", True) else "optional")).lower()
-            if kind == "required" and d.get("modId") not in ("neoforge", "forge", "minecraft", "java") and d.get("modId") not in own:
-                return False
-    return True
+        meta = metadata(z, loader)
+        if meta is None:
+            return set() if provides(jar, loader) else None
+    own = provides(jar, loader)
+    if loader == "fabric":
+        asked = {d for d in (meta.get("depends") or {})}
+        asked |= {"adapter:" + e.get("adapter") for es in (meta.get("entrypoints") or {}).values() for e in es
+                  if isinstance(e, dict) and e.get("adapter", "default") != "default"}
+    else:
+        asked = {d.get("modId") for blocks in meta.get("dependencies", {}).values() for d in (blocks if isinstance(blocks, list) else [])
+                 if str(d.get("type", "required" if d.get("mandatory", True) else "optional")).lower() == "required"}
+        if meta.get("modLoader", "javafml") not in OWN_LOADERS:
+            asked.add("loader:" + meta["modLoader"])
+    return {a for a in asked if a and a not in BUILT_IN and a not in own}
+
+
+def provides(jar, loader):
+    """What a jar gives the mods beside it: its mod ids and those of the jars nested in it, "adapter:K" for each Fabric
+    language adapter, and "loader:*" when it or a nested jar carries a NeoForge language loader (whose name only its code says)."""
+    import io
+    import zipfile
+
+    def read(z):
+        out = set()
+        meta = metadata(z, loader)
+        if meta is not None and loader == "fabric":
+            out |= {meta.get("id"), *(meta.get("provides") or []), *("adapter:" + k for k in (meta.get("languageAdapters") or {}))}
+        elif meta is not None:
+            out |= {m.get("modId") for m in meta.get("mods", [])}
+        if any(n in z.namelist() for n in LANGUAGE_SERVICES):
+            out.add("loader:*")
+        for entry in z.namelist():
+            if entry.endswith(".jar") and entry.startswith(("META-INF/jars/", "META-INF/jarjar/")):
+                try:
+                    out |= read(zipfile.ZipFile(io.BytesIO(z.read(entry))))
+                except zipfile.BadZipFile:
+                    pass
+        return out
+
+    with zipfile.ZipFile(jar) as z:
+        return {i for i in read(z) if i}
+
+
+def unmet(asked, provided):
+    """What of a mod's needs nothing provided answers; a language loader is answered by any jar that carries one."""
+    return {a for a in asked if a not in provided and not (a.startswith("loader:") and ("loader:*" in provided or a[7:] in provided))}
+
+
+def version_info(version_id):
+    """One Modrinth version (its files and dependencies), kept for good: a version never changes."""
+    cache = HOME / "modrinth" / f"version-{version_id}.json"
+    if cache.is_file():
+        return json.loads(cache.read_text(encoding="utf-8"))
+    info = api(f"version/{version_id}")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    part = part_of(cache)
+    part.write_text(json.dumps(info), encoding="utf-8")
+    publish(part, cache)
+    return info
+
+
+def required_projects(version_id):
+    """The Modrinth projects a version lists as required: what its author says players must install with it."""
+    return [d["project_id"] for d in version_info(version_id).get("dependencies") or []
+            if d.get("dependency_type") == "required" and d.get("project_id")]
+
+
+def library(project, loader, version):
+    """A library mod's newest file for a loader and release, downloaded once into ~/.mmt/exposure/libraries/, with the
+    version it came from; None when the project has no file for that release."""
+    for v in project_versions(project):
+        if loader not in v["loaders"] or version not in v["game"]:
+            continue
+        f = next((f for f in v["files"] if f["primary"] and f["file"].endswith(".jar")), None) or next((f for f in v["files"] if f["file"].endswith(".jar")), None)
+        if not f:
+            continue
+        target = HOME / "libraries" / f"{loader}-{version}" / f"{project}--{f['file']}"
+        if not target.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(urllib.request.Request(f["url"], headers=AGENT), timeout=300) as r:
+                data = r.read()
+            if f.get("sha1") and hashlib.sha1(data).hexdigest() != f["sha1"]:
+                raise SystemExit(f"{f['url']}: the download is not the file Modrinth lists")
+            part = part_of(target)
+            part.write_bytes(data)
+            publish(part, target)
+        return target, v["id"]
+    return None
+
+
+def choose(loader, frm, to, linked, folder, pins, platform):
+    """The linked mods to start, and the library mods they need. A mod starts when what it needs is provided: by the
+    platform, by another chosen mod, or by a library. A library is a project the mod's Modrinth version lists as
+    required (and each library's own, in turn): its release for the new version when there is one, which is what players
+    would install; else its release for the old one, ported with the mods. Returns (chosen jars, libraries for the new
+    release, libraries to port, {mod: what it still needs} for the mods left out)."""
+    provided, chosen, ready, to_port, asked_for = set(platform), [], {}, {}, {}
+    looked = set()
+    own = set(platform)
+    candidates = [folder / n for n in linked if (folder / n).is_file()]
+    unread = {j.name: [f"metadata for {loader}"] for j in candidates if needs(j, loader) is None}
+    candidates = [j for j in candidates if j.name not in unread and not provides(j, loader) & own - {"loader:*"}]
+    by_jar = {folder / f"{m['slug']}--{m['file']}": m for m in pins}
+    while True:
+        more = [j for j in candidates if j not in chosen and not unmet(needs(j, loader), provided)]
+        for j in more:
+            chosen.append(j)
+            provided |= provides(j, loader)
+        if more:
+            continue
+        waiting = [j for j in candidates if j not in chosen]
+        found = False
+        for j in waiting:
+            todo = [by_jar[j]["version"]] if j in by_jar and j not in looked else []
+            looked.add(j)
+            while todo:
+                for project in required_projects(todo.pop()):
+                    if project in asked_for:
+                        continue
+                    if any(m["project"] == project and folder / f"{m['slug']}--{m['file']}" in candidates for m in pins):
+                        asked_for[project] = None  # a top mod of the old release: started (or not) on its own merits
+                        continue
+                    got = library(project, loader, to)
+                    where = ready
+                    if not got:
+                        got, where = library(project, loader, frm), to_port
+                    asked_for[project] = got
+                    if got:
+                        where[got[0].name] = got[0]
+                        provided |= provides(got[0], loader)
+                        todo.append(got[1])
+                        found = True
+        if not found:
+            break
+    left = {**unread, **{j.name: sorted(unmet(needs(j, loader), provided)) for j in candidates if j not in chosen}}
+    return chosen, ready, to_port, left
 
 
 def mod_ids(jar):
-    """The mod ids a NeoForge, Forge or Fabric jar declares."""
-    import tomllib
+    """The mod ids a NeoForge, Forge or Fabric jar declares, in any loader's metadata it carries."""
     import zipfile
-    meta = fabric_meta(jar)
-    if meta is not None:
-        return {meta.get("id")} | set(meta.get("provides") or [])
     with zipfile.ZipFile(jar) as z:
-        for name in ("META-INF/neoforge.mods.toml", "META-INF/mods.toml"):
-            if name in z.namelist():
-                try:
-                    return {m.get("modId") for m in tomllib.loads(z.read(name).decode("utf-8", "replace")).get("mods", [])}
-                except tomllib.TOMLDecodeError:
-                    return set()
-    return set()
+        fabric, toml = metadata(z, "fabric"), metadata(z, "neoforge")
+    return ({fabric.get("id"), *(fabric.get("provides") or [])} if fabric else set()) | ({m.get("modId") for m in toml.get("mods", [])} if toml else set())
 
 
 def has_code(jar):
@@ -1189,7 +1316,7 @@ def named_in_errors(receipt, mods, present):
     after the loader's "Found N error(s)" in the server log beside the receipt."""
     if not receipt:
         return {}
-    errors, packs = [], []
+    errors, packs, mixins = [], [], []
     for log in sorted(Path(receipt).parent.glob("*server*.log")):
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
         at = next((i for i, line in enumerate(lines) if re.search(r"Found \d+ error\(s\)", line)), None)
@@ -1197,12 +1324,21 @@ def named_in_errors(receipt, mods, present):
             errors += [line for line in lines[at + 1:at + 20] if line.startswith("- ")]
         # A data file the release refuses names the data pack it came from, which a mod's own pack is named for.
         packs += [m.group(0) for line in lines for m in [re.search(r"Failed to parse \S+ from pack (\S+)", line)] if m]
+        # A mixin that fails to apply names the mod whose config it is, in the exception that stopped the start ("Caused by:
+        # ...MixinPreProcessorException: Attach error for x.mixins.json:Y from mod betterstats ..."); a warning about a
+        # client class a server lacks, or a stack frame, is not that.
+        mixins += [m for line in lines if re.match(r"(Caused by: )?[\w.$]+(Exception|Error)\b", line)
+                   for m in [re.search(r"\b(\S+\.json:\S+) from mod ([\w.-]+)", line)] if m]
     blamed = {}
     for line in packs:
         pack_id = line.rsplit(" ", 1)[1]
         for name in present:
             if pack_id in mod_ids(mods / name):
                 blamed[name] = "its data fails on this release: " + line[:300]
+    for m in mixins:
+        for name in present:
+            if m.group(2) in mod_ids(mods / name):
+                blamed.setdefault(name, f"its mixin {m.group(1)} fails to apply: " + m.string.strip()[:300])
     for line in errors:
         # The mod whose start the error is about: the one the line says needs something ("... of NAME VERSION ...").
         for name in present:
@@ -1213,8 +1349,8 @@ def named_in_errors(receipt, mods, present):
 
 
 def load(loader, frm, to, save):
-    """The mods the jar scoreboard says link that need no other mod, ported as jars and started on a real server of the new release,
-    then in a real client of it (client_starts), with both verdicts side by side.
+    """The mods the jar scoreboard says link, ported as jars and started on a real server of the new release with the library
+    mods they need (choose), then in a real client of it (client_starts), with both verdicts side by side.
 
     One start holds them all; a start that fails drops the jar its log names and starts again, until a start opens a world,
     places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only."""
@@ -1223,30 +1359,27 @@ def load(loader, frm, to, save):
         jars(loader, frm, to)
     linked = [m["mod"] for m in json.loads(report.read_text(encoding="utf-8"))["mods"] if "error" not in m and not m["unlinked"]]
     folder = HOME / "jars" / f"{loader}-{frm}"
-    # A Fabric mod that needs Fabric API needs nothing beyond the platform the pack starts with; one that needs other
-    # mods starts with them when they link too.
-    provided, adapters, chosen = set(platform_ids(loader, to)), set(), []
-    platform_own = set(provided)
-    while True:
-        # A linked mod that is the platform itself (Fabric API among the top mods) is not started twice: the loader
-        # refuses two jars with one mod id, and the platform's copy for the new release is the one players run.
-        more = [folder / name for name in linked if folder / name not in chosen and not mod_ids(folder / name) & platform_own
-                and standalone(folder / name, provided, adapters)]
-        if not more:
-            break
-        for jar in more:
-            chosen.append(jar)
-            provided |= mod_ids(jar)
-            adapters |= set((fabric_meta(jar) or {}).get("languageAdapters") or {})
+    # A Fabric mod that needs Fabric API needs nothing beyond the platform the pack starts with. A linked mod that is the
+    # platform itself (Fabric API among the top mods) is not started twice: the loader refuses two jars with one mod id,
+    # and the platform's copy for the new release is the one players run. Other mods start with the mods and libraries
+    # they need.
+    pins = json.loads((PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"]
+    chosen, ready, to_port, left = choose(loader, frm, to, linked, folder, pins, set(platform_ids(loader, to)))
+    for name, missing in sorted(left.items()):
+        print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
     pack = ROOT / ".runs" / "exposure" / f"load-{loader}-{frm}-{to}"
     if pack.exists():
         shutil.rmtree(pack)
     # A Fabric jar is ported in Mojang's names (read as jars does) and handed back in the names Fabric runs.
-    read, _ = mojang_names(loader, frm, chosen)
+    read, _ = mojang_names(loader, frm, chosen + list(to_port.values()))
     report = jar_port(loader, frm, to, read, pack / "mods", pack / "report.json", runtime=loader == "fabric")
     links = {m["mod"]: not m.get("unlinked") and "error" not in m for m in report["mods"]}
     (pack / "dropped").mkdir()
-    platform = []
+    # The libraries are in the pack as the platform is, and not counted: the mods are the top mods that link.
+    for name, jar in ready.items():
+        shutil.copy(jar, pack / "mods" / name)
+    platform = sorted(ready) + sorted(to_port)
+    libraries = {**{n: f"its release for {to}" for n in ready}, **{n: f"its {frm} release, ported" for n in to_port}}
     if loader == "fabric":
         # Fabric API is the platform nearly every Fabric pack has, as NeoForge's own classes are to a NeoForge mod: mods
         # that call it optionally, or without listing it, start as they would for players. It is not counted.
@@ -1274,9 +1407,17 @@ def load(loader, frm, to, save):
             if finding.get("severity") != "problem":
                 continue
             for s in finding.get("suspects", []):
-                top = s.get("jar", "").split("!")[0] or next((n for n in present if s.get("mod") in mod_ids(pack / "mods" / n)), "")
+                top = s.get("jar", "").split("!")[0] or next((n for n in present + list(libraries) if s.get("mod") in mod_ids(pack / "mods" / n)), "")
                 if top in present:
                     blamed.setdefault(top, "; ".join(s.get("why", []))[:400])
+                elif top in libraries and (pack / "mods" / top).is_file():
+                    # A library that fails takes the mods that need it along; each is failed with the library's reason.
+                    gives = provides(pack / "mods" / top, loader)
+                    (pack / "mods" / top).rename(pack / "dropped" / top)
+                    for name in present:
+                        asked = needs(pack / "mods" / name, loader) or set()
+                        if asked and len(unmet(asked, gives)) < len(asked):
+                            blamed.setdefault(name, f"needs the library {top}, which fails: " + "; ".join(s.get("why", []))[:300])
         if not blamed:
             blamed = named_in_errors(result.get("receipt"), pack / "mods", present)
         if not blamed:
@@ -1319,6 +1460,8 @@ def load(loader, frm, to, save):
         # A mod with no game code links trivially; what fails it is its data, which the link check does not read.
         "failedDataOnly": sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and not has_code(folder / n)),
         "verdicts": verdicts,
+        "libraries": libraries,
+        "notStarted": left,
         "client": client,
         # What the roadmap's step 51 says would prove the server proof wrong: a mod that loads on the server and links, and fails in the client.
         "loadedOnServerFailedInClient": sorted(n for n, v in client["verdicts"].items() if v.startswith("failed") and verdicts.get(n) == "loaded" and links.get(n)),
