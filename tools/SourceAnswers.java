@@ -171,6 +171,7 @@ final class SourceAnswers {
         Map<String, Integer> bySource = new TreeMap<>();
         int files = 0, replaced = 0;
         List<String> examples = new ArrayList<>();
+        List<Object> written = new ArrayList<>(); // each outer site as written: file, its lines in the new text, the text it replaced
         try (StandardJavaFileManager fm = compiler.getStandardFileManager(ignored, Locale.ROOT, StandardCharsets.UTF_8)) {
             StringBuilder cp = new StringBuilder();
             for (Path jar : classpath) {
@@ -195,7 +196,15 @@ final class SourceAnswers {
                     continue;
                 }
                 Imports imports = new Imports(unit);
-                String out = imports.add(rewrite(text, finder.sites, trees.getSourcePositions(), unit, imports));
+                List<int[]> placed = new ArrayList<>();
+                String body = rewrite(text, finder.sites, trees.getSourcePositions(), unit, imports, placed);
+                String out = imports.add(body);
+                int shift = out.length() - body.length(); // the added imports sit above every site
+                for (int[] p : placed) {
+                    int from = p[2] + shift, to = p[3] + shift;
+                    written.add(Json.map("file", Path.of(unit.getSourceFile().toUri()).toString(), "start", from, "end", to,
+                        "line", lineOf(out, from), "endLine", lineOf(out, Math.max(from, to - 1)), "original", text.substring(p[0], p[1])));
+                }
                 if (out.equals(text)) {
                     continue;
                 }
@@ -222,11 +231,23 @@ final class SourceAnswers {
         report.put("replaced", replaced);
         report.put("bySource", bySource);
         report.put("examples", examples);
+        report.put("written", written);
         return report;
     }
 
     /** The source with every site replaced, inner sites first: an operand that is itself a site is written as its replacement. */
-    static String rewrite(String text, List<Site> sites, SourcePositions positions, CompilationUnitTree unit, Imports imports) {
+    static int lineOf(String text, int offset) {
+        int line = 1;
+        for (int i = 0; i < offset && i < text.length(); i++) {
+            if (text.charAt(i) == '\n') {
+                line++;
+            }
+        }
+        return line;
+    }
+
+    /** placed gets {old start, old end, new start, new end} of each outer site. */
+    static String rewrite(String text, List<Site> sites, SourcePositions positions, CompilationUnitTree unit, Imports imports, List<int[]> placed) {
         List<Site> outer = new ArrayList<>();
         for (Site s : sites) {
             if (sites.stream().noneMatch(o -> o != s && o.start() <= s.start() && s.end() <= o.end())) {
@@ -237,7 +258,10 @@ final class SourceAnswers {
         StringBuilder out = new StringBuilder();
         int at = 0;
         for (Site s : outer) {
-            out.append(text, at, s.start()).append(render(text, s, sites, positions, unit, imports));
+            out.append(text, at, s.start());
+            int from = out.length();
+            out.append(render(text, s, sites, positions, unit, imports));
+            placed.add(new int[] { s.start(), s.end(), from, out.length() });
             at = s.end();
         }
         return out.append(text.substring(at)).toString();
@@ -477,11 +501,18 @@ final class SourceAnswers {
                 return;
             }
             String expr = a[0];
-            // An answer that needs an operand the use does not have (a receiver for a static use) is not written.
+            // An answer that needs an operand the use does not have (a receiver for a static use) is not written, nor one
+            // that calls on an operand Java gives no type of its own (a lambda or a method reference: Supplier's get() on
+            // GameRenderer::getPositionTexShader is bytecode a jar port can write and source cannot).
             Matcher used = Pattern.compile("\\$(\\d+)").matcher(expr);
             while (used.find()) {
                 int i = Integer.parseInt(used.group(1));
                 if (i >= operands.size() || i == 0 && statik) {
+                    return;
+                }
+                Tree t = operands.get(i);
+                boolean continued = used.end() < expr.length() && (expr.charAt(used.end()) == '.' || expr.charAt(used.end()) == '[');
+                if (continued && t != null && (t.getKind() == Tree.Kind.LAMBDA_EXPRESSION || t.getKind() == Tree.Kind.MEMBER_REFERENCE)) {
                     return;
                 }
             }

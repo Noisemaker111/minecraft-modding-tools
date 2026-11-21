@@ -30,14 +30,56 @@ final class Port {
      * from the same files (tools/SourceAnswers.java). The sources are already backed up, so undo covers it. A mod whose
      * own compile cannot be recorded goes on as before, with the typed fixer and rules alone.
      */
-    void sourceAnswers(JavaTools tools, Map<String, Object> model, Path map, String from, String to, Mmt.Options options) throws Exception {
-        PortPlan.Compiled own;
+    PortPlan.Compiled ownCompile(Map<String, Object> model) throws Exception {
         try {
-            own = PortPlan.ownCompile(build, model, false);
+            return PortPlan.ownCompile(build, model, false);
         } catch (IOException unrecorded) {
             build.report.stages.add(Json.map("name", "source-answers", "skipped", "the mod's own compile recorded nothing: " + String.valueOf(unrecorded.getMessage()).lines().findFirst().orElse("")));
-            return;
+            return null;
         }
+    }
+
+    /** Each answer written into the source: file, lines in the text as written, and the text it replaced. */
+    final List<Map<String, Object>> answersWritten = new ArrayList<>();
+
+    /**
+     * Puts back the answers the new release's compiler rejects (an error on one of their lines): javac sees source types
+     * a jar port does not (a generic method's value where the old call gave a holder), and the place goes on as before
+     * this step, through the typed fixer and rules. Before any other repair changes the files, so each answer is where it
+     * was written. Returns how many were put back.
+     */
+    int revertRejectedAnswers(Path log) throws IOException {
+        if (answersWritten.isEmpty()) return 0;
+        Map<String, List<Integer>> errorLines = new HashMap<>();
+        for (Object o : errors(log)) {
+            var e = Json.object(o);
+            errorLines.computeIfAbsent(Path.of(Json.text(e, "file", "")).toAbsolutePath().normalize().toString(), k -> new ArrayList<>()).add(((Number) e.get("line")).intValue());
+        }
+        Map<String, List<Map<String, Object>>> byFile = new LinkedHashMap<>();
+        for (var w : answersWritten) {
+            String file = Path.of(Json.text(w, "file", "")).toAbsolutePath().normalize().toString();
+            int line = ((Number) w.get("line")).intValue(), end = ((Number) w.get("endLine")).intValue();
+            if (errorLines.getOrDefault(file, List.of()).stream().anyMatch(l -> l >= line && l <= end)) byFile.computeIfAbsent(file, k -> new ArrayList<>()).add(w);
+        }
+        int reverted = 0;
+        for (var e : byFile.entrySet()) {
+            Path file = Path.of(e.getKey());
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            List<Map<String, Object>> sites = new ArrayList<>(e.getValue());
+            sites.sort(Comparator.comparingInt((Map<String, Object> w) -> ((Number) w.get("start")).intValue()).reversed());
+            for (var w : sites) {
+                int start = ((Number) w.get("start")).intValue(), end = ((Number) w.get("end")).intValue();
+                if (end > text.length()) continue;
+                text = text.substring(0, start) + Json.text(w, "original", "") + text.substring(end);
+                reverted++;
+            }
+            Files.writeString(file, text, StandardCharsets.UTF_8);
+        }
+        answersWritten.clear();
+        return reverted;
+    }
+
+    void sourceAnswers(JavaTools tools, Map<String, Object> model, Path map, String from, String to, PortPlan.Compiled own) throws Exception {
         Path dir = build.project.state().resolve("source-answers");
         Files.createDirectories(dir);
         Path sourcesFile = dir.resolve("sources.txt"), classpathFile = dir.resolve("classpath.txt"), report = dir.resolve("report.json");
@@ -49,6 +91,7 @@ final class Port {
             "--report", report.toString()), "port-source-answers");
         if (run.exit() != 0 || !Files.isRegularFile(report)) throw new IOException("Source answers stopped: " + Run.tail(run.log()));
         var written = Json.read(report);
+        for (Object w : Json.array(written.getOrDefault("written", List.of()))) answersWritten.add(Json.object(w));
         build.report.stages.add(Json.map("name", "source-answers", "replaced", written.get("replaced"), "files", written.get("files"), "bySource", written.get("bySource")));
     }
 
@@ -1499,11 +1542,12 @@ final class Port {
         List<String> removed = new ArrayList<>();
         if (rounds < 1 || rounds > 20) throw new IllegalArgumentException("--rounds must be 1–20");
         try {
-            if (!target.isEmpty() && namespace.equals("mojmap")) sourceAnswers(tools, model, map, from, to, options);
+            PortPlan.Compiled ownBuild = !target.isEmpty() && namespace.equals("mojmap") ? ownCompile(model) : null;
             if (!target.isEmpty()) {
                 Target.apply(target);
                 build.refreshJdk();
             }
+            if (ownBuild != null) sourceAnswers(tools, model, map, from, to, ownBuild);
             for (Path file : excluded) {
                 Path owned = file.toRealPath();
                 if (!owned.startsWith(build.project.root)) throw new IOException(
@@ -1550,6 +1594,14 @@ final class Port {
             if (initial.exit() != 0 && dropMissingAccessTargets(initial.log()) > 0) initial = build.gradle(tasks, explicitTask ? "port-initial-compile-at" : "port-initial-build-at");
             log = initial.log();
             compiled = initial.exit() == 0;
+            int answersReverted = compiled ? 0 : revertRejectedAnswers(log);
+            if (answersReverted > 0) {
+                build.report.stages.add(Json.map("name", "source-answers-rejected", "reverted", answersReverted));
+                initial = build.gradle(tasks, explicitTask ? "port-initial-compile-answers" : "port-initial-build-answers");
+                log = initial.log();
+                compiled = initial.exit() == 0;
+            }
+            answersWritten.clear();
             // The errors the port started from (every one: port builds lift javac's 100-error cap), before any repair.
             int errorsBefore = compiled ? 0 : errors(log).size();
             Set<String> seen = new HashSet<>();
