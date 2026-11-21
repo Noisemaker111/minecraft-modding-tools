@@ -1,0 +1,17 @@
+{
+ "id": "44",
+ "title": "One porting scoreboard, read from jars, for every update and loader",
+ "part": "Port by changed game part",
+ "status": "done",
+ "text": "python bench/exposure.py jars links what each of the 150 most-downloaded mods references (classes, mixins, access transformers) against the target release, as the JVM and Mixin will, and ranks what does not link by the mods it holds back. It replaces exposure.py run as the list that chooses porting work: run cleared 58 NeoForge mods and the link check 32, and every mod that failed on a real server was one run cleared and the link check did not. Fabric jars ship in intermediary names, so the link check reads them through the game's own mappings to Mojang's names, and the source porter's worklist (port-plan) is read the same way.",
+ "start": "2026-11-19",
+ "finish": "the all-updates, both-loaders table is in coverage/measures.json (port.jar-links.every-update), exposure.py run is gone, and NeoForge 1.21.1 -> 1.21.2 counts what the one-update scoreboard counts (41 before #120, 43 after)",
+ "wrongIf": "a mod python bench/exposure.py load starts fails on the server although the link check says it links",
+ "done": "2026-11-19",
+ "result": "python bench/exposure.py all, or tools/cloud-run exposure in about 8 minutes, ports the 150 most-downloaded mods of each release (pinned in bench/exposure/mods/) to the next and links them, for 43 Fabric updates from 1.14.4 and 18 NeoForge updates from 1.20.5: 5,258 of 9,149 mod ports link (57.5%), 5,018 before #120. NeoForge 1.21.1 -> 1.21.2 counts 41 on the code before #120 and 43 after, as the one-update scoreboard did; Fabric 40. Fabric jars are read in Mojang's names through intermediary (tools/ModNames.java), with Fabric API's transitive access applied to the game; ported to their own release, 124 of 150 Fabric 1.21.1 mods link against 100 of 150 NeoForge ones, so the reading adds no misses of its own. On a real 1.21.2 server 23 of the 25 standalone NeoForge mods that link load; one is client-only and one, with no code, fails on its data. Each reference on the list says what the game's own code did about it. exposure.py run is retired. Not read yet: NeoForge 1.20.2 to 1.20.5 (step 53).",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links",
+  "port.jar-loads.linked"
+ ]
+}

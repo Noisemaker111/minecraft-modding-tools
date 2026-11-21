@@ -1,0 +1,14 @@
+{
+ "id": "40",
+ "title": "Loader rules from the loaders' own APIs",
+ "part": "Loader pairs",
+ "status": "done",
+ "text": "Write each loader-change rule here, from Fabric's and NeoForge's own published APIs and docs, with a before/after test, and check every class and member it names in the loaders' published jars (python bench/loader_api.py verify). No rule is read from other people's mods.",
+ "start": "2026-11-10",
+ "target": "2026-11-10",
+ "measures": [
+  "loader.rules"
+ ],
+ "done": "2026-11-14",
+ "result": "knowledge/loaders.json holds 41 rules (entrypoints, metadata, loader calls, events, key mappings, flammability, Mod Menu, data generation); bench/loader_api.py verify found all 143 symbols they name in Fabric Loader, Fabric API, NeoForge, FancyModLoader, NeoForge's event bus, its distmarker jar and Minecraft 26.2 and 26.3 (coverage/loader/api.json). It replaces the earlier catalogue mined from 35 multi-loader mods. mmt self-test runs every rule both ways."
+}

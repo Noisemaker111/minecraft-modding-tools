@@ -1,0 +1,9 @@
+{
+ "id": "23",
+ "title": "Optional pixel comparison",
+ "part": "Behaviour in the real game",
+ "status": "later",
+ "text": "Optional pixel comparison for regressions, off by default.",
+ "start": "2027-01-25",
+ "target": "2027-02-12"
+}

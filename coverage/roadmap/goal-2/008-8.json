@@ -1,0 +1,14 @@
+{
+ "id": "8",
+ "title": "Render-pipeline changes become rules",
+ "part": "Neighbouring versions (1.21.x), Fabric and NeoForge",
+ "status": "done",
+ "text": "Turn the render-pipeline family into rules (draw texture / render pipeline / texture view), then re-run step 7 to a build.",
+ "start": "2026-11-09",
+ "target": "2026-11-17",
+ "measures": [
+  "port.errors.appleskin-fabric-1.20.1-1.21.6"
+ ],
+ "done": "2026-11-07",
+ "result": "The GUI render family is rules in yarn and official names, each tied to the update that changed it: the render type first in every blit (1.21.2), the RenderPipeline (1.21.6), shader colour into each draw call (1.21.6), blend, depth and cull state (1.21.5), texture-id binds (1.21.5) and texture views (1.21.6). They replace the two whole-jump drawTexture rules. On AppleSkin 1.20.1 → 1.21.6 no render error is left; it still stops at 11 errors outside rendering (step 7)."
+}

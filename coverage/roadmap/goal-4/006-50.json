@@ -1,0 +1,17 @@
+{
+ "id": "50",
+ "title": "A mod's .jar works as well as its source",
+ "part": "One place for both",
+ "status": "done",
+ "text": "port and convert change a mod's source folder, which only its author has. A compiled mod is read today for two things only: to count what it uses of the game and of a loader (python bench/exposure.py, python bench/convert_coverage.py real) and to run it in a modpack on a real server (mmt pack-check). Source stays: an author gets source back. A .jar has to work too, in and out, for everyone who has only the .jar. This step comes before the others because it decides their shape: the work is either done on the compiled classes themselves, or on source recovered from the .jar and built again, and the first job is to try both on mods the scoreboards already clear and keep the one whose results load in the game. If the compiled classes are changed directly, steps 44 and 47 are rewritten: the worklist is the .jar scoreboard, which has no source to be blind to, and a fix is applied where a class names the game part.",
+ "finish": "Of the 42 most-downloaded NeoForge mods for 1.21.1 that the porting scoreboard clears and that need no other mod, 40 come back as a .jar for 1.21.2 that loads on a real 1.21.2 server (0 today: no command takes a .jar). Measured: 35 such mods by the scoreboard's own list (it said 42 before mods needing another language loader such as Kotlin were counted as needing another mod)",
+ "wrongIf": "fewer than 30 of those 42 load, which would mean the scoreboard clears mods that are not ready",
+ "start": "2026-11-19",
+ "target": "2026-12-05",
+ "done": "2026-11-18",
+ "measures": [
+  "port.jar-loads",
+  "port.jar-links"
+ ],
+ "result": "The compiled classes are changed directly: mmt port --jar MOD.jar --to 1.21.2 (tools/JarPort.java) relinks every reference a mod's classes, mixins and access transformers make to the game against the new release, renames what the game's own change map names, moves the metadata, ports nested mods, and names what does not link instead of guessing. No source and no build: 35 jars take 8 seconds. On a real 1.21.2 server 28 of the 35 load (a new world, every block item placed, the world opened again); the finish line said 40. The 7 others are not a jar problem: 6 use game code 1.21.2 changed (ferritecore and glitchcore mixin targets, Jade, MRU, Nature's Compass, TerraBlender's biome data) and 1 is client-only. Every one of the 6 was named in advance by the new link check, and every mod it said links loaded. The scoreboard that chose them (exposure.py run) cannot see mixins, field types or access transformers: it clears 58 of the 150 top mods, the link check 32. Decompiling to source and building again was not tried: the jar path loads 28 with no build, and its 6 failures are game changes a rebuilt source would meet too. A server does not run client code, so 15 of the 28 loaded with references that only a game client reaches still unlinked (step 51)."
+}

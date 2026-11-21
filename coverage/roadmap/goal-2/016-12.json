@@ -1,0 +1,13 @@
+{
+ "id": "12",
+ "title": "An untouched 1.20.1 mod to 1.21.6, loaded",
+ "part": "Big jumps across families (1.16.5, 1.18.2, 1.20.1 → 1.21.x)",
+ "status": "later",
+ "text": "Prove one untouched mod from 1.20.1 (or older) to 1.21.6 to a build, then to a loaded client.",
+ "start": "2026-12-01",
+ "target": "2026-12-18",
+ "measures": [
+  "port.mods-working",
+  "port.errors.jade-neoforge-1.21.1-1.21.6"
+ ]
+}

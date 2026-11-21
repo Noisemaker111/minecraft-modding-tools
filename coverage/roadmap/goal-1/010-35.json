@@ -1,0 +1,18 @@
+{
+ "id": "35",
+ "title": "Check the game's data without launching it",
+ "part": "No game window, low cost",
+ "status": "done",
+ "done": "2026-11-07",
+ "text": "A check that needs the game's data but not its picture runs the game's own code with no window and no world: data-check reads what the mod registered, each item as a real stack, and every error the game logs while it loads the data packs. It costs about 5 CPU-s per check once one loaded JVM answers many checks, instead of 49 for a hidden client.",
+ "start": "2026-11-07",
+ "target": "2026-12-18",
+ "measures": [
+  "test.data-check-cpu",
+  "test.data-check-code-change-cpu",
+  "test.data-check-first-cpu",
+  "test.data-check-ram",
+  "test.data-check-cpu.boat"
+ ],
+ "result": "mmt data-check works on Fabric 26.3: on the Prism Lab demo mod it lists the mod's items, blocks, loot table and recipe with no game launched, and a broken recipe fails it with the game's own error. The game stays loaded: a changed data file costs about 2 CPU-s in 2 s, copied from src without Gradle when Gradle would copy it as it is. A spare game waits behind it, started up to just before the mods' own code, and takes changed code for about 5 CPU-s in 4 s; a changed mixin or loader file loads a fresh game, 12 s. The build is read once and kept until a build file changes. A loaded game holds about 0.38 GB."
+}

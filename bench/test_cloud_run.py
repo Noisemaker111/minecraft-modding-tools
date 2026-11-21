@@ -1,5 +1,6 @@
 """tools/cloud-run.py's parts that need no GitHub: which listed run is the one it started, and run times."""
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -43,4 +44,35 @@ try:
     check(False, "a 404 stops")
 except SystemExit:
     check(len(calls) == 1, "a real refusal is not retried")
+
+# Main's table is made once per commit and found again. A commit that changed only files the table cannot read (the
+# workflow's paths-ignore) has its parent's table; a sweep dispatched for a commit names it in its title.
+globs = C.ignored_paths()
+check("docs/**" in globs and "bench/exposure/all.json" in globs and "coverage/roadmap/**" in globs, f"the ignored files are read from the workflow: {globs}")
+check(C.glob_matches("**.md", ".claude/skills/port-a-mod/SKILL.md") and C.glob_matches("coverage/roadmap/**", "coverage/roadmap/goal-2/055-78.json")
+      and not C.glob_matches("docs/**", "tools/docs.java") and not C.glob_matches("bench/exposure/load-*.json", "bench/exposure/mods/a.json"),
+      "path filters match as GitHub's: ** crosses folders, * stays in one")
+history = {"c3": ("c2", ["ROADMAP.md", "docs/index.html"]), "c2": ("c1", ["tools/JarPort.java"]), "c1": ("c0", [])}
+fake_git = lambda *a: (history.get(a[-1].rstrip("^"), (None,))[0] or "") if a[0] == "rev-parse" else "\n".join(history[a[-1]][1])  # noqa: E731
+check(C.same_table("c3", globs, git=fake_git) == ["c3", "c2"], "a commit that changed only generated files has its parent's table, and no further back")
+A, B, D = "a" * 40, "b" * 40, "d" * 40
+listed = [{"databaseId": 1, "headSha": A, "displayTitle": "Cloud jar scoreboard: fabric:1.20.1 ", "status": "completed", "conclusion": "success"},
+          {"databaseId": 2, "headSha": B, "displayTitle": f"Cloud jar scoreboard: every update at {A} req-x", "status": "in_progress", "conclusion": ""},
+          {"databaseId": 3, "headSha": D, "displayTitle": "Cloud jar scoreboard: every update ", "status": "completed", "conclusion": "failure"},
+          {"databaseId": 4, "headSha": D, "displayTitle": "Cloud jar scoreboard: every update ", "status": "completed", "conclusion": "success"}]
+check([r["databaseId"] for r in C.full_runs_of(listed, [A])] == [2], "a partial sweep is no table; one dispatched for the commit is, even while it runs")
+check([r["databaseId"] for r in C.full_runs_of(listed, [B, D])] == [4], "a sweep that ran the commit as its head counts, a failed one does not")
+asked = []
+
+
+def fake_gh(*a):
+    asked.append(a[:2])
+    if a[:2] == ("run", "list"):
+        return json.dumps(listed)
+    raise AssertionError(f"nothing else is asked of GitHub: {a}")
+
+
+C.same_table = lambda commit, globs=None, git=None: [commit]
+check(C.main_table(D, gh=fake_gh)[0] == 4 and asked == [("run", "list")], f"a saved table is found without dispatching a sweep of main: {asked}")
+check(C.main_table("e" * 40, gh=fake_gh, dispatch=False) == (None, "none"), "a commit with no sweep has no table yet")
 print(f"{checks} cloud-run checks passed")

@@ -4,7 +4,7 @@ Every chart and number is generated automatically on main (.github/workflows/gen
 - bench/exposure/all.json          (live .jar porting coverage across every Fabric & NeoForge update)
 - coverage/sweeps/pack.json        (modpack pass & repair rates + history)
 - coverage/sweeps/convert.json     (loader-switch pass rates + history)
-- coverage/roadmap.json            (goals, steps, burn-up, timeline)
+- coverage/roadmap.json, roadmap/  (goals, one file per step: burn-up, timeline)
 - coverage/measures.json           (tracked metrics and history)
 - coverage/ledger.json             (verified port runs and loader pairs)
 

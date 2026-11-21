@@ -1,0 +1,16 @@
+{
+ "id": "29",
+ "title": "Reproduce Sismeel's Forge 1.20.1 pack problems",
+ "part": "Forge 1.20.1 packs",
+ "status": "doing",
+ "text": "Reproduce Sismeel's Forge 1.20.1 pack problems: an item becomes a different block when placed, and a world fails to reopen. Identify the affected item and obtain or recreate the failing world; the supplied pack export has configurations and mod download references, but no world or logs. Determine each cause independently.",
+ "points": [
+  "World that will not reopen: done. Traverse 7.0.12 bundles Biolith 1.0.1-alpha.1, which gives 7 Traverse biomes climate values of 3.01; Blueprint saves the overworld's biome list in full, and the next start rejects it (\"Overworld settings missing\"). Seen on the pack's real Forge server and in its real client (the save gets the datapack-failure screen). Biolith 1.0.1-beta.1 in mods/ fixes it: new worlds reopen, and a world saved by the broken version opens too.",
+  "Item that becomes another block: not reproduced. Every block item (14,129 in singleplayer), placed by a player's right-click on the pack's server and again in singleplayer with every client-only mod, land as themselves or as their own mod's deliberate variant (bamboo shoot, sapling stages, Craziness Awakened's random spawners); the 29 that change afterwards are vanilla rules (coral dying out of water) or the mod's own. No two mods override the same block look. 221 block names belong to blocks from two or more mods (e.g. \"Azure Planks\" in Outer End and Slugterra), the likeliest cause on the evidence; `pack-check` now lists them. Items are also placed on a wall, a ceiling and in water (ladders, hanging signs, spore blossoms, kelp). Sweet berries never place in this pack: Sizeable Foliage refuses it on purpose and plants its bush from \"Sweet Berry Seeds\" instead. The item's name from Sismeel is still needed."
+ ],
+ "start": "2026-10-29",
+ "target": "2026-11-20",
+ "measures": [
+  "pack.block-items-checked"
+ ]
+}

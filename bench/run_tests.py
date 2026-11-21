@@ -24,11 +24,8 @@ FIXTURE = "fixtures/prism-lab"  # Prism Lab, the demo mod the mod-project checks
 WINDOWS = os.name == "nt"
 SEP = ";" if WINDOWS else ":"
 
-PYTHON = ["bench/test_measures.py", "bench/test_record.py", "bench/test_ledger_rule.py", "bench/test_java_lines.py",
-          "bench/test_loader_api.py", "bench/test_sweeps.py", "bench/test_session_cost.py", "bench/test_perf_sessions.py",
-          "bench/test_performance.py", "bench/test_perf_verdicts.py", "bench/test_cloud_run.py", "bench/test_budgets.py",
-          "bench/diorama/test_budget.py", "bench/diorama/test_prepare_comparison.py", "bench/diorama/test_prepare_world.py",
-          "bench/test_scoreboard.py", "bench/test_convert_coverage.py", "bench/test_exposure.py"]
+# Every bench/**/test_*.py runs in the python check, except one another check runs with arguments.
+PYTHON = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "bench").rglob("test_*.py") if p.name != "test_fingerprint.py")
 
 
 def java(*args):
@@ -52,28 +49,23 @@ def port_preflight():
     yield java("-cp", str(out), "LegacyMapTest")
 
 
+# The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test), found
+# here rather than listed, so two pull requests that each add one never touch the same line. Each is a class with a main.
+JAR_PORT_TESTS = ("JarPort*Test.java", "Game*Test.java", "ModNames*Test.java")
+
+
+def jar_port_tests(folder=ROOT / "tools" / "tests"):
+    return sorted({p.relative_to(ROOT).as_posix() for pattern in JAR_PORT_TESTS for p in folder.glob(pattern)})
+
+
 def jar_port():
     out = ROOT / ".runs" / "jarport-tests"
     asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
+    tests = jar_port_tests()
     yield ["javac", "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
-           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/tests/JarPortTest.java", "tools/tests/JarPortRulesTest.java",
-           "tools/tests/JarPortFixesTest.java", "tools/tests/JarPortFabricTest.java", "tools/tests/ModNamesTest.java", "tools/tests/GameLearnTest.java",
-           "tools/tests/GameMeaningTest.java", "tools/tests/JarPortLoaderTest.java", "tools/tests/GameRemovedTest.java", "tools/tests/JarPortRetypeTest.java", "tools/tests/JarPortFieldTest.java", "tools/tests/JarPortTakeoverTest.java", "tools/tests/JarPortFinalTest.java",
-           "tools/tests/GameChainTest.java", "tools/tests/GameRetypedTest.java", "tools/tests/JarPortCarryTest.java", "tools/tests/GameSameCallTest.java", "tools/tests/GameSplitTest.java", "tools/tests/GameLateTest.java", "tools/tests/GameTypesTest.java", "tools/tests/GameConstantTest.java"]
-    yield java("-cp", str(out) + SEP + asm, "JarPortTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "ModNamesTest")
-    yield java("-cp", str(out) + SEP + asm, "GameLearnTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameMeaningTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameRetypedTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "JarPortLoaderTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameRemovedTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameChainTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "JarPortCarryTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameSameCallTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameSplitTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameLateTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameTypesTest", str(out / "scratch"))
-    yield java("-cp", str(out) + SEP + asm, "GameConstantTest", str(out / "scratch"))
+           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", *tests]
+    for test in tests:
+        yield java("-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch"))
 
 
 def console_accessor():

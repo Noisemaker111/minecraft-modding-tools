@@ -1,0 +1,13 @@
+{
+ "id": "22",
+ "title": "A mod's own behaviour asserted in a real client",
+ "part": "Behaviour in the real game",
+ "status": "done",
+ "text": "A mod's own behaviour asserted in a real client: AppleSkin's HUD estimate, Zombie Apocalypse Addon's zombies hunting with `/zhunt` on its 1.21.4 port; each fails when the mod is broken on purpose.",
+ "result": "(local only; they start the game)",
+ "start": "2026-10-26",
+ "done": "2026-10-26",
+ "measures": [
+  "test.behaviour-checks"
+ ]
+}

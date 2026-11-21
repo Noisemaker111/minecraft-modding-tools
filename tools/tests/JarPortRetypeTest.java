@@ -14,6 +14,12 @@ import org.objectweb.asm.*;
  */
 final class JarPortRetypeTest {
 
+    public static void main(String[] args) throws Exception {
+        Path scratch = Files.createDirectories(Path.of(args[0]));
+        check(scratch);
+        JarPortTest.finish("JarPortRetypeTest");
+    }
+
     static final String POSE = "Lg6/Pose;", GFX = "Lg6/Graphics;", KEY = "Lg6/Key;";
     static final String CI = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
     static final String CIR = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;";

@@ -1,0 +1,13 @@
+{
+ "id": "25",
+ "title": "The bot joins any Paper version from 1.8",
+ "part": "Plugins on a real Paper server",
+ "status": "done",
+ "text": "The bot joins any Paper version from 1.8 through ViaProxy, reading each world's real floor and height.",
+ "result": "(1.8.8, 1.12.2, 1.16.5, 1.20.1 and 1.21.4 passed locally; CI covers 26.3 only)",
+ "start": "2026-10-26",
+ "done": "2026-10-26",
+ "measures": [
+  "plugin.paper-versions.local"
+ ]
+}

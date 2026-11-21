@@ -1,0 +1,16 @@
+{
+ "id": "24",
+ "title": "Paper plugins: plugin-check and server-check",
+ "part": "Plugins on a real Paper server",
+ "status": "done",
+ "text": "Paper plugins: `plugin-check` on MockBukkit (fast floor), then `server-check` on a real Paper server with a bot player following a scenario, secrets masked. AgentCraft passes, and each break made on purpose fails at its step.",
+ "start": "2026-10-25",
+ "done": "2026-10-26",
+ "measures": [
+  "plugin.server-check.warm",
+  "plugin.server-check.cold",
+  "plugin.plugin-check.warm",
+  "plugin.server-check.cpu",
+  "plugin.server-check.ram"
+ ]
+}

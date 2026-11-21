@@ -1,0 +1,17 @@
+{
+ "id": "64",
+ "title": "The jump to the newest game keeps what each update taught, NeoForge side",
+ "part": "Port by changed game part",
+ "status": "doing",
+ "text": "Worked from the nearest-to-done list of NeoForge 1.21.1 -> 26.3. Its biggest kind was references the game had already answered at one update whose answer a later update renamed: 282 of them, 1,440 uses, refused because JarPort compiles a learned expression against the release it ports to. Each learned expression and switched-to call is now carried through every later update of the chain as a mod's own call is (GameDiff.Carry). Also: a call whose method now returns nothing is written where the mod popped the value anyway (1.21.6's drawString, 41 mods); a static call to what is now an instance method is no longer linked (the JVM refuses it; FerriteCore on 1.21.9), so what the loader's own code writes takes its place; a @ModifyVariable's own ordinal is read and counts the target's parameters, and a method string on a loader-patched signature whose name the new release dropped is reported (Yeetus Experimentus on 1.20.5).",
+ "start": "2026-11-20",
+ "target": "2026-11-22",
+ "finish": "port.jar-links.newest and port.jar-links.big-updates up from 15 and 1,896, port.jar-links.every-update no lower than 5,883 except named false links, and load on NeoForge 26.3 showing every newly linked standalone mod loads",
+ "wrongIf": "a mod that links through a carried expression, a dropped value or a learned instance call fails in a real game",
+ "measures": [
+  "port.jar-links.newest",
+  "port.jar-links.big-updates",
+  "port.jar-links.every-update"
+ ],
+ "result": "2026-11-21: finish line not reached. port.jar-links.newest 15 -> 15 and big-updates 1,896 -> 1,896; every update 5,883 -> 5,884. Newest-jump broken uses NeoForge 18,179 -> 17,764 and Fabric 16,188 -> 15,693 without a whole mod freed: the nearest NeoForge mods each still need one kind with no general answer from the game yet (CycleButton.builder needs an initial value the old call never gave, NBT getString/getList, 1.21.9's permission levels, ClickEvent/HoverEvent by action, mixins on save-data methods). 1.21.5 -> 1.21.6 +3 (drawString); offset in the big updates by three false links now refused: Spark on 1.21.1 -> 1.21.2 (NeoForge and Fabric, a static call to what became an instance method) and Yeetus Experimentus on NeoForge 1.20.4 -> 1.20.5. Real servers: NeoForge 26.3 7 of 8 linked standalone mods load (Dungeons and Taverns fails on its data), 1.21.6 26 of 30 (4 client-only); pack-check's NeoForge client fails with an empty pack on both releases."
+}

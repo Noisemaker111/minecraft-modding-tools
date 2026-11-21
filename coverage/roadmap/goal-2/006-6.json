@@ -1,0 +1,9 @@
+{
+ "id": "6",
+ "title": "Refuse a port that still targets the old game",
+ "part": "Neighbouring versions (1.21.x), Fabric and NeoForge",
+ "status": "done",
+ "text": "A port refuses to pass while it still targets the old game: packaged metadata is read back.",
+ "start": "2026-10-23",
+ "done": "2026-10-24"
+}

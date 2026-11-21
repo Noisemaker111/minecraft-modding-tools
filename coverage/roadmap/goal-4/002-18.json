@@ -1,0 +1,14 @@
+{
+ "id": "18",
+ "title": "Fabric → NeoForge on one mod",
+ "part": "Loader pairs",
+ "status": "done",
+ "text": "Fabric → NeoForge on one small mod, measured end to end.",
+ "start": "2027-01-04",
+ "target": "2027-01-29",
+ "measures": [
+  "loader.pairs-working"
+ ],
+ "done": "2026-11-14",
+ "result": "mmt convert moved Auto Omen (Fabric 26.3) to NeoForge with no hand edits, and its own in-game raid self test passed 23 of 23 checks there, the same as on Fabric. Pride Flags (Fabric 26.1.2, with Fabric data generation) moved too: on NeoForge its blocks, items, flammability, loot, recipes and rendered flags were checked in the game. The NeoForge Auto Omen converted back to Fabric passed the same self test."
+}

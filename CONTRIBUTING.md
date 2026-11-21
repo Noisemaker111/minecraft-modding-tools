@@ -45,7 +45,8 @@ Do whatever the licences and terms of service allow, and nothing past them.
 
 ## How the work runs
 
-The plan is the roadmap: `coverage/roadmap.json`, shown as `ROADMAP.md` and on the website. There is no other plan.
+The plan is the roadmap: `coverage/roadmap.json` (its goals) and `coverage/roadmap/goal-N/` (one file per step,
+`NNN-ID.json`, NNN its place in the goal), shown as `ROADMAP.md` and on the website. There is no other plan.
 In November 2026 the method for porting, converting and pack speed was each worked out mid-session and kept only in
 chat and in draft PRs that stayed open for days, so `main` went on teaching the method that had just been replaced
 and every new session started from it. These four steps keep that from happening.
@@ -73,7 +74,7 @@ and every new session started from it. These four steps keep that from happening
    the proof at the end of a PR, never what chooses the work. The third hand fix of the same kind still means stop
    and find what produces them.
 4. **Land it at the finish line.** One step is one PR. When the number reaches the finish line and is proven, merge.
-   The same PR marks the step done in `coverage/roadmap.json`, records the number, names the next step, and updates
+   The same PR marks the step done in its file (`python bench/record.py step ID done`), records the number, names the next step, and updates
    the workflow if the method changed, so `main` always holds the current method. A PR open for more than a few days
    had its finish line too far away: land what is proven and make the rest the next step.
 

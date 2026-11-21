@@ -1,0 +1,9 @@
+{
+ "id": "28",
+ "title": "Port a Paper plugin between versions",
+ "part": "Forge mods and Paper plugins",
+ "status": "later",
+ "text": "Port a Paper plugin between versions (SCOPE.md rung 5; config-only so far).",
+ "start": "2027-01-04",
+ "target": "2027-01-22"
+}

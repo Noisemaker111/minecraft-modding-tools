@@ -71,5 +71,11 @@ check(tb.state(m)[0] == "met", "reaching the target is met")
 check(M.fmt(36.5, "s") == "36.5 s" and M.fmt(165, "s", True) == "2.8 min" and M.fmt(1, "files") == "1 file", "number format")
 check(json.loads(M.dump(book.data)) == book.data, "dump round-trips")
 check(M.MEASURES.read_text(encoding="utf-8") == M.dump(M.load(M.MEASURES)), "coverage/measures.json is in the dump layout (one line per point)")
+# A step's file is named for its place and its id, and the goals file holds no steps: a step kept anywhere else is not read.
+for f in sorted(M.STEPS.glob("*/*")):
+    goal, (place, _, sid) = f.parent.name, f.stem.partition("-")
+    check(f.suffix == ".json" and place.isdigit() and M.load(f).get("id") == sid and any(f"goal-{g['id']}" == goal for g in book.roadmap["goals"]),
+          f"{f.relative_to(M.ROOT)} is not named NNN-ID.json for its step id, in a goal's folder")
+check(all("steps" not in g for g in M.load(M.ROADMAP)["goals"]), "coverage/roadmap.json lists no steps: each is a file in coverage/roadmap/goal-N/")
 
 print(f"{checks} measure checks passed")

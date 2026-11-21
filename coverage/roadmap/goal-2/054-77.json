@@ -1,0 +1,18 @@
+{
+ "id": "77",
+ "title": "A call whose constant picks its replacement, read per constant; a moved method reached through what holds it",
+ "part": "Port by changed game part",
+ "status": "done",
+ "done": "2026-11-21",
+ "text": "GameDiff votes a member's uses apart by the constant one operand passes (a static final field of its own type: an enum's constant, or 1.21.4's HoverEvent.Action.SHOW_TEXT): 1.21.5's new ClickEvent(SUGGEST_COMMAND, s) is new ClickEvent.SuggestCommand(s), new HoverEvent(SHOW_TEXT, v) is new HoverEvent.ShowText((Component) v), the cast to the type the game passed. A constant no game code passes is read from the new release's types: the one class, a kind of what the member gives, whose static value the enum builds the constant with (OPEN_URL with OpenUrl.CODEC), made by its one constructor that takes the other operands as they are or by a JDK maker with no checked exception (URI.create(s)). Per-constant readings win where constants read differently, so most uses passing one constant cannot outvote the rest. JarPort reads which constant each call passes (the verifier's stack, across jumps where every way in agrees) and takes that constant's reading; a new of a game class the update made abstract or an interface is held by a null until a replacement gives the value, or reported. A method the update moved to a class neither the call's nor its declaring class is (26.2's Gui.getChat() is Hud.getChat()) is called through the one public field or getter of the old class that holds the new one ($0.hud.getChat()), never on the old receiver; moved down to a subclass, it is reported. bench/learn_diff.py lists every reading a learner change adds, drops or changes against main, per update.",
+ "start": "2026-11-21",
+ "target": "2026-11-21",
+ "finish": "port.jar-links.newest up from 20, every update and big updates no lower except named false links, load on 26.3 server and client for newly linked standalone mods",
+ "wrongIf": "a mod making a chat click or hover event, or calling a moved Gui method, behaves differently in game from its old version",
+ "measures": [
+  "port.jar-links.newest",
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates"
+ ],
+ "result": "2026-11-21 (on #161): newest 20 -> 21 (NeoForge jump 14 -> 15: e4mc); every update 6,131 -> 6,132, big updates 1,965 -> 1,966: 1.21.4 -> 1.21.5 Fabric 32 -> 37 and NeoForge 36 -> 38, and 5 named false links now reported (calls on a receiver the new release does not have the method on: Almanac, veinminer and its client, euphoria-patches, continuity, mru). On the NeoForge jump the chat events held 32 mods (ClickEvent) and 28 (HoverEvent) before, 2 and 7 after. Real NeoForge 26.3: e4mc loads on the server and in the client (before the holder pass its client failed on gui.getChat() called on a Gui as Hud's, the same verifier error the named false links have). learn_diff over 21 NeoForge and 43 Fabric updates: no reading changed; new ones include the DensityFunctions.map(f, ABS) -> abs(f) family at 26.3 and the Gui -> Hud moves at 26.2."
+}

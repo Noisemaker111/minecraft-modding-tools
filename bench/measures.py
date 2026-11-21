@@ -1,4 +1,5 @@
-"""Every number mmt shows, in one format: coverage/measures.json, tied to coverage/roadmap.json.
+"""Every number mmt shows, in one format: coverage/measures.json, tied to the roadmap (coverage/roadmap.json, each
+step its own file in coverage/roadmap/GOAL/).
 
 A measure is one thing measured the same way each time (same work, same cache condition), with all
 its points and the target it is heading for. The roadmap page, ROADMAP.md and PR tables all read
@@ -21,6 +22,7 @@ import ledger_rule  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 MEASURES = ROOT / "coverage" / "measures.json"
 ROADMAP = ROOT / "coverage" / "roadmap.json"
+STEPS = ROOT / "coverage" / "roadmap"
 LEDGER = ROOT / "coverage" / "ledger.json"
 INDEX = ROOT / "coverage" / "changes" / "index.json"
 
@@ -35,6 +37,41 @@ def load(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_roadmap(path=ROADMAP, steps=STEPS):
+    """The roadmap with each goal's steps read from coverage/roadmap/goal-ID/NNN-STEP.json, in NNN order.
+
+    A step is a file of its own so two pull requests that each add or finish a step touch different files: as one list,
+    every new step went after the same last line and every merge to main conflicted the next open pull request."""
+    road = load(path)
+    for g in road["goals"]:
+        files = sorted((steps / f"goal-{g['id']}").glob("*.json"), key=lambda f: (int(f.name.split("-", 1)[0]), f.name))
+        g["steps"] = [load(f) for f in files]
+    return road
+
+
+def step_file(goal, position, step, steps=STEPS):
+    return steps / f"goal-{goal}" / f"{position:03d}-{step['id']}.json"
+
+
+def save_roadmap(road, path=ROADMAP, steps=STEPS):
+    """Writes load_roadmap's shape back: the goals without their steps, and one file per step, leaving a step's file
+    alone when its text did not change so an edit touches only the step it is about."""
+    keep = set()
+    for g in road["goals"]:
+        for i, step in enumerate(g["steps"], 1):
+            f = step_file(g["id"], i, step, steps)
+            text = json.dumps(step, indent=1, ensure_ascii=False) + "\n"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            if not f.is_file() or f.read_text(encoding="utf-8") != text:
+                f.write_text(text, encoding="utf-8", newline="\n")
+            keep.add(f)
+    for f in steps.glob("goal-*/*.json"):
+        if f not in keep:
+            f.unlink()
+    goals = [{k: v for k, v in g.items() if k != "steps"} for g in road["goals"]]
+    path.write_text(json.dumps({**road, "goals": goals}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+
+
 def dump(data):
     """JSON with every flat object (a point, a target) on one line, so a new point is a one-line diff."""
     text = json.dumps(data, indent=1, ensure_ascii=False)
@@ -47,7 +84,7 @@ class Book:
 
     def __init__(self, measures=None, roadmap=None, ledger=None, index=None):
         self.data = measures if measures is not None else load(MEASURES)
-        self.roadmap = roadmap if roadmap is not None else load(ROADMAP)
+        self.roadmap = roadmap if roadmap is not None else load_roadmap()
         self.ledger = ledger if ledger is not None else load(LEDGER)
         self.index = index if index is not None else (load(INDEX) if INDEX.is_file() else None)
         self.by_id = {m["id"]: m for m in self.data["measures"]}
@@ -343,6 +380,9 @@ def main(argv=None):
             return 1
         if m.get("computed"):
             print(f"{args.id} is computed from {m['computed']}; record the run there instead.", file=sys.stderr)
+            return 1
+        if m.get("recordedBy"):
+            print(f"{args.id} is recorded on main by {m['recordedBy']} after each merge; a pull request does not add its points.", file=sys.stderr)
             return 1
         p = {"date": args.date, "value": int(args.value) if args.value.is_integer() and m["unit"] != "s" else args.value}
         if args.n:

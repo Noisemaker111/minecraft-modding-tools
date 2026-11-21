@@ -1,0 +1,12 @@
+{
+ "id": "4",
+ "title": "NeoForge end to end: Zombie Apocalypse 1.21.1 → 1.21.4",
+ "part": "Neighbouring versions (1.21.x), Fabric and NeoForge",
+ "status": "done",
+ "text": "Second loader end to end: NeoForge ZombieApocalypseAddon 1.21.1 → 1.21.4 with no hand edits; its `/za` command runs in a 1.21.4 world.",
+ "start": "2026-10-24",
+ "done": "2026-10-24",
+ "measures": [
+  "port.updates-working.neoforge"
+ ]
+}

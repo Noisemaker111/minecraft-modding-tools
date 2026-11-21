@@ -1,0 +1,16 @@
+{
+ "id": "61",
+ "title": "Calls on a moved screen's parameter follow the game's own rewrite",
+ "part": "Port by changed game part",
+ "status": "done",
+ "done": "2026-11-20",
+ "text": "Inside an override moved to the game's new parameter types (step 59), the mod's old code still calls things on the parameter it worked out (font.draw(pose, ...), Screen.renderTooltip(pose, ...)). GameDiff.Retyped reads, from every pair of game methods whose parameter changed type, what the new body computes at such a call with the new parameter standing for the old one (graphics.drawString(font, text, x, y, color, false)), and JarPort writes the mod's call that way. The mod's own helpers and mixin handlers that the moved body passes the parameter to move too. exposure.py load starts Fabric mods that need only Fabric API, with the released Fabric API in the pack.",
+ "start": "2026-11-20",
+ "target": "2026-11-22",
+ "finish": "port.jar-links.every-update up from 5,838 with no update lower, and load --loader fabric on 1.19.4 -> 1.20 (server and client) showing every linked mod loads, Fabric API mods included",
+ "wrongIf": "a mod that links only through a rewritten call fails in a real game",
+ "measures": [
+  "port.jar-links.every-update"
+ ],
+ "result": "Every update 5,846 of 9,423, the same as main: Fabric 1.19.4 -> 1.20 42 -> 44 from rewritten screen calls, and FerriteCore no longer counted on 1.20.6 -> 1.21 (both loaders), whose mixin casts ModelResourceLocation to a ResourceLocation accessor. Real Fabric 1.20 server and client with Fabric API: every linked mod loads (21 on the server, 9 client-only, 30/30 in the client; Krypton loads alone and clashes with e4mc on 1.19.4 too). Real NeoForge 1.21: Necronomicon loads now that its dependency on forge asks for neoforge."
+}

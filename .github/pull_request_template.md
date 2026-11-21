@@ -1,4 +1,4 @@
-**Step and finish line:** the roadmap step (`coverage/roadmap.json`), its number today, and the number that ends
+**Step and finish line:** the roadmap step (`coverage/roadmap/goal-N/NNN-ID.json`), its number today, and the number that ends
 this PR.
 
 **Approach:** the method and why it finishes the whole step, not only the next case. What result would prove it
