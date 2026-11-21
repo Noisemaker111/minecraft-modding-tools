@@ -59,7 +59,7 @@ def jar_port():
            "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/tests/JarPortTest.java", "tools/tests/JarPortRulesTest.java",
            "tools/tests/JarPortFixesTest.java", "tools/tests/JarPortFabricTest.java", "tools/tests/ModNamesTest.java", "tools/tests/GameLearnTest.java",
            "tools/tests/GameMeaningTest.java", "tools/tests/JarPortLoaderTest.java", "tools/tests/GameRemovedTest.java", "tools/tests/JarPortRetypeTest.java", "tools/tests/JarPortFieldTest.java", "tools/tests/JarPortTakeoverTest.java",
-           "tools/tests/GameChainTest.java", "tools/tests/GameRetypedTest.java", "tools/tests/JarPortCarryTest.java", "tools/tests/GameSameCallTest.java", "tools/tests/GameSplitTest.java", "tools/tests/GameLateTest.java", "tools/tests/GameTypesTest.java"]
+           "tools/tests/GameChainTest.java", "tools/tests/GameRetypedTest.java", "tools/tests/JarPortCarryTest.java", "tools/tests/GameSameCallTest.java", "tools/tests/GameSplitTest.java", "tools/tests/GameLateTest.java", "tools/tests/GameTypesTest.java", "tools/tests/GameConstantTest.java"]
     yield java("-cp", str(out) + SEP + asm, "JarPortTest", str(out / "scratch"))
     yield java("-cp", str(out) + SEP + asm, "ModNamesTest")
     yield java("-cp", str(out) + SEP + asm, "GameLearnTest", str(out / "scratch"))
@@ -73,6 +73,7 @@ def jar_port():
     yield java("-cp", str(out) + SEP + asm, "GameSplitTest", str(out / "scratch"))
     yield java("-cp", str(out) + SEP + asm, "GameLateTest", str(out / "scratch"))
     yield java("-cp", str(out) + SEP + asm, "GameTypesTest", str(out / "scratch"))
+    yield java("-cp", str(out) + SEP + asm, "GameConstantTest", str(out / "scratch"))
 
 
 def console_accessor():
