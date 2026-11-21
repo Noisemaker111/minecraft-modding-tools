@@ -1062,6 +1062,9 @@ public final class JarPort {
      */
     record Bridge(String name, String desc, String target, String targetDesc, int[] from, int access, String[][] via) {}
 
+    /** In a Bridge's from: the old parameter is read from the object itself (this, then via's steps), not a new parameter. */
+    static final int THIS = -3;
+
     /** Collects an @Inject's method strings and @At values; at is the @At being read, or null. */
     static AnnotationVisitor injection(Injector inj, String[] at) {
         return new AnnotationVisitor(Opcodes.ASM9) {
@@ -1950,12 +1953,16 @@ public final class JarPort {
         // Looked up from the game classes the mod actually extends: a game subclass may keep the old name while its
         // ancestor renames it, and then the mod's method still overrides as written.
         List<String> supers = gameParents(mod, rc);
-        if (supers.stream().anyMatch(s -> Exposure.declaring(b, s, 'm', m.name, mapped) != null)) {
+        String[] took = moved[1].equals(m.name) && moved[2].equals(mapped) ? tookOver(mod, rc, m, supers) : null;
+        if (took != null) {
+            moved = took;
+        } else if (supers.stream().anyMatch(s -> Exposure.declaring(b, s, 'm', m.name, mapped) != null)) {
             return; // still overrides as written
         }
-        if (moved[2].equals(mapped) && supers.stream().anyMatch(s -> Exposure.declaring(b, s, 'm', moved[1], moved[2]) != null)) {
+        String[] to = moved;
+        if (moved[2].equals(mapped) && supers.stream().anyMatch(s -> Exposure.declaring(b, s, 'm', to[1], to[2]) != null)) {
             mod.renamedDecl.put(rc.name + "." + m.name + m.desc, new String[] { moved[1], moved[2] });
-            mod.change("override renamed");
+            mod.change(took != null ? "override moved where the game's own overrides moved" : "override renamed");
             return;
         }
         if (bridge(mod, rc, m, decl.owner(), moved, mapped, supers)) {
@@ -2032,7 +2039,7 @@ public final class JarPort {
             return null;
         }
         int[] paired = pair(now, was);
-        String[][] via = retype.conversions(iface, name, sam, moved, paired);
+        String[][] via = Retype.withoutThis(retype.conversions(iface, name, sam, moved, paired));
         boolean[] unread = unread(mod, holder.name, m.name, m.desc, (m.flags & Opcodes.ACC_STATIC) != 0, own.length);
         int k = caps.length - skip;
         Type[] params = new Type[k + now.length];
@@ -2063,6 +2070,180 @@ public final class JarPort {
             return new Bridge(m.name, newDesc, m.name, m.desc, from, m.flags | Opcodes.ACC_SYNTHETIC, null);
         }
         return new Bridge(m.name, newDesc, m.name, m.desc, from, m.flags, steps);
+    }
+
+    /**
+     * {owner, name, desc} (new names) of an abstract method the new release adds to a mod class's game supertypes that the
+     * game's own subclasses moved their override of the mod method's game method into (AbstractButton.renderWidget ->
+     * renderContents in 1.21.11, AbstractSelectionList.Entry.render -> renderContent in 1.21.9), when the class does not
+     * write it and the game no longer lets the old one be overridden (gone, or final; then the mod's method must not call
+     * the game's, which calls the new one). Null otherwise.
+     */
+    String[] tookOver(Mod mod, GameDiff.RawCls rc, GameDiff.RawMeth m, List<String> supers) {
+        String mapped = desc(m.desc);
+        for (String s : supers) {
+            GameDiff.Cls still = Exposure.declaring(b, s, 'm', m.name, mapped);
+            if (still != null && (still.methods.get(m.name + mapped).flags & Opcodes.ACC_FINAL) == 0) {
+                return null;
+            }
+        }
+        Deque<String> todo = new ArrayDeque<>(supers);
+        Set<String> seen = new HashSet<>();
+        while (!todo.isEmpty()) {
+            GameDiff.Cls k = b.classes.get(todo.poll());
+            if (k == null || !seen.add(k.name)) {
+                continue;
+            }
+            for (GameDiff.Meth n : k.methods.values()) {
+                String[] was = (n.flags & Opcodes.ACC_ABSTRACT) == 0 ? null : takeover(k.name, n);
+                if (was != null && was[0].equals(m.name) && was[1].equals(m.desc)) {
+                    why(rc.name + "." + m.name + m.desc, "T took " + n.name + " written=" + rc.methods.containsKey(n.name + oldDesc(n.desc)) + " super=" + callsSuper(mod, rc.name, m));
+                }
+                if (was != null && was[0].equals(m.name) && was[1].equals(m.desc) && !rc.methods.containsKey(n.name + oldDesc(n.desc))
+                    && !callsSuper(mod, rc.name, m)) {
+                    return new String[] { k.name, n.name, n.desc };
+                }
+            }
+            if (k.sup != null) {
+                todo.add(k.sup);
+            }
+            todo.addAll(k.ifaces);
+        }
+        return null;
+    }
+
+    final Map<String, Optional<String[]>> takeovers = new HashMap<>();
+
+    /**
+     * {name, desc} (old names) of the method the game's own subclasses of k overrode in the old release and no longer do
+     * in the new one, where they write k's new abstract method n instead: at least two, and most of those the old release
+     * had, agreeing. Null when they do not show one.
+     */
+    String[] takeover(String k, GameDiff.Meth n) {
+        return takeovers.computeIfAbsent(k + "." + n.name + n.desc, key -> {
+            Map<String, Integer> dropped = new HashMap<>();
+            Map<String, List<String>> by = new HashMap<>(); // dropped method -> the subclasses that dropped it
+            int had = 0;
+            for (GameDiff.Cls sub : b.classes.values()) {
+                GameDiff.Meth own = sub.methods.get(n.name + n.desc);
+                GameDiff.Cls old = a.classes.get(inverse.getOrDefault(sub.name, sub.name));
+                if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || sub.name.equals(k) || old == null || !subtype(b, sub.name, k)
+                    || old.methods.containsKey(n.name + oldDesc(n.desc))) {
+                    continue;
+                }
+                had++;
+                for (GameDiff.Meth om : old.methods.values()) {
+                    if (om.name.startsWith("<") || om.isStatic() || (om.flags & Opcodes.ACC_PRIVATE) != 0) {
+                        continue;
+                    }
+                    boolean overrides = old.sup != null && Exposure.declaring(a, old.sup, 'm', om.name, om.desc) != null
+                        || old.ifaces.stream().anyMatch(i -> Exposure.declaring(a, i, 'm', om.name, om.desc) != null);
+                    // No longer written under its own name (the route map may follow it to the new method: renderWidget ->
+                    // renderContents in each game button, while AbstractButton's final renderWidget stays).
+                    if (overrides && !sub.methods.containsKey(om.name + desc(om.desc))) {
+                        dropped.merge(om.name + om.desc, 1, Integer::sum);
+                        by.computeIfAbsent(om.name + om.desc, x -> new ArrayList<>()).add(sub.name);
+                    }
+                }
+            }
+            int total = had;
+            List<Map.Entry<String, Integer>> best = dropped.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).limit(2).toList();
+            if (best.isEmpty() || best.get(0).getValue() < 2 || best.get(0).getValue() * 10 < total * 8
+                || best.size() > 1 && best.get(1).getValue().equals(best.get(0).getValue())) {
+                return Optional.empty();
+            }
+            String sig = best.get(0).getKey();
+            String[] was = { sig.substring(0, sig.indexOf('(')), sig.substring(sig.indexOf('(')) };
+            // Methods that went at the same time are not one moved to the other (1.19.4 dropped changeFocus as it added
+            // visitWidgets): the subclasses' new bodies must be mostly their old ones.
+            return moved(by.get(sig), was, n) ? Optional.of(was) : Optional.empty();
+        }).orElse(null);
+    }
+
+    /**
+     * Whether most of the game subclasses' new bodies of n are their old bodies of was: at least half of each body's
+     * instructions in common, for most of them. False when the game's code cannot be read.
+     */
+    boolean moved(List<String> subs, String[] was, GameDiff.Meth n) {
+        GameCode oldCode = code(a), newCode = code(b);
+        if (oldCode == null || newCode == null) {
+            return false;
+        }
+        int alike = 0;
+        for (String sub : subs) {
+            Map<String, String> before = oldCode.bodies(inverse.getOrDefault(sub, sub), this::cls), now = newCode.bodies(sub, x -> x);
+            String x = before == null ? null : before.get(was[0] + desc(was[1])), y = now == null ? null : now.get(n.name + n.desc);
+            if (x != null && y != null && alike(x, y)) {
+                alike++;
+            }
+        }
+        return alike * 10 >= subs.size() * 8;
+    }
+
+    /** At least half of two bodies' instructions (as GameCode.bodies writes them) in common, counted as multisets. */
+    static boolean alike(String x, String y) {
+        Map<String, Integer> left = new HashMap<>();
+        String[] a = x.split(";"), b = y.split(";");
+        for (String t : a) {
+            left.merge(t, 1, Integer::sum);
+        }
+        int common = 0;
+        for (String t : b) {
+            Integer n = left.get(t);
+            if (n != null && n > 0) {
+                common++;
+                left.put(t, n - 1);
+            }
+        }
+        return common * 2 >= Math.max(a.length, b.length);
+    }
+
+    /**
+     * Whether a mod method reaches the game method of its own name and descriptor (super.name(...), or this.name(...) in
+     * a helper of the mod's it calls, a lambda included): moved to the game's new method, which the game's final old one
+     * calls, it would call itself back. A call that reaches another mod class's method of that name moves with it.
+     */
+    boolean callsSuper(Mod mod, String owner, GameDiff.RawMeth m) {
+        Deque<String[]> todo = new ArrayDeque<>(List.<String[]>of(new String[] { owner, m.name, m.desc }));
+        Set<String> seen = new HashSet<>();
+        boolean[] reaches = { false };
+        while (!todo.isEmpty() && !reaches[0]) {
+            String[] at = todo.poll();
+            byte[] bytes = mod.bytes.get(at[0]);
+            if (bytes == null || !seen.add(at[0] + "." + at[1] + at[2])) {
+                continue;
+            }
+            new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                    return !name.equals(at[1]) || !desc.equals(at[2]) ? null : new MethodVisitor(Opcodes.ASM9) {
+                        void call(String o, String n, String d) {
+                            Decl decl = o.startsWith("[") ? null : declaringOld(mod, o, 'm', n, d);
+                            if (n.equals(m.name) && d.equals(m.desc) && (decl == null || decl.game())) {
+                                reaches[0] = true;
+                            } else if (decl != null && !decl.game()) {
+                                todo.add(new String[] { decl.owner(), n, d });
+                            }
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int opcode, String o, String n, String d, boolean itf) {
+                            call(o, n, d);
+                        }
+
+                        @Override
+                        public void visitInvokeDynamicInsn(String n, String d, Handle bsm, Object... args) {
+                            for (Object arg : args) {
+                                if (arg instanceof Handle h) {
+                                    call(h.getOwner(), h.getName(), h.getDesc());
+                                }
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        }
+        return reaches[0];
     }
 
     /**
@@ -2109,6 +2290,8 @@ public final class JarPort {
         }
         int[] paired = pair(params, was);
         String[][] via = retype.conversions(gameOwner, m.name, m.desc, moved, paired);
+        why(rc.name + "." + m.name + m.desc, "B moved=" + Arrays.toString(moved) + " paired=" + Arrays.toString(paired) + " via=" + (via == null ? null : Arrays.deepToString(via))
+            + " unread=" + Arrays.toString(unread));
         from = new int[was.length];
         String[][] steps = new String[was.length][];
         for (int i = 0; i < was.length; i++) {
@@ -2283,6 +2466,7 @@ public final class JarPort {
      * Recipe.placementInfo()); one it does not is reported, never filled in.
      */
     void abstracts(Mod mod, GameDiff.RawCls rc) {
+        finals(mod, rc);
         if ((rc.flags & (Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT)) != 0) {
             return;
         }
@@ -2345,6 +2529,38 @@ public final class JarPort {
                 if ((m.flags & Opcodes.ACC_ABSTRACT) != 0 && !written.contains(m.name + m.desc) && !OBJECT.contains(m.name + m.desc) && !generic(supers, m)
                     && !alreadyAbstract(k, m) && !before.contains(m.name + oldDesc(m.desc))) {
                     mod.unlinked.add("abstract method not written: " + Exposure.dotted(k.name) + "." + m.name + m.desc + " (in " + Exposure.dotted(rc.name) + ")");
+                }
+            }
+        }
+    }
+
+    /**
+     * A method of a mod class still overriding one the new release made final (1.21.11's AbstractButton.renderWidget) is
+     * reported: the JVM refuses the class. One the old release had final too was overridden all the same (a mod's access
+     * widener or the loader's transformer opens it), and that stays as it was.
+     */
+    void finals(Mod mod, GameDiff.RawCls rc) {
+        List<String> supers = gameParents(mod, rc);
+        List<String> was = new ArrayList<>();
+        for (GameDiff.RawCls c = rc; c != null; c = c.sup == null ? null : mod.classes.get(c.sup)) {
+            if (c.sup != null && !mod.classes.containsKey(c.sup)) {
+                was.add(c.sup);
+            }
+            c.ifaces.stream().filter(i -> !mod.classes.containsKey(i)).forEach(was::add);
+        }
+        for (GameDiff.RawMeth m : rc.methods.values()) {
+            if (m.name.startsWith("<") || (m.flags & (Opcodes.ACC_STATIC | Opcodes.ACC_PRIVATE)) != 0 || mod.renamedDecl.containsKey(rc.name + "." + m.name + m.desc)) {
+                continue;
+            }
+            String mapped = desc(m.desc);
+            boolean finalBefore = was.stream().map(s -> Exposure.declaring(a, s, 'm', m.name, m.desc))
+                .anyMatch(k -> k != null && (k.methods.get(m.name + m.desc).flags & Opcodes.ACC_FINAL) != 0);
+            for (String s : finalBefore ? List.<String>of() : supers) {
+                GameDiff.Cls k = Exposure.declaring(b, s, 'm', m.name, mapped);
+                GameDiff.Meth over = k == null ? null : k.methods.get(m.name + mapped);
+                if (over != null && (over.flags & Opcodes.ACC_FINAL) != 0 && (over.flags & (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC)) == 0) {
+                    mod.unlinked.add("final method overridden: " + Exposure.dotted(k.name) + "." + m.name + mapped + " (in " + Exposure.dotted(rc.name) + ")");
+                    break;
                 }
             }
         }
@@ -3204,7 +3420,7 @@ public final class JarPort {
                 if (from == null) {
                     // Arguments that changed type: worked out from the new ones as the game's own overrides do (Retype).
                     int[] paired = pair(now, was);
-                    String[][] learned = retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired);
+                    String[][] learned = Retype.withoutThis(retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired));
                     from = new int[captured];
                     for (int i = 0; i < captured; i++) {
                         if (paired[i] >= 0) {
@@ -4022,6 +4238,20 @@ public final class JarPort {
         }
 
         static final String[][] NONE = new String[0][];
+
+        /** Readings without what an overriding method's this answers, for code that runs without that object (a lambda, a mixin). */
+        static String[][] withoutThis(String[][] via) {
+            if (via == null) {
+                return null;
+            }
+            String[][] out = via.clone();
+            for (int i = 0; i < out.length; i++) {
+                if (out[i] != null && Integer.parseInt(out[i][0]) == THIS) {
+                    out[i] = null;
+                }
+            }
+            return out;
+        }
         final Map<String, Map<String, Integer>> pool = new HashMap<>(); // "new type>old type" -> steps -> the game's uses
         final Set<String> pooledPairs = new HashSet<>();
         boolean filling;
@@ -4119,7 +4349,7 @@ public final class JarPort {
             for (int i = 0; i < was.length; i++) {
                 for (var e : votes.get(i).entrySet()) {
                     String[] parts = e.getKey().split(" ", 2);
-                    if (parts.length == 2) {
+                    if (parts.length == 2 && Integer.parseInt(parts[0]) != THIS) {
                         pool.computeIfAbsent(now[Integer.parseInt(parts[0])].getDescriptor() + ">" + desc(was[i].getDescriptor()), k -> new HashMap<>())
                             .merge(parts[1], e.getValue(), Integer::sum);
                     }
@@ -4206,7 +4436,7 @@ public final class JarPort {
             while (steps.size() < 6 && (n.kids.length == 1 && (n.op == 'v' && n.value == null && n.ref.desc().startsWith("()") || n.op == 'f'
                 || n.op == 'x' && CONVERT.containsKey(n.kids[0].type + n.type)) || constantArguments(n))) {
                 steps.push(switch (n.op) {
-                    case 'v' -> "m:" + n.ref.owner() + "." + n.ref.name() + n.ref.desc();
+                    case 'v' -> "m:" + declarer(n.ref.owner(), n.ref.name(), n.ref.desc()) + "." + n.ref.name() + n.ref.desc();
                     case 'f' -> "f:" + n.ref.owner() + "." + n.ref.name() + ":" + n.ref.desc();
                     default -> "x:" + n.kids[0].type + n.type; // charTyped's char from the event's int code point
                 });
@@ -4217,12 +4447,23 @@ public final class JarPort {
                 n = n.kids[0];
             }
             Integer j = n.op == 'p' && n.value instanceof Integer slot ? newParam.get(slot) : null;
+            // What the object itself now answers where the old method was told it (1.21.9: an entry's top, which render
+            // took as a parameter, is this.getContentY() in renderContent).
+            if (j == null && n.op == 'p' && Integer.valueOf(0).equals(n.value) && !steps.isEmpty()) {
+                j = THIS;
+            }
             // The new parameter itself is a conversion only where it is the old one's very type at another place
             // (mouseDragged's drag distances after the event that replaced x, y and button).
             if (j == null || steps.isEmpty() && !m.type.equals(desc(wanted.getDescriptor()))) {
                 return null;
             }
             return steps.isEmpty() ? String.valueOf(j) : j + " " + String.join(" ", steps);
+        }
+
+        /** The class of the new release that declares a method a call names, so one call made through subclasses reads alike. */
+        String declarer(String owner, String name, String desc) {
+            GameDiff.Cls holder = Exposure.declaring(b, owner, 'm', name, desc);
+            return holder == null ? owner : holder.name;
         }
 
         /** An instance call on one value whose other arguments are all primitive constants. */
@@ -4959,7 +5200,7 @@ public final class JarPort {
         /** Whether a call's arguments include an old parameter the body has only a default for. */
         boolean defaulted(Type[] args) {
             Integer[] src = track.sources(args);
-            return src != null && Arrays.stream(src).anyMatch(s -> s != null && br.from()[s] < 0);
+            return src != null && Arrays.stream(src).anyMatch(s -> s != null && br.from()[s] == -1);
         }
 
         @Override
@@ -4967,7 +5208,10 @@ public final class JarPort {
             super.visitCode();
             for (int i = 0; i < was.length; i++) {
                 int f = br.from()[i];
-                if (f < 0) {
+                if (f == THIS) {
+                    mv.visitVarInsn(Opcodes.ALOAD, 0);
+                    steps(mv, br.via()[i]);
+                } else if (f < 0) {
                     pushDefault(mv, was[i]);
                 } else {
                     loadNew(f);

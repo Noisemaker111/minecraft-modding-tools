@@ -937,6 +937,24 @@
       "port.jar-links.big-updates"
      ],
      "result": "2026-11-21 (on #157): newest 18 -> 19 (NeoForge jump 12 -> 13: Coroutil); every update 6,124 -> 6,134, big updates 1,958 -> 1,968 (1.21.10 -> 1.21.11 Fabric 40 -> 43, NeoForge 50 -> 56; 26.2 -> 26.3 NeoForge 46 -> 47), none lower; 'call, game: template' finishes 32 -> 28, mods 1,100 -> 1,085. Real NeoForge 26.3: Coroutil loads on the server and in the client. Ten releases' learned lines diffed against main's learner: no reading lost, and two wrong old ones replaced (setLootTable(ResourceKey.createRegistryKey(id)) is now ResourceKey.create(Registries.LOOT_TABLE, id); several null arguments are now the argument)."
+    },
+    {
+     "id": "76",
+     "title": "Abstract methods the update added: the body the game's own subclasses moved",
+     "part": "Port by type of break",
+     "status": "done",
+     "done": "2026-11-21",
+     "text": "The type `abstract method not written, game: not read`. Where the new release adds an abstract method and the game's own subclasses stopped overriding an old one to write it instead (AbstractButton.renderWidget -> renderContents in 1.21.11, AbstractWidget.updateNarration -> updateWidgetNarration in 1.19.3), and the old one is gone or final, a mod's override moves the same way: renamed when the signature is the same, else moved with each old parameter worked out as the game's moved overrides do. An old parameter the object itself now answers is read from it (1.21.9: an entry's top is this.getContentY() in renderContent). Guards: the subclasses' new bodies must be mostly their old ones, and a mod method reaching the now-final one (itself, through a helper or a lambda) stays reported. A mod method still overriding a method the update made final is reported. No game method of the type has one body every implementer writes, so no body is copied.",
+     "start": "2026-11-21",
+     "target": "2026-11-22",
+     "finish": "the type's finishes and mods counts fall, newest and big-updates up, load on a real server and client where it frees the most",
+     "wrongIf": "a mod this frees fails in a real game",
+     "measures": [
+      "port.jar-links.every-update",
+      "port.jar-links.big-updates",
+      "port.jar-links.newest"
+     ],
+     "result": "Type finishes 39 -> 29, mods 750 -> 700. Every update 6,134 -> 6,131, big updates 1,968 -> 1,965 (9 freed, 12 false links caught: mods overriding 1.20.3's now-final AbstractWidget.render and 1.21.11's AbstractButton.renderWidget), newest 19 -> 20 (Terralith on NeoForge 1.21.1 -> 26.3). Real Fabric 1.19.3 server and client: Better Advancements (its narration override moved) loads in both, every client mod loads (28 of 28). Real Fabric 1.21.9 server and client: MidnightLib (its list entries' render moved) loads in both."
     }
    ]
   },
