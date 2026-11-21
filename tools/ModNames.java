@@ -502,6 +502,7 @@ public final class ModNames {
             final Set<String> methods = new HashSet<>(); // name + desc
             final Set<String> fields = new HashSet<>();
             final Set<String> accessors = new HashSet<>(); // @Accessor/@Invoker methods: their own names stay
+            final Set<String> closed = new HashSet<>(); // private or static methods, which override nothing
             final List<String> targets = new ArrayList<>(); // a mixin's target classes
         }
 
@@ -510,7 +511,14 @@ public final class ModNames {
             final Map<String, Own> own = new HashMap<>();
             final Map<String, String> renamed = new HashMap<>(); // class.name+desc or class.name -> intermediary
 
+            final Map<String, Set<String>> originals; // class -> its method names in the jar as it came, in intermediary
+
             Jar(Collection<byte[]> classFiles) {
+                this(classFiles, Map.of());
+            }
+
+            Jar(Collection<byte[]> classFiles, Map<String, Set<String>> originals) {
+                this.originals = originals;
                 for (byte[] bytes : classFiles) {
                     read(bytes);
                 }
@@ -533,6 +541,9 @@ public final class ModNames {
                         String hit = o.targets.stream().map(t -> game('m', t, bare, desc)).filter(Objects::nonNull).findFirst().orElse(null);
                         if (hit == null) {
                             hit = inherited(e.getKey(), bare, desc);
+                        }
+                        if (hit == null) {
+                            hit = original(e.getKey(), bare, desc);
                         }
                         if (hit != null) {
                             above(e.getKey(), m, name.substring(0, name.length() - bare.length()) + hit, new HashSet<>());
@@ -579,6 +590,9 @@ public final class ModNames {
                     @Override
                     public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
                         o.methods.add(name + desc);
+                        if ((access & (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC)) != 0) {
+                            o.closed.add(name + desc);
+                        }
                         return new MethodVisitor(Opcodes.ASM9) {
                             @Override
                             public AnnotationVisitor visitAnnotation(String d, boolean visible) {
@@ -590,6 +604,21 @@ public final class ModNames {
                         };
                     }
                 }, ClassReader.SKIP_CODE);
+            }
+
+            /**
+             * The intermediary name the class itself gave a method in the jar as it came, where its supertypes cannot be
+             * followed to the game (another mod's class between): of the game's methods named so in Mojang's names, the
+             * one id the class already used. Intermediary ids hold across releases. Null when that is not one.
+             */
+            String original(String cls, String name, String desc) {
+                Set<String> had = originals.get(cls);
+                Set<String> ids = had == null ? null : byMojang().get(name + desc);
+                if (ids == null) {
+                    return null;
+                }
+                List<String> both = ids.stream().filter(had::contains).toList();
+                return both.size() == 1 ? both.get(0) : null;
             }
 
             /** The intermediary name of a game method a mod class inherits through its own supertypes, or null. */
@@ -672,6 +701,131 @@ public final class ModNames {
 
         /** One jar, nested jars included, in the names Fabric runs. */
         byte[] jar(byte[] bytes) throws IOException {
+            return jar(bytes, Map.of());
+        }
+
+        byte[] jar(byte[] bytes, Map<String, Set<String>> originals) throws IOException {
+            return jar(bytes, new Jar(classesIn(bytes), originals));
+        }
+
+        Set<String> gameNames; // name + desc (Mojang) of every game method whose intermediary name is another
+        Map<String, Set<String>> byMojang; // name + desc (Mojang) -> the intermediary names game methods so named have
+
+        Map<String, Set<String>> byMojang() {
+            if (byMojang == null) {
+                byMojang = new HashMap<>();
+                methods.forEach((key, inter) -> byMojang.computeIfAbsent(key.substring(key.lastIndexOf('.', key.indexOf('(')) + 1), k -> new HashSet<>()).add(inter));
+            }
+            return byMojang;
+        }
+
+        /** Each class's method names in a jar (its nested jars' included), as it came: in intermediary for a Fabric jar. */
+        static Map<String, Set<String>> methodNames(byte[] jar) throws IOException {
+            Map<String, Set<String>> out = new HashMap<>();
+            for (byte[] bytes : classesIn(jar)) {
+                ClassReader r = new ClassReader(bytes);
+                Set<String> names = out.computeIfAbsent(r.getClassName(), k -> new HashSet<>());
+                r.accept(new ClassVisitor(Opcodes.ASM9) {
+                    @Override
+                    public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                        names.add(name);
+                        return null;
+                    }
+                }, ClassReader.SKIP_CODE);
+            }
+            return out;
+        }
+
+        /**
+         * The methods (class.name+desc, Mojang names) the hand-back would leave in Mojang names though the game has a
+         * method of that name and descriptor named otherwise in intermediary, in a class whose supertypes reach one the
+         * hand-back cannot read (another mod's, not in this jar): if it overrides that game method, Fabric never calls it
+         * (AbstractMethodError), and nothing here can tell which intermediary name it needs.
+         */
+        List<String> gaps(byte[] bytes, Map<String, Set<String>> originals) throws IOException {
+            if (gameNames == null) {
+                gameNames = new HashSet<>();
+                methods.forEach((key, inter) -> {
+                    String nameDesc = key.substring(key.lastIndexOf('.', key.indexOf('(')) + 1);
+                    if (!nameDesc.startsWith(inter + "(")) {
+                        gameNames.add(nameDesc);
+                    }
+                });
+            }
+            Jar jar = new Jar(classesIn(bytes), originals);
+            List<String> out = new ArrayList<>();
+            for (var e : jar.own.entrySet()) {
+                Own o = e.getValue();
+                String unseen = o.targets.isEmpty() ? unseen(jar, e.getKey()) : null;
+                if (unseen == null) {
+                    continue;
+                }
+                Set<String> had = originals.get(e.getKey());
+                for (String m : o.methods) {
+                    // Only a descriptor naming the game's own types tells an override apart from a name another library
+                    // shares; and a name the class already had in the jar as it came was its own, not an intermediary one.
+                    if (!m.startsWith("<") && !o.accessors.contains(m) && !o.closed.contains(m) && !jar.renamed.containsKey(e.getKey() + "." + m)
+                        && gameNames.contains(m) && GAME_TYPE.matcher(m.substring(m.indexOf('('))).find() && (had == null || !had.contains(m.substring(0, m.indexOf('('))))) {
+                        out.add(e.getKey().replace('/', '.') + "." + m + " (through " + unseen.replace('/', '.') + ")");
+                    }
+                }
+            }
+            Collections.sort(out);
+            return out;
+        }
+
+        static final java.util.regex.Pattern GAME_TYPE = java.util.regex.Pattern.compile("L(net/minecraft/|com/mojang/blaze3d/)");
+
+        /** Packages of the JDK and of what the loader itself runs on, which never extend the game, and the game's own. */
+        static final List<String> LIBRARIES = List.of("java/", "javax/", "jdk/", "sun/", "org/spongepowered/", "com/llamalad7/mixinextras/", "org/objectweb/asm/",
+            "net/fabricmc/", "kotlin/", "kotlinx/", "scala/",
+            "net/minecraft/", "com/mojang/"); // a game class the release does not have is reported as gone already
+
+        /** The first supertype of a mod class the hand-back cannot read (not the jar's, not the game's or its platform's, not the JDK's), or null. */
+        String unseen(Jar jar, String cls) {
+            Deque<String> queue = new ArrayDeque<>(List.of(cls));
+            Set<String> seen = new HashSet<>();
+            while (!queue.isEmpty()) {
+                String c = queue.poll();
+                if (!seen.add(c)) {
+                    continue;
+                }
+                Own o = jar.own.get(c);
+                if (o != null) {
+                    if (o.sup != null) {
+                        queue.add(o.sup);
+                    }
+                    queue.addAll(o.ifaces);
+                    continue;
+                }
+                if (game.classes.containsKey(c) || LIBRARIES.stream().anyMatch(c::startsWith)) {
+                    continue;
+                }
+                return c;
+            }
+            return null;
+        }
+
+        /**
+         * Every class a jar carries, its nested jars' included: a mod class may reach the game through a library nested
+         * beside it (Enhanced Block Entities' pack implements PackResources through the ARRP it nests), so the hand-back
+         * reads them all as one, and gives the outer jar and every nested one the same names.
+         */
+        static List<byte[]> classesIn(byte[] bytes) throws IOException {
+            List<byte[]> out = new ArrayList<>();
+            try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+                for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
+                    if (e.getName().endsWith(".class") && !e.getName().startsWith("META-INF/versions/")) {
+                        out.add(zip.readAllBytes());
+                    } else if (e.getName().endsWith(".jar")) {
+                        out.addAll(classesIn(zip.readAllBytes()));
+                    }
+                }
+            }
+            return out;
+        }
+
+        byte[] jar(byte[] bytes, Jar shared) throws IOException {
             Map<String, byte[]> entries = new LinkedHashMap<>();
             Map<String, Long> times = new HashMap<>();
             try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
@@ -698,8 +852,7 @@ public final class ModNames {
             }
             String widener = meta.get("accessWidener") instanceof String w ? w : null;
             Set<String> refmaps = refmapFiles(entries);
-            List<byte[]> classFiles = entries.entrySet().stream().filter(e -> e.getKey().endsWith(".class")).map(Map.Entry::getValue).toList();
-            Jar jar = new Jar(classFiles);
+            Jar jar = shared;
             Map<String, byte[]> out = new LinkedHashMap<>();
             for (var e : entries.entrySet()) {
                 String name = e.getKey();
@@ -716,7 +869,7 @@ public final class ModNames {
                         // left as it is
                     }
                 } else if (nested.contains(name)) {
-                    data = jar(data);
+                    data = jar(data, jar);
                 } else if (name.equals(widener)) {
                     data = widener(new String(data, StandardCharsets.UTF_8), jar).getBytes(StandardCharsets.UTF_8);
                 } else if (refmaps.contains(name)) {

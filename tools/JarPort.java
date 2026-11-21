@@ -322,6 +322,7 @@ public final class JarPort {
     public static void main(String[] args) throws Exception {
         String from = null, to = null, map = null, out = null, loader = null, report = null, book = null;
         boolean runtime = false;
+        Path originalsDir = null;
         List<Path> jars = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -334,6 +335,7 @@ public final class JarPort {
                 case "--report" -> report = args[++i];
                 case "--fixes" -> book = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
+                case "--originals" -> originalsDir = Path.of(args[++i]);
                 default -> jars.add(Path.of(args[i]));
             }
         }
@@ -346,6 +348,7 @@ public final class JarPort {
             port.loader = loader;
         }
         port.runtimeNames = runtime;
+        port.originalsDir = originalsDir;
         if ("fabric".equals(loader)) {
             port.platform(Exposure.fabricApi(from), Exposure.fabricApi(to));
         }
@@ -415,12 +418,24 @@ public final class JarPort {
     /** A whole jar, nested mods included; each jar's result is added to results. */
     byte[] port(byte[] jar, String name, List<Map<String, Object>> results) throws IOException {
         boolean fabric = loader.equals("fabric");
+        // The jar's own intermediary method names, which the hand-back gives back where it cannot follow a class to the game:
+        // from the jar, or from the jar as it came where it was read into Mojang's names before (--originals).
+        Path came = originalsDir == null ? null : originalsDir.resolve(name);
+        Map<String, Set<String>> originals = !fabric ? Map.of() : intermediary(jar) ? ModNames.Back.methodNames(jar)
+            : came != null && Files.isRegularFile(came) ? ModNames.Back.methodNames(Files.readAllBytes(came)) : Map.of();
         if (fabric && compareVersions(a.version, UNOBFUSCATED) < 0 && intermediary(jar)) {
             jar = fabricIn().jar(jar, new ModNames.Counts());
         }
         byte[] out = port(jar, name, results, null);
+        if (fabric && compareVersions(b.version, UNOBFUSCATED) < 0 && !results.isEmpty()) {
+            // Fabric runs the jar in intermediary: a method whose name the hand-back cannot give is never called.
+            @SuppressWarnings("unchecked") List<Object> unlinked = (List<Object>) results.get(results.size() - 1).get("unlinked");
+            for (String gap : handBack() instanceof ModNames.Back back ? back.gaps(out, originals) : List.<String>of()) {
+                unlinked.add("method name lost in the Fabric hand-back: " + gap);
+            }
+        }
         if (fabric && runtimeNames && compareVersions(b.version, UNOBFUSCATED) < 0) {
-            out = fabricOut().jar(out);
+            out = fabricOut().jar(out, originals);
         }
         return out;
     }
@@ -429,6 +444,7 @@ public final class JarPort {
     static final String UNOBFUSCATED = "26.1";
 
     boolean runtimeNames; // hand a Fabric jar back in the names Fabric runs, not Mojang's
+    Path originalsDir; // where each jar is as it came, by its file name, when the jars given were read into Mojang's names first
     ModNames in;
     ModNames.Back out;
 
@@ -439,6 +455,21 @@ public final class JarPort {
             throw new IOException("Fabric's intermediary names for " + a.version + " could not be read: " + unreadable.getMessage(), unreadable);
         }
     }
+
+    /** The hand-back to the target's intermediary, or null where a release has none to read (a test's made-up one). */
+    ModNames.Back handBack() {
+        if (handBackMissing) {
+            return null;
+        }
+        try {
+            return fabricOut();
+        } catch (IOException unreadable) {
+            handBackMissing = true;
+            return null;
+        }
+    }
+
+    boolean handBackMissing;
 
     ModNames.Back fabricOut() throws IOException {
         try {

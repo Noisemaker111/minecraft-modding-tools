@@ -168,6 +168,53 @@ final class JarPortFabricTest {
             "on the JVM: the subclass calls the extendable constructor, the game's generic method answers, the Fabric rule's "
                 + "replacement runs, the game calls the mod's override through its intermediary name, and a lambda for the mod's "
                 + "interface answers the game interface's: " + trace);
+        handBack();
+    }
+
+    /**
+     * The hand-back to intermediary for a class that reaches the game through a library nested in the jar (named as the
+     * game's method, the library read with the jar), and for one that reaches it through another mod's class it cannot
+     * read: named as the class itself named it in the jar as it came, else reported.
+     */
+    static void handBack() throws Exception {
+        GameDiff.Snap game = new GameDiff.Snap("2.0");
+        JarPortTest.snap(game, "net/minecraft/world/Item", 0, null);
+        JarPortTest.snap(game, "net/minecraft/world/Thing", Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, null, "make()Lnet/minecraft/world/Item;");
+        ModNames.Back back = new ModNames.Back(Map.of(), Map.of("net/minecraft/world/Thing.make()Lnet/minecraft/world/Item;", "method_100"), Map.of(), game);
+        java.util.function.Function<String[], byte[]> maker = c -> JarPortTest.real(c[0], c[1], 0, c.length > 2 ? new String[] { c[2] } : new String[0], w -> {
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "make", "()Lnet/minecraft/world/Item;", null, null);
+            m.visitCode();
+            m.visitInsn(Opcodes.ACONST_NULL);
+            m.visitInsn(Opcodes.ARETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        });
+        byte[] nested = JarPortTest.jar(Map.of("m6x/Pack.class", maker.apply(new String[] { "m6x/Pack", "java/lang/Object", "lib/Lib" }),
+            "fabric.mod.json", "{\"id\": \"m6x\", \"jars\": [{\"file\": \"META-INF/jars/lib.jar\"}]}".getBytes(StandardCharsets.UTF_8),
+            "META-INF/jars/lib.jar", JarPortTest.jar(Map.of("lib/Lib.class",
+                JarPortTest.empty("lib/Lib", Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "java/lang/Object", "net/minecraft/world/Thing")))));
+        JarPortTest.expect(new ClassReader(JarPortTest.entries(back.jar(nested)).get("m6x/Pack.class")).getClassName().equals("m6x/Pack")
+            && methods(JarPortTest.entries(back.jar(nested)).get("m6x/Pack.class")).contains("method_100()Lnet/minecraft/world/Item;"),
+            "a class reaching the game through a library nested in its jar gets the game method's intermediary name: " + methods(JarPortTest.entries(back.jar(nested)).get("m6x/Pack.class")));
+
+        byte[] other = JarPortTest.jar(Map.of("m6x/Other.class", maker.apply(new String[] { "m6x/Other", "other/Base" })));
+        List<String> gaps = back.gaps(other, Map.of());
+        List<String> none = back.gaps(other, Map.of("m6x/Other", Set.of("method_100")));
+        Set<String> named = methods(JarPortTest.entries(back.jar(other, Map.of("m6x/Other", Set.of("method_100")))).get("m6x/Other.class"));
+        JarPortTest.expect(gaps.equals(List.of("m6x.Other.make()Lnet/minecraft/world/Item; (through other.Base)")) && none.isEmpty() && named.contains("method_100()Lnet/minecraft/world/Item;"),
+            "one reaching it through another mod's class takes the name it had in the jar as it came, and without that is reported: " + gaps + " " + none + " " + named);
+    }
+
+    static Set<String> methods(byte[] bytes) {
+        Set<String> out = new TreeSet<>();
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                out.add(name + desc);
+                return null;
+            }
+        }, ClassReader.SKIP_CODE);
+        return out;
     }
 
     static void statics(GameDiff.Snap s, String name, String method) {

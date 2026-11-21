@@ -406,6 +406,9 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False):
     out_dir.mkdir(parents=True, exist_ok=True)
     args = [java(), "-Xmx10g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--map", str(route), "--fixes", str(ROOT / "knowledge" / "fixes.json"), "--out", str(out_dir),
             "--loader", loader] + (["--runtime-names"] if runtime else [])
+    if shipped_obfuscated(loader, frm):
+        # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
+        args += ["--originals", str(HOME / "jars" / f"{loader}-{frm}")]
     rows = side_by_side(args, jars, report)
     counts = {}
     for m in rows:
