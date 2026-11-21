@@ -50,30 +50,46 @@ final class Port {
      */
     int revertRejectedAnswers(Path log) throws IOException {
         if (answersWritten.isEmpty()) return 0;
-        Map<String, List<Integer>> errorLines = new HashMap<>();
+        Map<String, Set<Integer>> errorLines = new HashMap<>();
         for (Object o : errors(log)) {
             var e = Json.object(o);
-            errorLines.computeIfAbsent(Path.of(Json.text(e, "file", "")).toAbsolutePath().normalize().toString(), k -> new ArrayList<>()).add(((Number) e.get("line")).intValue());
+            errorLines.computeIfAbsent(Path.of(Json.text(e, "file", "")).toAbsolutePath().normalize().toString(), k -> new HashSet<>()).add(((Number) e.get("line")).intValue());
         }
         Map<String, List<Map<String, Object>>> byFile = new LinkedHashMap<>();
-        for (var w : answersWritten) {
-            String file = Path.of(Json.text(w, "file", "")).toAbsolutePath().normalize().toString();
-            int line = ((Number) w.get("line")).intValue(), end = ((Number) w.get("endLine")).intValue();
-            if (errorLines.getOrDefault(file, List.of()).stream().anyMatch(l -> l >= line && l <= end)) byFile.computeIfAbsent(file, k -> new ArrayList<>()).add(w);
-        }
+        for (var w : answersWritten) byFile.computeIfAbsent(Path.of(Json.text(w, "file", "")).toAbsolutePath().normalize().toString(), k -> new ArrayList<>()).add(w);
         int reverted = 0;
         for (var e : byFile.entrySet()) {
+            Set<Integer> lines = errorLines.getOrDefault(e.getKey(), Set.of());
+            if (lines.isEmpty()) continue;
             Path file = Path.of(e.getKey());
             String text = Files.readString(file, StandardCharsets.UTF_8);
-            List<Map<String, Object>> sites = new ArrayList<>(e.getValue());
-            sites.sort(Comparator.comparingInt((Map<String, Object> w) -> ((Number) w.get("start")).intValue()).reversed());
-            for (var w : sites) {
-                int start = ((Number) w.get("start")).intValue(), end = ((Number) w.get("end")).intValue();
-                if (end > text.length()) continue;
-                text = text.substring(0, start) + Json.text(w, "original", "") + text.substring(end);
+            // Later steps (the preflight's renames) may have moved the text since it was written: each answer is found
+            // where its written text still stands, at its place or as the one such text in the file, and is left alone
+            // otherwise. One the compiler reports an error on is put back.
+            List<int[]> back = new ArrayList<>(); // start, length, index into sites
+            List<Map<String, Object>> sites = e.getValue();
+            for (int k = 0; k < sites.size(); k++) {
+                var w = sites.get(k);
+                String written = Json.text(w, "text", "");
+                int start = ((Number) w.get("start")).intValue();
+                if (written.isEmpty()) continue;
+                if (!text.startsWith(written, start)) {
+                    int found = text.indexOf(written);
+                    if (found < 0 || text.indexOf(written, found + 1) >= 0) continue;
+                    start = found;
+                }
+                int first = 1 + (int) text.substring(0, start).chars().filter(c -> c == '\n').count();
+                int last = first + (int) written.chars().filter(c -> c == '\n').count();
+                boolean rejected = false;
+                for (int l = first; l <= last && !rejected; l++) rejected = lines.contains(l);
+                if (rejected) back.add(new int[] { start, written.length(), k });
+            }
+            back.sort(Comparator.comparingInt((int[] b) -> b[0]).reversed());
+            for (int[] b : back) {
+                text = text.substring(0, b[0]) + Json.text(sites.get(b[2]), "original", "") + text.substring(b[0] + b[1]);
                 reverted++;
             }
-            Files.writeString(file, text, StandardCharsets.UTF_8);
+            if (!back.isEmpty()) Files.writeString(file, text, StandardCharsets.UTF_8);
         }
         answersWritten.clear();
         return reverted;
