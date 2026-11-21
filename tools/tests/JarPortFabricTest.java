@@ -189,13 +189,18 @@ final class JarPortFabricTest {
             m.visitMaxs(0, 0);
             m.visitEnd();
         });
-        byte[] nested = JarPortTest.jar(Map.of("m6x/Pack.class", maker.apply(new String[] { "m6x/Pack", "java/lang/Object", "lib/Lib" }),
-            "fabric.mod.json", "{\"id\": \"m6x\", \"jars\": [{\"file\": \"META-INF/jars/lib.jar\"}]}".getBytes(StandardCharsets.UTF_8),
-            "META-INF/jars/lib.jar", JarPortTest.jar(Map.of("lib/Lib.class",
-                JarPortTest.empty("lib/Lib", Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "java/lang/Object", "net/minecraft/world/Thing")))));
+        // A jar Fabric does not load (not in fabric.mod.json's "jars"), before the listed one, holds a stale lib.Lib that is no game Thing.
+        Map<String, byte[]> files = new LinkedHashMap<>();
+        files.put("m6x/Pack.class", maker.apply(new String[] { "m6x/Pack", "java/lang/Object", "lib/Lib" }));
+        files.put("fabric.mod.json", "{\"id\": \"m6x\", \"jars\": [{\"file\": \"META-INF/jars/lib.jar\"}]}".getBytes(StandardCharsets.UTF_8));
+        files.put("META-INF/jars/stale.jar", JarPortTest.jar(Map.of("lib/Lib.class",
+            JarPortTest.empty("lib/Lib", Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "java/lang/Object"))));
+        files.put("META-INF/jars/lib.jar", JarPortTest.jar(Map.of("lib/Lib.class",
+            JarPortTest.empty("lib/Lib", Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "java/lang/Object", "net/minecraft/world/Thing"))));
+        byte[] nested = JarPortTest.jar(files);
         JarPortTest.expect(new ClassReader(JarPortTest.entries(back.jar(nested)).get("m6x/Pack.class")).getClassName().equals("m6x/Pack")
             && methods(JarPortTest.entries(back.jar(nested)).get("m6x/Pack.class")).contains("method_100()Lnet/minecraft/world/Item;"),
-            "a class reaching the game through a library nested in its jar gets the game method's intermediary name: " + methods(JarPortTest.entries(back.jar(nested)).get("m6x/Pack.class")));
+            "a class reaching the game through a library nested in its jar (the one Fabric loads) gets the game method's intermediary name: " + methods(JarPortTest.entries(back.jar(nested)).get("m6x/Pack.class")));
 
         byte[] other = JarPortTest.jar(Map.of("m6x/Other.class", maker.apply(new String[] { "m6x/Other", "other/Base" })));
         List<String> gaps = back.gaps(other, Map.of());
@@ -203,6 +208,31 @@ final class JarPortFabricTest {
         Set<String> named = methods(JarPortTest.entries(back.jar(other, Map.of("m6x/Other", Set.of("method_100")))).get("m6x/Other.class"));
         JarPortTest.expect(gaps.equals(List.of("m6x.Other.make()Lnet/minecraft/world/Item; (through other.Base)")) && none.isEmpty() && named.contains("method_100()Lnet/minecraft/world/Item;"),
             "one reaching it through another mod's class takes the name it had in the jar as it came, and without that is reported: " + gaps + " " + none + " " + named);
+        // Its super call to the other mod's method is to the same game method: it takes that name too.
+        byte[] calling = JarPortTest.jar(Map.of("m6x/Calls.class", JarPortTest.real("m6x/Calls", "other/Base", 0, new String[0], w -> {
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "make", "()Lnet/minecraft/world/Item;", null, null);
+            m.visitCode();
+            m.visitVarInsn(Opcodes.ALOAD, 0);
+            m.visitMethodInsn(Opcodes.INVOKESPECIAL, "other/Base", "make", "()Lnet/minecraft/world/Item;", false);
+            m.visitInsn(Opcodes.ARETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        })));
+        List<String> superCalls = new ArrayList<>();
+        new ClassReader(JarPortTest.entries(back.jar(calling, Map.of("m6x/Calls", Set.of("method_100")))).get("m6x/Calls.class")).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String n, String d, boolean itf) {
+                        if (opcode == Opcodes.INVOKESPECIAL && owner.equals("other/Base") && !n.startsWith("<")) {
+                            superCalls.add(n);
+                        }
+                    }
+                };
+            }
+        }, 0);
+        JarPortTest.expect(superCalls.equals(List.of("method_100")), "a restored override's super call to the other mod's method takes the same intermediary name: " + superCalls);
     }
 
     static Set<String> methods(byte[] bytes) {

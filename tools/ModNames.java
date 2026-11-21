@@ -512,6 +512,7 @@ public final class ModNames {
             final Map<String, String> renamed = new HashMap<>(); // class.name+desc or class.name -> intermediary
 
             final Map<String, Set<String>> originals; // class -> its method names in the jar as it came, in intermediary
+            final Map<String, String> restored = new HashMap<>(); // unreadable class.name+desc -> the intermediary name an override of it took
 
             Jar(Collection<byte[]> classFiles) {
                 this(classFiles, Map.of());
@@ -554,6 +555,9 @@ public final class ModNames {
 
             void read(byte[] bytes) {
                 ClassReader r = new ClassReader(bytes);
+                if (own.containsKey(r.getClassName())) {
+                    return; // a copy of a class read already (the outer jar's comes first)
+                }
                 Own o = new Own();
                 own.put(r.getClassName(), o);
                 o.sup = r.getSuperName();
@@ -618,7 +622,39 @@ public final class ModNames {
                     return null;
                 }
                 List<String> both = ids.stream().filter(had::contains).toList();
-                return both.size() == 1 ? both.get(0) : null;
+                if (both.size() != 1) {
+                    return null;
+                }
+                // The method of that name in the class it could not read is the one overridden: a call to it (super) takes the name too.
+                for (String c : unreadable(cls)) {
+                    restored.putIfAbsent(c + "." + name + desc, both.get(0));
+                }
+                return both.get(0);
+            }
+
+            /** The supertypes of a mod class that are neither the jar's nor the game's (another mod's classes). */
+            List<String> unreadable(String cls) {
+                List<String> out = new ArrayList<>();
+                Deque<String> queue = new ArrayDeque<>(List.of(cls));
+                Set<String> seen = new HashSet<>();
+                while (!queue.isEmpty()) {
+                    String c = queue.poll();
+                    if (!seen.add(c)) {
+                        continue;
+                    }
+                    Own o = own.get(c);
+                    if (o == null) {
+                        if (!game.classes.containsKey(c)) {
+                            out.add(c);
+                        }
+                        continue;
+                    }
+                    if (o.sup != null) {
+                        queue.add(o.sup);
+                    }
+                    queue.addAll(o.ifaces);
+                }
+                return out;
             }
 
             /** The intermediary name of a game method a mod class inherits through its own supertypes, or null. */
@@ -681,6 +717,9 @@ public final class ModNames {
                     Own o = own.get(c);
                     if (o == null) {
                         String hit = game(kind, c, name, desc);
+                        if (hit == null && kind == 'm') {
+                            hit = restored.get(c + "." + name + desc);
+                        }
                         if (hit != null) {
                             return hit;
                         }
@@ -813,13 +852,34 @@ public final class ModNames {
          */
         static List<byte[]> classesIn(byte[] bytes) throws IOException {
             List<byte[]> out = new ArrayList<>();
+            Map<String, byte[]> jars = new LinkedHashMap<>();
+            byte[] meta = null;
             try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
                 for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
                     if (e.getName().endsWith(".class") && !e.getName().startsWith("META-INF/versions/")) {
                         out.add(zip.readAllBytes());
                     } else if (e.getName().endsWith(".jar")) {
-                        out.addAll(classesIn(zip.readAllBytes()));
+                        jars.put(e.getName(), zip.readAllBytes());
+                    } else if (e.getName().equals("fabric.mod.json")) {
+                        meta = zip.readAllBytes();
                     }
+                }
+            }
+            // Only the nested jars Fabric loads (fabric.mod.json's "jars"), after the jar's own classes, which win a name both have.
+            Set<String> listed = new HashSet<>();
+            try {
+                Object list = meta == null ? null : Json.object(Json.parse(new String(meta, StandardCharsets.UTF_8))).get("jars");
+                for (Object j : list instanceof List<?> l ? l : List.of()) {
+                    if (j instanceof Map<?, ?> m && m.get("file") instanceof String file) {
+                        listed.add(file);
+                    }
+                }
+            } catch (RuntimeException unreadable) {
+                // no nested jars Fabric would load
+            }
+            for (var e : jars.entrySet()) {
+                if (listed.contains(e.getKey())) {
+                    out.addAll(classesIn(e.getValue()));
                 }
             }
             return out;
