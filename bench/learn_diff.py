@@ -2,12 +2,14 @@
 working tree's GameDiff and from another commit's (main by default), on each update, side by side.
 
     python bench/learn_diff.py [--base origin/main] [--loader neoforge|fabric] [--hops 1.21.4,1.21.5 26.2,26.3] [--jobs 3]
+    python bench/learn_diff.py --repeat [--loader ...] [--hops ...]   the working tree against itself, run again
 
 A sweep counts mods that link, which hides a reading that is wrong but links (kill() learned as discard()) and one lost
 where another rule happened to cover it. This lists, per update, each member whose reading is new (+), gone (-) or
 changed (~), with both expressions, so each can be judged before the sweep. With no --hops it reads every update the
 loader's mods are read across. The other commit's maps are kept in .runs/learn-diff/ by its commit, so a second run
-reads only the working tree again.
+reads only the working tree again. --repeat compares two fresh runs of the working tree instead: a port must come out
+the same every time, so any line listed there is a bug.
 """
 import argparse
 import concurrent.futures
@@ -56,6 +58,13 @@ def learned(classes, frm, to, loader, out):
     return lines
 
 
+def rest(one, two, name):
+    """Whether the two runs' whole maps match too, the timings in "hops" apart."""
+    x, y = (json.loads((f / name).read_text(encoding="utf-8")) for f in (one, two))
+    differ = sorted(k for k in set(x) | set(y) if k != "hops" and x.get(k) != y.get(k))
+    return "; the rest of the map the same" if not differ else "; the rest of the map differs in " + ", ".join(differ)
+
+
 def shown(key):
     owner, name, desc, when, then_owner, then_name = key
     text = f"{owner}.{name}{desc}"
@@ -72,14 +81,19 @@ def main():
     p.add_argument("--loader", default="neoforge", choices=["neoforge", "fabric"])
     p.add_argument("--hops", nargs="*", help="updates as FROM,TO; every update of the loader when left out")
     p.add_argument("--jobs", type=int, default=3)
+    p.add_argument("--repeat", action="store_true", help="the working tree against a second run of itself")
     a = p.parse_args()
     hops = [tuple(h.split(",")) for h in a.hops] if a.hops else exposure.updates(a.loader)
-    base_folder, base = base_classes(a.base)
     head = exposure.jar_tools()
-    work = OUT / "work"
-    work.mkdir(parents=True, exist_ok=True)
-    for old in work.glob("*.json"):
-        old.unlink()
+    work, again = OUT / "work", OUT / "again"
+    for folder in (work, again):
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.glob("*.json"):
+            old.unlink()
+    if a.repeat:
+        base_folder, base, a.base = again, head, "a second run of the working tree"
+    else:
+        base_folder, base = base_classes(a.base)
 
     def one(hop):
         frm, to = hop
@@ -98,7 +112,7 @@ def main():
                     rows.append(("-", key, before[key], None))
                 elif before[key] != after[key]:
                     rows.append(("~", key, before[key], after[key]))
-            print(f"{a.loader} {frm} -> {to}: {len(rows)} changed of {len(after)} learned")
+            print(f"{a.loader} {frm} -> {to}: {len(rows)} changed of {len(after)} learned" + (rest(base_folder, work, f"{a.loader}-{frm}-{to}.json") if a.repeat else ""))
             for mark, key, was, now in rows:
                 totals[mark] += 1
                 print(f"  {mark} {shown(key)}")

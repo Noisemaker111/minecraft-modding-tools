@@ -194,6 +194,15 @@ public final class GameDiff {
             return bigrams;
         }
 
+        /**
+         * From its names, so maps and sets of methods go round in the same order every run (an identity hash differs
+         * between runs, and a link two old methods tie for went to whichever came first). Equality stays identity.
+         */
+        @Override
+        public int hashCode() {
+            return (owner.name.hashCode() * 31 + name.hashCode()) * 31 + desc.hashCode();
+        }
+
         String sig() {
             return owner.name + "." + name + desc;
         }
@@ -210,6 +219,12 @@ public final class GameDiff {
         String id; // our stable id (field_g<n>)
         String regId; // the id it is registered under: the first string <clinit> loads for it ("doMobLoot"), no "minecraft:"
 
+        /** From its names, as Meth's. */
+        @Override
+        public int hashCode() {
+            return (owner.name.hashCode() * 31 + name.hashCode()) * 31 + desc.hashCode();
+        }
+
         Fld(Cls owner, String name, String desc, int flags) {
             this.owner = owner;
             this.name = name;
@@ -225,6 +240,12 @@ public final class GameDiff {
         final String sup;
         final List<String> ifaces;
         final boolean loader;
+        /** From its name, as Meth's. */
+        @Override
+        public int hashCode() {
+            return name.hashCode();
+        }
+
         final Map<String, Meth> methods = new LinkedHashMap<>(); // name + desc
         final Map<String, Fld> fields = new LinkedHashMap<>(); // name
         final List<Cls> children = new ArrayList<>();
@@ -3813,7 +3834,9 @@ public final class GameDiff {
             out.addAll(byTypes(out));
             // Kept out of the passes above: each holds only where its constant is passed, so none is a member's reading.
             out.addAll(byConstant);
-            out.sort(Comparator.comparing(Learned::owner).thenComparing(Learned::name).thenComparing(Learned::desc));
+            // A total order: lines of one member (one per constant) come out the same way every run.
+            out.sort(Comparator.comparing(Learned::owner).thenComparing(Learned::name).thenComparing(Learned::desc)
+                .thenComparing(l -> l.when() == null ? "" : l.when()).thenComparing(Learned::expr));
             if (log != null) {
                 try {
                     Files.writeString(Path.of(LEARN_LOG + "-" + h.a.version + "-" + h.b.version + ".tsv"), log, StandardCharsets.UTF_8);
@@ -6534,6 +6557,7 @@ public final class GameDiff {
                     throw new UncheckedIOException(ex);
                 }
             }
+            out.sort(Comparator.comparing(Reading::owner).thenComparing(Reading::name).thenComparing(Reading::desc).thenComparingInt(Reading::at).thenComparing(Reading::as));
             return out;
         }
 
