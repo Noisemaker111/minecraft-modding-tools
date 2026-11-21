@@ -44,6 +44,8 @@ public final class JarPort {
         final Map<String, GameDiff.RawCls> classes = new HashMap<>();
         final Map<String, Integer> maxLocals = new HashMap<>(); // class.method+desc
         final Map<String, String[]> renamedDecl = new HashMap<>(); // class.name+desc (or class.field) -> {name, desc}
+        final Map<String, List<Copy>> copies = new HashMap<>(); // class -> game code copied into it
+        final Map<String, String> superHook = new HashMap<>(); // class.name+desc of a moved override -> what its super call to the game becomes: the hook's name, or "own:" + the class's renamed hook
         final Map<String, List<String>> mixinTargets = new HashMap<>(); // mixin class -> target classes (old names)
         final Map<String, String[]> accessors = new HashMap<>(); // class.method+desc -> {Accessor|Invoker, value or null}
         final Set<String> shadowFields = new HashSet<>(); // mixin class.field annotated @Shadow; its other fields are its own
@@ -1062,6 +1064,9 @@ public final class JarPort {
      */
     record Bridge(String name, String desc, String target, String targetDesc, int[] from, int access, String[][] via) {}
 
+    /** A game class's method (new names) copied into a mod class as a private method named as. */
+    record Copy(String source, String name, String desc, String as) {}
+
     /** In a Bridge's from: the old parameter is read from the object itself (this, then via's steps), not a new parameter. */
     static final int THIS = -3;
 
@@ -1956,6 +1961,8 @@ public final class JarPort {
         String[] took = moved[1].equals(m.name) && moved[2].equals(mapped) ? tookOver(mod, rc, m, supers) : null;
         if (took != null) {
             moved = took;
+        } else if (finalHook(mod, rc, m, supers) instanceof String[] hook && moveToHook(mod, rc, m, hook, supers)) {
+            return;
         } else if (supers.stream().anyMatch(s -> Exposure.declaring(b, s, 'm', m.name, mapped) != null)) {
             return; // still overrides as written
         }
@@ -2110,6 +2117,337 @@ public final class JarPort {
             todo.addAll(k.ifaces);
         }
         return null;
+    }
+
+    /**
+     * {class, name, desc} (new names) of the overridable method a mod method's game method hands its call to, where the
+     * update made that game method final (1.20.3's AbstractWidget.render calls renderWidget with its own arguments;
+     * 1.21.11's AbstractButton.renderWidget calls renderContents): the one method of the same signature on this that the
+     * final one's body calls. Null when the game method is not newly final or calls no such one.
+     */
+    String[] finalHook(Mod mod, GameDiff.RawCls rc, GameDiff.RawMeth m, List<String> supers) {
+        String mapped = desc(m.desc);
+        GameDiff.Cls fin = null;
+        for (String s : supers) {
+            GameDiff.Cls k = Exposure.declaring(b, s, 'm', m.name, mapped);
+            if (k != null) {
+                fin = (k.methods.get(m.name + mapped).flags & Opcodes.ACC_FINAL) != 0 ? k : null;
+                break;
+            }
+        }
+        GameCode code = code(b);
+        if (fin == null || code == null || finalBefore(mod, rc, m)) {
+            return null;
+        }
+        Map<String, String> bodies = code.bodies(fin.name, x -> x);
+        String body = bodies == null ? null : bodies.get(m.name + mapped);
+        if (body == null) {
+            return null;
+        }
+        Set<String> called = new HashSet<>();
+        Matcher calls = Pattern.compile("18[25]:([^;.]+)\\.([^;.(]+)" + Pattern.quote(mapped) + ";").matcher(body);
+        while (calls.find()) {
+            if (!calls.group(2).equals(m.name) && subtype(b, fin.name, calls.group(1))) {
+                called.add(calls.group(2));
+            }
+        }
+        if (called.size() != 1) {
+            return null;
+        }
+        String h = called.iterator().next();
+        GameDiff.Cls holder = Exposure.declaring(b, fin.name, 'm', h, mapped);
+        GameDiff.Meth hook = holder == null ? null : holder.methods.get(h + mapped);
+        return hook == null || (hook.flags & (Opcodes.ACC_FINAL | Opcodes.ACC_STATIC | Opcodes.ACC_PRIVATE)) != 0 ? null : new String[] { fin.name, h, mapped };
+    }
+
+    /** Whether the game method a mod method overrides was final in the old release too (opened for the mod, then). */
+    boolean finalBefore(Mod mod, GameDiff.RawCls rc, GameDiff.RawMeth m) {
+        for (GameDiff.RawCls c = rc; c != null; c = c.sup == null ? null : mod.classes.get(c.sup)) {
+            List<String> parents = new ArrayList<>(c.ifaces);
+            if (c.sup != null) {
+                parents.add(c.sup);
+            }
+            for (String p : parents) {
+                GameDiff.Cls k = mod.classes.containsKey(p) ? null : Exposure.declaring(a, p, 'm', m.name, m.desc);
+                if (k != null && (k.methods.get(m.name + m.desc).flags & Opcodes.ACC_FINAL) != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A mod method overriding a method the update made final moves to the hook the final one calls, as its code ran
+     * around the old method's: the final method still does the rest (the visibility test, the hover, the tooltip).
+     * The mod's super call to the old method becomes one to the hook the game class above implements; where the class
+     * writes the hook itself, that method keeps its body under another name and the super call goes there, as the old
+     * method called it. Not where the code calls the method on its own object again (the final one would call it back),
+     * or where nothing above implements the hook it would call.
+     */
+    boolean moveToHook(Mod mod, GameDiff.RawCls rc, GameDiff.RawMeth m, String[] hook, List<String> supers) {
+        String h = hook[1], hd = hook[2];
+        if (rc.methods.containsKey(h + "$mmt" + oldDesc(hd)) || callsOnSelf(mod, rc.name, m)) {
+            why(rc.name + "." + m.name, "H calls itself on its object");
+            return false;
+        }
+        boolean writes = rc.methods.containsKey(h + oldDesc(hd));
+        // A mod subclass writing the hook itself, without the old method, would take the final method's call before the
+        // moved code (before, the old method ran first and reached its hook through its super call).
+        for (GameDiff.RawCls sub : mod.classes.values()) {
+            if (sub != rc && subtype(mod, sub.name, rc.name) && sub.methods.containsKey(h + oldDesc(hd)) && !sub.methods.containsKey(m.name + m.desc)) {
+                why(rc.name + "." + m.name, "H a subclass writes the hook: " + sub.name);
+                return false;
+            }
+        }
+        if (!writes && callsSuperDirectly(mod, rc.name, m)) {
+            GameDiff.Cls impl = null;
+            for (String s : supers) {
+                impl = Exposure.declaring(b, s, 'm', h, hd);
+                if (impl != null) {
+                    break;
+                }
+            }
+            Copy copy = null;
+            if (impl == null || (impl.methods.get(h + hd).flags & Opcodes.ACC_ABSTRACT) != 0) {
+                // The old method's own code went into parts the game's subclasses call (1.21.11: Button.Plain's
+                // renderContents calls renderDefaultSprite and renderDefaultLabel): the super call runs that code.
+                copy = supers.isEmpty() ? null : defaultBody(supers.get(0), m.name, m.desc, h, hd, rc.name);
+                if (copy == null) {
+                    why(rc.name + "." + m.name, "H no hook above to call: " + (impl == null ? null : impl.name) + " supers=" + supers);
+                    return false;
+                }
+                mod.copies.computeIfAbsent(rc.name, x -> new ArrayList<>()).add(copy);
+                mod.superHook.put(rc.name + "." + m.name + m.desc, "copy:" + copy.as());
+            }
+            if (copy != null) {
+                mod.renamedDecl.put(rc.name + "." + m.name + m.desc, new String[] { h, hd });
+                mod.change("override of a method the update made final moved to the hook it calls, its super call to the code the game split from it");
+                return true;
+            }
+        }
+        if (writes) {
+            mod.renamedDecl.put(rc.name + "." + h + oldDesc(hd), new String[] { h + "$mmt", hd });
+        }
+        mod.superHook.put(rc.name + "." + m.name + m.desc, writes ? "own:" + h + "$mmt" : h);
+        mod.renamedDecl.put(rc.name + "." + m.name + m.desc, new String[] { h, hd });
+        mod.change("override of a method the update made final moved to the hook it calls");
+        return true;
+    }
+
+    /**
+     * The game code a super call to an old method k inherited runs in the new release, where the update split that
+     * method's code into parts: the hook h as written by k's game subclasses that relied on the old method as it was
+     * (they did not override it in the old release; 1.21.11's new Button.Plain), when they all write the same code
+     * and it uses only what the mod class inherits too. Null otherwise.
+     */
+    Copy defaultBody(String k, String o, String od, String h, String hd, String modClass) {
+        GameCode code = code(b);
+        if (code == null) {
+            return null;
+        }
+        Set<String> seen = new HashSet<>();
+        String chosen = null;
+        for (GameDiff.Cls sub : b.classes.values()) {
+            GameDiff.Meth own = sub.methods.get(h + hd);
+            GameDiff.Cls old = a.classes.get(inverse.getOrDefault(sub.name, sub.name));
+            if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || (sub.flags & Opcodes.ACC_ABSTRACT) != 0 || sub.name.equals(k) || !subtype(b, sub.name, k)
+                || old != null && old.methods.containsKey(o + od)) {
+                continue;
+            }
+            Map<String, String> bodies = code.bodies(sub.name, x -> x);
+            String text = bodies == null ? null : bodies.get(h + hd);
+            if (text != null && copyable(code, sub.name, h, hd, k)) {
+                seen.add(text);
+                chosen = sub.name;
+            }
+        }
+        return seen.size() == 1 ? new Copy(chosen, h, hd, h + "$default") : null;
+    }
+
+    /**
+     * Whether a game class's method uses only what a mod class under k can use too: members it inherits from k and
+     * above (not private), and other classes' public members. No new instances or casts of the class itself.
+     */
+    boolean copyable(GameCode code, String source, String h, String hd, String k) {
+        String jar = code.toJar.getOrDefault(source, source);
+        byte[] bytes = code.bytes.apply(jar);
+        if (bytes == null) {
+            return false;
+        }
+        boolean[] ok = { false };
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                if (!(code.names.method(jar, n, d) + code.names.desc(d)).equals(h + hd)) {
+                    return null;
+                }
+                ok[0] = true;
+                return new MethodVisitor(Opcodes.ASM9) {
+                    void member(String owner, String name, String desc, boolean field) {
+                        String declObf = code.declarer(owner, name, desc, field);
+                        String decl = declObf == null ? null : code.names.cls(declObf);
+                        String mapped = declObf == null ? name : field ? code.names.field(declObf, name) : code.names.method(declObf, name, desc);
+                        GameDiff.Cls dc = decl == null ? null : b.classes.get(decl);
+                        if (dc == null) {
+                            ok[0] &= !code.names.cls(owner).equals(source); // a JDK member, not one of the class's own
+                            return;
+                        }
+                        int flags = field ? (dc.fields.containsKey(mapped) ? dc.fields.get(mapped).flags : Opcodes.ACC_PRIVATE)
+                            : dc.methods.entrySet().stream().filter(e -> e.getKey().startsWith(mapped + "(") && e.getValue().desc.equals(code.names.desc(desc)))
+                                .map(e -> e.getValue().flags).findFirst().orElse(Opcodes.ACC_PRIVATE);
+                        boolean inherited = subtype(b, k, decl) && (flags & Opcodes.ACC_PRIVATE) == 0;
+                        boolean open = (flags & Opcodes.ACC_PUBLIC) != 0 && !code.names.cls(owner).equals(source);
+                        ok[0] &= inherited || open;
+                    }
+
+                    @Override
+                    public void visitFieldInsn(int opcode, String owner, String name, String desc) {
+                        member(owner, name, desc, true);
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
+                        member(owner, name, desc, false);
+                    }
+
+                    @Override
+                    public void visitTypeInsn(int opcode, String type) {
+                        ok[0] &= !code.names.cls(type).equals(source);
+                    }
+
+                    @Override
+                    public void visitInvokeDynamicInsn(String name, String desc, Handle bsm, Object... args) {
+                        ok[0] = false;
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return ok[0];
+    }
+
+    /** Writes a copy of a game class's method into the mod class being written, its own class read as the mod's. */
+    void copyBody(Copy copy, String modClass, ClassVisitor out) {
+        GameCode code = code(b);
+        String jar = code.toJar.getOrDefault(copy.source(), copy.source());
+        org.objectweb.asm.commons.Remapper names = new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
+            @Override
+            public String map(String internal) {
+                String n = code.names.cls(internal);
+                return n.equals(copy.source()) ? modClass : inverse.getOrDefault(n, n);
+            }
+
+            @Override
+            public String mapMethodName(String owner, String name, String desc) {
+                String decl = name.startsWith("<") ? null : code.declarer(owner, name, desc, false);
+                return decl == null ? name : code.names.method(decl, name, desc);
+            }
+
+            @Override
+            public String mapFieldName(String owner, String name, String desc) {
+                String decl = code.declarer(owner, name, desc, true);
+                return decl == null ? name : code.names.field(decl, name);
+            }
+        };
+        new ClassReader(code.bytes.apply(jar)).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                if (!(code.names.method(jar, n, d) + code.names.desc(d)).equals(copy.name() + copy.desc())) {
+                    return null;
+                }
+                MethodVisitor mv = out.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC, copy.as(), names.mapMethodDesc(d), null, null);
+                return mv == null ? null : new org.objectweb.asm.commons.MethodRemapper(mv, names);
+            }
+        }, 0);
+    }
+
+    /**
+     * Whether any method of a mod class makes a super call that reaches the game's method of a mod method's name and
+     * descriptor (the redirect to the hook applies to the whole class: a helper's super.renderWidget too), through mod
+     * parents that only inherit it.
+     */
+    boolean callsSuperDirectly(Mod mod, String owner, GameDiff.RawMeth m) {
+        byte[] bytes = mod.bytes.get(owner);
+        boolean[] calls = { false };
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String o, String n, String d, boolean itf) {
+                        calls[0] |= opcode == Opcodes.INVOKESPECIAL && n.equals(m.name) && d.equals(m.desc) && gameDeclared(mod, o, n, d);
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return calls[0];
+    }
+
+    /** Whether mod class c is sup or extends it through the mod's own classes. */
+    static boolean subtype(Mod mod, String c, String sup) {
+        for (GameDiff.RawCls k = mod.classes.get(c); k != null; k = k.sup == null ? null : mod.classes.get(k.sup)) {
+            if (k.name.equals(sup)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a call names a method the game declares, reached through mod classes that only inherit it. */
+    boolean gameDeclared(Mod mod, String owner, String name, String desc) {
+        Decl decl = owner.startsWith("[") ? null : declaringOld(mod, owner, 'm', name, desc);
+        return decl != null && decl.game();
+    }
+
+    /**
+     * Whether a mod method, or a method of its class it calls on its own object, calls the method of its own name and
+     * descriptor on its own object other than as a super call (this.render(...)): the final one would call it back.
+     */
+    boolean callsOnSelf(Mod mod, String owner, GameDiff.RawMeth m) {
+        byte[] bytes = mod.bytes.get(owner);
+        if (bytes == null) {
+            return true;
+        }
+        Deque<String> todo = new ArrayDeque<>(List.of(m.name + m.desc));
+        Set<String> seen = new HashSet<>();
+        boolean[] found = { false };
+        while (!todo.isEmpty() && !found[0]) {
+            String at = todo.poll();
+            if (!seen.add(at)) {
+                continue;
+            }
+            new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                    if (!(name + desc).equals(at) || (access & Opcodes.ACC_STATIC) != 0) {
+                        return null;
+                    }
+                    Object self = new Object();
+                    return new org.objectweb.asm.commons.AnalyzerAdapter(Opcodes.ASM9, owner, access, name, desc, null) {
+                        @Override
+                        public void visitVarInsn(int opcode, int var) {
+                            super.visitVarInsn(opcode, var);
+                            if (opcode == Opcodes.ALOAD && var == 0 && stack != null) {
+                                stack.set(stack.size() - 1, self);
+                            }
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int opcode, String o, String n, String d, boolean itf) {
+                            int depth = Arrays.stream(Type.getArgumentTypes(d)).mapToInt(Type::getSize).sum();
+                            boolean onSelf = opcode != Opcodes.INVOKESTATIC && stack != null && stack.size() > depth && stack.get(stack.size() - 1 - depth) == self;
+                            if (onSelf && opcode != Opcodes.INVOKESPECIAL && n.equals(m.name) && d.equals(m.desc)) {
+                                found[0] = true;
+                            } else if (onSelf && o.equals(owner) && !n.startsWith("<")) {
+                                todo.add(n + d);
+                            }
+                            super.visitMethodInsn(opcode, o, n, d, itf);
+                        }
+                    };
+                }
+            }, ClassReader.EXPAND_FRAMES);
+        }
+        return found[0];
     }
 
     final Map<String, Optional<String[]>> takeovers = new HashMap<>();
@@ -2904,6 +3242,9 @@ public final class JarPort {
 
             @Override
             public void visitEnd() {
+                for (Copy copy : mod.copies.getOrDefault(self[0], List.of())) {
+                    copyBody(copy, self[0], remap);
+                }
                 for (Bridge br : mod.bridges.getOrDefault(self[0], List.of())) {
                     if (br.via() != null) {
                         moved(mod, bytes, self[0], br, remap);
@@ -5648,6 +5989,10 @@ public final class JarPort {
             super.visitFieldInsn(opcode, inverse.getOrDefault(t[0], t[0]), t[1], oldDesc(t[2]));
         }
 
+        boolean gameDeclared(String owner, String name, String desc) {
+            return JarPort.this.gameDeclared(mod, owner, name, desc);
+        }
+
         /**
          * A read of a field the new release has with another type (Level.random: Random, then RandomSource), read as its new
          * type where every use of the value still fits it (the calls made on it are ones the new type has, the calls it is
@@ -5802,6 +6147,19 @@ public final class JarPort {
         public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
             fresh = false;
             callsSeen++;
+            String hookCall = opcode == Opcodes.INVOKESPECIAL && mod.superHook.containsKey(mod.self + "." + name + desc) && gameDeclared(owner, name, desc)
+                ? mod.superHook.get(mod.self + "." + name + desc) : null;
+            if (hookCall != null) {
+                // A moved override's super call to the method the update made final: to the hook it calls instead.
+                if (hookCall.startsWith("copy:")) {
+                    super.visitMethodInsn(Opcodes.INVOKESPECIAL, mod.self, hookCall.substring(5), desc, false);
+                } else if (hookCall.startsWith("own:")) {
+                    super.visitMethodInsn(mod.selfInterface ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, mod.self, hookCall.substring(4), desc, mod.selfInterface);
+                } else {
+                    super.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, hookCall, desc, itf);
+                }
+                return;
+            }
             String[] onNew = onNewType.remove(callsSeen);
             if (onNew != null) {
                 int op = Integer.parseInt(onNew[0]);
@@ -5860,7 +6218,8 @@ public final class JarPort {
 
         void call(int opcode, String owner, String name, String desc, boolean itf) {
             String[] own = mod.renamedDecl.get(owner + "." + name + desc);
-            if (own != null) {
+            // An override moved under a final game method is still reached through it; only super calls go straight there.
+            if (own != null && (opcode == Opcodes.INVOKESPECIAL || !mod.superHook.containsKey(owner + "." + name + desc))) {
                 super.visitMethodInsn(opcode, owner, own[0], oldDesc(own[1]), itf);
                 return;
             }
@@ -5888,7 +6247,7 @@ public final class JarPort {
             if (decl == null || !decl.game()) {
                 if (decl != null) {
                     String[] inherited = mod.renamedDecl.get(decl.owner() + "." + name + desc);
-                    if (inherited != null) {
+                    if (inherited != null && (opcode == Opcodes.INVOKESPECIAL || !mod.superHook.containsKey(decl.owner() + "." + name + desc))) {
                         super.visitMethodInsn(opcode, owner, inherited[0], oldDesc(inherited[1]), itf);
                         return;
                     }
@@ -6788,7 +7147,8 @@ public final class JarPort {
         Handle handle(Handle h) {
             if (h.getTag() > Opcodes.H_PUTSTATIC) {
                 String[] own = mod.renamedDecl.get(h.getOwner() + "." + h.getName() + h.getDesc());
-                if (own != null) {
+                // A reference to an override moved under a final game method still goes through the final one.
+                if (own != null && (h.getTag() == Opcodes.H_INVOKESPECIAL || !mod.superHook.containsKey(h.getOwner() + "." + h.getName() + h.getDesc()))) {
                     return new Handle(h.getTag(), h.getOwner(), own[0], oldDesc(own[1]), h.isInterface());
                 }
                 Decl decl = h.getOwner().startsWith("[") ? null : declaringOld(mod, h.getOwner(), 'm', h.getName(), h.getDesc());
@@ -7547,12 +7907,13 @@ public final class JarPort {
         if (meta.get("depends") instanceof Map<?, ?> depends && depends.containsKey("minecraft")) {
             Json.object(depends).put("minecraft", to);
         }
-        // A version of a nested platform module the mod asks for is the old release's; the new release's platform has its own.
         // A name the old platform answered to and the new one does not is asked of the module that gave it.
         if (meta.get("depends") instanceof Map<?, ?> depends) {
             Map<String, Object> asks = Json.object(depends);
-            for (String id : platformNested) {
-                if (asks.containsKey(id)) {
+            // A version of the platform (or one of its modules) the mod asks for is numbered as the old release's platform
+            // was (Konkrete for 1.20.2 asks Fabric API 0.91.6, while 1.20.3's is 0.91.1): the new release's platform is its own.
+            for (String id : List.copyOf(asks.keySet())) {
+                if (platformNested.contains(id) || platformIds.contains(id)) {
                     asks.put(id, "*");
                 }
             }
