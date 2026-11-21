@@ -3831,6 +3831,7 @@ public final class GameDiff {
             out.addAll(sameMeaning(out, log));
             out.addAll(throughAccessor(out));
             out.addAll(throughHolder(out));
+            out.addAll(unwrapped(out));
             out.addAll(throughClassMap(out));
             out.addAll(renamedFamily(out));
             // A chain both of whose members are learned alone is already ported member by member.
@@ -5369,6 +5370,81 @@ public final class GameDiff {
                 out.add(new Learned(dotted(x.owner.name), x.name, x.desc, false, true, "$0." + ways.get(0) + "." + y.name + "(" + args + ")", 1, 1));
             }
             return out;
+        }
+
+        /**
+         * A method whose plain result (a number, a String) the update wrapped in a record, the same arguments otherwise
+         * (1.21.9's packVersion(type) gives a PackFormat where it gave the int): the record's one factory from that plain
+         * value (PackFormat.of(int)) puts it in one component (new PackFormat(n, 0): the first), and that component's
+         * accessor gives it back, $0.packVersion($1).major().
+         */
+        List<Learned> unwrapped(List<Learned> found) {
+            Set<String> have = new HashSet<>();
+            for (Learned l : found) {
+                have.add(l.owner().replace('.', '/') + "." + l.name() + l.desc());
+            }
+            List<Learned> out = new ArrayList<>();
+            for (var e : h.mAB.entrySet()) {
+                Meth x = e.getKey(), y = e.getValue();
+                if (x.special() || have.contains(x.sig()) || (y.flags & ACC_PUBLIC) == 0 || x.isStatic() != y.isStatic()) {
+                    continue;
+                }
+                MethodTypeDesc xt = MethodTypeDesc.ofDescriptor(x.desc), yt = MethodTypeDesc.ofDescriptor(y.desc);
+                String was = xt.returnType().descriptorString(), now = yt.returnType().descriptorString();
+                boolean plain = was.length() == 1 && !was.equals("V") || was.equals("Ljava/lang/String;");
+                if (!plain || !now.startsWith("L") || xt.parameterCount() != yt.parameterCount()
+                    || !h.descBA(y.desc).substring(0, h.descBA(y.desc).indexOf(')')).equals(x.desc.substring(0, x.desc.indexOf(')')))) {
+                    continue;
+                }
+                Cls r = h.b.classes.get(now.substring(1, now.length() - 1));
+                String component = r == null ? null : componentOf(r, was);
+                if (component == null) {
+                    continue;
+                }
+                StringBuilder args = new StringBuilder();
+                for (int i = 1; i <= xt.parameterCount(); i++) {
+                    args.append(i == 1 ? "" : ", ").append("$").append(i);
+                }
+                String call = (x.isStatic() ? dotted(y.owner.name) : "$0") + "." + y.name + "(" + args + ")";
+                out.add(new Learned(dotted(x.owner.name), x.name, x.desc, false, true, call + "." + component + "()", 1, 1));
+            }
+            return out;
+        }
+
+        /** The accessor of the component of record r that r's one public static factory from a value of type plain fills with it. */
+        String componentOf(Cls r, String plain) {
+            String rt = "L" + r.name + ";";
+            List<Meth> makers = r.methods.values().stream().filter(m -> m.isStatic() && (m.flags & ACC_PUBLIC) != 0 && m.desc.equals("(" + plain + ")" + rt)).toList();
+            List<Fld> parts = r.fields.values().stream().filter(f -> (f.flags & ACC_STATIC) == 0).toList();
+            if (makers.size() != 1 || !"java/lang/Record".equals(r.sup) || parts.isEmpty()) {
+                return null;
+            }
+            Body body;
+            try {
+                body = decode(h.b, r.name, makers.get(0).name + makers.get(0).desc, false);
+            } catch (RuntimeException unreadable) {
+                return null;
+            }
+            if (body == null || !body.whole) {
+                return null;
+            }
+            for (Node st : body.statements) {
+                if (st.op == 'S' && "return".equals(st.value) && st.kids.length == 1 && st.kids[0].op == 'w' && st.kids[0].kids.length == parts.size()) {
+                    Node made = st.kids[0];
+                    int at = -1;
+                    for (int i = 0; i < made.kids.length; i++) {
+                        if (made.kids[i].op == 'p' && Integer.valueOf(0).equals(made.kids[i].value)) {
+                            at = at == -1 ? i : -2;
+                        }
+                    }
+                    Fld part = at >= 0 ? parts.get(at) : null;
+                    Meth accessor = part == null ? null : r.methods.get(part.name + "()" + plain);
+                    if (accessor != null && part.desc.equals(plain) && (accessor.flags & ACC_PUBLIC) != 0) {
+                        return accessor.name;
+                    }
+                }
+            }
+            return null;
         }
 
         /** The old member's operand types by $N in a's names ($0 its receiver, null where there is none); null if unknown. */
