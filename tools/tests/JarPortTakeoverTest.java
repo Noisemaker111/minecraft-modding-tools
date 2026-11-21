@@ -19,8 +19,10 @@ final class JarPortTakeoverTest {
         GameDiff.Snap a = new GameDiff.Snap("1.0"), b = new GameDiff.Snap("2.0");
         JarPortTest.snap(a, "t9/Draw", 0, null);
         JarPortTest.snap(b, "t9/Draw", 0, null);
-        JarPortTest.snap(a, "t9/Button", 0, null, "renderWidget(I)V");
+        // locked() is final in both releases: a mod's access widener opened it, and its override stays as it was.
+        method(JarPortTest.snap(a, "t9/Button", 0, null, "renderWidget(I)V"), "locked", "()V", Opcodes.ACC_FINAL);
         GameDiff.Cls button = JarPortTest.snap(b, "t9/Button", 0, null);
+        method(button, "locked", "()V", Opcodes.ACC_FINAL);
         method(button, "renderWidget", "(I)V", Opcodes.ACC_FINAL);
         method(button, "renderContents", "(I)V", Opcodes.ACC_ABSTRACT);
         JarPortTest.snap(a, "t9/Entry", 0, null, "render(II)V");
@@ -143,7 +145,7 @@ final class JarPortTakeoverTest {
         m.visitMethodInsn(Opcodes.INVOKESTATIC, "t9/Draw", what, "(I)V", false);
     }
 
-    /** n10.MyButton extends t9.Button: renderWidget(x) logs "mine" x, after super.renderWidget(x) when calls. */
+    /** n10.MyButton extends t9.Button: renderWidget(x) logs "mine" x, after super.renderWidget(x) when calls; MyButton also overrides locked(). */
     static byte[] myButton(boolean calls) {
         String name = calls ? "n10/SuperButton" : "n10/MyButton";
         ClassWriter w = JarPortRetypeTest.writer(name, "t9/Button");
@@ -159,6 +161,13 @@ final class JarPortTakeoverTest {
         m.visitInsn(Opcodes.RETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();
+        if (!calls) {
+            m = w.visitMethod(Opcodes.ACC_PUBLIC, "locked", "()V", null, null);
+            m.visitCode();
+            m.visitInsn(Opcodes.RETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        }
         w.visitEnd();
         return w.toByteArray();
     }

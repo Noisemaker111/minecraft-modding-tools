@@ -2536,16 +2536,26 @@ public final class JarPort {
 
     /**
      * A method of a mod class still overriding one the new release made final (1.21.11's AbstractButton.renderWidget) is
-     * reported: the JVM refuses the class.
+     * reported: the JVM refuses the class. One the old release had final too was overridden all the same (a mod's access
+     * widener or the loader's transformer opens it), and that stays as it was.
      */
     void finals(Mod mod, GameDiff.RawCls rc) {
         List<String> supers = gameParents(mod, rc);
+        List<String> was = new ArrayList<>();
+        for (GameDiff.RawCls c = rc; c != null; c = c.sup == null ? null : mod.classes.get(c.sup)) {
+            if (c.sup != null && !mod.classes.containsKey(c.sup)) {
+                was.add(c.sup);
+            }
+            c.ifaces.stream().filter(i -> !mod.classes.containsKey(i)).forEach(was::add);
+        }
         for (GameDiff.RawMeth m : rc.methods.values()) {
             if (m.name.startsWith("<") || (m.flags & (Opcodes.ACC_STATIC | Opcodes.ACC_PRIVATE)) != 0 || mod.renamedDecl.containsKey(rc.name + "." + m.name + m.desc)) {
                 continue;
             }
             String mapped = desc(m.desc);
-            for (String s : supers) {
+            boolean finalBefore = was.stream().map(s -> Exposure.declaring(a, s, 'm', m.name, m.desc))
+                .anyMatch(k -> k != null && (k.methods.get(m.name + m.desc).flags & Opcodes.ACC_FINAL) != 0);
+            for (String s : finalBefore ? List.<String>of() : supers) {
                 GameDiff.Cls k = Exposure.declaring(b, s, 'm', m.name, mapped);
                 GameDiff.Meth over = k == null ? null : k.methods.get(m.name + mapped);
                 if (over != null && (over.flags & Opcodes.ACC_FINAL) != 0 && (over.flags & (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC)) == 0) {
