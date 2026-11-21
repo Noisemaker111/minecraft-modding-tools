@@ -1565,7 +1565,8 @@ def load(loader, frm, to, save, mods=None, out=None):
                     # port is judged by the mod starting alone.
                     verdicts[name] = "clash: loads alone, fails next to the other mods: " + verdicts[name][len("failed: "):]
                     print(f"  {name}: loads alone, fails next to the others")
-    client = client_starts(loader, to, pack, [n for n, v in verdicts.items() if v == "loaded" or v.startswith("client-only")], platform)
+    client = client_starts(loader, to, pack, [n for n, v in verdicts.items() if v == "loaded" or v.startswith("client-only")],
+                           [n for n in platform if (pack / "mods" / n).is_file()])
     loaded = [n for n, v in verdicts.items() if v == "loaded"]
     summary = {
         "loader": loader, "from": frm, "to": to, "scope": scope, "mods": len(chosen), "loaded": len(loaded),
