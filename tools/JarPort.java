@@ -2198,25 +2198,52 @@ public final class JarPort {
         return common * 2 >= Math.max(a.length, b.length);
     }
 
-    /** Whether a mod method calls the game method it overrides (super.name(...)). */
+    /**
+     * Whether a mod method reaches the game method of its own name and descriptor (super.name(...), or this.name(...) in
+     * a helper of the mod's it calls, a lambda included): moved to the game's new method, which the game's final old one
+     * calls, it would call itself back. A call that reaches another mod class's method of that name moves with it.
+     */
     boolean callsSuper(Mod mod, String owner, GameDiff.RawMeth m) {
-        byte[] bytes = mod.bytes.get(owner);
-        if (bytes == null) {
-            return true;
-        }
-        boolean[] calls = { false };
-        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
-            @Override
-            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
-                return !name.equals(m.name) || !desc.equals(m.desc) ? null : new MethodVisitor(Opcodes.ASM9) {
-                    @Override
-                    public void visitMethodInsn(int opcode, String o, String n, String d, boolean itf) {
-                        calls[0] |= opcode == Opcodes.INVOKESPECIAL && n.equals(m.name) && d.equals(m.desc);
-                    }
-                };
+        Deque<String[]> todo = new ArrayDeque<>(List.<String[]>of(new String[] { owner, m.name, m.desc }));
+        Set<String> seen = new HashSet<>();
+        boolean[] reaches = { false };
+        while (!todo.isEmpty() && !reaches[0]) {
+            String[] at = todo.poll();
+            byte[] bytes = mod.bytes.get(at[0]);
+            if (bytes == null || !seen.add(at[0] + "." + at[1] + at[2])) {
+                continue;
             }
-        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        return calls[0];
+            new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                    return !name.equals(at[1]) || !desc.equals(at[2]) ? null : new MethodVisitor(Opcodes.ASM9) {
+                        void call(String o, String n, String d) {
+                            Decl decl = o.startsWith("[") ? null : declaringOld(mod, o, 'm', n, d);
+                            if (n.equals(m.name) && d.equals(m.desc) && (decl == null || decl.game())) {
+                                reaches[0] = true;
+                            } else if (decl != null && !decl.game()) {
+                                todo.add(new String[] { decl.owner(), n, d });
+                            }
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int opcode, String o, String n, String d, boolean itf) {
+                            call(o, n, d);
+                        }
+
+                        @Override
+                        public void visitInvokeDynamicInsn(String n, String d, Handle bsm, Object... args) {
+                            for (Object arg : args) {
+                                if (arg instanceof Handle h) {
+                                    call(h.getOwner(), h.getName(), h.getDesc());
+                                }
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        }
+        return reaches[0];
     }
 
     /**
@@ -2439,6 +2466,7 @@ public final class JarPort {
      * Recipe.placementInfo()); one it does not is reported, never filled in.
      */
     void abstracts(Mod mod, GameDiff.RawCls rc) {
+        finals(mod, rc);
         if ((rc.flags & (Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT)) != 0) {
             return;
         }
@@ -2501,6 +2529,28 @@ public final class JarPort {
                 if ((m.flags & Opcodes.ACC_ABSTRACT) != 0 && !written.contains(m.name + m.desc) && !OBJECT.contains(m.name + m.desc) && !generic(supers, m)
                     && !alreadyAbstract(k, m) && !before.contains(m.name + oldDesc(m.desc))) {
                     mod.unlinked.add("abstract method not written: " + Exposure.dotted(k.name) + "." + m.name + m.desc + " (in " + Exposure.dotted(rc.name) + ")");
+                }
+            }
+        }
+    }
+
+    /**
+     * A method of a mod class still overriding one the new release made final (1.21.11's AbstractButton.renderWidget) is
+     * reported: the JVM refuses the class.
+     */
+    void finals(Mod mod, GameDiff.RawCls rc) {
+        List<String> supers = gameParents(mod, rc);
+        for (GameDiff.RawMeth m : rc.methods.values()) {
+            if (m.name.startsWith("<") || (m.flags & (Opcodes.ACC_STATIC | Opcodes.ACC_PRIVATE)) != 0 || mod.renamedDecl.containsKey(rc.name + "." + m.name + m.desc)) {
+                continue;
+            }
+            String mapped = desc(m.desc);
+            for (String s : supers) {
+                GameDiff.Cls k = Exposure.declaring(b, s, 'm', m.name, mapped);
+                GameDiff.Meth over = k == null ? null : k.methods.get(m.name + mapped);
+                if (over != null && (over.flags & Opcodes.ACC_FINAL) != 0 && (over.flags & (Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC)) == 0) {
+                    mod.unlinked.add("final method overridden: " + Exposure.dotted(k.name) + "." + m.name + mapped + " (in " + Exposure.dotted(rc.name) + ")");
+                    break;
                 }
             }
         }

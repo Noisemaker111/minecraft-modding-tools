@@ -79,21 +79,25 @@ final class JarPortTakeoverTest {
         port.newCode = new JarPort.GameCode(after::get, null);
 
         List<Map<String, Object>> runs = new ArrayList<>();
-        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n10/MyButton.class", myButton(false), "n10/MyRow.class", myRow())), "takeover.jar", runs));
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n10/MyButton.class", myButton(false), "n10/MyRow.class", myRow(),
+            "n10/BaseButton.class", button("n10/BaseButton", "t9/Button", false, "box"), "n10/IconButton.class", button("n10/IconButton", "n10/BaseButton", true, "mine"))), "takeover.jar", runs));
         List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(unlinked.isEmpty(), "a mod's override moves where the game's own subclasses moved theirs: " + unlinked);
 
         List<Map<String, Object>> refused = new ArrayList<>();
-        port.port(JarPortTest.jar(Map.of("n10/SuperButton.class", myButton(true), "n10/MyWidget.class", myWidget())), "refused.jar", refused);
+        port.port(JarPortTest.jar(Map.of("n10/SuperButton.class", myButton(true), "n10/HelperButton.class", helperButton(), "n10/MyWidget.class", myWidget())), "refused.jar", refused);
         List<String> left = Json.array(refused.get(0).get("unlinked")).stream().map(String::valueOf).sorted().toList();
-        JarPortTest.expect(left.equals(List.of("abstract method not written: t9.Button.renderContents(I)V (in n10.SuperButton)",
-            "abstract method not written: t9.Widget.fresh()V (in n10.MyWidget)")),
-            "an override calling the final method back, and one whose game method went without its body moving anywhere, stay reported: " + left);
+        JarPortTest.expect(left.equals(List.of("abstract method not written: t9.Button.renderContents(I)V (in n10.HelperButton)",
+            "abstract method not written: t9.Button.renderContents(I)V (in n10.SuperButton)", "abstract method not written: t9.Widget.fresh()V (in n10.MyWidget)",
+            "final method overridden: t9.Button.renderWidget(I)V (in n10.HelperButton)", "final method overridden: t9.Button.renderWidget(I)V (in n10.SuperButton)")),
+            "an override calling the final method back, itself or through a helper, and one whose game method went without its body moving anywhere, stay reported: " + left);
 
         Map<String, byte[]> classes = new HashMap<>(JarPortTest.newGame());
         classes.putAll(game());
         classes.put("n10/MyButton", ported.get("n10/MyButton.class"));
         classes.put("n10/MyRow", ported.get("n10/MyRow.class"));
+        classes.put("n10/BaseButton", ported.get("n10/BaseButton.class"));
+        classes.put("n10/IconButton", ported.get("n10/IconButton.class"));
         ClassLoader loader = new ClassLoader(null) {
             @Override
             protected Class<?> findClass(String name) throws ClassNotFoundException {
@@ -109,11 +113,12 @@ final class JarPortTakeoverTest {
             Class<?> buttonClass = loader.loadClass("t9.Button"), entryClass = loader.loadClass("t9.Entry");
             buttonClass.getMethod("renderWidget", int.class).invoke(loader.loadClass("n10.MyButton").getConstructor().newInstance(), 5);
             entryClass.getMethod("run", entryClass).invoke(null, loader.loadClass("n10.MyRow").getConstructor().newInstance());
+            buttonClass.getMethod("renderWidget", int.class).invoke(loader.loadClass("n10.IconButton").getConstructor().newInstance(), 4);
             trace = String.valueOf(loader.loadClass("g2.Log").getField("out").get(null));
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(trace.equals("mine5;at7,3;"), "the moved overrides run against the new release, the entry's top read from it: " + trace);
+        JarPortTest.expect(trace.equals("mine5;at7,3;box4;mine4;"), "the moved overrides run against the new release, the entry's top read from it, a mod button's super call reaching its moved parent: " + trace);
     }
 
     static void method(GameDiff.Cls c, String name, String desc, int flags) {
@@ -151,6 +156,48 @@ final class JarPortTakeoverTest {
         }
         m.visitVarInsn(Opcodes.ILOAD, 1);
         m.visitMethodInsn(Opcodes.INVOKESTATIC, "t9/Draw", "mine", "(I)V", false);
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** name extends sup: renderWidget(x) = [super.renderWidget(x);] Draw.what(x). */
+    static byte[] button(String name, String sup, boolean callsSuper, String what) {
+        ClassWriter w = JarPortRetypeTest.writer(name, sup);
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "renderWidget", "(I)V", null, null);
+        m.visitCode();
+        if (callsSuper) {
+            m.visitVarInsn(Opcodes.ALOAD, 0);
+            m.visitVarInsn(Opcodes.ILOAD, 1);
+            m.visitMethodInsn(Opcodes.INVOKESPECIAL, sup, "renderWidget", "(I)V", false);
+        }
+        m.visitVarInsn(Opcodes.ILOAD, 1);
+        m.visitMethodInsn(Opcodes.INVOKESTATIC, "t9/Draw", what, "(I)V", false);
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** n10.HelperButton extends t9.Button: renderWidget(x) calls its private back(x), which calls super.renderWidget(x). */
+    static byte[] helperButton() {
+        ClassWriter w = JarPortRetypeTest.writer("n10/HelperButton", "t9/Button");
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "renderWidget", "(I)V", null, null);
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        m.visitVarInsn(Opcodes.ILOAD, 1);
+        m.visitMethodInsn(Opcodes.INVOKESPECIAL, "n10/HelperButton", "back", "(I)V", false);
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        m = w.visitMethod(Opcodes.ACC_PRIVATE, "back", "(I)V", null, null);
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        m.visitVarInsn(Opcodes.ILOAD, 1);
+        m.visitMethodInsn(Opcodes.INVOKESPECIAL, "t9/Button", "renderWidget", "(I)V", false);
         m.visitInsn(Opcodes.RETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();
