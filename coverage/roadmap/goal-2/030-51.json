@@ -1,0 +1,16 @@
+{
+ "id": "51",
+ "title": "A ported jar is proven in a game client too",
+ "part": "Port by changed game part",
+ "status": "done",
+ "text": "mmt pack-check proves a ported jar on a real server, and a server never runs client code: 15 of the 28 jars that loaded on 1.21.2 still reference rendering and screen code that does not link there. A client start with the ported jars (the loader's own client install, a world opened and a screen shown, hidden and muted) proves the rest, and makes the load proof cover client-only mods, which a server leaves out.",
+ "start": "2026-11-24",
+ "finish": "python bench/exposure.py load starts the ported jars in a real 1.21.2 client as well as on a server, and reports both",
+ "wrongIf": "a mod that loads on the server and links fails in the client",
+ "done": "2026-11-19",
+ "measures": [
+  "port.jar-loads.client",
+  "port.jar-loads.linked"
+ ],
+ "result": "mmt pack-check --side client installs the loader's own client with its installer (NeoForge's --install-client), builds the launch from its version files as a launcher does, and starts the pack hidden and muted with mmt's agent: the title screen, a flat world the vanilla server makes, the inventory and every creative tab, which draws every item each mod adds. python bench/exposure.py load runs it after the server and reports both side by side. NeoForge 1.21.1 to 1.21.2: on the server 23 of 25 load; in the client 23 of 24, including cubes-without-borders, which the server left out as client-only. The step's wrongIf happened once: Puzzle loads on the server and links, and fails in the client, because its injection point (RenderSystem.blendFunc inside LoadingOverlay.render) is a call 1.21.2 no longer makes there; the member still exists, so the link check passes it (step 55). The jar scoreboard also checks mods' data now: 17 of 5,302 linked mod ports over all 61 updates name a built-in game id their new release dropped, Dungeons and Taverns' enchantment effect among them. Not covered: a mod's own screens and keys, Fabric's client."
+}

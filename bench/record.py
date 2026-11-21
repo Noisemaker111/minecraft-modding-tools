@@ -13,7 +13,7 @@
         kept is skipped. knowledge/perf-patterns.json cites accepted runs from here as its proof.
 
     python bench/record.py step ID start|done|next|later [--result TEXT] [--target DATE]
-        A roadmap step changes status in coverage/roadmap.json. start sets it to doing, done sets its done
+        A roadmap step changes status in its file, coverage/roadmap/goal-N/NNN-ID.json. start sets it to doing, done sets its done
         date. A new --target keeps the old date in the step's "moved" list.
 
 Numbers that are not a port's error count: python bench/measures.py add ID VALUE --source WHERE.
@@ -45,10 +45,6 @@ def load_json(path):
 
 def save_ledger(ledger, path=LEDGER):
     Path(path).write_text(json.dumps(ledger, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
-
-
-def save_roadmap(roadmap, path=M.ROADMAP):
-    Path(path).write_text(json.dumps(roadmap, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
 
 # ---- a port receipt -----------------------------------------------------------------------------
@@ -183,7 +179,7 @@ def set_step(roadmap, sid, action, result=None, target=None, date=None):
     """Move a step to its next status in place and return it. Raises ValueError on a move that would be a false claim."""
     step = next((s for g in roadmap["goals"] for s in g["steps"] if s["id"] == sid), None)
     if not step:
-        raise ValueError(f"No step {sid} in coverage/roadmap.json.")
+        raise ValueError(f"No step {sid} in coverage/roadmap/.")
     date = date or today()
     if target and target != step.get("target"):
         if step.get("target"):
@@ -253,9 +249,9 @@ def main(argv=None):
             if point:
                 print(f"{args.measure}: {json.dumps(point, ensure_ascii=False)}")
         else:
-            roadmap = M.load(M.ROADMAP)
+            roadmap = M.load_roadmap()
             step = set_step(roadmap, args.id, args.action, args.result, args.target, args.date)
-            save_roadmap(roadmap)
+            M.save_roadmap(roadmap)
             print(f"Step {step['id']} ({step['title']}) is {step['status']}"
                   + (f", done {step['done']}" if step.get("done") else f", started {step['start']}, target {step['target']}" if step["status"] == "doing" else f", target {step['target']}"))
         found = M.problems(M.Book())

@@ -1,0 +1,12 @@
+{
+ "id": "27",
+ "title": "The bot joins a modded server",
+ "part": "Behaviour in the real game",
+ "status": "next",
+ "text": "The bot joins a modded server (NeoForge or Fabric dedicated server), so mods get scenario checks like plugins do.",
+ "start": "2026-11-23",
+ "target": "2026-12-11",
+ "measures": [
+  "test.behaviour-checks"
+ ]
+}

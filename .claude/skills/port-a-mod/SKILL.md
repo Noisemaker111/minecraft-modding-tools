@@ -76,7 +76,7 @@ work only after it predicts the result:** the mods it clears build, and the ones
 ## What comes first: jobs on the tool
 
 Step 50 is done: a `.jar` is ported by changing its classes. Step 44 is done: one scoreboard, read from jars, for every
-update and both loaders. What remains on the tool (`coverage/roadmap.json`, Goal 2) needs someone who can change
+update and both loaders. What remains on the tool (`coverage/roadmap/goal-2/`) needs someone who can change
 `tools/JarPort.java` safely. If that is not you, say so to Jon and stop; adding text rules instead is the mistake in
 the first row above.
 

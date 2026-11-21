@@ -1,0 +1,10 @@
+{
+ "id": "45",
+ "title": "Generate the target build from the loader's starter project",
+ "part": "Port by changed game part",
+ "status": "later",
+ "text": "The target build comes from the loader's own starter project for that version (Fabric's template, NeoForge's MDK); the mod's code, resources and dependencies move into it, instead of patching its old build script. Proves it wrong: under 70% of the mods that build today still build from a generated build on their own version.",
+ "start": "2026-11-24",
+ "target": "2026-12-08",
+ "result": "Tried on 2026-11-18 (PR #109, closed unmerged, branch generated-builds kept). 14 of the 16 building ports still build from a starter project, so it passed its own test, but over the whole corpus it freed none and lost 2: 14 of 125 build (cloud run 44382488417) against 16 of 126. 8 ports use Architectury, which rewrites the mod's code; 13 need a library with no release for the target version. Build scripts are not what holds the corpus back; steps 44 and 47 come first."
+}

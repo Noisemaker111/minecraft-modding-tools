@@ -1,0 +1,12 @@
+{
+ "id": "39",
+ "title": "Mod ↔ plugin on one server-side project",
+ "part": "Mods and plugins",
+ "status": "later",
+ "text": "Move one server-side project across the mod and plugin line: a Forge or Fabric mod with no client code to a Paper plugin (events, commands, scheduler and config mapped to the Bukkit API), and a plugin the other way. Client code, mixins into the game and new blocks or items cannot exist on a plugin server, so the port stops and names each one instead of dropping it.",
+ "start": "2027-02-22",
+ "target": "2027-03-26",
+ "measures": [
+  "loader.pairs-working"
+ ]
+}

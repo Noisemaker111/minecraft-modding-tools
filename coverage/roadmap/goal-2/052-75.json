@@ -1,0 +1,18 @@
+{
+ "id": "75",
+ "title": "A removed method answered from the new release's own types, and a removed member read where the game's uses were narrower",
+ "part": "Port by changed game part",
+ "status": "done",
+ "done": "2026-11-21",
+ "text": "Two learner pieces for 'call, game: template', both read from the new release's own classes. (1) A removed public method of one argument with nothing of the game's code to read is asked of the class itself or of the one object a public no-argument getter of it hands out, with its argument made from the old one by the new release's public constructors and factories (a factory only from a primitive or a String, and only its class's one; no maker or method taking any object), each the only way at every step (1.21.11: CommandSourceStack.hasPermission(int) is $0.permissions().hasPermission(new Permission.HasCommandLevel(PermissionLevel.byId($1)))). It runs last, for what nothing else answered. (2) Where the game's own uses of a removed one-argument member passed narrower values than it declares and some were rewritten in ways that compile only for the narrower type, only readings that compile for the declared type count (26.3: new BlockPos(Vec3i), written v or v.immutable() where v was a BlockPos, is new BlockPos(v.getX(), v.getY(), v.getZ())).",
+ "start": "2026-11-21",
+ "target": "2026-11-21",
+ "finish": "port.jar-links.newest up from 18, every update and big updates no lower, load on 26.3 server and client for newly linked standalone mods",
+ "wrongIf": "a mod calling a removed method answered from types behaves differently in game from its old version",
+ "measures": [
+  "port.jar-links.newest",
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates"
+ ],
+ "result": "2026-11-21 (on #157): newest 18 -> 19 (NeoForge jump 12 -> 13: Coroutil); every update 6,124 -> 6,134, big updates 1,958 -> 1,968 (1.21.10 -> 1.21.11 Fabric 40 -> 43, NeoForge 50 -> 56; 26.2 -> 26.3 NeoForge 46 -> 47), none lower; 'call, game: template' finishes 32 -> 28, mods 1,100 -> 1,085. Real NeoForge 26.3: Coroutil loads on the server and in the client. Ten releases' learned lines diffed against main's learner: no reading lost, and two wrong old ones replaced (setLootTable(ResourceKey.createRegistryKey(id)) is now ResourceKey.create(Registries.LOOT_TABLE, id); several null arguments are now the argument)."
+}

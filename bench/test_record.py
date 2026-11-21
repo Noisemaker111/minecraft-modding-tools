@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
     check(ledger.read_text(encoding="utf-8") == after, "--dry-run writes nothing")
 
     # ---- a roadmap step
-    road = M.load(M.ROADMAP)
+    road = M.load_roadmap()
     nxt = next(s for g in road["goals"] for s in g["steps"] if s["status"] in ("next", "later"))
     r = copy.deepcopy(road)
     s = record.set_step(r, nxt["id"], "start", date="2026-11-10")

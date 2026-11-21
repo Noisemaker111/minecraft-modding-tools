@@ -1,0 +1,13 @@
+{
+ "id": "11b",
+ "title": "Hub router",
+ "part": "Big jumps across families (1.16.5, 1.18.2, 1.20.1 → 1.21.x)",
+ "status": "done",
+ "text": "Router: `port` chains hops X → family hub → hub → … → Y from `coverage/changes/index.json`, one record per hop; renames inside a family applied from the index.",
+ "result": "`port --from A --to B --fix` walks the hubs, joins every update's renames and moves into one map by intermediary ids (`VersionMap --chain`), runs only the rules whose jump covers an update it crosses, builds once, and names the update behind each error left. Releases before 1.14.4 are refused. ZombieApocalypseAddon 1.21.1 → 1.21.4 (three families) builds and loads; → 1.21.6 stops at the same 9 errors as the one-jump path, all placed on 1.21.4 → 1.21.5; → 26.3 stops at 69 instead of 100+.",
+ "start": "2026-10-25",
+ "done": "2026-10-25",
+ "measures": [
+  "port.time.zaa-neoforge-1.21.1-1.21.4"
+ ]
+}

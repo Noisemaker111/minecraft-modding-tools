@@ -1,0 +1,20 @@
+{
+ "id": "33",
+ "title": "Measure what one game session costs today",
+ "part": "No game window, low cost",
+ "status": "done",
+ "text": "Measure RAM, CPU, start time and time per check for one client, one dedicated server and one Paper server, warm and cold, as the baseline the next steps are judged against.",
+ "start": "2026-11-06",
+ "target": "2026-11-13",
+ "measures": [
+  "test.session-ram",
+  "test.session-start-cpu",
+  "test.session-idle-cpu",
+  "test.parallel-probe",
+  "test.cold-start-check.fabric",
+  "plugin.server-check.cpu",
+  "plugin.server-check.ram"
+ ],
+ "result": "bench/session_cost.py measures a session from the operating system on Windows, Linux and macOS. A hidden Fabric 26.3 client peaks at 1 GB and spends about 100 CPU-s starting, 49 with C1 only, which hidden launches now use; 16 started side by side from one saved launch. Warm on a hidden game: a screen check takes 3.9 s, a world check 3.0 s, a scripted scenario 5.1 s. mp-check's own dedicated server starts in 11 to 19 s. AgentCraft's scenario on a real Paper server takes about 51 s warm (130 CPU-s, 2.4 GB at the peak) and 316 s on a fresh clone, most of it Gradle reading and building the plugin for the first time. This PC is shared, so every point carries how busy it was.",
+ "done": "2026-11-07"
+}

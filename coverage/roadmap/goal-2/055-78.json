@@ -1,0 +1,18 @@
+{
+ "id": "78",
+ "title": "Overrides of game methods the update made final",
+ "part": "Port by type of break",
+ "status": "done",
+ "done": "2026-11-21",
+ "text": "The type `final method overridden`: a mod overrides a game method the new release made final. Where the final method hands its own arguments to an overridable hook (1.20.3's AbstractWidget.render calls renderWidget; 1.21.11's AbstractButton.renderWidget calls renderContents), the mod's override moves to the hook and the final method still does the rest for it (visibility, hover, tooltip). Its super call goes to the hook the game class above implements; where the class writes the hook too, that keeps its body under another name and the super call goes there; where the old method's code was split into parts (1.21.11's Button became abstract, Button.Plain's renderContents calling renderDefaultSprite and renderDefaultLabel), the super call runs a copy of what the game's own subclasses write, when it uses only what the mod class inherits. Other code calling the mod's method still goes through the final one. Refused where the code calls the method on its own object again. Also: a mod's version range on the platform (Fabric API) is asked of the new release's platform.",
+ "start": "2026-11-21",
+ "target": "2026-11-22",
+ "finish": "the false links #161 named link again (Fabric 1.20.3, NeoForge 1.20.3, 1.21.11), the type's counts fall, newest and big-updates up, load on 1.20.3",
+ "wrongIf": "a mod this frees fails in a real game",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates",
+  "port.jar-links.newest"
+ ],
+ "result": "Type finishes 11 -> 0, mods 131 -> 35. Every update 6,132 -> 6,145, big updates 1,966 -> 1,979, newest 21, none lower. Fabric 1.20.2 -> 1.20.3 74 -> 82 (AppleSkin, Cloth Config, Enhanced Block Entities, Freecam, Konkrete, LambDynamicLights, MaLiLib, ShulkerBoxTooltip), NeoForge 1.20.2 -> 1.20.3 88 -> 90 (Cloth Config, Crafting Tweaks), NeoForge 1.21.10 -> 1.21.11 55 -> 58. Real Fabric 1.20.3: seven of them with Fabric API start a server and open a world, and reach the client's title screen; Enhanced Block Entities crashes on a name hand-back gap (its pack class's getNamespaces through a nested library). Real NeoForge 1.20.3: Cloth Config starts a server and reaches the client's title screen."
+}

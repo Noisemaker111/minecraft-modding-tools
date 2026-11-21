@@ -1,0 +1,13 @@
+{
+ "id": "3",
+ "title": "Prove behaviour, not just a build",
+ "part": "Neighbouring versions (1.21.x), Fabric and NeoForge",
+ "status": "done",
+ "text": "Prove a port's behaviour, not just its build. The first try (overlay inspected, AppleSkin inventory change 95.6%, save reloads at the same position) was re-marked to \"loads\" on 2026-10-26: a frame change and a save reload happen without the mod. Behaviour needs an assertion on the mod's own state (`--assert` on its class, `--expect-value` on its screen).",
+ "result": "`tools/tests/AppleSkinHudCheck.java` checks AppleSkin's HUD estimate against real regeneration on the 1.21.6 port, and fails when the estimate is broken on purpose.",
+ "start": "2026-10-24",
+ "done": "2026-10-26",
+ "measures": [
+  "port.mods-working"
+ ]
+}

@@ -1,0 +1,10 @@
+{
+ "id": "16",
+ "title": "Name what moved in 26.3",
+ "part": "26.x, the unobfuscated game",
+ "status": "later",
+ "text": "Diff the old official names against the 26.3 jar to name what moved.",
+ "start": "2026-11-20",
+ "target": "2026-12-04",
+ "result": "Not worked on since 2026-11-08. The corpus measures it: 1 of its 27 ports to 26.x builds (cloud sweep, 2026-11-18)."
+}

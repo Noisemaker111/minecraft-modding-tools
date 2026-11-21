@@ -1,0 +1,9 @@
+{
+ "id": "11a",
+ "title": "Change index and version families",
+ "part": "Big jumps across families (1.16.5, 1.18.2, 1.20.1 → 1.21.x)",
+ "status": "done",
+ "text": "Change index and hub-and-spoke families: every release from 1.14.4 to 26.3 diffed against the next in Mojang's names (`coverage/changes/`, `tools/ChangeIndex.java`), 24 families cut where an update breaks 1% or more of the game's names, each with a hub picked by Modrinth mod count, rule coverage and the best ledger run per step, shown in the porting map (`docs/index.html#porting`). Releases before 1.14.4 are listed as blocked (no official mappings).",
+ "start": "2026-10-25",
+ "done": "2026-10-25"
+}

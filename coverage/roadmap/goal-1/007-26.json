@@ -1,0 +1,13 @@
+{
+ "id": "26",
+ "title": "The bot on older Paper versions, on demand",
+ "part": "Plugins on a real Paper server",
+ "status": "next",
+ "text": "The bot's run on older Paper versions (1.8.8 to 1.21.4) is one command anyone can start on demand (boat or workflow_dispatch), rerun when the bot or ViaProxy code changes; not a nightly job, since the Paper builds are pinned.",
+ "start": "2026-11-09",
+ "target": "2026-11-20",
+ "measures": [
+  "plugin.paper-versions.local",
+  "plugin.paper-versions.ci"
+ ]
+}

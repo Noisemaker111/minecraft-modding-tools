@@ -1,0 +1,16 @@
+{
+ "id": "59",
+ "title": "Overrides whose parameters changed type move to the new signature",
+ "part": "Port by changed game part",
+ "status": "done",
+ "done": "2026-11-20",
+ "text": "A mod method overriding a game method whose parameters changed type (1.20's Screen.render(PoseStack, ...) -> render(GuiGraphics, ...); 1.21.9's keyPressed(int, int, int) -> keyPressed(KeyEvent)) is moved whole to the new signature: each old parameter is worked out first from the new ones as the game's own overrides do (graphics.pose(), event.key()), learned by lining up the old and new bodies of every game class in the override family, and pooled over the update by type. Calls in the moved body that need what the game passes now get it: renderBackground(pose) -> renderBackground(graphics), GuiComponent.fill(pose, ...) -> graphics.fill(...), super.keyPressed(k, s, m) -> super.keyPressed(event). Mixin handlers that take the target's arguments get the same conversions.",
+ "start": "2026-11-19",
+ "target": "2026-11-21",
+ "finish": "port.jar-links.every-update up, and load on 1.19.4 -> 1.20 (Fabric server) and 1.21.1 -> 1.21.2 (NeoForge server and client) shows every linked standalone mod loading",
+ "wrongIf": "a mod that links only through a moved override fails in a real game",
+ "measures": [
+  "port.jar-links.every-update"
+ ],
+ "result": "2026-11-20: +2 mod ports link from this alone (Capes on Fabric 1.19.4 -> 1.20, OctoLib on Fabric 1.21.8 -> 1.21.9); both are client-side and Fabric's client is not started by load yet. The screen family stays the biggest blocker because the same mods also call methods whose receiver changed (Font.draw(pose, ...) -> graphics.drawString(font, ...), Screen.renderTooltip -> GuiGraphics.renderTooltip): next is learning those calls with the new parameter as an operand. Every update (tools/cloud-run exposure, run 44778079456): 5,854 -> 5,838 of 9,423 on main after #128; +1 from moved overrides (Fabric 1.19.4 -> 1.20) and -17 mods whose required injection point is gone (Better Mount HUD crashes on it in a real Fabric 1.20.5 client)."
+}

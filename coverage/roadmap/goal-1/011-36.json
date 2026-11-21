@@ -1,0 +1,15 @@
+{
+ "id": "36",
+ "title": "Many sessions at once on one PC",
+ "part": "No game window, low cost",
+ "status": "done",
+ "text": "mmt runs at least 8 game checks side by side on this PC, each with its own game folder, without running out of memory, and a waiting hidden client costs almost no CPU.",
+ "start": "2026-11-07",
+ "measures": [
+  "test.parallel-sessions",
+  "test.session-idle-cpu",
+  "test.parallel-probe"
+ ],
+ "result": "8 projects (copies of the demo mod) each ran data-check at once: from no game all passed within 26.6 s, about 21 CPU-s each and 4.5 GB at the peak; with their games loaded, all passed again within 6.3 s. The 8 loaded games hold 2.85 GB and their 8 spares 2.41 GB. A brand-new project's first check takes about 36 s, 21 of it Gradle reading the build and recording the launch. A hidden game nobody has asked anything for 2 s now draws 10 frames a second, woken at once by the next request: it uses 0.04 to 0.06 cores while waiting instead of 0.14 to 0.16, measured alternately on the same PC, with warm checks as fast as before. Tried and not used: Java's start-up cache for Paper (AOT) halves a start's CPU (48 to 24 CPU-s) but recording it adds about 95 s to one start and its shutdown, and the self-updating class archive saves 2 to 5 s per start but adds about 40 s to the first, a slow first start this step exists to avoid. The faster-start targets set on Nov 6 (a hidden client on 25 CPU-s, a cold check under 10 s, a server start of 10 s) were dropped on Nov 7: they do not move the goal, and their numbers stay as facts.",
+ "done": "2026-11-07"
+}

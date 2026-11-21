@@ -1,0 +1,12 @@
+{
+ "id": "53",
+ "title": "Read NeoForge 1.20.2 to 1.20.4 mods",
+ "part": "Port by changed game part",
+ "status": "done",
+ "text": "NeoForge mods before 1.20.5 name game members by SRG ids (m_N_, f_N_). Read them in Mojang's names through NeoForge's own NeoForm mappings, as Fabric's are read through intermediary, so the scoreboard covers NeoForge's first three updates too.",
+ "start": "2026-11-19",
+ "target": "2026-12-03",
+ "finish": "port.jar-links.every-update counts 21 NeoForge updates",
+ "done": "2026-11-20",
+ "result": "2026-11-20 (with step 57): NeoForge's NeoForm build (named in its own jar's manifest) gives each SRG id an obfuscated member, which Mojang's mappings name, so ModNames reads NeoForge 1.20.2 to 1.20.4 mods (classes, access transformers, jarjar-nested jars) and NeoForge's own jar in Mojang names. 1.20.2 -> 1.20.3: 89 of 149 link, 1.20.3 -> 1.20.4: 129 of 149, 1.20.4 -> 1.20.5: 22 of 148, held back mostly by NeoForge 20.5's own rewrites (payload registration, TickEvent, ConfigScreenHandler). No SRG name is left in any reference."
+}

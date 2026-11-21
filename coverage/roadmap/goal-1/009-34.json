@@ -1,0 +1,15 @@
+{
+ "id": "34",
+ "title": "Every game check with no window",
+ "part": "No game window, low cost",
+ "status": "done",
+ "text": "ui-check, world-check, mp-check, eval and the behaviour checks run with no Minecraft window and no sound, with the same assertions and the same 1280x720 captures, and a check stops when a window asked to stay hidden is not.",
+ "start": "2026-11-13",
+ "target": "2026-11-27",
+ "measures": [
+  "test.screen-check.fabric",
+  "test.scenario.fabric"
+ ],
+ "done": "2026-11-07",
+ "result": "ui-check, world-check, eval and mp-check ran with the game hidden and quiet: no game window was on screen after any of 15 warm checks, nor at any half-second sample through a whole mp-check (its client and its own server), and each check kept its assertions and its 1280x720 framebuffer capture. The behaviour checks (AppleSkin's HUD estimate, Zombie Apocalypse's AI) ran hidden on a Linux machine with no screen at all. A check stops when a game asked to stay hidden reports its window library was not rewritten. The title screen no longer costs a fixed 4.5 s wait; it waits only while it fades in. The warm screen check (3.9 s) and scenario (5.1 s) are timed as the whole mmt command; the 1.5 s and 2.9 s of October were the older Windows lane's own loop with a window, so they are not the same work."
+}

@@ -1,0 +1,10 @@
+{
+ "id": "11",
+ "title": "Chain mappings across families",
+ "part": "Big jumps across families (1.16.5, 1.18.2, 1.20.1 → 1.21.x)",
+ "status": "done",
+ "text": "Chain mappings across more than one family in a single port, with one record per hop.",
+ "result": "with 11b up to 1.21.11; updates into 26.x have no shared ids, so there the router relies on rules and names errors from the step files by name only.",
+ "start": "2026-10-25",
+ "done": "2026-10-25"
+}

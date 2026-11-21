@@ -1,0 +1,14 @@
+{
+ "id": "31",
+ "title": "Any installed pack or export as input",
+ "part": "Forge 1.20.1 packs",
+ "status": "doing",
+ "text": "Accept installed modpacks and exports as inputs, identify versions and loaders from evidence, and diagnose and repair proven incompatibilities with reversible changes and clear blockers. Expand across Minecraft versions and loaders with real pack cases.",
+ "result": "CurseForge exports and CurseForge app instances, both run in the game with `--fix` (a fixed .zip copy; an instance changed only after the recheck passes, and `--undo` restores it exactly). Jars no CurseForge list describes (other launchers' folders, hand-added jars) get their sides from Modrinth by SHA-1; a client-only mod neither site knows, and Forge does not name, still stops the game checks and is listed. Forge only in the game; repairs come from `knowledge/pack-fixes.json` (one entry).",
+ "start": "2026-10-30",
+ "target": "2027-01-15",
+ "measures": [
+  "pack.packs-in-game",
+  "pack.known-repairs"
+ ]
+}

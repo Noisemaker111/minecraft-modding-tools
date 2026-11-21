@@ -1,0 +1,16 @@
+{
+ "id": "41",
+ "title": "NeoForge mods to Fabric through a bridge built from NeoForge's own files",
+ "part": "Loader pairs",
+ "status": "done",
+ "text": "Cover NeoForge's whole published API on Fabric instead of fixing mods one at a time: a coverage check against NeoForge's jars and patches (bench/bridge_coverage.py), the methods its patches add to game classes generated for 26.3, 26.1 and 1.21.1 (bench/bridge_generate.py), and NeoForge's own LGPL classes copied into the converted mod when they compile on Fabric, with failing members left out (bench/bridge_import.py).",
+ "finish": "14 of 28 corpus mods convert, compile and load in the game (cloud sweep on the final commit)",
+ "wrongIf": "the copied classes or generated methods break a mod that loaded before, or the count stays at 13",
+ "start": "2026-11-16",
+ "target": "2026-11-18",
+ "measures": [
+  "loader.convert-corpus"
+ ],
+ "done": "2026-11-18",
+ "result": "14 of 28 compile and load in the game (was 10 on 2026-11-16), 10 with the same behaviour fingerprint as the original; curios is new. 720 of NeoForge's classes compile on Fabric for 26.3, 714 for 26.1, 568 for 1.21.1."
+}

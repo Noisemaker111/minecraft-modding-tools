@@ -1,0 +1,10 @@
+{
+ "id": "32",
+ "title": "Random Things as a Forge port case",
+ "part": "Forge mods and Paper plugins",
+ "status": "later",
+ "text": "Bring Random Things forward from its source as a Forge version-port case, and prove its behavior on the target version. Automatic Forge porting is not yet supported.",
+ "result": "its newest source is a partial 1.14.4 rewrite (36 files, 2019 MCP snapshot names); the full mod is 1.12.2.",
+ "start": "2027-01-18",
+ "target": "2027-02-05"
+}

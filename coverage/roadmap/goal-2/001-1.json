@@ -1,0 +1,12 @@
+{
+ "id": "1",
+ "title": "F3Nope 1.21.5 → 1.21.6 on Fabric",
+ "part": "Neighbouring versions (1.21.x), Fabric and NeoForge",
+ "status": "done",
+ "text": "Port a real Fabric mod one minor forward: F3Nope 1.21.5 → 1.21.6, build + mixin audit.",
+ "start": "2026-10-23",
+ "done": "2026-10-24",
+ "measures": [
+  "port.updates-working.fabric"
+ ]
+}
