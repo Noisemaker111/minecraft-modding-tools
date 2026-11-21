@@ -185,6 +185,23 @@ with tempfile.TemporaryDirectory() as tmp:
     check([j.name for j in chosen] == ["ipn--ktmod.jar"] and list(ready) == ["libipn.jar"] and list(to_port) == ["lang-all.jar"],
           f"a mod is started with the libraries it needs, each library's own found through it: {chosen} {ready} {to_port}")
     check(left == {"lone--lone.jar": ["nowhere"]}, f"a mod whose need nothing answers is named with what it needs: {left}")
+    # A Fabric mod's Modrinth version lists Fabric API, which the pack already runs as its platform: a second copy as a
+    # library stops Fabric ("Mod id fabric-api is in 2 jars"), so only its other library is added.
+    api = Path(tmp) / "fabric-api.jar"
+    api.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "fabric-api"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
+    cloth = Path(tmp) / "cloth.jar"
+    cloth.write_bytes(module("cloth-config"))
+    (folder / "hud--hud.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "hud", "depends": {"fabric-api": "*", "cloth-config": "*"}})}))
+    pins = [{"slug": "hud", "file": "hud.jar", "project": "P-hud", "version": "v-hud"}]
+    listed = {"v-hud": ["P-api", "P-cloth"]}
+    files = {("P-api", "2.0"): (api, "v-api"), ("P-cloth", "2.0"): (cloth, "v-cloth")}
+    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["hud--hud.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        E.required_projects, E.library = real
+    check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
+          f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
 
 # A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
 # server lacks, from another mod, does not.

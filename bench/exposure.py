@@ -1188,6 +1188,10 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                     where = ready
                     if not got:
                         got, where = library(project, loader, frm), to_port
+                    if got and provides(got[0], loader) & own - {"loader:*"}:
+                        # The platform is this project (Fabric API): the pack has it already, and a second copy stops Fabric.
+                        asked_for[project] = None
+                        continue
                     asked_for[project] = got
                     if got:
                         where[got[0].name] = got[0]
