@@ -1,0 +1,18 @@
+{
+ "id": "82",
+ "title": "Mixins follow game code the update moved to another method",
+ "part": "Port by type of break",
+ "status": "done",
+ "text": "Mixin breaks sit in half of the blocked mods (2,654 of 5,248 over every update and jump, sweep run 44966973220), and PR #171's trial found them in 83 of the 106 mods still blocked on NeoForge 1.21.1 -> 1.21.2. First measured which mixin break kinds hold mods that nothing else holds: the scoreboard keeps each blocked mod's references by type (held) and why each mixin handler did not follow its target (refused). Then the porter follows a mixin to where the game's own code went, as a method whose parameters changed, so every existing handler conversion applies: a dropped method to the one method the class gained that reads like it; an injection point the method no longer reaches to the one helper it now calls, or new method made of its code, that has the point and is named once in the class; a parameter the new method no longer takes, read from the field the old method stored it in, where only the new constructors store that field.",
+ "start": "2026-11-22",
+ "target": "2026-11-23",
+ "finish": "mods held only by mixin breaks fall over every update, the big updates and the jump to the newest game, with no update lower, and the freed mods start in a real game",
+ "wrongIf": "a mod this frees fails in a real game on its moved mixin, or a mixin is followed to code that is not the old method's",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates",
+  "port.jar-links.newest"
+ ],
+ "result": "Measured first: over every update and jump, 2,654 of 5,248 blocked mods hold a mixin break but only 343 are held by mixin breaks alone, so mixins are rarely a mod's only wall; the kinds in those 343 are spread thin (target changed signature 124, target gone 113, injection point gone 45). Following mixins to where the game's code went took mixin-only mods 343 -> 335 and mixin references in blocked mods 15,353 -> 14,862. Every update 6,145 -> 6,150, big updates 1,979 -> 1,984, newest 21 -> 21, no update or jump lower (run 44972865325): Fabric 1.20.4 -> 1.20.5 28 -> 30 (Better Mount HUD, Zoomify), 1.21.1 -> 1.21.2 36 -> 37 (Animatica), 1.21.10 -> 1.21.11 44 -> 46 (Carry On, Inventory Profiles Next). Real games: Animatica loads in a 1.21.2 client; Carry On on a 1.21.11 server and client; Inventory Profiles Next in a 1.21.11 client. Better Mount HUD fails in a 1.20.5 client on a @ModifyVariable at a local store in renderPlayerHealth that this step did not move, where Mixin scans no target (the gap step 55 found on 1.21.2). Zoomify was not started: the load step picks a YACL release that needs a newer Fabric API than 1.20.5's. Left: mixins into code moved to another class, handlers capturing locals, changed return types, and render states, where the old argument no longer reaches the method.",
+ "done": "2026-11-22"
+}
