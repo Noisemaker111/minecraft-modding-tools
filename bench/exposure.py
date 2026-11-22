@@ -833,6 +833,13 @@ def kind_of(member, said):
     return f"{member.split(': ', 1)[0]}{' (library)' if row.get('part') == 'library' else ''}, game: {row.get('game') or 'not read'}"
 
 
+def held_by(row, data, said):
+    by = {}
+    for ref in sorted(left(row, data)):
+        by.setdefault(kind_of(ref, said), []).append(ref)
+    return by
+
+
 def by_type(rows, data, said):
     """Each type of break with the mods that have one, the mods it alone holds back (handled, they are done), and
     its most-used references as examples; the types that finish the most mods first."""
@@ -928,6 +935,10 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     }
     order = nearest(rows, data, said)
     summary["types"] = by_type(rows, data, said)
+    # Every blocked mod's references by type, so a way to handle several types can be counted by the mods it frees.
+    summary["held"] = {m["mod"]: held_by(m, data, said) for m in rows if left(m, data)}
+    # Why each blocked mod's mixin handlers did not follow their targets (JarPort.why), for designing the mixin types.
+    summary["refused"] = {m["mod"]: m["refused"] for m in rows if left(m, data) and m.get("refused")}
     summary["nearest"] = [{**turn, "members": turn["members"][:25]} for turn in order[:40]]
     summary["finishing"] = [[turn["fixes"], turn["modsDone"]] for turn in order]
     # Each mod's verdict: the references it still needs, the types of break they are, and what its port wrote. Two runs
