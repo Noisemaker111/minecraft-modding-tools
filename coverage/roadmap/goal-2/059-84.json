@@ -1,0 +1,11 @@
+{
+ "id": "84",
+ "title": "The game proof starts on every release the scoreboard covers",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "Ports are proven by starting them on a real server and client of the new release (tools/cloud-run load), but on 2026-11-22 mmt's own in-game check could not start on several releases, so ports to them were unproven. Fabric 1.18 and 1.18.1: the probe's 1.18 layer called RegistryOps, a 1.18.2 class. 1.16 and 1.16.1: the 1.16 layer called RegistryWriteOps and registryAccess, added in 1.16.2. 1.14.4 to 1.15.2: no layer at all. The game proof left CraftPresence and MaLiLib out on 1.18.2 without a word, even asked for by name: each nests a copy of one Fabric API module, and the platform test read nested ids as the jar's own. Packs mixing mods built for different Java versions did not start (BlueMap built for Java 11 on 1.16.2, which runs on Java 8). And Fabric clients from 1.20.5 to 1.21.6 and the NeoForge 1.21.11 client ended with 'client start failed and named no mod', so those ports were proven on the server only: the client was killed on Fabric's first resolution line, NeoForge's early-service crash is said at ERROR and its frames' class loader name has spaces, and a client sent back to the disconnected screen said nothing of why.",
+ "start": "2026-11-22",
+ "target": "2026-11-23",
+ "finish": "tools/cloud-run load starts a server and a client on Fabric 1.14.4 -> 1.15, 1.15.2 -> 1.16, 1.17.1 -> 1.18 and 1.20.6 -> 1.21 and the NeoForge 1.21.10 -> 1.21.11 client; every mod asked for is started or named with why, and a client that fails names a mod or says why",
+ "wrongIf": "one of those updates still stops before the server or client starts for a reason in mmt's check rather than a mod, or a mod asked for is left out with no reason"
+}
