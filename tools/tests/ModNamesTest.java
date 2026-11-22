@@ -59,6 +59,19 @@ public final class ModNamesTest {
         check("/^(update|method_10)$/".equals(strings.get("onPattern")), "a regex selector stays as written, so the hand-back still matches it: " + strings.get("onPattern"));
         check(strings.get("targets").equals("net.minecraft.world.entity.Entity"), "a @Mixin target written as text renamed in its own spelling");
 
+        // A mod written in other names overrides tick() as method_10 and passes it to its own method that Mojang also names
+        // tick (GeckoLib's getTexture -> getTextureLocation): read in, one tick() remains, not one declared twice.
+        Map<String, byte[]> clash = unzip(new ModNames(names).jar(zip(Map.of("mod/Clash.class", clash())), new ModNames.Counts()));
+        List<String> ticks = new ArrayList<>();
+        new ClassReader(clash.get("mod/Clash.class")).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                ticks.add(name + desc);
+                return null;
+            }
+        }, ClassReader.SKIP_CODE);
+        check(ticks.equals(List.of("tick()V")), "an override that only calls the mod's own method of its Mojang name is that method, declared once: " + ticks);
+
         String widener = new String(out.get("m.accesswidener"), StandardCharsets.UTF_8);
         check(widener.startsWith("accessWidener v2 named") && widener.contains("net/minecraft/world/entity/Entity baseTick"), "the access widener in Mojang names");
         String at = new String(out.get("META-INF/accesstransformer.cfg"), StandardCharsets.UTF_8);
@@ -106,6 +119,26 @@ public final class ModNamesTest {
         mv.visitInsn(Opcodes.RETURN);
         mv.visitMaxs(2, 1);
         mv.visitEnd();
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+
+    /** Entity's subclass with its own tick() and method_10() (Entity.tick in intermediary) calling it. */
+    static byte[] clash() {
+        ClassWriter cw = new ClassWriter(0);
+        cw.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "mod/Clash", null, "net/minecraft/class_1", null);
+        MethodVisitor own = cw.visitMethod(Opcodes.ACC_PUBLIC, "tick", "()V", null, null);
+        own.visitCode();
+        own.visitInsn(Opcodes.RETURN);
+        own.visitMaxs(0, 1);
+        own.visitEnd();
+        MethodVisitor pass = cw.visitMethod(Opcodes.ACC_PUBLIC, "method_10", "()V", null, null);
+        pass.visitCode();
+        pass.visitVarInsn(Opcodes.ALOAD, 0);
+        pass.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "mod/Clash", "tick", "()V", false);
+        pass.visitInsn(Opcodes.RETURN);
+        pass.visitMaxs(1, 1);
+        pass.visitEnd();
         cw.visitEnd();
         return cw.toByteArray();
     }

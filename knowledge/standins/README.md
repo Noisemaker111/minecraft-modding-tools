@@ -19,6 +19,10 @@ nest it.
   - `Owner init(A...)` the old constructor `new Owner(A...)` (not a `super(...)` call)
   - `boolean isInstance(Object)` what `x instanceof Owner` meant
   - A stand-in for a class the new release dropped, with nothing the route or a rule moves it to, stands in for the class.
+    Where the route moves the class to one a mod's code cannot use as the old one (the JVM's verifier refuses the ported
+    class: TranslatableComponent -> TranslatableContents in 1.19, which is no component), the port leaves the route out
+    for that mod and the stand-in stands in for the class there; mods the route suits keep it. Such a stand-in is the old
+    class itself (not a holder of static methods): constructors, instance methods, and a supertype a mod can extend.
   - A stand-in for a class mods extend is written as that class (`public abstract class GuiComponent` with its `public`
     constructor and instance members, not `final` with a private constructor): mods' subclasses of the old class extend
     it, even where the route moves the class's values elsewhere, and its public static methods answer the old ones as
