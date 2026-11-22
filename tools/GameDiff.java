@@ -67,8 +67,10 @@ public final class GameDiff {
     static final String WHY = System.getProperty("gamediff.why", ""); // -Dgamediff.why=<internal class name>: print its class candidates
 
     public static void main(String[] args) throws Exception {
-        String chain = null;
-        String out = null;
+        // Several --chain/--out pairs build several maps in one process (a port's steps, bench/exposure.py routes): each
+        // is its own chain, as if built alone, and the process starts and warms up once.
+        List<String> chains = new ArrayList<>();
+        List<String> outs = new ArrayList<>();
         String loader = null;
         String loaderVersions = null;
         List<String> compare = new ArrayList<>();
@@ -76,8 +78,8 @@ public final class GameDiff {
         String report = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--chain" -> chain = args[++i];
-                case "--out" -> out = args[++i];
+                case "--chain" -> chains.add(args[++i]);
+                case "--out" -> outs.add(args[++i]);
                 case "--loader" -> loader = args[++i];
                 case "--loader-versions" -> loaderVersions = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
@@ -99,9 +101,62 @@ public final class GameDiff {
             Compare.run(compare.get(0), compare.get(1), !all, report == null ? null : Path.of(report));
             return;
         }
-        if (chain == null || out == null) {
+        if (chains.isEmpty() || chains.size() != outs.size()) {
             usage();
         }
+        // Each map is its own chain, one core's work, so the maps are built side by side, each worker taking a run of
+        // consecutive chains: a chain starts at the release the one before it ended at, read once. As many workers as
+        // the heap holds: 20 workers on a 24-processor PC ran out of 10 GB.
+        int workers = workers(chains.size(), MAP_WORKER, 0);
+        List<Thread> running = new ArrayList<>();
+        List<Throwable> failed = Collections.synchronizedList(new ArrayList<>());
+        String l = loader, lv = loaderVersions;
+        for (int w = 0; w < workers; w++) {
+            int from = chains.size() * w / workers, to = chains.size() * (w + 1) / workers;
+            running.add(Thread.ofPlatform().start(() -> {
+                try {
+                    for (int i = from; i < to; i++) {
+                        map(chains.get(i), outs.get(i), l, lv);
+                        Set<String> later = new HashSet<>();
+                        for (String c : chains.subList(i + 1, to)) {
+                            later.addAll(List.of(c.split(",")));
+                        }
+                        for (String v : chains.get(i).split(",")) {
+                            if (!later.contains(v)) {
+                                Exposure.forget(v);
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    failed.add(t);
+                }
+            }));
+        }
+        for (Thread t : running) {
+            t.join();
+        }
+        if (!failed.isEmpty()) {
+            throw failed.get(0) instanceof Exception e ? e : new RuntimeException(failed.get(0));
+        }
+    }
+
+    /**
+     * The heap one map worker needs (Fabric 1.20.1 -> 26.3's 20 step maps): 2 workers ran out of 2 GB and finished in 3,
+     * 4 in 4 GB with 33 full collections and as fast as with 10 GB in 5, 8 ran out of 6 GB and finished in 8.
+     */
+    static final long MAP_WORKER = 1280L << 20;
+
+    /**
+     * Workers for jobs side by side: one per processor, as many as the heap left after base holds at perWorker each, and
+     * at least one.
+     */
+    static int workers(int jobs, long perWorker, long base) {
+        long room = Runtime.getRuntime().maxMemory() - base;
+        long byMemory = Math.max(1, room / perWorker);
+        return (int) Math.max(1, Math.min(jobs, Math.min(Runtime.getRuntime().availableProcessors(), byMemory)));
+    }
+
+    static void map(String chain, String out, String loader, String loaderVersions) throws Exception {
         long t0 = System.nanoTime();
         List<String> versions = List.of(chain.split(","));
         Driver driver = new Driver(versions, loader, loaderVersions == null ? null : List.of(loaderVersions.split(",")));
@@ -132,7 +187,7 @@ public final class GameDiff {
 
     static void usage() {
         System.err.println(
-            "usage: java GameDiff --chain <v1,v2,...> --out map.json [--loader neoforge|fabric] [--loader-versions a,b,...] [--cache dir]\n" +
+            "usage: java GameDiff --chain <v1,v2,...> --out map.json [--chain ... --out ...] [--loader neoforge|fabric] [--loader-versions a,b,...] [--cache dir]\n" +
             "       java GameDiff --compare <A> <B> [--all] [--report disagreements.txt]"
         );
         System.exit(2);
@@ -8393,6 +8448,9 @@ public final class GameDiff {
         int nextField = 1;
         String metadata;
 
+        static final ThreadLocal<Snap> LAST = new ThreadLocal<>(); // the release this thread's last chain ended at
+        static final ThreadLocal<String> LAST_LOADER = ThreadLocal.withInitial(() -> "");
+
         Driver(List<String> versions, String loader, List<String> pinned) {
             this.versions = versions;
             this.loader = loader;
@@ -8409,7 +8467,7 @@ public final class GameDiff {
                 // The loader as a mod runs on it, the classes the link check reads (Exposure.snap): NeoForge's universal jar
                 // with FML and its other net.neoforged libraries, or Fabric Loader with Fabric API's modules, in Mojang
                 // names. Its own code uses its own API, so a change to it is learned like the game's.
-                Exposure.Platform p = "fabric".equals(loader) ? Exposure.fabric(version) : Exposure.neoforge(version);
+                Exposure.Platform p = Exposure.platform(loader, version);
                 List<byte[]> classes = p.classes();
                 if (!classes.isEmpty()) {
                     prevPlatform = classes;
@@ -8423,7 +8481,13 @@ public final class GameDiff {
                     loaderNotes.add(version + ": no " + loader + " release; loader classes start at a later release");
                     loaderUsed.put(version, null);
                 }
-                return next(GameDiff.load(version, classes, p.version()), null, p.version());
+                // The release that ended the last chain of this process starts this one (a long port's steps): read once.
+                Snap last = LAST.get();
+                Snap s = last != null && last.version.equals(version) && Objects.equals(last.loaderVersion, p.version()) && LAST_LOADER.get().equals(loader)
+                    ? last : GameDiff.load(version, classes, p.version());
+                LAST.set(s);
+                LAST_LOADER.set(loader);
+                return next(s, null, p.version());
             }
             if (loader != null) {
                 int i = versions.indexOf(version);

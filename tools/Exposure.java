@@ -107,7 +107,7 @@ public final class Exposure {
      * references to the game, so a loader API change is porting work, not a surprise at load time.
      */
     static GameDiff.Snap snap(String version, String loader) throws Exception {
-        Platform p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of());
+        Platform p = platform(loader, version);
         String vj = GameDiff.versionJson(version);
         Path client = GameDiff.verified(GameDiff.download(vj, "client"), "client-" + version + ".jar");
         String[] m = GameDiff.download(vj, "client_mappings");
@@ -132,6 +132,29 @@ public final class Exposure {
      * its classes in Mojang names, its access transformer, and interfaces it adds to game classes (Mojang names).
      */
     record Platform(String version, List<byte[]> classes, String access, Map<String, List<String>> injected) {}
+
+    /**
+     * A release's platform, read once per process: a long port reads each release at two of its steps (as the new release
+     * of one and the old of the next), and reading Fabric API into Mojang names was half of reading a release.
+     */
+    static Platform platform(String loader, String version) throws Exception {
+        String key = loader + " " + version;
+        Platform p = PLATFORMS.get(key);
+        if (p == null) {
+            p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of());
+            Platform first = PLATFORMS.putIfAbsent(key, p);
+            p = first == null ? p : first;
+        }
+        return p;
+    }
+
+    static final Map<String, Platform> PLATFORMS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Lets go of what was read once for a release a long port has gone past. */
+    static void forget(String version) {
+        PLATFORMS.keySet().removeIf(k -> k.endsWith(" " + version));
+        Intermediary.FABRIC.remove(version);
+    }
 
     static final String NEOFORGED = "https://maven.neoforged.net/releases/";
 
@@ -250,7 +273,7 @@ public final class Exposure {
         Map<String, List<String>> injected = new HashMap<>();
         if (api != null) {
             byte[] bytes = Files.readAllBytes(api);
-            Intermediary names = compare(version, "26.1") < 0 ? new Intermediary(version) : null;
+            Intermediary names = compare(version, "26.1") < 0 ? Intermediary.of(version) : null;
             // Fabric API's modules open game members to every mod with "transitive-" widener lines (BlockEntityRenderers.
             // register, MenuScreens.register), as NeoForge does with its access transformer.
             for (String text : wideners(bytes)) {
@@ -541,6 +564,18 @@ public final class Exposure {
             }
         }
 
+        /** Fabric's intermediary names of a release, read once per process: every step of a long port before 26.1 asks again. */
+        static Intermediary of(String version) throws Exception {
+            Intermediary cached = FABRIC.get(version);
+            if (cached == null) {
+                FABRIC.putIfAbsent(version, new Intermediary(version));
+                cached = FABRIC.get(version);
+            }
+            return cached;
+        }
+
+        static final Map<String, Intermediary> FABRIC = new java.util.concurrent.ConcurrentHashMap<>();
+
         /**
          * NeoForge's SRG names of one release in Mojang's. NeoForge's pom names the NeoForm build it was made from; NeoForm's
          * joined mappings name each obfuscated class (in Mojang's name already) and member with an SRG id, unique in the
@@ -750,8 +785,9 @@ public final class Exposure {
         return out;
     }
 
+    // The JDK's own cache is a plain HashMap, and JarPort verifies on several threads at once.
     static final java.lang.classfile.ClassHierarchyResolver JDK_CLASSES =
-        java.lang.classfile.ClassHierarchyResolver.ofResourceParsing(ClassLoader.getPlatformClassLoader()).cached();
+        java.lang.classfile.ClassHierarchyResolver.ofResourceParsing(ClassLoader.getPlatformClassLoader()).cached(() -> Collections.synchronizedMap(new HashMap<>()));
 
     static final Pattern VERIFIED_METHOD = Pattern.compile(" in ([\\w/$]+)::([^(\\s]+)\\(");
 

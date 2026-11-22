@@ -592,7 +592,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # scoreboard after every edit, and porting every mod again is most of a run.
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
-    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
+    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
     E.ROOT, E.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     fixes = root / "knowledge" / "fixes.json"
@@ -608,7 +608,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     commands = []
 
-    def fake_side_by_side(command, given, report):
+    def fake_side_by_side(command, given, report, one=False):
         ported.append([j.name for j in given])
         commands.append(command)
         return [{"mod": j.name, "out": str(report.parent / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]), "silent": []} for j in given]
@@ -617,7 +617,7 @@ with tempfile.TemporaryDirectory() as tmp:
     step_routes = {("1.0", "1.1"): route, ("1.1", "1.2"): root / "route-1.1-1.2.json"}
     step_routes[("1.1", "1.2")].write_text("{}", encoding="utf-8")
     E.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
-    E.side_by_side, E.route_map, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda frm, to, *a: step_routes[(frm, to)]), (lambda: "classes"), (lambda: "classes")
+    E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
     E.tools_classes_key, E.platform_key, E.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
 
     def port():
@@ -668,7 +668,7 @@ with tempfile.TemporaryDirectory() as tmp:
     except SystemExit as failed:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
-    (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
+    (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}

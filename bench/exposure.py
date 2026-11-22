@@ -374,15 +374,25 @@ def java_version():
 
 
 def route_map(frm, to, loader, classes):
-    target = keyed_at("maps", content_key(tools_key(*MAP_SOURCES), platform_bytes(), java_version())) / f"{loader}-{frm}-{to}.json"
-    if target.is_file():
-        return target
-    part = part_of(target)
-    args = [java(), "-Xmx10g", "-cp", str(classes), "GameDiff", "--chain", ",".join(chain(frm, to)), "--out", str(part)]
-    if loader:
-        args += ["--loader", loader]
-    subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
-    return publish(part, target)
+    return route_maps([(frm, to)], loader, classes)[0]
+
+
+def route_maps(updates, loader, classes):
+    """The route map of each (from, to), kept in ~/.mmt/exposure/maps/. The missing ones are built by one GameDiff process,
+    each as its own chain: a long port has a map per step (stops), and a process per map started cold and read both
+    releases again every time."""
+    folder = keyed_at("maps", content_key(tools_key(*MAP_SOURCES), platform_bytes(), java_version()))
+    targets = [folder / f"{loader}-{frm}-{to}.json" for frm, to in updates]
+    missing = {t: (frm, to) for t, (frm, to) in zip(targets, updates) if not t.is_file()}
+    if missing:
+        parts = {t: part_of(t) for t in missing}
+        args = [java(), "-Xmx10g", "-cp", str(classes), "GameDiff"] + (["--loader", loader] if loader else [])
+        for t, (frm, to) in missing.items():
+            args += ["--chain", ",".join(chain(frm, to)), "--out", str(parts[t])]
+        subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
+        for t, part in parts.items():
+            publish(part, t)
+    return targets
 
 
 ASM = [ROOT / "tools" / "perf" / "lib" / "asm-9.9.jar", ROOT / "tools" / "perf" / "lib" / "asm-commons-9.9.jar"]
@@ -419,8 +429,9 @@ def jar_tools():
     return CLASSES["path"]
 
 
-# Each process that reads jars loads two releases of the game first and starts cold, so more piles stop paying:
-# on 24 processors 150 NeoForge mods took 144 s in one pile, 66 s in four and 75 s in nine.
+# Each process that reads jars (ModNames; JarPort ports on every processor in one process) starts cold and reads a
+# release first, so more piles stop paying: when JarPort ran in piles, 150 NeoForge mods took 144 s in one pile on 24
+# processors, 66 s in four and 75 s in nine.
 PILE = 36
 # A pile only pays with processors to spare for its start: on GitHub's 4-processor runners four piles took 104 s
 # where one had taken about 90.
@@ -440,11 +451,12 @@ def piles(jars):
     return [pile for _, pile in dealt]
 
 
-def side_by_side(command, jars, report):
-    """Runs a tool that reads jars one at a time (JarPort, ModNames) on every processor at once: a jar's result does not
-    depend on the jars beside it, and one process used one of this machine's processors (150 mods took 140 s on one of
-    24). Returns the reports' rows in the order the jars were given."""
-    dealt = piles(jars)
+def side_by_side(command, jars, report, one=False):
+    """Runs a tool that reads jars one at a time (ModNames) on every processor at once: a jar's result does not depend on
+    the jars beside it, and one process used one of this machine's processors (150 mods took 140 s on one of 24). one: a
+    tool that uses every processor itself (JarPort) gets every jar in one process. Returns the reports' rows in the order
+    the jars were given."""
+    dealt = [list(jars)] if one else piles(jars)
     if len(dealt) > 1:
         # The piles share the memory one process had.
         command = [f"-Xmx{max(3, 10 // len(dealt))}g" if c.startswith("-Xmx") else c for c in command]
@@ -510,7 +522,7 @@ STOPS = {}
 def routes(loader, frm, to):
     """The route map of each step of a port from frm to to."""
     steps = stops(loader, frm, to)
-    return [route_map(a, b, loader, compile_tools()) for a, b in zip(steps, steps[1:])]
+    return route_maps(list(zip(steps, steps[1:])), loader, compile_tools())
 
 
 def port_key(loader, frm, to, runtime=False):
@@ -566,7 +578,8 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
             args += ["--originals", str(HOME / "jars" / f"{loader}-{frm}")]
-        for m in side_by_side(args, todo, report):
+        # One process: JarPort ports the jars of each step on every processor, and each process read every step's releases.
+        for m in side_by_side(args, todo, report, one=True):
             rows[m["mod"]] = m
             if cache:
                 kept = {k: v for k, v in m.items() if k != "out"}  # where this run wrote it, not part of the answer
@@ -608,7 +621,8 @@ def game_says(loader, frm, to, report):
     starts to load is loaded from code that changed, so its key changes with it."""
     classes = compile_tools()
     asked = [r["member"] for r in json.loads(report.read_text(encoding="utf-8"))["unlinkedByMods"]]
-    folder = keyed_at("game", content_key(platform_key(loader, route_map(frm, to, loader, classes)), java_version())) / f"{loader}-{frm}-{to}"
+    # The loader releases of each step: a port that stops on the way reads no map of the whole jump, and none is built for it.
+    folder = keyed_at("game", content_key(*(platform_key(loader, r) for r in routes(loader, frm, to)), java_version())) / f"{loader}-{frm}-{to}"
     folder.mkdir(parents=True, exist_ok=True)
     loaded = folder / "loaded.txt"
     known = folder / (classes_key(classes, loaded.read_text(encoding="utf-8").split()) + ".json") if loaded.is_file() else None
@@ -943,11 +957,11 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
         pinned = [p for p in pinned if p.name in held]
         if not pinned:
             raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
-    classes = compile_tools()
-    # Reading the jars' names, the game's change map and the data reports need nothing from each other.
+    compile_tools()  # once, before the threads below that run it
+    # Reading the jars' names, the game's change maps and the data reports need nothing from each other.
     with ThreadPoolExecutor(3) as pool:
         named = pool.submit(timed, "names", mojang_names, loader, frm, pinned)
-        mapped = pool.submit(timed, "map", route_map, frm, to, loader, classes)
+        mapped = pool.submit(timed, "map", routes, loader, frm, to)
         checked = pool.submit(timed, "data", data_check, frm, to, pinned)
         (mods, unread), data = named.result(), checked.result()
         mapped.result()
