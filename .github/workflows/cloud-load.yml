@@ -54,7 +54,14 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '25'
+          # Every Java a covered release runs on (1.14.4-1.16.5: 8, 1.17: 16, 1.18-1.20.4: 17, 1.20.5-1.21.11: 21, 26.x:
+          # 25), from the runner's own tool cache; mmt finds them by setup-java's JAVA_HOME_<N>_X64. The last is the default.
+          java-version: |
+            8
+            16
+            17
+            21
+            25
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
