@@ -65,6 +65,9 @@ jobs:
           Xvfb :99 -screen 0 1280x720x24 -nolisten tcp &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+          # 26.x opens its window through SDL, which finds no matching GLX visual on Xvfb, so its client never starts
+          # there; SDL's offscreen driver on Mesa's EGL does (as in cloud-convert.yml). Older releases' GLFW ignores it.
+          echo "SDL_VIDEO_DRIVER=offscreen" >> "$GITHUB_ENV"
           ./mmt preferences --background on --quiet on
       - name: Port the mods, start them on a server and in a client
         run: |
