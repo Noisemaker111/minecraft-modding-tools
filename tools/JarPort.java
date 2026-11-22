@@ -5209,6 +5209,7 @@ public final class JarPort {
         }
 
         final List<Read> reads = new ArrayList<>(); // by field instruction number; null for a write or a primitive
+        final Map<Integer, Read> results = new HashMap<>(); // by call number: where a call's object result goes
         final Map<Object, Read> marks = new IdentityHashMap<>();
         int calls = -1;
 
@@ -5303,6 +5304,14 @@ public final class JarPort {
                 said.put(self, new String[] { "R", String.valueOf(calls), owner, name, desc });
             }
             step(said, () -> super.visitMethodInsn(opcode, owner, name, desc, itf));
+            Type result = Type.getReturnType(desc);
+            if (stack != null && (result.getSort() == Type.OBJECT || result.getSort() == Type.ARRAY) && !name.equals("<init>")) {
+                Object mark = new String(result.getSort() == Type.OBJECT ? result.getInternalName() : result.getDescriptor());
+                stack.set(stack.size() - 1, mark);
+                Read r = new Read();
+                marks.put(mark, r);
+                results.put(calls, r);
+            }
         }
 
         @Override
@@ -5378,7 +5387,7 @@ public final class JarPort {
         }
 
         /** What a method of a class's bytes does with each value it reads from a field, or null when it is not there. */
-        static List<Read> of(byte[] bytes, String name, String desc) {
+        static ReadUses of(byte[] bytes, String name, String desc) {
             if (bytes == null) {
                 return null;
             }
@@ -5393,7 +5402,7 @@ public final class JarPort {
                     return found[0] = new ReadUses(reader.getClassName(), access, n, d);
                 }
             }, ClassReader.EXPAND_FRAMES);
-            return found[0] == null ? null : found[0].reads;
+            return found[0];
         }
     }
 
@@ -6005,7 +6014,7 @@ public final class JarPort {
         int nextLocal;
         int extraStack; // what code written in place of an instruction may push beyond it
         int fieldsSeen = -1, callsSeen = -1; // the method's field and method instructions so far, as ReadUses numbers them
-        List<ReadUses.Read> reads;
+        ReadUses uses;
         boolean readsTried;
         final Map<Integer, String[]> onNewType = new HashMap<>(); // call number -> {opcode, owner, name, desc} on a retyped value
 
@@ -6133,8 +6142,9 @@ public final class JarPort {
             if (!readsTried) {
                 readsTried = true;
                 int dot = key.indexOf('.'), paren = key.indexOf('(');
-                reads = paren < 0 ? null : ReadUses.of(mod.bytes.get(key.substring(0, dot)), key.substring(dot + 1, paren), key.substring(paren));
+                uses = paren < 0 ? null : ReadUses.of(mod.bytes.get(key.substring(0, dot)), key.substring(dot + 1, paren), key.substring(paren));
             }
+            List<ReadUses.Read> reads = uses == null ? null : uses.reads;
             ReadUses.Read read = reads == null || fieldsSeen >= reads.size() ? null : reads.get(fieldsSeen);
             Map<Integer, String[]> calls = read == null || read.bad || read.uses.isEmpty() ? null : onNewType(read, type);
             String[] steps = calls != null ? null : unwrap(now[2], want);
@@ -6149,16 +6159,91 @@ public final class JarPort {
                 mod.change("field read as its new type");
                 return true;
             }
-            boolean itf = isInterface(mod, type.getInternalName());
-            String held = inverse.getOrDefault(type.getInternalName(), type.getInternalName());
-            super.visitMethodInsn(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, held, steps[0].substring(0, steps[0].indexOf('(')),
-                oldDesc(steps[0].substring(steps[0].indexOf('('))), itf);
+            unwrapping(type, steps);
+            mod.change("field read through what the game's code reads from its new type");
+            return true;
+        }
+
+        /** Writes what the game's code reads from a value of type held to get the one it holds (see unwrap). */
+        void unwrapping(Type held, String[] steps) {
+            boolean itf = isInterface(mod, held.getInternalName());
+            super.visitMethodInsn(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, inverse.getOrDefault(held.getInternalName(), held.getInternalName()),
+                steps[0].substring(0, steps[0].indexOf('(')), oldDesc(steps[0].substring(steps[0].indexOf('('))), itf);
             String cast = steps[1];
             super.visitTypeInsn(Opcodes.CHECKCAST, inverse.getOrDefault(cast, cast));
             if (steps.length > 2) {
                 super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, cast, steps[2].substring(0, steps[2].indexOf('(')), steps[2].substring(steps[2].indexOf('(')), false);
             }
-            mod.change("field read through what the game's code reads from its new type");
+        }
+
+        /** The exact JVM conversion from a call's new primitive result to the one the code used (1.21.6's Window.getGuiScale() int, read as the double it was). */
+        static final Map<String, Integer> WIDEN = Map.of("ID", Opcodes.I2D, "IJ", Opcodes.I2L, "FD", Opcodes.F2D, "BI", Opcodes.NOP, "SI", Opcodes.NOP, "CI", Opcodes.NOP);
+
+        /** Types whose value may hold nothing (an empty Optional, a failed DataResult): reading the value out could throw where the old call answered. */
+        static final Set<String> MAYBE = Set.of("java/util/Optional", "com/mojang/serialization/DataResult", "java/util/OptionalInt", "java/util/OptionalLong", "java/util/OptionalDouble");
+
+        /**
+         * A call whose method the update gave another result type, its arguments still fitting (1.19's getRandom: Random,
+         * then RandomSource; 1.21.6's getGuiScale: double, then int). The new result is taken as it is where every use
+         * of it means the same of its type (ReadUses, as a retyped field read), widened where a primitive converts exactly,
+         * or turned into the old type as the game's own code gets what a holder of it holds. Not a result that may hold
+         * nothing (Optional, DataResult): the old call answered there.
+         */
+        boolean resultConverted(int opcode, String owner, String declOwner, String name, String desc) {
+            if (moved != null || opcode == Opcodes.INVOKESPECIAL) {
+                return false;
+            }
+            boolean isStatic = opcode == Opcodes.INVOKESTATIC;
+            String[] t = route.method(declOwner, name, desc);
+            Type[] before = Type.getArgumentTypes(desc(desc)), after = Type.getArgumentTypes(t[2]);
+            Type was = Type.getReturnType(desc(desc)), now = Type.getReturnType(t[2]);
+            if (before.length != after.length || was.equals(now) || was.getSort() == Type.VOID || now.getSort() == Type.VOID || !isStatic && !isA(cls(owner), t[0])
+                || now.getSort() == Type.OBJECT && MAYBE.contains(now.getInternalName())) {
+                // A result that may hold nothing is never null itself: even a null test of it would answer otherwise.
+                return false;
+            }
+            for (int i = 0; i < before.length; i++) {
+                if (!usable(before[i], after[i])) {
+                    return false;
+                }
+            }
+            GameDiff.Cls holder = Exposure.declaring(b, t[0], 'm', t[1], t[2]);
+            GameDiff.Meth m = holder == null ? null : holder.methods.get(t[1] + t[2]);
+            if (m == null || m.isStatic() != isStatic || !linksNew(mod, callers, t[0], 'm', t[1], t[2])) {
+                return false;
+            }
+            boolean objects = now.getSort() == Type.OBJECT && (was.getSort() == Type.OBJECT || was.getSort() == Type.ARRAY);
+            Integer widen = WIDEN.get(now.getDescriptor() + was.getDescriptor());
+            Map<Integer, String[]> calls = null;
+            String[] steps = null;
+            if (objects) {
+                if (!readsTried) {
+                    readsTried = true;
+                    int dot = key.indexOf('.'), paren = key.indexOf('(');
+                    uses = paren < 0 ? null : ReadUses.of(mod.bytes.get(key.substring(0, dot)), key.substring(dot + 1, paren), key.substring(paren));
+                }
+                ReadUses.Read read = uses == null ? null : uses.results.get(callsSeen);
+                calls = read == null || read.bad || read.uses.isEmpty() ? null : onNewType(read, now);
+                steps = calls != null ? null : unwrap(now.getDescriptor(), was.getDescriptor());
+            }
+            if (calls == null && steps == null && widen == null) {
+                return false;
+            }
+            GameDiff.Cls named = b.classes.getOrDefault(t[0], holder);
+            boolean itf = (named.flags & Opcodes.ACC_INTERFACE) != 0;
+            super.visitMethodInsn(isStatic ? Opcodes.INVOKESTATIC : itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, inverse.getOrDefault(t[0], t[0]), t[1], oldDesc(t[2]), itf);
+            if (widen != null) {
+                if (widen != Opcodes.NOP) {
+                    super.visitInsn(widen);
+                }
+                mod.change("call whose result type changed, widened to the old one");
+            } else if (calls != null) {
+                onNewType.putAll(calls);
+                mod.change("call whose result type changed, its result used as the new type");
+            } else {
+                unwrapping(now, steps);
+                mod.change("call whose result type changed, read through what the game's code reads from it");
+            }
             return true;
         }
 
@@ -6455,6 +6540,9 @@ public final class JarPort {
                 }
                 String unlinked = "call: " + Exposure.dotted(decl.owner()) + "." + name + desc + (WHERE ? " @ " + where + (Sites.this.moved != null ? " (moved)" : "") : "");
                 if (converted(opcode, owner, decl.owner(), name, desc)) {
+                    return;
+                }
+                if (resultConverted(opcode, owner, decl.owner(), name, desc)) {
                     return;
                 }
                 if (relocated(decl.owner(), name, desc)) {
