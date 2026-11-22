@@ -7943,7 +7943,7 @@ public final class JarPort {
 
     /**
      * The stand-ins a ported jar's classes call, carried in the jar under a package of its own (mmt.standin.mID, ID from the
-     * jar's name): two mods carrying one stand-in never put two copies of a package on the game. Adds them to entries and
+     * jar's whole name): two mods carrying one stand-in never put two copies of a package on the game. Adds them to entries and
      * points the classes that use them there; nothing when none is used.
      */
     void bundle(Mod mod, Map<String, byte[]> rewritten, Map<String, byte[]> entries, String jarName) {
@@ -7967,7 +7967,7 @@ public final class JarPort {
             return;
         }
         openFor(mod, used);
-        String home = STANDIN + "m" + Integer.toHexString(jarName.replaceAll("!.*", "").hashCode() & 0x7fffffff) + "/";
+        String home = standinHome(jarName);
         org.objectweb.asm.commons.Remapper move = new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
             @Override
             public String map(String name) {
@@ -7984,6 +7984,14 @@ public final class JarPort {
             rewritten.put(move.map(name) + ".class", relocate(standins.get(name), move));
         }
         mod.change("stand-ins carried: " + used.stream().filter(n -> !n.matches(".*\\$\\d+$")).map(n -> Exposure.dotted(n.substring(STANDIN.length()))).toList());
+    }
+
+    /**
+     * The package a jar carries its stand-ins under, from the jar's whole name: a jar nested in a mod ("MOD.jar!INNER.jar")
+     * is a module of its own on NeoForge, which refuses one package in two modules.
+     */
+    static String standinHome(String jarName) {
+        return STANDIN + "m" + Integer.toHexString(jarName.hashCode() & 0x7fffffff) + "/";
     }
 
     static byte[] relocate(byte[] bytes, org.objectweb.asm.commons.Remapper move) {

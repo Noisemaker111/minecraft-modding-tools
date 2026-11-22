@@ -150,6 +150,10 @@ final class JarPortStandinTest {
         }
         JarPortTest.expect(refused.contains("answers no member of s9.Gauge"), "a stand-in that answers no old member is refused, not ignored: " + refused);
 
+        String outer = JarPort.standinHome("mod.jar"), inner = JarPort.standinHome("mod.jar!library.jar");
+        JarPortTest.expect(!outer.equals(inner) && outer.matches("mmt/standin/m[0-9a-f]+/") && inner.matches("mmt/standin/m[0-9a-f]+/"),
+            "a mod and a jar nested in it carry their stand-ins in packages of their own (one module each on NeoForge): " + outer + " " + inner);
+
         // A stand-in runs on the new release's Java: 1.20.3 runs on Java 17, which cannot load Java 21's class files.
         Path old = scratch.resolve("standin-java/standins/1.20.2-1.20.3/s9");
         write(old.resolve("Gauge.java"), """
