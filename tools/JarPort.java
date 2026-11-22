@@ -383,6 +383,8 @@ public final class JarPort {
                     }
                 }
                 row.put("out", dest.toString());
+                // What the port wrote, as a hash: a mod whose ported jar is the same as before needs no new proof in game.
+                row.put("ported", HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(ported), 0, 8));
                 row.put("changed", changed);
                 row.put("unlinked", new ArrayList<>(unlinked));
                 row.put("silent", new ArrayList<>(silent));
@@ -2249,7 +2251,7 @@ public final class JarPort {
         }
         Set<String> seen = new HashSet<>();
         String chosen = null;
-        for (GameDiff.Cls sub : b.classes.values()) {
+        for (GameDiff.Cls sub : declaring(b, h + hd)) {
             GameDiff.Meth own = sub.methods.get(h + hd);
             GameDiff.Cls old = a.classes.get(inverse.getOrDefault(sub.name, sub.name));
             if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || (sub.flags & Opcodes.ACC_ABSTRACT) != 0 || sub.name.equals(k) || !subtype(b, sub.name, k)
@@ -2452,6 +2454,24 @@ public final class JarPort {
     }
 
     final Map<String, Optional<String[]>> takeovers = new HashMap<>();
+    final Map<String, Optional<String[]>> movedStatics = new HashMap<>(); // Sites.movedStatic: the same for every mod of the port
+    final Map<GameDiff.Snap, Map<String, List<GameDiff.Cls>>> declaringBy = new IdentityHashMap<>(); // release -> name+desc -> its classes declaring it
+
+    /**
+     * A release's classes that declare name+desc, in the order its classes map lists them, so a search over them answers as
+     * one over every class did. Searching every class at each unlinked call was a third of the port's time (JFR, 150 mods).
+     */
+    List<GameDiff.Cls> declaring(GameDiff.Snap release, String nameDesc) {
+        return declaringBy.computeIfAbsent(release, r -> {
+            Map<String, List<GameDiff.Cls>> index = new HashMap<>();
+            for (GameDiff.Cls c : r.classes.values()) {
+                for (String m : c.methods.keySet()) {
+                    index.computeIfAbsent(m, k -> new ArrayList<>()).add(c);
+                }
+            }
+            return index;
+        }).getOrDefault(nameDesc, List.of());
+    }
 
     /**
      * {name, desc} (old names) of the method the game's own subclasses of k overrode in the old release and no longer do
@@ -2463,7 +2483,7 @@ public final class JarPort {
             Map<String, Integer> dropped = new HashMap<>();
             Map<String, List<String>> by = new HashMap<>(); // dropped method -> the subclasses that dropped it
             int had = 0;
-            for (GameDiff.Cls sub : b.classes.values()) {
+            for (GameDiff.Cls sub : declaring(b, n.name + n.desc)) {
                 GameDiff.Meth own = sub.methods.get(n.name + n.desc);
                 GameDiff.Cls old = a.classes.get(inverse.getOrDefault(sub.name, sub.name));
                 if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || sub.name.equals(k) || old == null || !subtype(b, sub.name, k)
@@ -3812,9 +3832,13 @@ public final class JarPort {
      * Each mixin class's config's injectors.defaultRequire (0 when the config gives none, as Mixin takes it), read from
      * every mixin config in the jar: a JSON file naming a package and its mixin classes.
      */
+    static final byte[] PACKAGE_KEY = "package".getBytes(StandardCharsets.ISO_8859_1), ESCAPE = "\\u".getBytes(StandardCharsets.ISO_8859_1);
+
     static void requires(Mod mod, Map<String, byte[]> entries) {
         for (var e : entries.entrySet()) {
-            if (!e.getKey().endsWith(".json") || e.getKey().contains("/lang/")) {
+            // Only a file that can hold the key "package" is parsed: parsing every data file was a tenth of the port's time.
+            if (!e.getKey().endsWith(".json") || e.getKey().contains("/lang/")
+                || indexOf(e.getValue(), PACKAGE_KEY) < 0 && indexOf(e.getValue(), ESCAPE) < 0) {
                 continue;
             }
             Map<String, Object> config;
@@ -4827,8 +4851,8 @@ public final class JarPort {
         List<String> overriders(String owner, String name, String desc) {
             return overridersOf.computeIfAbsent(owner + "." + name + desc, k -> {
                 List<String> out = new ArrayList<>();
-                for (GameDiff.Cls c : a.classes.values()) {
-                    if (c.methods.containsKey(name + desc) && subtype(a, c.name, owner)) {
+                for (GameDiff.Cls c : declaring(a, name + desc)) {
+                    if (subtype(a, c.name, owner)) {
                         out.add(c.name);
                     }
                 }
@@ -6524,24 +6548,26 @@ public final class JarPort {
 
         /** {owner, name} of the one class in the same project (its first two package names) that gained a public static name+newDesc. */
         String[] movedStatic(String declOwner, String name, String newDesc) {
-            String[] parts = cls(declOwner).split("/");
-            String project = parts.length > 2 ? parts[0] + "/" + parts[1] + "/" : "";
-            String found = null;
-            for (GameDiff.Cls c : b.classes.values()) {
-                GameDiff.Meth m = c.methods.get(name + newDesc);
-                if (m == null || !m.isStatic() || (m.flags & Opcodes.ACC_PUBLIC) == 0 || !c.name.startsWith(project)) {
-                    continue;
+            return movedStatics.computeIfAbsent(declOwner + "." + name + newDesc, key -> {
+                String[] parts = cls(declOwner).split("/");
+                String project = parts.length > 2 ? parts[0] + "/" + parts[1] + "/" : "";
+                String found = null;
+                for (GameDiff.Cls c : declaring(b, name + newDesc)) {
+                    GameDiff.Meth m = c.methods.get(name + newDesc);
+                    if (!m.isStatic() || (m.flags & Opcodes.ACC_PUBLIC) == 0 || !c.name.startsWith(project)) {
+                        continue;
+                    }
+                    GameDiff.Cls before = a.classes.get(inverse.getOrDefault(c.name, c.name));
+                    if (before != null && before.methods.containsKey(name + oldDesc(newDesc))) {
+                        continue;
+                    }
+                    if (found != null) {
+                        return Optional.empty();
+                    }
+                    found = c.name;
                 }
-                GameDiff.Cls before = a.classes.get(inverse.getOrDefault(c.name, c.name));
-                if (before != null && before.methods.containsKey(name + oldDesc(newDesc))) {
-                    continue;
-                }
-                if (found != null) {
-                    return null;
-                }
-                found = c.name;
-            }
-            return found == null ? null : new String[] { found, name };
+                return found == null ? Optional.<String[]>empty() : Optional.of(new String[] { found, name });
+            }).orElse(null);
         }
 
         /**

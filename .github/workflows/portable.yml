@@ -40,7 +40,7 @@ jobs:
           key: ci-${{ runner.os }}-${{ hashFiles('fixtures/prism-lab/build.gradle', 'fixtures/prism-lab/settings.gradle', 'fixtures/prism-lab/gradle.properties', 'fixtures/prism-lab/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: ci-${{ runner.os }}-
       - name: Offline checks
-        run: python bench/run_tests.py
+        run: python bench/run_tests.py --all
       - name: Stop Gradle before the cache save
         if: success() && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
         run: pkill -f GradleDaemon || true
@@ -93,7 +93,7 @@ jobs:
           restore-keys: ci-${{ runner.os }}-
       - name: Offline checks
         working-directory: portable workspace
-        run: python bench/run_tests.py
+        run: python bench/run_tests.py --all
       - name: Stop Java so Windows can read its cache locks
         if: success() && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
         shell: pwsh
