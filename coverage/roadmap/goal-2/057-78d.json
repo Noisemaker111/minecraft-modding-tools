@@ -13,5 +13,5 @@
   "port.jar-links.every-update",
   "port.jar-links.big-updates"
  ],
- "result": "RESULT"
+ "result": "Two of three held; the third failed as written, for reasons outside the stand-ins. 11 stand-ins freed 11 mods: NeoForge 1.21.1 -> 1.21.2 went 41 -> 52 of 147. The same game-only stand-ins took Fabric 1.21.1 -> 1.21.2 from 36 -> 41. Every update 6,145 -> 6,161, big updates 1,979 -> 1,995 (cloud run 44969588277 against main's 44960606918), none lower. The 11 took about 10 minutes together, 1-2 minutes each; the mechanism took about 1.5 hours once. Real starts: 9 of the 11 load on a real 1.21.2 server and client. 2 fail (18%, against 17 of 559 today): Natures Compass on 1.21.2's required item ids ('Item id not set', invisible to the link check), and Enchantment Descriptions on its Bookshelf library, whose ported 1.21.1 build fails. Neither is a stand-in's code. Ceiling: the top 10 classes each free one mod. Only 23 of 106 blocked mods are blocked solely by calls, fields and class uses; 83 also hold a mixin or override break, out of scope. So stand-ins alone top out around 64 of 147 on this update, at about one stand-in per mod, and the rewritten systems never reached the top 10. Receipts: bench/exposure/load-neoforge-1.21.1-1.21.2-0b47b4c3f7.json, bench/exposure/load-fabric-1.21.1-1.21.2-9adb993ed0.json."
 }
