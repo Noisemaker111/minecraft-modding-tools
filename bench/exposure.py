@@ -1655,8 +1655,19 @@ def client_starts(loader, to, server_pack, names, platform=()):
         if not blamed:
             blamed = needs_other_java(res, present)
         failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
-        if not blamed and not res.get("client", {}).get("toolError") and len(present) > 1:
-            blamed = first_failing(pack, present, loader, start, failure)
+        if not blamed and not res.get("client", {}).get("toolError"):
+            # The libraries are searched too (Fabric API, the platform, is not): one of them can be what fails.
+            libraries = [n for n in platform if (pack / "mods" / n).is_file() and not own_ids(pack / "mods" / n, loader) & {"fabric-api"}]
+            found = first_failing(pack, present + libraries, loader, start, failure)
+            for library in [n for n in found if n in libraries]:
+                gives = provides(pack / "mods" / library, loader, to)
+                (pack / "mods" / library).rename(pack / "dropped" / library)
+                print(f"  {library}: the library fails in the client")
+                for name in present:
+                    asked = needs(pack / "mods" / name, loader) or set()
+                    if asked & gives:
+                        found.setdefault(name, f"needs the library {library}, which fails in the client: " + found[library][:300])
+            blamed = {n: why for n, why in found.items() if n in present}
         if not blamed:
             # The client itself could not be driven (no mod set makes it fail or pass, or mmt's own step does not fit this
             # release): the server's verdicts stand, and the client is reported as not run, with why.
@@ -1692,9 +1703,17 @@ def with_needs(chosen, asks, gives):
         out += more
 
 
-def first_failing(pack, present, loader, start, failure):
-    """When a client start fails and nothing names a mod (sent back to the disconnected screen with no reason), the mod
-    whose arrival makes it fail: the shortest run of present, each with the jars it needs, whose start fails, found by
+def client_opened(result):
+    return bool(result.get("result", {}).get("client", {}).get("opened"))
+
+
+def server_opened(result):
+    return bool(result.get("ok"))
+
+
+def first_failing(pack, present, loader, start, failure, opened=client_opened):
+    """When a start fails and nothing names a mod (a client sent back to the disconnected screen with no reason, a server
+    whose new world does not open), the jar whose arrival makes it fail: the shortest run of present, each with the jars it needs, whose start fails, found by
     halving (about log2 of the mods in starts). Returns {jar: why}, or {} when the client fails with no mod at all: the
     fault is not a mod's."""
     mods, held = pack / "mods", pack / "held"
@@ -1710,7 +1729,7 @@ def first_failing(pack, present, loader, start, failure):
             elif n in keep and (held / n).is_file():
                 (held / n).rename(mods / n)
         result, _ = start()
-        return not result.get("result", {}).get("client", {}).get("opened")
+        return not opened(result)
 
     low, high = 0, len(present)
     try:
@@ -1727,8 +1746,8 @@ def first_failing(pack, present, loader, start, failure):
             if (held / n).is_file():
                 (held / n).rename(mods / n)
     culprit = present[high - 1]
-    print(f"  {culprit}: the client starts with the mods before it and fails once it is added")
-    return {culprit: f"the client starts without it and fails with it (named by halving; the start alone said: {failure[:300]})"}
+    print(f"  {culprit}: the game starts with the jars before it and fails once it is added")
+    return {culprit: f"the game starts without it and fails with it (named by halving; the start alone said: {failure[:300]})"}
 
 
 def starts_alone(loader, to, pack, name, platform):
@@ -1899,6 +1918,13 @@ def load(loader, frm, to, save, mods=None, out=None):
             platform.append(api_jar.name)
     mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     verdicts = {}
+
+    def start_server():
+        done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        at = done.stdout.find("{")
+        return json.loads(done.stdout[at:]) if at >= 0 else {}
+
     for attempt in range(len(chosen) + len(libraries) + 1):
         done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -1925,6 +1951,9 @@ def load(loader, frm, to, save, mods=None, out=None):
             culprits = named_in_errors(result.get("receipt"), pack / "mods", present + in_pack)
         if not culprits:
             culprits = needs_other_java(res, present + in_pack)
+        if not culprits:
+            culprits = first_failing(pack, present + in_pack, loader, lambda: (start_server(), None),
+                                     str(res.get("details") or result.get("error"))[-300:], server_opened)
         blamed = {n: why for n, why in culprits.items() if n in present}
         for top in (n for n in culprits if n in in_pack):
             # A library that fails takes the mods that need it along; each is failed with the library's reason.
