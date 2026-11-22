@@ -211,6 +211,11 @@
    "question": "What is the performance work for?",
    "choice": "Three things, in Jon's words on 2026-11-21: \"apply our thing to a mod and be able to almost instantly be able to tell 1. What's causing lag 2. How to optimize (insert known ways to make whatever faster) and 3. Auto optimize if possible (I really want this)\". Until then performance was not a goal on this roadmap: the docs described a profiler and a way to prove a hand-written change, and PERFORMANCE.md said mmt never writes or proposes code. It is now goal 5, and the third part reverses that line: mmt makes the change itself, from saved rules with no AI call, and keeps it only when the real game shows the same behaviour and a real speedup.",
    "date": "2026-11-21"
+  },
+  {
+   "question": "Should porting, changing loader, testing and the lag work be built on one thing?",
+   "choice": "Jon asked on 2026-11-21: \"should these all use the same thing because that's what is happening… checking against the api and making it compatible, even with the performance thing it's about the right usage of the api\". Mostly yes. Port, convert and the checks all ask where a mod touches the game and what that part is on the other side, and five separate readers answer it today; step 83 makes it one record every command uses. The lag work shares less: a slow spot is found by measuring the running game, and the record only names the game call it sits on.",
+   "date": "2026-11-21"
   }
  ]
 }
