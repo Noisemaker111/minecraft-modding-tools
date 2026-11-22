@@ -2237,7 +2237,7 @@ def main():
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     ls = sub.add_parser("updates", help="every LOADER:FROM:TO all runs, updates and jumps, as JSON (the cloud run's matrix)")
     ls.add_argument("--loader", choices=sorted(FIRST))
-    ls.add_argument("--only", help="LOADER:FROM,...")
+    ls.add_argument("--only", help="LOADER:FROM or LOADER:FROM:TO, comma-separated")
     pn = sub.add_parser("pin")
     pn.add_argument("--loader", choices=sorted(FIRST), help="one loader (default both)")
     pn.add_argument("--version", help="one release (default every one the loader is read for)")
@@ -2270,8 +2270,13 @@ def main():
         jars(a.loader, a.frm, a.to, a.save, a.out, kind=a.kind)
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
-        print(json.dumps([f"{lo}:{x}:{y}" for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in updates(lo) + jumps(lo)
-                          if not only or f"{lo}:{x}" in only]))
+        every = [(lo, x, y) for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in updates(lo) + jumps(lo)]
+        picked = [f"{lo}:{x}:{y}" for lo, x, y in every if not only or f"{lo}:{x}" in only or f"{lo}:{x}:{y}" in only]
+        # A name that picks nothing ran an empty sweep that looked like a result (0 of 0); say which instead.
+        unknown = sorted(o for o in only or () if not any(o in (f"{lo}:{x}", f"{lo}:{x}:{y}") for lo, x, y in every))
+        if unknown:
+            raise SystemExit(f"--only names no update: {', '.join(unknown)} (LOADER:FROM for every update from it, or LOADER:FROM:TO)")
+        print(json.dumps(picked))
     elif a.command == "load":
         load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
     elif a.command == "load-plan":

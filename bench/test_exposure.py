@@ -29,6 +29,26 @@ def check(ok, label):
     checks += 1
 
 
+# The sweep's plan: an --only naming a whole update picks it, and one that names nothing stops the sweep, where it ran no
+# job and printed "0 of 0" as if that were a result.
+def plan(only):
+    out, argv = io.StringIO(), sys.argv
+    sys.argv, sys.stdout = ["exposure.py", "updates", "--only", only], out
+    try:
+        E.main()
+        return json.loads(out.getvalue())
+    except SystemExit as stop:
+        return str(stop)
+    finally:
+        sys.argv, sys.stdout = argv, sys.__stdout__
+
+
+newest = E.updates("fabric")[-1]
+check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1]}"], "--only LOADER:FROM:TO picks that update")
+check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
+check("names no update: fabric:1.20.1:99.9" in plan("fabric:1.20.1:99.9"), f"--only naming no update stops: {plan('fabric:1.20.1:99.9')}")
+
+
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     # Two worktrees: the same tools, then one with an edited GameDiff.
