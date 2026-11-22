@@ -28,28 +28,49 @@ import net.minecraft.util.FastColor;
 import org.joml.Matrix4f;
 
 /**
- * 1.19.4's GuiComponent, which 1.20 dropped.
+ * 1.19.4's GuiComponent drawing helpers on 1.20.
  *
- * Read from both releases: 1.19.4's GuiComponent was the base of screens and widgets and held the static drawing
- * helpers (fill, fillGradient, hLine and vLine, blit of the texture RenderSystem.setShaderTexture had bound, blit of an
- * atlas sprite, blitNineSliced, blitRepeating, renderOutline, drawString and drawCenteredString, a scissor stack) and the
- * shared texture names; each drew at once through the Tesselator with the pose's matrix. 1.20 moved all of them onto
- * GuiGraphics, which takes the texture with each blit and batches into its buffer source. This is 1.19.4's class on
+ * Read from both releases: 1.19.4's GuiComponent held static drawing helpers (fill, fillGradient, hLine and vLine, blit
+ * of the texture RenderSystem.setShaderTexture had bound, blit of an atlas sprite, blitNineSliced, blitRepeating,
+ * renderOutline, drawString and drawCenteredString, a scissor stack) and the shared texture names; each drew at once
+ * through the Tesselator with the pose's matrix. 1.20 moved them onto GuiGraphics, which takes the texture with each blit
+ * and batches into its buffer source; the port carries the GuiComponent type to GuiGraphics. These are 1.19.4's bodies on
  * 1.20: the same Tesselator, BufferBuilder, BufferUploader, RenderSystem and shader calls, which 1.20 keeps, so a blit
- * still draws the texture the mod bound; text goes through this update's Font stand-in, 1.19.4's Font.drawShadow.
+ * still draws the texture the mod bound; text goes through this update's Font stand-in, 1.19.4's Font.drawShadow. Each
+ * public static method answers the old static method of its name, and the texture names (files 1.20 still ships) answer
+ * the old fields.
  *
  * Agrees with Fabric's 1.20 post (https://fabricmc.net/2023/05/25/120.html): "`DrawableHelper`, a utility that is
  * frequently used by subclassing it, turned into an object passed to rendering methods: `DrawContext`." (GuiComponent
  * and GuiGraphics in Mojang's names.)
  */
-public abstract class GuiComponent {
+public final class GuiComponent {
+
+   private GuiComponent() {}
+
    public static final ResourceLocation BACKGROUND_LOCATION = new ResourceLocation("textures/gui/options_background.png");
    public static final ResourceLocation STATS_ICON_LOCATION = new ResourceLocation("textures/gui/container/stats_icons.png");
    public static final ResourceLocation GUI_ICONS_LOCATION = new ResourceLocation("textures/gui/icons.png");
    public static final ResourceLocation LIGHT_DIRT_BACKGROUND = new ResourceLocation("textures/gui/light_dirt_background.png");
+   public static ResourceLocation BACKGROUND_LOCATION() {
+      return BACKGROUND_LOCATION;
+   }
+
+   public static ResourceLocation STATS_ICON_LOCATION() {
+      return STATS_ICON_LOCATION;
+   }
+
+   public static ResourceLocation GUI_ICONS_LOCATION() {
+      return GUI_ICONS_LOCATION;
+   }
+
+   public static ResourceLocation LIGHT_DIRT_BACKGROUND() {
+      return LIGHT_DIRT_BACKGROUND;
+   }
+
    private static final ScissorStack SCISSOR_STACK = new ScissorStack();
 
-   protected static void hLine(PoseStack p0, int p1, int p2, int p3, int p4) {
+   public static void hLine(PoseStack p0, int p1, int p2, int p3, int p4) {
       if (p2 < p1) {
          int p5 = p1;
          p1 = p2;
@@ -59,7 +80,7 @@ public abstract class GuiComponent {
       fill(p0, p1, p3, p2 + 1, p3 + 1, p4);
    }
 
-   protected static void vLine(PoseStack p0, int p1, int p2, int p3, int p4) {
+   public static void vLine(PoseStack p0, int p1, int p2, int p3, int p4) {
       if (p3 < p2) {
          int p5 = p2;
          p2 = p3;
@@ -126,11 +147,11 @@ public abstract class GuiComponent {
       RenderSystem.disableBlend();
    }
 
-   protected static void fillGradient(PoseStack p0, int p1, int p2, int p3, int p4, int p5, int p6) {
+   public static void fillGradient(PoseStack p0, int p1, int p2, int p3, int p4, int p5, int p6) {
       fillGradient(p0, p1, p2, p3, p4, p5, p6, 0);
    }
 
-   protected static void fillGradient(PoseStack p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7) {
+   public static void fillGradient(PoseStack p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7) {
       RenderSystem.enableBlend();
       RenderSystem.setShader(GameRenderer::getPositionColorShader);
       Tesselator p8 = Tesselator.getInstance();
@@ -141,7 +162,7 @@ public abstract class GuiComponent {
       RenderSystem.disableBlend();
    }
 
-   protected static void fillGradient(Matrix4f p0, BufferBuilder p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8) {
+   public static void fillGradient(Matrix4f p0, BufferBuilder p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8) {
       float p9 = FastColor.ARGB32.alpha(p7) / 255.0F;
       float p10 = FastColor.ARGB32.red(p7) / 255.0F;
       float p11 = FastColor.ARGB32.green(p7) / 255.0F;
