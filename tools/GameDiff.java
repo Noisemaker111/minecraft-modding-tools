@@ -104,17 +104,38 @@ public final class GameDiff {
         if (chains.isEmpty() || chains.size() != outs.size()) {
             usage();
         }
-        for (int i = 0; i < chains.size(); i++) {
-            map(chains.get(i), outs.get(i), loader, loaderVersions);
-            Set<String> later = new HashSet<>();
-            for (String c : chains.subList(i + 1, chains.size())) {
-                later.addAll(List.of(c.split(",")));
-            }
-            for (String v : chains.get(i).split(",")) {
-                if (!later.contains(v)) {
-                    Exposure.forget(v);
+        // Each map is its own chain, one core's work holding about a gigabyte, so the maps are built side by side, each
+        // worker taking a run of consecutive chains: a chain starts at the release the one before it ended at, read once.
+        int workers = Math.max(1, Math.min(chains.size(), Runtime.getRuntime().availableProcessors()));
+        List<Thread> running = new ArrayList<>();
+        List<Throwable> failed = Collections.synchronizedList(new ArrayList<>());
+        String l = loader, lv = loaderVersions;
+        for (int w = 0; w < workers; w++) {
+            int from = chains.size() * w / workers, to = chains.size() * (w + 1) / workers;
+            running.add(Thread.ofPlatform().start(() -> {
+                try {
+                    for (int i = from; i < to; i++) {
+                        map(chains.get(i), outs.get(i), l, lv);
+                        Set<String> later = new HashSet<>();
+                        for (String c : chains.subList(i + 1, to)) {
+                            later.addAll(List.of(c.split(",")));
+                        }
+                        for (String v : chains.get(i).split(",")) {
+                            if (!later.contains(v)) {
+                                Exposure.forget(v);
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    failed.add(t);
                 }
-            }
+            }));
+        }
+        for (Thread t : running) {
+            t.join();
+        }
+        if (!failed.isEmpty()) {
+            throw failed.get(0) instanceof Exception e ? e : new RuntimeException(failed.get(0));
         }
     }
 
@@ -8306,8 +8327,8 @@ public final class GameDiff {
         int nextField = 1;
         String metadata;
 
-        static Snap last;
-        static String lastLoader = "";
+        static final ThreadLocal<Snap> LAST = new ThreadLocal<>(); // the release this thread's last chain ended at
+        static final ThreadLocal<String> LAST_LOADER = ThreadLocal.withInitial(() -> "");
 
         Driver(List<String> versions, String loader, List<String> pinned) {
             this.versions = versions;
@@ -8340,10 +8361,11 @@ public final class GameDiff {
                     loaderUsed.put(version, null);
                 }
                 // The release that ended the last chain of this process starts this one (a long port's steps): read once.
-                Snap s = last != null && last.version.equals(version) && Objects.equals(last.loaderVersion, p.version()) && lastLoader.equals(loader)
+                Snap last = LAST.get();
+                Snap s = last != null && last.version.equals(version) && Objects.equals(last.loaderVersion, p.version()) && LAST_LOADER.get().equals(loader)
                     ? last : GameDiff.load(version, classes, p.version());
-                last = s;
-                lastLoader = loader;
+                LAST.set(s);
+                LAST_LOADER.set(loader);
                 return next(s, null, p.version());
             }
             if (loader != null) {
