@@ -1,0 +1,17 @@
+{
+ "id": "78d",
+ "title": "Trial: stand-ins for what the game's code does not answer",
+ "part": "Port by type of break",
+ "status": "done",
+ "done": "2026-11-21",
+ "text": "Trial of a method, judged on NeoForge 1.21.1 -> 1.21.2: for the old game classes the game's own code does not answer, ranked by the mods they finish together, write a stand-in (the old API implemented on the new game, written from both releases' code and the loaders' migration notes) that the porter compiles against the new release and carries in the ported jar (knowledge/standins/, JarPort.standins). Judged by: mods freed by the top 10 (fail under 8), agent time per stand-in (fail over about 45 minutes), and real-server starts of the freed mods (fail if they fail more often than 17 of 559).",
+ "start": "2026-11-21",
+ "target": "2026-11-22",
+ "finish": "10 stand-ins free at least 8 mods on NeoForge 1.21.1 -> 1.21.2, each written in under about 45 minutes, and the freed mods start on a real server as often as ported mods do today",
+ "wrongIf": "fewer than 8 mods freed, a stand-in takes over about 45 minutes, or the freed mods fail to start more often than 17 of 559",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates"
+ ],
+ "result": "RESULT"
+}
