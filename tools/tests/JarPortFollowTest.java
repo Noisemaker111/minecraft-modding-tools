@@ -10,6 +10,8 @@ import org.objectweb.asm.*;
  * - f8.Hud.render() no longer calls air() itself: it calls the new private renderAir(), which does (1.21.2's
  *   Gui.renderPlayerHealth and renderAirBubbles). An @Inject at that call follows into renderAir. f8.Bar.draw() moved its
  *   call into part(), which another method calls too, so the injector would run more often there and stays reported.
+ * - f8.Hud.layers() hands its drawing to the new drawLayer(), which setup() names (1.20.5 split Gui.render into layer
+ *   methods registered by reference): drawLayer's code is the old layers' code, so an @Inject at its air() call follows.
  * - f8.Screen.init(Mc, int, int) becomes init(int, int); the old one stored the Mc in this.mc, which only the new
  *   constructor sets now (1.21.11's Screen.init). A handler that took the Mc reads this.mc. f8.Pane's new init sets its mc
  *   itself, so at the new method's start the field may not hold it yet, and the handler stays reported.
@@ -31,8 +33,8 @@ final class JarPortFollowTest {
             JarPortTest.snap(s, "f8/Mc", 0, null);
             JarPortTest.snap(s, "f8/Sink", 0, null, "a(I)V", "b(I)V", "c(I)V", "d(I)V");
         }
-        JarPortTest.snap(a, "f8/Hud", 0, null, "tick(I)V", "render()V", "air()I");
-        GameDiff.Cls hud = JarPortTest.snap(b, "f8/Hud", 0, null, "update(IF)V", "other()V", "render()V", "air()I");
+        JarPortTest.snap(a, "f8/Hud", 0, null, "tick(I)V", "render()V", "air()I", "layers()V", "setup()V");
+        GameDiff.Cls hud = JarPortTest.snap(b, "f8/Hud", 0, null, "update(IF)V", "other()V", "render()V", "air()I", "layers()V", "setup()V", "drawLayer()V");
         hud.methods.put("renderAir()V", new GameDiff.Meth(hud, "renderAir", "()V", Opcodes.ACC_PRIVATE));
         JarPortTest.snap(a, "f8/Bar", 0, null, "go()V", "draw()V", "air()I", "more()V");
         GameDiff.Cls bar = JarPortTest.snap(b, "f8/Bar", 0, null, "go1()V", "go2()V", "draw()V", "air()I", "more()V");
@@ -54,10 +56,11 @@ final class JarPortFollowTest {
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of(
             "m8/HudMixin.class", mixin("m8/HudMixin", "f8/Hud", "onTick", "(I" + CI + ")V", "tick(I)V", "HEAD", null, "onAir", "render()V", "Lf8/Hud;air()I"),
+            "m8/LayerMixin.class", mixin("m8/LayerMixin", "f8/Hud", "onSetup", "(" + CI + ")V", "setup()V", "HEAD", null, "onLayer", "layers()V", "Lf8/Hud;air()I"),
             "m8/BarMixin.class", mixin("m8/BarMixin", "f8/Bar", "onGo", "(" + CI + ")V", "go()V", "HEAD", null, "onAir", "draw()V", "Lf8/Bar;air()I"),
             "m8/ScreenMixin.class", initMixin("m8/ScreenMixin", "f8/Screen"),
             "m8/PaneMixin.class", initMixin("m8/PaneMixin", "f8/Pane"),
-            "m8.mixins.json", "{\"package\": \"m8\", \"mixins\": [\"HudMixin\", \"BarMixin\", \"ScreenMixin\", \"PaneMixin\"], \"injectors\": {\"defaultRequire\": 1}}"
+            "m8.mixins.json", "{\"package\": \"m8\", \"mixins\": [\"HudMixin\", \"LayerMixin\", \"BarMixin\", \"ScreenMixin\", \"PaneMixin\"], \"injectors\": {\"defaultRequire\": 1}}"
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8))), "follow.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
 
@@ -73,6 +76,9 @@ final class JarPortFollowTest {
             "an @Inject at a call the method moved into a helper of its own follows into the helper: " + hudStrings);
         JarPortTest.expect(unlinked.stream().noneMatch(u -> u.contains("in f8.Hud.render")),
             "the injection point that moved into the helper is no break: " + unlinked);
+        JarPortTest.expect(JarPortFixesTest.strings(ported.get("m8/LayerMixin.class")).getOrDefault("onLayer(" + CI + ")V", "").startsWith("drawLayer()V INVOKE Lf8/Hud;air()I")
+                && unlinked.stream().noneMatch(u -> u.contains("in f8.Hud.layers")),
+            "an @Inject at a call the method handed to a new method made of its own code follows there: " + JarPortFixesTest.strings(ported.get("m8/LayerMixin.class")) + " " + unlinked);
         JarPortTest.expect(unlinked.stream().anyMatch(u -> u.startsWith("mixin injection point gone: f8.Bar.air()I in f8.Bar.draw()V")),
             "a helper something else calls too is not injected into: " + unlinked);
 
@@ -125,7 +131,18 @@ final class JarPortFollowTest {
         method(w, "render", "()V", Opcodes.ACC_PUBLIC, m -> call(m, "f8/Hud", old ? "air" : "renderAir", old ? "()I" : "()V"));
         if (!old) {
             method(w, "renderAir", "()V", Opcodes.ACC_PRIVATE, m -> call(m, "f8/Hud", "air", "()I"));
+            method(w, "drawLayer", "()V", Opcodes.ACC_PUBLIC, m -> layer(m));
         }
+        method(w, "layers", "()V", Opcodes.ACC_PUBLIC, m -> {
+            if (old) {
+                layer(m);
+            }
+        });
+        method(w, "setup", "()V", Opcodes.ACC_PUBLIC, m -> {
+            if (!old) {
+                call(m, "f8/Hud", "drawLayer", "()V");
+            }
+        });
         w.visitEnd();
         return w.toByteArray();
     }
@@ -178,6 +195,15 @@ final class JarPortFollowTest {
         });
         w.visitEnd();
         return w.toByteArray();
+    }
+
+    /** What f8.Hud draws as a layer: a constant to two sinks, then air(). */
+    static void layer(MethodVisitor m) {
+        for (String n : List.of("c", "d")) {
+            m.visitIntInsn(Opcodes.BIPUSH, 9);
+            m.visitMethodInsn(Opcodes.INVOKESTATIC, "f8/Sink", n, "(I)V", false);
+        }
+        call(m, "f8/Hud", "air", "()I");
     }
 
     static void sinks(MethodVisitor m, String... names) {

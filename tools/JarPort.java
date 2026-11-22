@@ -2530,6 +2530,24 @@ public final class JarPort {
         return alike * 10 >= subs.size() * 8;
     }
 
+    /** Whether most (four in five) of a body's instructions, at least six of them, are also in another's, counted as multisets. */
+    static boolean within(String part, String whole) {
+        Map<String, Integer> left = new HashMap<>();
+        for (String t : whole.split(";")) {
+            left.merge(t, 1, Integer::sum);
+        }
+        String[] mine = part.split(";");
+        int common = 0;
+        for (String t : mine) {
+            Integer n = left.get(t);
+            if (n != null && n > 0) {
+                common++;
+                left.put(t, n - 1);
+            }
+        }
+        return mine.length >= 6 && common * 5 >= mine.length * 4;
+    }
+
     /** At least half of two bodies' instructions (as GameCode.bodies writes them) in common, counted as multisets. */
     static boolean alike(String x, String y) {
         Map<String, Integer> left = new HashMap<>();
@@ -3600,11 +3618,12 @@ public final class JarPort {
     }
 
     /**
-     * An injector whose points all left the methods it names, followed into the helper each method now calls where the
-     * code around them went (1.21.2's Gui.renderPlayerHealth calls the new renderAirBubbles, which reads getMaxAirSupply
-     * now). Every point must be a call or field use; exactly one private method of the class that the new method calls
-     * must have them all (as often as the old method had, when an ordinal picks one), and nothing else in the class may
-     * call it, so the injector runs as often as before. into with each method as one whose parameters changed ('s'),
+     * An injector whose points all left the methods it names, followed to the one method of the class where the code
+     * around them went: a private helper the new method calls (1.21.2's Gui.renderPlayerHealth calls the new
+     * renderAirBubbles, which reads getMaxAirSupply now), or a method the update added whose instructions are mostly the
+     * old method's (1.20.5 split Gui.render into layer methods it registers by reference). Every point must be a call or
+     * field use and that method must have them all (as often as the old method had, when an ordinal picks one); the
+     * class must name it once (a call or a method reference), so the injector runs as often as before. into with each method as one whose parameters changed ('s'),
      * which the handler follows only where Mixin will accept it, or null. A method whose own parameters changed too is
      * followed from its new signature.
      */
@@ -3624,16 +3643,33 @@ public final class JarPort {
             if (bodies == null) {
                 return null;
             }
-            GameDiff.Meth found = null;
-            Set<String> seen = new HashSet<>();
+            Map<String, String> was = code(a) == null ? null : code(a).bodies(before.owner.name, this::cls);
+            String old = was == null ? null : was.get(before.name + desc(before.desc));
+            Set<String> called = new HashSet<>();
             for (String[] r : refs) {
-                GameDiff.Meth n = r[0].equals("m") && r[1].equals(f.owner()) && seen.add(r[2] + r[3]) ? b.method(f.owner(), r[2], r[3]) : null;
-                if (n == null || (n.flags & Opcodes.ACC_PRIVATE) == 0 || n.name.startsWith("<")) {
+                if (r[0].equals("m") && r[1].equals(f.owner())) {
+                    called.add(r[2] + r[3]);
+                }
+            }
+            GameDiff.Meth found = null;
+            for (GameDiff.Meth n : b.classes.get(f.owner()).methods.values()) {
+                if (n.name.startsWith("<") || n.name.equals(f.name()) && n.desc.equals(f.desc())) {
                     continue;
                 }
-                String call = ":" + f.owner() + "." + n.name + n.desc + ";";
-                long callers = bodies.values().stream().mapToLong(body -> body.split(Pattern.quote(call), -1).length - 1).sum();
-                boolean all = callers == 1;
+                // Reached from the new method itself as a private helper, or a method the update added whose code is
+                // mostly the old method's (1.20.5 split Gui.render into layers it registers as method references).
+                boolean helper = called.contains(n.name + n.desc) && (n.flags & Opcodes.ACC_PRIVATE) != 0;
+                boolean part = !helper && old != null && !was.containsKey(n.name + n.desc) && bodies.get(n.name + n.desc) != null
+                    && within(bodies.get(n.name + n.desc), old);
+                if (!helper && !part) {
+                    continue;
+                }
+                Matcher use = Pattern.compile(Pattern.quote(":" + f.owner() + "." + n.name + n.desc) + "[;:]").matcher(String.join("\n", bodies.values()));
+                int uses = 0;
+                while (use.find()) {
+                    uses++;
+                }
+                boolean all = uses == 1;
                 for (int k = 0; all && k < ats.size(); k++) {
                     all = pointKept(inj.ats().get(k), ats.get(k), new GameDiff.Meth[] { n, before });
                 }
