@@ -205,8 +205,11 @@ def hero_scoreboard_html(book):
 
     rm_pct = round(100 * n_done / len(steps)) if steps else 0
 
+    av = exposure.get("anyVersion") or {}
+    porting = ((f"{av['every']} / {av['mods']}", f"{ex_pct}% per update", "Top mods whose .jar ports to any version", round(100 * av["every"] / av["mods"]), "yellow")
+               if av.get("mods") else (f"{ex_pct}%", f"{ex_link:,} / {ex_mods:,}", f".jar mods linking ({ex_updates} updates)", ex_pct, "green" if ex_pct >= 60 else "yellow"))
     items = [
-        (f"{ex_pct}%", f"{ex_link:,} / {ex_mods:,}", f".jar mods linking ({ex_updates} updates)", ex_pct, "green" if ex_pct >= 60 else "yellow"),
+        porting,
         (f"{pk_pass} / {pk_total}", f"{pk.get('repaired', 0)} repaired", "Modpacks passing on real servers", pk_pct, "green"),
         (f"{cv_load} / {cv_total}", f"{cv.get('same behaviour fingerprint as the original', 0)} exact", "Fabric ↔ NeoForge conversions", cv_pct, "yellow"),
         (f"{n_done} / {len(steps)}", f"{rm_pct}%", "Roadmap steps proven done", rm_pct, "accent"),
@@ -266,8 +269,13 @@ def area_progress_html(book):
 
     g1_d, g1_t, g1_now = gstat("1")
 
+    av = exposure.get("anyVersion") or {}
     cards = [
         (
+            "Version porting", f"{av['every']}/{av['mods']}", "top mods go to any version",
+            f"Their .jar ported to every release, forward and back, and linked; {ex_pct}% link one update at a time. {g2_d}/{g2_t} steps done.",
+            g2_now, "#porting", round(100 * av["every"] / av["mods"]), "yellow",
+        ) if av.get("mods") else (
             "Version porting", f"{ex_pct}%", f"{ex_link:,} of {ex_mods:,} top mods link",
             f"Fabric (1.14.4–26.3) and NeoForge (1.20.5–26.3) .jar & source porting. {g2_d}/{g2_t} steps done.",
             g2_now, "#porting", ex_pct, "green" if ex_pct >= 60 else "yellow",
@@ -562,7 +570,7 @@ def roadmap_md(book):
         pts, mins = book.points(m), M.minutes(book, m)
         now = M.fmt(pts[-1]["value"], m["unit"], mins) if pts else "not measured"
         tgt = M.target_words(book, m)
-        return f"{M.label(m)} is **{now}**" + (f", target {tgt}" if tgt else "")
+        return f"{M.label(m)} is **{now}**" + (f", target {tgt}" if tgt else "") + (f" ([what is not there yet]({m['see']}))" if m.get("see") else "")
 
     steps = [s for g in r["goals"] for s in g["steps"]]
     out = ["# Roadmap", "",

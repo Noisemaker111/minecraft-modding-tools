@@ -861,6 +861,18 @@
    "target": {"value": 50, "by": "2026-12-08", "step": "47"}
   },
   {
+   "id": "port.jar-links.any-version",
+   "area": "port",
+   "name": "Mods that go to any version: the ported jar links on every release, forward and back, Fabric and NeoForge",
+   "unit": "mods",
+   "better": "higher",
+   "explain": "Any mod, any version: the 150 most-downloaded mods of each loader's most-used release (Fabric 1.20.1, NeoForge 1.21.1, the mods port.jar-links.newest reads) are each ported as a jar to every other release the loader has, forward to the newest and back to the first (Fabric 1.14.4, NeoForge 1.20.2), 43 and 21 releases, and a mod counts when its port links on every one: every reference its classes, mixins and access transformers make to the game and the loader, and the game ids in its data. A release whose job did not run, or where the mod cannot be read, counts as not reached. Links, not runs: it does not say the mod works in a game (tools/cloud-run load proves that per update). Computed in bench/exposure.py's every-update run (tools/cloud-run exposure, and main's run after each merge); what is not there yet, per mod and ranked by what frees the most mods, is bench/exposure/any-version.md.",
+   "see": "bench/exposure/any-version.md",
+   "recordedBy": ".github/workflows/cloud-exposure.yml",
+   "info": true,
+   "points": []
+  },
+  {
    "id": "port.jar-links.newest",
    "area": "port",
    "name": "Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge",

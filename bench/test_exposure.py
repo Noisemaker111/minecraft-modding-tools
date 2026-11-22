@@ -499,7 +499,7 @@ with tempfile.TemporaryDirectory() as tmp:
         sys.stdout = sys.__stdout__
     check(lines[0] == "every update: 14 -> 16 of 20 (+2)" and lines[1] == "big updates: 4 -> 6 of 10 (+2)" and "updates higher: fabric 1.1 -> 2.0 4 -> 6" in lines,
           f"compare names the counts and the update that moved: {lines}")
-    check(same[3:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
+    check(same[E.HEADS:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
     measures = Path(tmp) / "measures.json"
     measures.write_text(json.dumps({"measures": [{"id": m, "points": [{"date": "2026-01-01", "value": 14 if m.endswith("every-update") else 4 if m.endswith("big-updates") else 1, "source": "x"}]}
                                                  for m in E.MAIN_MEASURES]}), encoding="utf-8")
@@ -534,6 +534,53 @@ with tempfile.TemporaryDirectory() as tmp:
         E.ROOT = repo
     check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
           and len(json.loads(measures.read_text(encoding="utf-8"))["measures"][0]["points"]) == 3, "a sweep of an older commit that finishes later is not recorded")
+    check((Path(tmp) / "any-version.md").read_text(encoding="utf-8").startswith("# Any mod, any version") and len(points["port.jar-links.any-version"]) == 3,
+          "main's sweep also writes the any-version page and its measure")
+
+# Any mod, any version: the most-used release's mods to every other release, back as well as forward. A mod counts only
+# when its port links on every one; a release whose job did not run, or where the mod was unreadable, is not reached.
+with tempfile.TemporaryDirectory() as tmp:
+    E.INDEX = Path(tmp) / "index.json"
+    E.INDEX.write_text(json.dumps({
+        "allVersions": [{"id": v, "status": "indexed"} for v in ("1.0", "1.1", "2.0", "2.1")],
+        "families": {"list": [{"id": "1", "versions": ["1.0", "1.1"], "hub": "1.1", "mods": {"1.1": 9}},
+                              {"id": "2", "versions": ["2.0", "2.1"], "hub": "2.0", "mods": {"2.0": 3}}]}}), encoding="utf-8")
+    E.FIRST = {"fabric": "1.0", "neoforge": "2.0"}
+    pins, E.PINS = E.PINS, Path(tmp) / "pins"
+    E.PINS.mkdir()
+    (E.PINS / "neoforge-2.0.json").write_text(json.dumps({"mods": [{"slug": "e", "file": "e.jar"}, {"slug": "f", "file": "f.jar"}]}), encoding="utf-8")
+    check(E.any_version("fabric") == [("1.1", "1.0"), ("1.1", "2.0"), ("1.1", "2.1")] and ("fabric", "1.1", "1.0") in
+          {("fabric", *p) for p in E.runs("fabric")}, f"the most-used release goes to every other release, the older ones too: {E.any_version('fabric')}")
+
+    def ported(frm, to, verdicts, unreadable=()):
+        return {"loader": "fabric", "from": frm, "to": to, "modsRead": len(verdicts), "modsThatLink": 0, "top": [],
+                "unreadable": {m: "bad" for m in unreadable},
+                "verdicts": {f"{m}--{m}.jar": {"left": ["x"] * len(t), "types": t} for m, t in verdicts.items()}}
+
+    split, linked, field = "call, game: split", "call, game: linked", "field, game: split"
+    runs = Path(tmp) / "runs"
+    runs.mkdir()
+    for s in (ported("1.1", "1.0", {"a": [], "b": [split], "c": [], "d": []}),
+              ported("1.1", "2.0", {"a": [], "b": [], "c": [linked], "d": []}),
+              ported("1.1", "2.1", {"a": [], "b": [], "c": [linked, field]}, ["d--d.jar"])):
+        (runs / f"fabric-{s['from']}-{s['to']}.json").write_text(json.dumps(s), encoding="utf-8")
+    sys.stdout = io.StringIO()
+    try:
+        a = E.join(runs)["anyVersion"]
+    finally:
+        sys.stdout = sys.__stdout__
+        E.PINS = pins
+    fab, neo = a["loaders"]["fabric"], a["loaders"]["neoforge"]
+    check((a["every"], a["mods"]) == (1, 6) and a["everywhere"]["fabric"] == ["a"],
+          f"only the mod that links on every release counts, out of every pinned mod, a loader whose jobs did not run too: {a['every']} of {a['mods']}")
+    check(fab["reached"] == {"a": 3, "b": 2, "c": 1, "d": 2} and (fab["everyNewer"], fab["everyOlder"]) == (2, 3),
+          f"each mod's releases reached, a mod unreadable on one release missing it: {fab}")
+    check(neo["notRun"] == ["2.1"] and all(m["missing"] == ["2.1"] for m in a["held"] if m["loader"] == "neoforge"), f"a release that did not run is named and not reached: {neo}")
+    check([(t["type"], t["finishes"], t["mods"]) for t in a["types"]][:3] == [("not run", 2, 2), (split, 1, 1), ("unreadable", 1, 1)]
+          and next(t for t in a["types"] if t["type"] == linked)["finishes"] == 0,
+          f"a type frees the mods it alone keeps from every release; a mod held by two types is freed by neither: {a['types']}")
+    check([(t["loader"], t["release"], t["finishes"], t["mods"]) for t in a["releases"]][:3] == [("neoforge", "2.1", 2, 2), ("fabric", "2.1", 1, 2), ("fabric", "1.0", 1, 1)],
+          f"a release frees the mods that miss only it: {a['releases']}")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:

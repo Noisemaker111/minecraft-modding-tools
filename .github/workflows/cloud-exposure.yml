@@ -167,8 +167,8 @@ jobs:
           # Another merge may land while this runs: take it and record again on top.
           for attempt in 1 2 3 4 5; do
             python bench/exposure.py record-main "$TABLE" --commit "$GITHUB_SHA" --run "$RUN"
-            if git diff --quiet -- bench/exposure/all.json coverage/measures.json; then exit 0; fi
-            git add bench/exposure/all.json coverage/measures.json
+            if git diff --quiet -- bench/exposure/all.json bench/exposure/any-version.md coverage/measures.json; then exit 0; fi
+            git add bench/exposure/all.json bench/exposure/any-version.md coverage/measures.json
             git commit -m "Main's jar scoreboard at ${GITHUB_SHA::10}"
             if git push; then exit 0; fi
             git fetch origin main

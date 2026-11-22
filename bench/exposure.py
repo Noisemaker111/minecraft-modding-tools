@@ -237,12 +237,34 @@ def jumps(loader):
     is already in updates. Every hub to the newest release was measured once (2026-11-20, run 44821929843): 33 more
     jobs that each read every release on the way, 60% of the run's time, and all but the nearest few under 15 of 147."""
     single = updates(loader)
-    read = [frm for frm, _ in single]
-    family = families()
-    hubs = sorted({f["hub"] for f in family.values() if f["hub"] in read}, key=vkey)
-    most = max(hubs, key=lambda hub: family[hub].get("mods", {}).get(hub, 0))
-    pairs = list(zip(hubs, hubs[1:])) + [(most, single[-1][1])]
+    hubs = hubs_of(loader)
+    pairs = list(zip(hubs, hubs[1:])) + [(most_used(loader), single[-1][1])]
     return [p for p in dict.fromkeys(pairs) if p not in single]
+
+
+def hubs_of(loader):
+    read = [frm for frm, _ in updates(loader)]
+    return sorted({f["hub"] for f in families().values() if f["hub"] in read}, key=vkey)
+
+
+def most_used(loader):
+    """The release with the most mods of all among a loader's hubs (Fabric 1.20.1, NeoForge 1.21.1): whose mods every
+    port people ask for starts from."""
+    family = families()
+    return max(hubs_of(loader), key=lambda hub: family[hub].get("mods", {}).get(hub, 0))
+
+
+def any_version(loader):
+    """The ports "any mod, any version" asks for: the most-used release's mods to every other release the loader is read
+    for, forward to the newest and back to the first. A mod goes to any version when its port links on every one."""
+    frm = most_used(loader)
+    every = [a for a, _ in updates(loader)] + [updates(loader)[-1][1]]
+    return [(frm, v) for v in every if v != frm]
+
+
+def runs(loader):
+    """Every pair the scoreboard runs for a loader: each update, each jump and each any-version target, once."""
+    return list(dict.fromkeys(updates(loader) + jumps(loader) + any_version(loader)))
 
 
 def java():
@@ -1051,8 +1073,8 @@ def verdicts_moved(before, after):
 
 
 def every_update(loaders, only, jobs, out_file=None):
-    """jars for every update and every jump of each loader, side by side; joined into one table."""
-    todo = [(lo, a, b) for lo in loaders for a, b in updates(lo) + jumps(lo) if not only or f"{lo}:{a}" in only]
+    """jars for every update, every jump and every any-version target of each loader, side by side; joined into one table."""
+    todo = [(lo, a, b) for lo in loaders for a, b in runs(lo) if not only or f"{lo}:{a}" in only]
     jar_tools()
     compile_tools()
     global CORES
@@ -1151,10 +1173,13 @@ def join(folder, out=None):
     kinds = sorted(kinds.values(), key=lambda k: (-k["finishes"], -k["mods"], k["type"]))
     # A summary an older run made has no types: the ranking then covers fewer updates than the counts, and says so.
     untyped = [f"{s['loader']} {s['from']} -> {s['to']}" for s in rows if "types" not in s]
-    missing = [f"{lo} {a} -> {b}" for lo, a, b in list(single) + list(wanted) if not any(pair(s) == (lo, a, b) for s in found)]
+    targets = {(lo, *p) for lo in FIRST for p in any_version(lo)}
+    missing = [f"{lo} {a} -> {b}" for lo, a, b in dict.fromkeys(list(single) + list(wanted) + sorted(targets))
+               if not any(pair(s) == (lo, a, b) for s in found)]
+    anyv = any_version_table({pair(s): s for s in found if pair(s) in targets})
     keep = ("loader", "from", "to", "modsRead", "modsThatLink", "modsThatLinkAndData", "brokenUses", "loaderUses", "modsHeldOnlyByLoader", "links")
     table = {
-        "date": date.today().isoformat(), "total": total, "loaders": loaders, "missing": missing,
+        "date": date.today().isoformat(), "total": total, "loaders": loaders, "missing": missing, "anyVersion": anyv,
         "updates": [{**{k: s.get(k) for k in keep}, "big": big(s["from"], s["to"])} for s in rows],
         "jumps": [{**{k: s.get(k) for k in keep}, "updatesCrossed": len(chain(s["from"], s["to"])) - 1} for s in far],
         "types": kinds,
@@ -1166,6 +1191,7 @@ def join(folder, out=None):
     def share(part, whole):
         return f"{part} of {whole} ({part / whole:.1%})" if whole else "0 of 0"
 
+    print(any_version_lines(anyv)[0] + "\n")
     print(f"| Loader | Update | Mods that link | And their data |\n|---|---|---|---|")
     for s in rows:
         data = "-" if s.get("modsThatLinkAndData") is None else s["modsThatLinkAndData"]
@@ -1195,10 +1221,119 @@ def join(folder, out=None):
     print("\nShared by the most mods, every update:")
     for r in top[:10]:
         print(f"  {r['mods']:>4} mods  {r['loader']} {r['update']}  {shown(r)}")
+    print("\nAny version:\n" + "\n".join(any_version_lines(anyv)))
     if out:
         Path(out).write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
         print(f"saved {out}")
     return table
+
+
+def any_version_table(by_pair):
+    """Any mod, any version: for each loader, the most-used release's mods (the pinned 150) ported to every other release
+    it is read for, and the mods whose port links (classes, mixins, access transformers and data) on every one. A target
+    whose job did not run, or where a mod could not be read, counts as not reached. For each mod that misses: the releases
+    it misses and the types of break holding it there. Then what would free the most mods for every release: each type
+    of break and each release, by the mods it alone holds back (handled, they reach every release) and the mods it holds."""
+    loaders, held, everywhere = {}, [], {}
+    for lo in FIRST:
+        frm, targets = most_used(lo), [b for _, b in any_version(lo)]
+        here = {t: by_pair.get((lo, frm, t)) for t in targets}
+        # Every pinned mod, so a target or a whole loader whose jobs did not run lowers the count instead of leaving it out.
+        pinned = PINS / f"{lo}-{frm}.json"
+        names = {f"{m['slug']}--{m['file']}" for m in json.loads(pinned.read_text(encoding="utf-8"))["mods"]} if pinned.is_file() else set()
+        names = sorted(names | {m for s in here.values() if s for m in list(s.get("verdicts", {})) + list(s.get("unreadable", {}))})
+        reached = {}
+        for jar in names:
+            missing = {}
+            for t, s in here.items():
+                if s is None:
+                    missing[t] = ["not run"]
+                elif jar in s.get("verdicts", {}):
+                    if s["verdicts"][jar]["left"]:
+                        missing[t] = s["verdicts"][jar]["types"]
+                else:
+                    missing[t] = ["unreadable" if jar in s.get("unreadable", {}) else "not read"]
+            mod = jar.split("--", 1)[0]
+            reached[mod] = len(targets) - len(missing)
+            if missing:
+                types = {}
+                for kinds in missing.values():
+                    for k in kinds:
+                        types[k] = types.get(k, 0) + 1
+                held.append({"loader": lo, "mod": mod, "reached": reached[mod], "of": len(targets), "missing": list(missing),
+                             "types": dict(sorted(types.items(), key=lambda kv: (-kv[1], kv[0])))})
+        older = [t for t in targets if vkey(t) < vkey(frm)]
+        everywhere[lo] = sorted(m for m, n in reached.items() if n == len(targets))
+        loaders[lo] = {"from": frm, "targets": len(targets), "older": len(older), "newer": len(targets) - len(older),
+                       "mods": len(names), "every": len(everywhere[lo]),
+                       "everyOlder": sum(1 for m in held if m["loader"] == lo and not set(m["missing"]) & set(older)) + len(everywhere[lo]),
+                       "everyNewer": sum(1 for m in held if m["loader"] == lo and set(m["missing"]) <= set(older)) + len(everywhere[lo]),
+                       "notRun": [t for t, s in here.items() if s is None], "reached": reached}
+    kinds, releases = {}, {}
+    for m in held:
+        for k, n in m["types"].items():
+            t = kinds.setdefault(k, {"type": k, "finishes": 0, "mods": 0, "releases": 0})
+            t["mods"] += 1
+            t["releases"] += n
+        if len(m["types"]) == 1:
+            kinds[next(iter(m["types"]))]["finishes"] += 1
+        for r in m["missing"]:
+            t = releases.setdefault((m["loader"], r), {"loader": m["loader"], "release": r, "finishes": 0, "mods": 0})
+            t["mods"] += 1
+        if len(m["missing"]) == 1:
+            releases[(m["loader"], m["missing"][0])]["finishes"] += 1
+    held.sort(key=lambda m: (len(m["missing"]), len(m["types"]), m["loader"], m["mod"]))
+    return {"mods": sum(t["mods"] for t in loaders.values()), "every": sum(t["every"] for t in loaders.values()),
+            "loaders": loaders, "everywhere": everywhere,
+            "types": sorted(kinds.values(), key=lambda t: (-t["finishes"], -t["mods"], t["type"])),
+            "releases": sorted(releases.values(), key=lambda t: (-t["finishes"], -t["mods"], t["loader"], vkey(t["release"]))),
+            "held": held}
+
+
+def any_version_lines(a, top=10):
+    """The any-version count as lines: the headline, then what would free the most mods, then the mods nearest to it."""
+    lo = a.get("loaders", {})
+    split = "; ".join(f"{k.capitalize()} {t['every']} of {t['mods']} from {t['from']} to all {t['targets']} other releases "
+                      f"({t['everyNewer']} reach every newer one, {t['everyOlder']} every older one)" for k, t in lo.items())
+    lines = [f"{a.get('every', 0)} of {a.get('mods', 0)} mods go to any version (their ported jar links on every release): {split}"]
+    not_run = [f"{k} {r}" for k, t in lo.items() for r in t["notRun"]]
+    if not_run:
+        lines.append(f"not run, so counted as not reached: {', '.join(not_run)}")
+    lines.append("types of break, by the mods each one alone keeps from every release (and the mods and mod-releases it holds):")
+    lines += [f"  frees {t['finishes']:>3}, in {t['mods']:>3} mods, {t['releases']:>5} mod-releases  {t['type']}" for t in a.get("types", [])[:top]]
+    lines.append("releases, by the mods each one alone keeps from going to any version (and the mods missing it):")
+    lines += [f"  frees {t['finishes']:>3}, {t['mods']:>3} mods miss it  {t['loader']} {t['release']}" for t in a.get("releases", [])[:top]]
+    lines.append("nearest to any version:")
+    lines += [f"  {m['loader']} {m['mod']}: {m['reached']} of {m['of']}, misses {', '.join(m['missing'])} ({'; '.join(m['types'])})"
+              for m in a.get("held", [])[:top]]
+    return lines
+
+
+ANY_VERSION_PAGE = ROOT / "bench" / "exposure" / "any-version.md"
+
+
+def any_version_page(table):
+    """bench/exposure/any-version.md: what is not there yet for any mod, any version, written with main's table."""
+    a = table.get("anyVersion") or {}
+    out = ["# Any mod, any version: what is not there yet", "",
+           f"Written by `python bench/exposure.py record-main` from main's jar scoreboard (bench/exposure/all.json) at "
+           f"{(table.get('commit') or '?')[:10]}, run {table.get('run', '?')}. Do not edit by hand.", "",
+           "The 150 most-downloaded mods of each loader's most-used release, each ported as a jar to every other release "
+           "the loader has, forward and back, and linked against it (classes, mixins, access transformers, data). It says "
+           "the port links, not that it runs: the game proof is `tools/cloud-run load`.", "",
+           "**" + any_version_lines(a)[0] + "**", ""]
+    out += ["## What would free the most mods", "", "Types of break. *Frees* counts the mods it alone keeps from every release: "
+            "handle it and they go to any version. *Mods* counts every mod it holds somewhere.", "",
+            "| Frees | Mods | Mod-releases | Type of break |", "|---|---|---|---|"]
+    out += [f"| {t['finishes']} | {t['mods']} | {t['releases']} | {t['type']} |" for t in a.get("types", [])[:30]]
+    out += ["", "Releases. *Frees* counts the mods that miss only this release.", "", "| Frees | Mods missing it | Loader | Release |", "|---|---|---|---|"]
+    out += [f"| {t['finishes']} | {t['mods']} | {t['loader']} | {t['release']} |" for t in a.get("releases", [])[:30]]
+    out += ["", "## Every mod that misses a release, nearest first", "", "| Loader | Mod | Reaches | Misses | Held by |", "|---|---|---|---|---|"]
+    out += [f"| {m['loader']} | {m['mod']} | {m['reached']} of {m['of']} | {', '.join(m['missing'])} | "
+            f"{'; '.join(f'{k} ({n})' for k, n in m['types'].items())} |" for m in a.get("held", [])]
+    out += ["", "## Mods that reach every release", ""]
+    out += [f"- {lo.capitalize()}: {', '.join(mods) or 'none yet'}" for lo, mods in a.get("everywhere", {}).items()]
+    return "\n".join(out) + "\n"
 
 
 MAIN_TABLE = ROOT / "bench" / "exposure" / "all.json"
@@ -1207,18 +1342,22 @@ MAIN_MEASURES = {
     "port.jar-links.every-update": lambda t: (t["total"]["link"], t["total"]["mods"]),
     "port.jar-links.big-updates": lambda t: (t["total"]["big"]["link"], t["total"]["big"]["mods"]),
     "port.jar-links.newest": lambda t: (t["total"]["newest"]["link"], t["total"]["newest"]["mods"]),
+    "port.jar-links.any-version": lambda t: (t.get("anyVersion", {}).get("every", 0), t.get("anyVersion", {}).get("mods", 0)),
 }
+# The headline counts compare names first, one line each.
+HEADS = len(MAIN_MEASURES)
 
 
 def compare(before, after):
-    """What one table changes against another, as lines: the three headline counts, each update and jump whose count
+    """What one table changes against another, as lines: the headline counts, each update and jump whose count
     moved, and each type of break whose finishes moved, the lower ones named first."""
     def num(n):
         return f"{n:,}"
 
     def heads(t):
         return {"every update": (t["total"]["link"], t["total"]["mods"]), "big updates": (t["total"]["big"]["link"], t["total"]["big"]["mods"]),
-                "newest game": (t["total"]["newest"]["link"], t["total"]["newest"]["mods"])}
+                "newest game": (t["total"]["newest"]["link"], t["total"]["newest"]["mods"]),
+                "any version": MAIN_MEASURES["port.jar-links.any-version"](t)}
 
     lines = []
     for name, (b, a) in ((k, (heads(before)[k], v)) for k, v in heads(after).items()):
@@ -1249,7 +1388,7 @@ def compare(before, after):
              for d, k in sorted(types, key=lambda t: t[0]) if d]
     if moved:
         lines.append("types: " + "; ".join(moved))
-    if not lines[3:]:
+    if not lines[HEADS:]:
         lines.append("no update, jump or type of break moved")
     return lines
 
@@ -1273,7 +1412,7 @@ def record_main(table_path, commit, run, measures_path=None, main_table=MAIN_TAB
     subject = subprocess.run(["git", "log", "-1", "--format=%s", commit], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     pr = re.search(r"\(#(\d+)\)\s*$", subject)
     at = f"main at {commit[:10]}" + (f" (#{pr.group(1)})" if pr else "")
-    moved = [line for line in compare(previous, table)[3:] if not line.startswith(("no update", "  "))] if previous else []
+    moved = [line for line in compare(previous, table)[HEADS:] if not line.startswith(("no update", "  "))] if previous else []
     for mid, read in MAIN_MEASURES.items():
         link, mods = read(table)
         points = by_id[mid].setdefault("points", [])
@@ -1282,7 +1421,8 @@ def record_main(table_path, commit, run, measures_path=None, main_table=MAIN_TAB
         points.append({"date": day or date.today().isoformat(), "value": link, "n": mods, "note": note[:600], "source": f"tools/cloud-run exposure {run} on {at}"})
     measures_path.write_text(M.dump(data), encoding="utf-8", newline="\n")
     main_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
-    print(f"main's table is {at}: " + "; ".join(compare(previous, table)[:3] if previous else [f"{read(table)[0]:,}" for read in MAIN_MEASURES.values()]))
+    main_table.with_name(ANY_VERSION_PAGE.name).write_text(any_version_page(table), encoding="utf-8", newline="\n")
+    print(f"main's table is {at}: " + "; ".join(compare(previous, table)[:HEADS] if previous else [f"{read(table)[0]:,}" for read in MAIN_MEASURES.values()]))
     return table
 
 
@@ -2270,7 +2410,7 @@ def main():
         jars(a.loader, a.frm, a.to, a.save, a.out, kind=a.kind)
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
-        print(json.dumps([f"{lo}:{x}:{y}" for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in updates(lo) + jumps(lo)
+        print(json.dumps([f"{lo}:{x}:{y}" for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in runs(lo)
                           if not only or f"{lo}:{x}" in only]))
     elif a.command == "load":
         load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
