@@ -1,0 +1,86 @@
+{
+ "loader": "fabric",
+ "from": "1.21.1",
+ "to": "1.21.2",
+ "scope": "all",
+ "mods": 33,
+ "loaded": 14,
+ "linkedAndLoaded": 14,
+ "linked": 33,
+ "failedButLinked": [
+  "attributefix--attributefix-fabric-1.21.1-21.1.3.jar",
+  "terrablender--TerraBlender-fabric-1.21.1-4.1.0.8.jar",
+  "terralith--Terralith_1.21.x_v2.6.2.jar",
+  "yungs-better-dungeons--YungsBetterDungeons-1.21.1-Fabric-5.1.4.jar",
+  "yungs-better-jungle-temples--YungsBetterJungleTemples-1.21.1-Fabric-3.1.2.jar",
+  "yungs-better-nether-fortresses--YungsBetterNetherFortresses-1.21.1-Fabric-3.1.5.jar",
+  "yungs-better-ocean-monuments--YungsBetterOceanMonuments-1.21.1-Fabric-4.1.2.jar"
+ ],
+ "clashOnly": [],
+ "failedDataOnly": [
+  "dungeons-and-taverns--dungeons-and-taverns-v4.4.4.jar"
+ ],
+ "verdicts": {
+  "ambientsounds--AmbientSounds_FABRIC_v6.3.11_mc1.21.1.jar": "client-only: client-only (folder, its own metadata)",
+  "animatica--animatica-0.6.1+1.21.jar": "client-only: client-only (folder, its own metadata)",
+  "better-mount-hud--bettermounthud-1.2.4.jar": "client-only: client-only (folder, its own metadata)",
+  "chatanimation--chatanimation-fabric-1.3.5+mc1.21.jar": "client-only: client-only (folder, its own metadata)",
+  "controlling--Controlling-fabric-1.21.1-19.0.5.jar": "client-only: client-only (folder, its own metadata)",
+  "cubes-without-borders--cwb-5.0.0+1.21.0.fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "fallingleaves--fallingleaves-1.17.1+1.21.1.jar": "client-only: client-only (folder, its own metadata)",
+  "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.21.1-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "modelfix--modelfix-1.21-1.6-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "morechathistory--morechathistory-1.3.1.jar": "client-only: client-only (folder, its own metadata)",
+  "searchables--Searchables-fabric-1.21.1-1.0.2.jar": "client-only: client-only (folder, its own metadata)",
+  "terralith--Terralith_1.21.x_v2.6.2.jar": "failed: the loader names it: - Mod 'Terralith' (terralith) 2.6.2 requires version 1.7.7 or later of mod 'Lithostitched' (lithostitched), but only the wrong version is present: 1.3.5!",
+  "forge-config-api-port--ForgeConfigAPIPort-v21.1.6-1.21.1-Fabric.jar": "loaded",
+  "attributefix--attributefix-fabric-1.21.1-21.1.3.jar": "failed: needs the library uy4Cnpcm--bookshelf-fabric-1.21.1-21.1.81.jar, which fails: the loader names it: [03:34:50] [main/ERROR]: Mixin apply for mod bookshelf failed bookshelf.mixins.json:patch.entity.MixinLivingEntity from mod bookshelf -> net.minecraft.class_1309: org.spongepowered.asm.mixin.injection.throwables.InvalidInjectionException Critical injection failure: @Inject annot",
+  "yungs-better-dungeons--YungsBetterDungeons-1.21.1-Fabric-5.1.4.jar": "failed: needs the library Ua7DFN59--YungsApi-1.21.1-Fabric-5.1.9.jar, which fails: its mixin config yungsapi.mixins.json is in the failure",
+  "yungs-better-jungle-temples--YungsBetterJungleTemples-1.21.1-Fabric-3.1.2.jar": "failed: needs the library Ua7DFN59--YungsApi-1.21.1-Fabric-5.1.9.jar, which fails: its mixin config yungsapi.mixins.json is in the failure",
+  "yungs-better-nether-fortresses--YungsBetterNetherFortresses-1.21.1-Fabric-3.1.5.jar": "failed: needs the library Ua7DFN59--YungsApi-1.21.1-Fabric-5.1.9.jar, which fails: its mixin config yungsapi.mixins.json is in the failure",
+  "yungs-better-ocean-monuments--YungsBetterOceanMonuments-1.21.1-Fabric-4.1.2.jar": "failed: needs the library Ua7DFN59--YungsApi-1.21.1-Fabric-5.1.9.jar, which fails: its mixin config yungsapi.mixins.json is in the failure",
+  "dungeons-and-taverns--dungeons-and-taverns-v4.4.4.jar": "failed: its data fails on this release: Failed to parse nova_structures:enchantment/wax_wings.json from pack mr_dungeons_andtaverns",
+  "terrablender--TerraBlender-fabric-1.21.1-4.1.0.8.jar": "failed: its data fails on this release: Failed to parse terrablender:worldgen/biome/deferred_placeholder.json from pack terrablender",
+  "better-advancements--BetterAdvancements-Fabric-1.21.1-0.4.3.21.jar": "loaded",
+  "clumps--Clumps-fabric-1.21.1-19.0.0.1.jar": "loaded",
+  "e4mc--e4mc-fabric-6.2.3.jar": "loaded",
+  "fabric-language-kotlin--fabric-language-kotlin-1.14.2+kotlin.2.4.21.jar": "loaded",
+  "krypton--krypton-0.2.8.jar": "loaded",
+  "melody--melody_fabric_1.0.10_MC_1.21.jar": "loaded",
+  "midnightlib--midnightlib-fabric-1.10.0+1.21.1.jar": "loaded",
+  "netherportalfix--netherportalfix-fabric-1.21.1-21.1.3.jar": "loaded",
+  "packet-fixer--packetfixer-3.3.1-1.20.5-1.21.X-merged.jar": "loaded",
+  "resourceful-config--resourcefulconfig-fabric-1.21-3.0.11.jar": "loaded",
+  "rhino--rhino-2101.2.7-build.85.jar": "loaded",
+  "supermartijn642s-config-lib--supermartijn642configlib-1.1.8-fabric-mc1.21.jar": "loaded",
+  "yosbr--yosbr-0.1.2.jar": "loaded"
+ },
+ "libraries": {
+  "9s6osm5g--cloth-config-16.0.143-fabric.jar": "its release for 1.21.2",
+  "MBAkmtvl--balm-fabric-1.21.3-21.3.5.jar": "its release for 1.21.2",
+  "XaDC71GB--lithostitched-fabric-1.21.2-1.3.8.jar": "its release for 1.21.2",
+  "aaRl8GiW--prickle-fabric-1.21.2-21.2.1.jar": "its release for 1.21.2",
+  "OsZiaDHq--CreativeCore_FABRIC_v2.13.54_mc1.21.1.jar": "its 1.21.1 release, ported",
+  "Ua7DFN59--YungsApi-1.21.1-Fabric-5.1.9.jar": "its 1.21.1 release, ported",
+  "uy4Cnpcm--bookshelf-fabric-1.21.1-21.1.81.jar": "its 1.21.1 release, ported"
+ },
+ "notStarted": {
+  "reeses-sodium-options--reeses-sodium-options-fabric-2.2.4+mc1.21.1.jar": [
+   "sodium"
+  ],
+  "sodium-shadowy-path-blocks--sodium-shadowy-path-blocks-fabric-4.1.0.jar": [
+   "sodium"
+  ],
+  "sodium-options-api--sodiumoptionsapi-fabric-1.0.10-1.21.1.jar": [
+   "reeses-sodium-options"
+  ]
+ },
+ "client": {
+  "mods": 25,
+  "loaded": 0,
+  "verdicts": {},
+  "notRun": "Game action 'ready' failed: java.io.IOException: Game did not reach the requested state; expected screen=, world=true; current screen=DisconnectedScreen",
+  "receipt": "/home/runner/.mmt/packs/.runs/portable/2026-11-22T03-41-16.563044315Z-bab5b15e/result.json"
+ },
+ "loadedOnServerFailedInClient": []
+}

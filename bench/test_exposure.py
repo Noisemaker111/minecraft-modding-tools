@@ -433,6 +433,9 @@ check(table[0]["examples"][0] == "call: g.X.one()V", "a type's first example is 
 verdicts["call: g.Y.two()V"] = {"game": "redesigned"}
 check(next(t for t in E.by_type(kinds, None, verdicts) if t["type"] == "call, game: linked")["finishes"] == 1,
       "a mod held by two types is finished by neither alone")
+verdicts["call: g.Z.three()V"] = {"game": "linked", "part": "library"}
+check([t["type"] for t in E.by_type(kinds, None, verdicts) if t["examples"] == ["call: g.Z.three()V"]] == ["call (library), game: linked"],
+      "a reference into a library the release ships is its own type, apart from the game's")
 
 # Jumps: the ports people ask for, from each family's most-used release to the next family's and to the newest.
 with tempfile.TemporaryDirectory() as tmp:

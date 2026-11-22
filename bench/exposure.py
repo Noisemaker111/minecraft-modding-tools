@@ -827,8 +827,17 @@ ANSWERED = {"replaced", "split", "linked", "template"}
 def kind_of(member, said):
     """The type of break a reference is: what it is (a call, a mixin target whose signature changed, an abstract method
     not written ...) and what the game's own code did about it. A way to handle a type frees every mod held by it, in
-    every update; a rule for one member frees the mods that use that member."""
-    return f"{member.split(': ', 1)[0]}, game: {said.get(member, {}).get('game') or 'not read'}"
+    every update; a rule for one member frees the mods that use that member. A reference into one of the libraries the
+    release ships (DataFixerUpper, Brigadier...) is a type of its own: the answer to it lives in that library, not the game."""
+    row = said.get(member, {})
+    return f"{member.split(': ', 1)[0]}{' (library)' if row.get('part') == 'library' else ''}, game: {row.get('game') or 'not read'}"
+
+
+def held_by(row, data, said):
+    by = {}
+    for ref in sorted(left(row, data)):
+        by.setdefault(kind_of(ref, said), []).append(ref)
+    return by
 
 
 def by_type(rows, data, said):
@@ -926,6 +935,10 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     }
     order = nearest(rows, data, said)
     summary["types"] = by_type(rows, data, said)
+    # Every blocked mod's references by type, so a way to handle several types can be counted by the mods it frees.
+    summary["held"] = {m["mod"]: held_by(m, data, said) for m in rows if left(m, data)}
+    # Why each blocked mod's mixin handlers did not follow their targets (JarPort.why), for designing the mixin types.
+    summary["refused"] = {m["mod"]: m["refused"] for m in rows if left(m, data) and m.get("refused")}
     summary["nearest"] = [{**turn, "members": turn["members"][:25]} for turn in order[:40]]
     summary["finishing"] = [[turn["fixes"], turn["modsDone"]] for turn in order]
     # Each mod's verdict: the references it still needs, the types of break they are, and what its port wrote. Two runs

@@ -54,6 +54,7 @@ public final class JarPort {
         final Set<String> widened = new HashSet<>(); // "owner.name" or "owner.name+desc" the mod's access transformer opens
         final Set<String> unlinked = new TreeSet<>();
         final Set<String> silent = new TreeSet<>(); // overrides the new release no longer calls: the mod loads, a hook is quiet
+        final Set<String> refused = new TreeSet<>(); // why a mixin handler did not follow its target (why), for the scoreboard
         final Map<String, Integer> changed = new TreeMap<>();
         String self; // the class being rewritten, and what a method added to it must respect
         boolean selfInterface;
@@ -93,9 +94,16 @@ public final class JarPort {
         loaderTo = b.loaderVersion;
         route = Exposure.Route.read(map);
         // A library the new release no longer lists may still be there at run time (the loader brings ASM, for one): only
-        // what changed inside a library both releases list is checked.
+        // what changed inside a library both releases list is checked. A class gone from a library the new release still
+        // lists is gone at run time (1.20.5's DataFixerUpper dropped DataResult.PartialResult).
+        Set<String> listed = new HashSet<>();
+        for (GameDiff.Cls c : b.classes.values()) {
+            if (c.library && c.artifact != null) {
+                listed.add(c.artifact);
+            }
+        }
         for (GameDiff.Cls c : a.classes.values()) {
-            if (c.library && !b.classes.containsKey(c.name)) {
+            if (c.library && !b.classes.containsKey(c.name) && !listed.contains(c.artifact)) {
                 b.classes.put(c.name, c);
             }
         }
@@ -371,7 +379,7 @@ public final class JarPort {
                 byte[] ported = port.port(Files.readAllBytes(jar), jar.getFileName().toString(), nested);
                 Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
                 Files.write(dest, ported);
-                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>();
+                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>();
                 Map<String, Integer> changed = new TreeMap<>();
                 for (Map<String, Object> n : nested) {
                     for (Object u : Json.array(n.get("unlinked"))) {
@@ -380,6 +388,9 @@ public final class JarPort {
                     }
                     for (Object u : Json.array(n.get("silent"))) {
                         silent.add(n.get("jar") + ": " + u);
+                    }
+                    for (Object u : n.get("refused") == null ? List.of() : Json.array(n.get("refused"))) {
+                        refused.add(u.toString());
                     }
                     for (var e : Json.object(n.get("changed")).entrySet()) {
                         changed.merge(e.getKey(), ((Number) e.getValue()).intValue(), Integer::sum);
@@ -391,6 +402,7 @@ public final class JarPort {
                 row.put("changed", changed);
                 row.put("unlinked", new ArrayList<>(unlinked));
                 row.put("silent", new ArrayList<>(silent));
+                row.put("refused", new ArrayList<>(refused));
                 linked += unlinked.isEmpty() ? 1 : 0;
             } catch (IOException | RuntimeException failed) {
                 row.put("error", String.valueOf(failed));
@@ -711,7 +723,12 @@ public final class JarPort {
             }
         }
         requires(mod, entries);
-        plan(mod);
+        planning = mod;
+        try {
+            plan(mod);
+        } finally {
+            planning = null;
+        }
         buses(mod);
         for (var e : mod.split.entrySet()) {
             String file = e.getKey() + "$ModBusListeners.class";
@@ -828,6 +845,7 @@ public final class JarPort {
         result.put("changed", mod.changed);
         result.put("unlinked", new ArrayList<>(mod.unlinked));
         result.put("silent", new ArrayList<>(mod.silent));
+        result.put("refused", new ArrayList<>(mod.refused));
         results.add(result);
         return buffer.toByteArray();
     }
@@ -1033,7 +1051,7 @@ public final class JarPort {
                             };
                         }
                         if (INJECTORS.contains(annotation)) {
-                            Injector inj = new Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1 });
+                            Injector inj = new Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1 }, new boolean[1]);
                             mod.injectors.put(rc.name + "." + name + desc, inj);
                             return injection(inj, null);
                         }
@@ -1081,7 +1099,7 @@ public final class JarPort {
      * too), and its require (-1: the mixin config's defaultRequire).
      */
     /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none; an @At's is in ats. */
-    record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal) {}
+    record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable) {}
 
     /**
      * A handler re-declared with its target's new parameters (desc, new names) and the original body moved to name$mmt:
@@ -1112,6 +1130,8 @@ public final class JarPort {
             public void visit(String n, Object v) {
                 if (at == null && "require".equals(n) && v instanceof Integer i) {
                     inj.require()[0] = i;
+                } else if (at == null && "cancellable".equals(n) && Boolean.TRUE.equals(v)) {
+                    inj.cancellable()[0] = true;
                 } else if (at == null && "ordinal".equals(n) && v instanceof Integer i && i >= 0) {
                     inj.ordinal()[0] = i;
                 } else if (at != null && v instanceof String s && ("value".equals(n) || "target".equals(n))) {
@@ -1801,7 +1821,7 @@ public final class JarPort {
                         retargetOther(mod, key, targets, m, inj);
                     }
                     if (inj != null) {
-                        pointsGone(mod, rc.name, targets, inj, m.desc);
+                        pointsGone(mod, rc.name, key, targets, inj, m.desc);
                     }
                 }
                 continue;
@@ -2180,7 +2200,7 @@ public final class JarPort {
             return null;
         }
         Set<String> called = new HashSet<>();
-        Matcher calls = Pattern.compile("18[25]:([^;.]+)\\.([^;.(]+)" + Pattern.quote(mapped) + ";").matcher(body);
+        Matcher calls = Pattern.compile("(?m)^18[25]:([^\\n.]+)\\.([^\\n.(]+)" + Pattern.quote(mapped) + "$").matcher(body);
         while (calls.find()) {
             if (!calls.group(2).equals(m.name) && subtype(b, fin.name, calls.group(1))) {
                 called.add(calls.group(2));
@@ -2571,10 +2591,46 @@ public final class JarPort {
         return alike * 10 >= subs.size() * 8;
     }
 
+    /** Whether most (four in five) of a body's instructions, at least six of them, are also in another's, counted as multisets. */
+    static boolean within(String part, String whole) {
+        Map<String, Integer> left = new HashMap<>();
+        for (String t : GameCode.instructions(whole)) {
+            left.merge(t, 1, Integer::sum);
+        }
+        String[] mine = GameCode.instructions(part);
+        int common = 0;
+        for (String t : mine) {
+            Integer n = left.get(t);
+            if (n != null && n > 0) {
+                common++;
+                left.put(t, n - 1);
+            }
+        }
+        return mine.length >= 6 && common * 5 >= mine.length * 4;
+    }
+
+    /** The share of the longer of two bodies' instructions the other has too, counted as multisets. */
+    static double likeness(String x, String y) {
+        Map<String, Integer> left = new HashMap<>();
+        String[] a = GameCode.instructions(x), b = GameCode.instructions(y);
+        for (String t : a) {
+            left.merge(t, 1, Integer::sum);
+        }
+        int common = 0;
+        for (String t : b) {
+            Integer n = left.get(t);
+            if (n != null && n > 0) {
+                common++;
+                left.put(t, n - 1);
+            }
+        }
+        return Math.max(a.length, b.length) == 0 ? 0 : (double) common / Math.max(a.length, b.length);
+    }
+
     /** At least half of two bodies' instructions (as GameCode.bodies writes them) in common, counted as multisets. */
     static boolean alike(String x, String y) {
         Map<String, Integer> left = new HashMap<>();
-        String[] a = x.split(";"), b = y.split(";");
+        String[] a = GameCode.instructions(x), b = GameCode.instructions(y);
         for (String t : a) {
             left.merge(t, 1, Integer::sum);
         }
@@ -3588,6 +3644,11 @@ public final class JarPort {
             List<GameDiff.Meth> sameName = named(b, cls(o), moved[1]);
             String report = "mixin target " + (sameName.isEmpty() ? "gone" : "changed signature") + ": " + Exposure.dotted(o) + "." + name + d;
             if (sameName.isEmpty()) {
+                GameDiff.Meth went = key.equals("method") && decl != null && decl.name.equals(o) ? codeMoved(o, name, d) : null;
+                if (went != null) {
+                    // Followed as a method whose parameters changed: the handler moves only where Mixin will accept it there.
+                    return new Found(text, report, null, 's', cls(o), went.name, went.desc, (owner == null ? "" : "L" + cls(o) + ";") + went.name + went.desc);
+                }
                 return new Found(text, report, null, (char) 0, null, null, null, null);
             }
             // Only its parameters changed: the route map's new signature, or the one method of that name on both sides.
@@ -3600,6 +3661,134 @@ public final class JarPort {
                 : new Found(text, report, null, 's', cls(o), now.name, now.desc, prefix + now.name + (mdesc == null ? "" : now.desc));
         }
         return keep(text);
+    }
+
+    final Map<String, Optional<GameDiff.Meth>> movedCode = new HashMap<>();
+
+    /**
+     * Where the code of a method the update dropped from its class (old names) went: the one method of the new class whose
+     * instructions are mostly the old method's (alike) and were not before, as when an update renames a method and changes
+     * its parameters at once. Where several read alike, the one that shares four in five of its instructions while no
+     * other does. Null when none, or no clear one, reads alike, or the old body is too short to tell one apart.
+     */
+    GameDiff.Meth codeMoved(String owner, String name, String desc) {
+        return movedCode.computeIfAbsent(owner + "." + name + desc, k -> {
+            GameCode oldCode = code(a), newCode = code(b);
+            GameDiff.Cls now = b.classes.get(cls(owner));
+            Map<String, String> before = oldCode == null ? null : oldCode.bodies(owner, this::cls);
+            Map<String, String> after = newCode == null || now == null ? null : newCode.bodies(cls(owner), x -> x);
+            String was = before == null || after == null ? null : before.get(name + desc(desc));
+            if (was == null || GameCode.instructions(was).length < 6) {
+                return Optional.empty();
+            }
+            GameDiff.Meth found = null;
+            double best = 0, next = 0;
+            for (GameDiff.Meth m : now.methods.values()) {
+                // A method the class kept counts when it took the dropped one's code in (1.21.2 put _blitToScreen's code
+                // into the kept blitToScreen and the new blitAndBlendToScreen): then two read alike and neither is followed.
+                String body = after.get(m.name + m.desc), had = before.get(m.name + m.desc);
+                if (m.name.startsWith("<") || body == null || !alike(was, body) || had != null && alike(was, had)) {
+                    continue;
+                }
+                double like = likeness(was, body);
+                if (like > best) {
+                    next = best;
+                    best = like;
+                    found = m;
+                } else {
+                    next = Math.max(next, like);
+                }
+            }
+            // Several read alike: only a clear winner took the code (1.21.2's setShaderTexture(int, ResourceLocation) is
+            // _setShaderTexture's body plus one call; setShaderTexture(int, int) shares half of it).
+            return next > 0 && (best < 0.8 || next >= 0.8) ? Optional.empty() : Optional.ofNullable(found);
+        }).orElse(null);
+    }
+
+    /**
+     * An injector whose points all left the methods it names, followed to the one method of the class where the code
+     * around them went: a private helper the new method calls (1.21.2's Gui.renderPlayerHealth calls the new
+     * renderAirBubbles, which reads getMaxAirSupply now), or a method the update added whose instructions are mostly the
+     * old method's (1.20.5 split Gui.render into layer methods it registers by reference). Every point must be a call or
+     * field use and that method must have them all (as often as the old method had, when an ordinal picks one); the
+     * class must name it once (a call or a method reference), so the injector runs as often as before. A helper the old
+     * class had must not have had the point already (it did not move there). Handlers that may cancel are never moved
+     * here (cancels). into with each method as one whose parameters changed ('s'),
+     * which the handler follows only where Mixin will accept it, or null. A method whose own parameters changed too is
+     * followed from its new signature.
+     */
+    List<Found> deeper(List<String> targets, Injector inj, List<Found> into, List<Found> ats) {
+        if (into.isEmpty() || into.stream().anyMatch(f -> f.kind() != 'm' && f.kind() != 's' || f.desc() == null || f.name().startsWith("<"))
+            || inj.ats().isEmpty() || inj.ats().stream().anyMatch(at -> !Set.of("INVOKE", "INVOKE_ASSIGN", "FIELD").contains(at[0]))
+            || ats.stream().anyMatch(at -> at == null || at.kind() == 0 || at.desc() == null) || pointsKept(targets, inj, into, ats)) {
+            return null;
+        }
+        GameCode code = code(b);
+        List<Found> out = new ArrayList<>();
+        for (int i = 0; i < into.size(); i++) {
+            Found f = into.get(i);
+            GameDiff.Meth before = oldMethod(targets, inj.methods().get(i));
+            List<String[]> refs = code == null || before == null ? null : code.refs(f.owner(), f.name(), f.desc());
+            Map<String, String> bodies = refs == null ? null : code.bodies(f.owner(), x -> x);
+            if (bodies == null) {
+                return null;
+            }
+            Map<String, String> was = code(a) == null ? null : code(a).bodies(before.owner.name, this::cls);
+            String old = was == null ? null : was.get(before.name + desc(before.desc));
+            Set<String> called = new HashSet<>();
+            for (String[] r : refs) {
+                if (r[0].equals("m") && r[1].equals(f.owner())) {
+                    called.add(r[2] + r[3]);
+                }
+            }
+            GameDiff.Meth found = null;
+            for (GameDiff.Meth n : b.classes.get(f.owner()).methods.values()) {
+                if (n.name.startsWith("<") || n.name.equals(f.name()) && n.desc.equals(f.desc())) {
+                    continue;
+                }
+                // Reached from the new method itself as a private helper, or a method the update added whose code is
+                // mostly the old method's (1.20.5 split Gui.render into layers it registers as method references).
+                boolean helper = called.contains(n.name + n.desc) && (n.flags & Opcodes.ACC_PRIVATE) != 0;
+                boolean part = !helper && old != null && !was.containsKey(n.name + n.desc) && bodies.get(n.name + n.desc) != null
+                    && within(bodies.get(n.name + n.desc), old);
+                if (!helper && !part) {
+                    continue;
+                }
+                Matcher use = Pattern.compile(Pattern.quote(":" + f.owner() + "." + n.name + n.desc) + "(?=[\\n:]|$)").matcher(String.join("\n", bodies.values()));
+                int uses = 0;
+                while (use.find()) {
+                    uses++;
+                }
+                // A helper the old class had too must not have had the point already: then the point did not move there,
+                // and the injector would land on other code that was always in it.
+                GameDiff.Meth had = helper && was.containsKey(n.name + n.desc) ? a.method(before.owner.name, n.name, oldDesc(n.desc)) : null;
+                boolean all = uses == 1 && (!helper || !was.containsKey(n.name + n.desc) || had != null);
+                for (int k = 0; all && k < ats.size(); k++) {
+                    all = pointKept(inj.ats().get(k), ats.get(k), new GameDiff.Meth[] { n, before }) && (had == null || hadNone(inj.ats().get(k), ats.get(k), had));
+                }
+                if (!all) {
+                    continue;
+                }
+                if (found != null) {
+                    return null;
+                }
+                found = n;
+            }
+            if (found == null) {
+                return null;
+            }
+            String text = inj.methods().get(i);
+            String prefix = text.startsWith("L") && text.indexOf(';') > 0 ? "L" + f.owner() + ";" : "";
+            out.add(new Found(text, null, null, 's', f.owner(), found.name, found.desc, prefix + found.name + found.desc));
+        }
+        return out;
+    }
+
+    /** Whether an old-release method made no use of an @At's member (named as the @At wrote it); false when unreadable. */
+    boolean hadNone(String[] point, Found at, GameDiff.Meth old) {
+        char kind = at.kind() == 's' || at.kind() == 'r' ? 'm' : at.kind();
+        Matcher m = MEMBER.matcher(point[1]);
+        return m.matches() && uses(code(a), a, old, kind, m.group(1), m.group(2), m.group(3) != null ? m.group(3) : m.group(4)) == 0;
     }
 
     /** Every method of that name a call on owner reaches through its superclasses in one release. */
@@ -3632,9 +3821,13 @@ public final class JarPort {
      * the new method, its result and staticness are, and its injection points are still in the new method.
      */
     static final boolean WHY = Boolean.getBoolean("jarport.why");
+    static Mod planning; // the mod plan is reading, whose refusals why records
 
     /** Why a mixin handler did not follow its target's new signature, for -Djarport.why (the type's design work). */
     static void why(String key, String reason) {
+        if (planning != null && !reason.equals("O1")) { // O1: nothing to follow
+            planning.refused.add(reason.split(" ", 2)[0] + " | " + key);
+        }
         if (WHY) {
             System.err.println("WHY " + reason + " | " + key);
         }
@@ -3642,6 +3835,8 @@ public final class JarPort {
 
     void retargetOther(Mod mod, String key, List<String> targets, GameDiff.RawMeth handler, Injector inj) {
         List<Found> into = inj.methods().stream().map(s -> find(targets, "method", s)).toList();
+        List<Found> points = inj.ats().stream().map(at -> at[1] == null ? null : find(targets, "target", at[1])).toList();
+        into = cancels(mod, key, handler, inj) ? into : Objects.requireNonNullElse(deeper(targets, inj, into, points), into);
         if (into.stream().noneMatch(f -> f.kind() == 's')) {
             { why(key, "O1"); return; }
         }
@@ -3679,6 +3874,112 @@ public final class JarPort {
                 mod.retargets.put(key + " " + inj.methods().get(i), into.get(i).changed());
             }
         }
+    }
+
+    /**
+     * The field a game method (old release) stored its parameter i in on its own object (this.minecraft = minecraft, as
+     * 1.21.10's Screen.init did), as a step for what this answers, when the new release's target class still has that
+     * field with that type, open to it, and the method stored nothing else there: the object kept what it was told, so a
+     * handler that took the parameter reads the field where the new method no longer passes it. Only where every new
+     * constructor stores it (1.21.11's Screen(Component) hands over to Screen(Minecraft, Font, Component)) and no other
+     * method does. Null otherwise.
+     */
+    String kept(GameDiff.Meth before, int i, String target) {
+        GameCode oldCode = code(a);
+        Map<String, String> bodies = oldCode == null || before.isStatic() ? null : oldCode.bodies(before.owner.name, this::cls);
+        String body = bodies == null ? null : bodies.get(before.name + desc(before.desc));
+        if (body == null) {
+            return null;
+        }
+        Type[] params = Type.getArgumentTypes(desc(before.desc));
+        int slot = 1;
+        for (int k = 0; k < i; k++) {
+            slot += params[k].getSize();
+        }
+        String put = "181:([^\\n]+)\\.(\\w+)" + Pattern.quote(params[i].getDescriptor());
+        Matcher stored = Pattern.compile("(?m)^25:0\\n" + params[i].getOpcode(Opcodes.ILOAD) + ":" + slot + "\\n" + put + "$").matcher(body);
+        if (!stored.find()) {
+            return null;
+        }
+        String owner = stored.group(1), field = stored.group(2), store = "181:" + owner + "." + field + params[i].getDescriptor();
+        if (Arrays.stream(GameCode.instructions(body)).filter(store::equals).count() != 1) {
+            return null;
+        }
+        GameDiff.Cls decl = Exposure.declaring(b, owner, 'f', field, null);
+        // The new release must set it before any method runs on every object: no other method stores it, and each
+        // constructor stores it (not a null) or hands over to another constructor of the class that does, so it holds
+        // the value at the new method's very start too.
+        Map<String, String> now = decl == null || code(b) == null ? null : code(b).bodies(decl.name, x -> x);
+        String own = "181:" + (decl == null ? "" : decl.name) + "." + field + params[i].getDescriptor();
+        if (now == null || now.keySet().stream().noneMatch(k -> k.startsWith("<init>"))) {
+            return null;
+        }
+        for (var e : now.entrySet()) {
+            List<String> code = Arrays.asList(GameCode.instructions(e.getValue()));
+            int at = code.indexOf(own);
+            boolean init = e.getKey().startsWith("<init>");
+            boolean delegates = code.stream().anyMatch(x -> x.startsWith("183:" + decl.name + ".<init>("));
+            if (!init && at >= 0 || init && !delegates && (at < 0 || at > 0 && code.get(at - 1).equals(String.valueOf(Opcodes.ACONST_NULL)))) {
+                return null;
+            }
+        }
+        String step = "f:" + owner + "." + field + ":" + params[i].getDescriptor();
+        return decl != null && decl.fields.get(field).desc.equals(params[i].getDescriptor()) && subtype(b, target, owner)
+            && openTo(new String[][] { { String.valueOf(THIS), step } }, target) ? step : null;
+    }
+
+    /**
+     * Whether every member the readings of what this answers (THIS) go through is open to code in the class target (new
+     * names): public, declared by target, or protected and declared by one of its superclasses.
+     */
+    boolean openTo(String[][] via, String target) {
+        for (String[] v : via == null ? new String[0][] : via) {
+            if (v == null || Integer.parseInt(v[0]) != THIS) {
+                continue;
+            }
+            for (int i = 1; i < v.length; i++) {
+                if (v[i].startsWith("x:") || v[i].startsWith("k:")) {
+                    continue;
+                }
+                String[] st = Retype.step(v[i]);
+                GameDiff.Cls decl = Exposure.declaring(b, st[1], st[0].charAt(0), st[2], st[0].equals("m") ? st[3] : null);
+                int flags = decl == null ? -1 : st[0].equals("m") ? decl.methods.get(st[2] + st[3]).flags : decl.fields.get(st[2]).flags;
+                boolean open = flags >= 0 && ((flags & Opcodes.ACC_PUBLIC) != 0 || decl.name.equals(target)
+                    || (flags & Opcodes.ACC_PROTECTED) != 0 && subtype(b, target, decl.name));
+                if (!open) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether a handler may cancel the method it injects into: a cancellable @Inject, or a CallbackInfo parameter marked
+     * with MixinExtras' @Cancellable. Moved into a helper (deeper), its cancel would end only the helper, and the method
+     * the mod meant to stop would run on.
+     */
+    boolean cancels(Mod mod, String key, GameDiff.RawMeth handler, Injector inj) {
+        if (inj.cancellable()[0]) {
+            return true;
+        }
+        byte[] bytes = mod.bytes.get(key.substring(0, key.indexOf('.')));
+        boolean[] marked = new boolean[1];
+        if (bytes != null) {
+            new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                    return !name.equals(handler.name) || !desc.equals(handler.desc) ? null : new MethodVisitor(Opcodes.ASM9) {
+                        @Override
+                        public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
+                            marked[0] |= d.equals(SUGAR + "Cancellable;");
+                            return null;
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_CODE);
+        }
+        return marked[0];
     }
 
     /** The first CallbackInfo parameter of a handler, or -1. */
@@ -3766,6 +4067,7 @@ public final class JarPort {
         // An @Inject takes only a place, not a call's arguments: an @At at a call the game replaced finds its place at the
         // replacement (font.draw(pose, ...) is graphics.drawString(font, ...) in the new method).
         List<Found> ats = inj.ats().stream().map(at -> at[1] == null ? null : replacedAt(at, find(targets, "target", at[1]))).toList();
+        into = cancels(mod, key, handler, inj) ? into : Objects.requireNonNullElse(deeper(targets, inj, into, ats), into);
         boolean moving = into.stream().anyMatch(f -> f.kind() == 's');
         if (moving) {
             Type[] params = Type.getArgumentTypes(handler.desc);
@@ -3814,7 +4116,10 @@ public final class JarPort {
                 if (from == null) {
                     // Arguments that changed type: worked out from the new ones as the game's own overrides do (Retype).
                     int[] paired = pair(now, was);
-                    String[][] learned = Retype.withoutThis(retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired));
+                    String[][] read = retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired);
+                    // A handler merged into its target runs on the target object, so what that object answers (Screen.init's
+                    // Minecraft, now this.minecraft) is read there, where the members read are open to the target's code.
+                    String[][] learned = (handler.flags & Opcodes.ACC_STATIC) == 0 && openTo(read, f.owner()) ? read : Retype.withoutThis(read);
                     from = new int[captured];
                     for (int i = 0; i < captured; i++) {
                         if (paired[i] >= 0) {
@@ -3824,6 +4129,9 @@ public final class JarPort {
                             via[i] = Arrays.copyOfRange(learned[i], 1, learned[i].length);
                         } else if (unread != null && unread[i]) {
                             from[i] = -1;
+                        } else if ((handler.flags & Opcodes.ACC_STATIC) == 0 && kept(before, i, f.owner()) != null) {
+                            from[i] = THIS;
+                            via[i] = new String[] { kept(before, i, f.owner()) };
                         } else {
                             { why(key, "I11"); return; }
                         }
@@ -3930,9 +4238,9 @@ public final class JarPort {
         return n;
     }
 
-    void pointsGone(Mod mod, String mixin, List<String> targets, Injector inj, String handlerDesc) {
+    void pointsGone(Mod mod, String mixin, String key, List<String> targets, Injector inj, String handlerDesc) {
         for (String text : inj.methods()) {
-            List<List<GameDiff.Meth>> into = selected(targets, text);
+            List<List<GameDiff.Meth>> into = mod.retargets.containsKey(key + " " + text) ? null : selected(targets, text);
             if (into == null) {
                 continue;
             }
@@ -4346,8 +4654,9 @@ public final class JarPort {
 
         /**
          * Every method of a class (Mojang names), synthetic ones too (a lambda's lambda$name$N), as name+desc -> its code as
-         * text: each instruction and what it names, class names passed through rename (an older release's into the newer
-         * one's), so two releases' copies of one lambda read alike. Null when the class is not in the jar.
+         * text: one instruction a line with what it names, class names passed through rename (an older release's into the
+         * newer one's), so two releases' copies of one lambda read alike. A line break is the only boundary: descriptors
+         * hold ';', and constants have their line breaks escaped. Null when the class is not in the jar.
          */
         Map<String, String> bodies(String owner, java.util.function.UnaryOperator<String> rename) {
             String jarOwner = toJar.getOrDefault(owner, owner);
@@ -4366,56 +4675,56 @@ public final class JarPort {
                     return new MethodVisitor(Opcodes.ASM9) {
                         @Override
                         public void visitInsn(int op) {
-                            sb.append(op).append(';');
+                            sb.append(op).append('\n');
                         }
 
                         @Override
                         public void visitIntInsn(int op, int v) {
-                            sb.append(op).append(':').append(v).append(';');
+                            sb.append(op).append(':').append(v).append('\n');
                         }
 
                         @Override
                         public void visitVarInsn(int op, int v) {
-                            sb.append(op).append(':').append(v).append(';');
+                            sb.append(op).append(':').append(v).append('\n');
                         }
 
                         @Override
                         public void visitTypeInsn(int op, String t) {
-                            sb.append(op).append(':').append(type.apply(t)).append(';');
+                            sb.append(op).append(':').append(type.apply(t)).append('\n');
                         }
 
                         @Override
                         public void visitFieldInsn(int op, String o, String f, String fd) {
-                            sb.append(op).append(':').append(type.apply(o)).append('.').append(names.field(o, f)).append(desc.apply(fd)).append(';');
+                            sb.append(op).append(':').append(type.apply(o)).append('.').append(names.field(o, f)).append(desc.apply(fd)).append('\n');
                         }
 
                         @Override
                         public void visitMethodInsn(int op, String o, String m, String md, boolean itf) {
-                            sb.append(op).append(':').append(type.apply(o)).append('.').append(names.method(o, m, md)).append(desc.apply(md)).append(';');
+                            sb.append(op).append(':').append(type.apply(o)).append('.').append(names.method(o, m, md)).append(desc.apply(md)).append('\n');
                         }
 
                         @Override
                         public void visitLdcInsn(Object v) {
-                            sb.append("ldc:").append(v instanceof Type t ? desc.apply(t.getDescriptor()) : v).append(';');
+                            sb.append("ldc:").append(v instanceof Type t ? desc.apply(t.getDescriptor()) : line(v)).append('\n');
                         }
 
                         @Override
                         public void visitJumpInsn(int op, Label l) {
-                            sb.append(op).append(';');
+                            sb.append(op).append('\n');
                         }
 
                         @Override
                         public void visitIincInsn(int v, int inc) {
-                            sb.append("iinc:").append(v).append(':').append(inc).append(';');
+                            sb.append("iinc:").append(v).append(':').append(inc).append('\n');
                         }
 
                         @Override
                         public void visitInvokeDynamicInsn(String n2, String d2, Handle bsm, Object... args) {
                             sb.append("indy:").append(n2).append(desc.apply(d2)).append(':').append(handle(bsm));
                             for (Object arg : args) {
-                                sb.append(':').append(arg instanceof Handle h ? handle(h) : arg instanceof Type t ? desc.apply(t.getDescriptor()) : arg);
+                                sb.append(':').append(arg instanceof Handle h ? handle(h) : arg instanceof Type t ? desc.apply(t.getDescriptor()) : line(arg));
                             }
-                            sb.append(';');
+                            sb.append('\n');
                         }
 
                         // A nested lambda is named by its enclosing method, not its number, which a release may change.
@@ -4426,17 +4735,17 @@ public final class JarPort {
 
                         @Override
                         public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
-                            sb.append("switch:").append(min).append(':').append(max).append(';');
+                            sb.append("switch:").append(min).append(':').append(max).append('\n');
                         }
 
                         @Override
                         public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
-                            sb.append("switch:").append(Arrays.toString(keys)).append(';');
+                            sb.append("switch:").append(Arrays.toString(keys)).append('\n');
                         }
 
                         @Override
                         public void visitMultiANewArrayInsn(String d2, int dims) {
-                            sb.append("multianewarray:").append(desc.apply(d2)).append(':').append(dims).append(';');
+                            sb.append("multianewarray:").append(desc.apply(d2)).append(':').append(dims).append('\n');
                         }
 
                         @Override
@@ -4453,6 +4762,16 @@ public final class JarPort {
          * The store instructions (ISTORE, ASTORE, ...) a method uses for its own locals, beyond its parameters; null when
          * it cannot be read.
          */
+        /** A constant as it reads on one line of a body. */
+        static String line(Object v) {
+            return String.valueOf(v).replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r");
+        }
+
+        /** A body's instructions, as bodies writes them. */
+        static String[] instructions(String body) {
+            return body.isEmpty() ? new String[0] : body.split("\n");
+        }
+
         Set<Integer> localStores(String owner, String name, String desc) {
             String jarOwner = toJar.getOrDefault(owner, owner);
             byte[] file = bytes.apply(jarOwner);
@@ -5153,7 +5472,10 @@ public final class JarPort {
             }
             for (int j = 0; j < adapter.captured(); j++) {
                 int f = adapter.from()[j];
-                if (f < 0) {
+                if (f == THIS) {
+                    handler.visitVarInsn(Opcodes.ALOAD, 0);
+                    steps(handler, adapter.via()[j]);
+                } else if (f < 0) {
                     pushDefault(handler, was[j]);
                 } else {
                     handler.visitVarInsn(now[f].getOpcode(Opcodes.ILOAD), slots[f]);
