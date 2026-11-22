@@ -8,7 +8,8 @@ import org.objectweb.asm.*;
  * - a mod's call to a loader method the new release dropped (NeoForge's FML, Fabric API) is reported, and one it kept links;
  * - an interface Fabric API adds to a game class ("loom:injected_interfaces") makes the mod's call through the game class link;
  * - NeoForge's own pom names the libraries its loader is made of, and NeoForm's mappings the SRG names its mods use;
- * - a NeoForge mod in SRG names (classes, access transformer, nested jars) is read in Mojang's names.
+ * - a NeoForge mod in SRG names (classes, access transformer, nested jars) is read in Mojang's names, the SRG ids from NeoForm
+ * as it writes them before 1.20.2 and as numbers after.
  */
 final class JarPortLoaderTest {
 
@@ -127,6 +128,10 @@ final class JarPortLoaderTest {
         Map<String, String> members = Exposure.Intermediary.srg(tsrg, pg);
         expect("count".equals(members.get("f_100_")) && "tick".equals(members.get("m_200_")) && "tick".equals(members.get("m_300_")) && !members.containsKey("p_300_0_"),
             "NeoForm's SRG ids join Mojang's names through the obfuscated game: " + members);
+        // From 1.20.2 NeoForm writes the obfuscated name in its srg column and keeps the SRG id only as its number.
+        Map<String, String> numbered = Exposure.Intermediary.srg("tsrg2 obf srg id\na a 7\n\tb b 100\n\tc ()V c 200\n\t\tstatic\n\td (I)V d 300\n\t\t0 o o 1\n", pg);
+        expect(numbered.equals(Map.of("f_100_", "count", "m_200_", "tick", "m_300_", "tick")),
+            "NeoForm's numbered ids (1.20.2 on) are the SRG ids mods still write, joined to Mojang's names: " + numbered);
         ModNames names = new ModNames(new Exposure.Intermediary(Map.of(), members));
         Map<String, byte[]> files = new LinkedHashMap<>();
         files.put("META-INF/mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"m7\"\n".getBytes(StandardCharsets.UTF_8));
