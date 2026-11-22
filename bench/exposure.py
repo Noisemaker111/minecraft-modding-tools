@@ -921,14 +921,14 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     if kind:
         summary["partial"] = f"only the {len(mods)} mods the last run held back with '{kind}'"
     before = work / "before.json"
-    if not kind:
-        if last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
-            os.replace(last, before)
-        work.mkdir(parents=True, exist_ok=True)
-        last.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
+    if not kind and last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
+        os.replace(last, before)
     against = before if not kind else last
     moved = verdicts_moved(json.loads(against.read_text(encoding="utf-8")), summary) if against.is_file() else None
     summary["moved"] = moved
+    if not kind:
+        work.mkdir(parents=True, exist_ok=True)
+        last.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     if not quiet:
         if moved is not None:
             print(f"against {'the run before' if not kind else 'the last whole run'} ({against}): "

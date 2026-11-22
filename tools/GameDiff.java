@@ -8043,8 +8043,9 @@ public final class GameDiff {
                     prev.fieldCount(),
                     (System.nanoTime() - t0) / 1e9
                 );
-                hops.add(line);
                 System.out.println("  " + line);
+                // The map holds no time, so the same releases and tools write the same bytes, and what is cached by them is found again.
+                hops.add(line.substring(0, line.lastIndexOf(" (")));
                 String step = prev.version + " -> " + s.version;
                 List<Hop.Rewrite> found = h.rewrites();
                 for (Hop.ArgDefault d : h.argDefaults(found)) {
@@ -8209,14 +8210,17 @@ public final class GameDiff {
                 head.append(i == 0 ? "\n    " : ",\n    ").append(classRewrites.get(i));
             }
             head.append(classRewrites.isEmpty() ? "],\n" : "\n  ],\n");
+            // Learned in parallel, so in no fixed order: written sorted, so one run's map is every run's.
+            List<String> learnedLines = learned.stream().map(l -> l.json()).sorted().toList();
             head.append("  \"learned\": [");
-            for (int i = 0; i < learned.size(); i++) {
-                head.append(i == 0 ? "\n    " : ",\n    ").append(learned.get(i).json());
+            for (int i = 0; i < learnedLines.size(); i++) {
+                head.append(i == 0 ? "\n    " : ",\n    ").append(learnedLines.get(i));
             }
             head.append(learned.isEmpty() ? "],\n" : "\n  ],\n");
+            List<String> retypedLines = retyped.stream().sorted().toList();
             head.append("  \"retyped\": [");
-            for (int i = 0; i < retyped.size(); i++) {
-                head.append(i == 0 ? "\n    " : ",\n    ").append(retyped.get(i));
+            for (int i = 0; i < retypedLines.size(); i++) {
+                head.append(i == 0 ? "\n    " : ",\n    ").append(retypedLines.get(i));
             }
             head.append(retyped.isEmpty() ? "],\n" : "\n  ],\n");
             if (loader != null) {
