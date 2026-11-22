@@ -133,6 +133,7 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
 - Prove in game before the PR ends, on GitHub's runners and never by starting Minecraft here: many agents share one PC.
   `tools/cloud-run load` for the updates you changed (step 5); the whole corpus once, on the PR's final commit:
   `tools/cloud-run ports`. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
-- End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`, a new
-  step is a new file): its result says what the method freed and what it left, which is the table above from step 79
-  on (ROADMAP.md shows every step). This file changes only when the method does; the table above takes no new rows.
+- Each type of break is a commit on the step's open PR, not a new step or PR (`CONTRIBUTING.md`, "How the work
+  runs"). End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`):
+  its result says what the method freed and what it left, which is the table above from step 79 on (ROADMAP.md shows
+  every step). This file changes only when the method does; the table above takes no new rows.
