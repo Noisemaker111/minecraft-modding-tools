@@ -7,7 +7,8 @@ of its own (`mmt.standin.mID`). The next update ports them like the rest of the 
 
 - **Where:** `FROM-TO/` + the old class's path, e.g. `1.21.1-1.21.2/net/minecraft/world/level/Level.java`, package
   `mmt.standin.` + the old class's package, class named as the old class (`ReloadableServerRegistries$Holder` for a
-  nested one). One file per old class, never per mod.
+  nested one). One file per old class, never per mod. A stand-in that uses a loader's own classes goes in
+  `FROM-TO.LOADER/` (`1.21.1-1.21.2.neoforge/`), read only for that loader; `FROM-TO/` is read for every loader.
 - **What answers what** (public static methods; types in the new release's names):
   - `R name(Owner self, A...)` the old instance method `Owner.name(A...)R`; `T name(Owner self)` and `void name(Owner self, T)` read and write the old field `name`
   - `R name(A...)` the old static method (or static field)

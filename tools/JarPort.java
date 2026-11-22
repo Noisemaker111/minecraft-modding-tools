@@ -7597,8 +7597,8 @@ public final class JarPort {
      * A stand-in whose old class the new release no longer has stands in for the class itself: references to the class
      * are moved to it. A port that uses a stand-in carries its classes (bundle), so a later update ports them as mod code.
      */
-    void standins(Path dir) throws IOException {
-        Map<String, byte[]> compiled = compileStandins(dir, b);
+    void standins(List<Path> dirs) throws IOException {
+        Map<String, byte[]> compiled = compileStandins(dirs, b);
         standins.putAll(compiled);
         for (var e : compiled.entrySet()) {
             GameDiff.Cls c = standinCls(e.getValue());
@@ -7720,11 +7720,14 @@ public final class JarPort {
     }
 
     /** The stand-in sources under dir compiled against stubs of the release (its classes' declarations, no code). */
-    static Map<String, byte[]> compileStandins(Path dir, GameDiff.Snap release) throws IOException {
-        List<Path> sources;
-        try (var walk = Files.walk(dir)) {
-            sources = walk.filter(f -> f.toString().endsWith(".java")).sorted().toList();
+    static Map<String, byte[]> compileStandins(List<Path> dirs, GameDiff.Snap release) throws IOException {
+        List<Path> sources = new ArrayList<>();
+        for (Path dir : dirs) {
+            try (var walk = Files.walk(dir)) {
+                walk.filter(f -> f.toString().endsWith(".java")).sorted().forEach(sources::add);
+            }
         }
+        Path dir = dirs.get(0).getParent();
         // Kept by what they are compiled from (the sources and the release read), so the processes of one sweep compile once.
         java.security.MessageDigest sha;
         try {
@@ -7988,9 +7991,16 @@ public final class JarPort {
             }
         }
         // After the rules: a class a rule moves (InteractionResultHolder -> InteractionResult) is no gone class to stand in for.
-        Path standins = book.resolveSibling("standins").resolve(a.version + "-" + b.version);
-        if (Files.isDirectory(standins)) {
-            standins(standins);
+        // FROM-TO/ holds stand-ins written on the game alone, for every loader; FROM-TO.LOADER/ those that use a loader's classes.
+        Path root = book.resolveSibling("standins");
+        List<Path> dirs = new ArrayList<>();
+        for (Path d : List.of(root.resolve(a.version + "-" + b.version), root.resolve(a.version + "-" + b.version + "." + loader))) {
+            if (Files.isDirectory(d)) {
+                dirs.add(d);
+            }
+        }
+        if (!dirs.isEmpty()) {
+            standins(dirs);
         }
     }
 

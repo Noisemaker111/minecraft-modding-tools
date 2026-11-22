@@ -60,6 +60,15 @@ final class JarPortStandinTest {
                 }
             }
             """);
+        // Another loader's stand-ins (FROM-TO.LOADER) use that loader's classes and are not read for this one.
+        write(scratch.resolve("standin-kb/standins/1.0-2.0.fabric/s9/Gauge.java"), """
+            package mmt.standin.s9;
+            public final class Gauge {
+                public static int read(s9.Gauge self) {
+                    return net.fabricmc.Only.value();
+                }
+            }
+            """);
         Path map = scratch.resolve("route-standin.json");
         Files.writeString(map, "{}");
         JarPort port = new JarPort(a, b, map);
