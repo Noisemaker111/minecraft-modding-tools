@@ -155,9 +155,10 @@ public final class Exposure {
             if (!d[0].startsWith("net.neoforged") || d[1].equals("neoform") || d[1].equals("neoforge")) {
                 continue;
             }
-            String path = d[0].replace('.', '/') + "/" + d[1] + "/" + d[2] + "/" + d[1] + "-" + d[2] + ".jar";
+            String file = d[1] + "-" + d[2] + (d[3] == null ? "" : "-" + d[3]) + ".jar";
+            String path = d[0].replace('.', '/') + "/" + d[1] + "/" + d[2] + "/" + file;
             try {
-                classes.addAll(classes(Files.readAllBytes(VersionMap.fetch(NEOFORGED + path, d[0] + "-" + d[1] + "-" + d[2] + ".jar")), "net/neoforged/"));
+                classes.addAll(classes(Files.readAllBytes(VersionMap.fetch(NEOFORGED + path, d[0] + "-" + file)), "net/neoforged/"));
             } catch (java.io.IOException notPublished) {
                 System.out.println("  " + path + ": " + notPublished.getMessage()); // a build-time library with no plain jar
             }
@@ -207,15 +208,18 @@ public final class Exposure {
         return VersionMap.fetchText(GameDiff.NEOFORGE + lv + "/neoforge-" + lv + ".pom", "neoforge-" + lv + ".pom");
     }
 
-    /** {group, artifact, version} of each plain jar dependency a pom lists (none with a type or classifier). */
+    /**
+     * {group, artifact, version, classifier or null} of each jar dependency a pom lists. A classifier names another jar of
+     * the artifact that the loader runs with: NeoForge's Dist and OnlyIn are in mergetool's "api" jar, nowhere else.
+     */
     static List<String[]> dependencies(String pom) {
         List<String[]> out = new ArrayList<>();
         Matcher d = Pattern.compile("<dependency>(.*?)</dependency>", Pattern.DOTALL).matcher(pom);
         while (d.find()) {
             String body = d.group(1); // its own coordinates come before any exclusion it lists
-            String g = tag(body, "groupId"), a = tag(body, "artifactId"), v = tag(body, "version");
-            if (g != null && a != null && v != null && tag(body, "type") == null && tag(body, "classifier") == null) {
-                out.add(new String[] {g, a, v});
+            String g = tag(body, "groupId"), a = tag(body, "artifactId"), v = tag(body, "version"), type = tag(body, "type");
+            if (g != null && a != null && v != null && (type == null || type.equals("jar"))) {
+                out.add(new String[] {g, a, v, tag(body, "classifier")});
             }
         }
         return out;

@@ -328,16 +328,20 @@ public final class JarPort {
     final Map<String, Chain> chains = new HashMap<>(); // owner.name+desc, or owner.name for a field
 
     public static void main(String[] args) throws Exception {
-        String from = null, to = null, map = null, out = null, loader = null, report = null, book = null;
-        boolean runtime = false;
+        String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null;
+        boolean runtime = false, hopsOnly = false;
         Path originalsDir = null;
+        List<String> via = new ArrayList<>(), maps = new ArrayList<>();
         List<Path> jars = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--runtime-names" -> runtime = true;
                 case "--from" -> from = args[++i];
                 case "--to" -> to = args[++i];
-                case "--map" -> map = args[++i];
+                case "--via" -> via.addAll(Arrays.stream(args[++i].split(",")).filter(v -> !v.isBlank()).toList());
+                case "--map" -> maps.add(args[++i]);
+                case "--hops" -> hopsOnly = true;
+                case "--chain" -> chain = args[++i];
                 case "--out" -> out = args[++i];
                 case "--loader" -> loader = args[++i];
                 case "--report" -> report = args[++i];
@@ -347,26 +351,64 @@ public final class JarPort {
                 default -> jars.add(Path.of(args[i]));
             }
         }
-        if (from == null || to == null || map == null || out == null || jars.isEmpty()) {
-            System.err.println("usage: JarPort --from V --to V --map route.json [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...");
+        if (hopsOnly) {
+            if (chain == null || book == null) {
+                System.err.println("usage: JarPort --hops --chain V1,V2,... --fixes knowledge/fixes.json [--loader neoforge|fabric]");
+                System.exit(2);
+            }
+            System.out.println(String.join(",", hops(List.of(chain.split(",")), Path.of(book).resolveSibling("standins"), loader == null ? "" : loader)));
+            return;
+        }
+        List<String> stops = new ArrayList<>();
+        stops.add(from);
+        stops.addAll(via);
+        stops.add(to);
+        if (from == null || to == null || maps.size() != stops.size() - 1 || out == null || jars.isEmpty()) {
+            System.err.println("usage: JarPort --from V [--via V,...] --to V --map route.json (one per step) [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...");
             System.exit(2);
-        }
-        JarPort port = new JarPort(Exposure.snap(from, loader), Exposure.snap(to, loader), Path.of(map));
-        if (loader != null) {
-            port.loader = loader;
-        }
-        port.runtimeNames = runtime;
-        port.originalsDir = originalsDir;
-        if ("fabric".equals(loader)) {
-            port.platform(Exposure.fabricApi(from), Exposure.fabricApi(to));
-        }
-        if (book != null) {
-            port.fixes(Path.of(book));
         }
         Path target = Path.of(out);
         boolean folder = jars.size() > 1 || Files.isDirectory(target);
         if (folder) {
             Files.createDirectories(target);
+        }
+        // Step by step, every jar through one step before the next: each step holds two releases of the game, and a port
+        // across a dozen updates would not fit holding all of them.
+        Map<Path, byte[]> bytes = new LinkedHashMap<>();
+        Map<Path, Map<String, Set<String>>> originals = new HashMap<>();
+        Map<Path, List<Map<String, Object>>> nested = new HashMap<>();
+        Map<Path, String> errors = new HashMap<>();
+        for (int i = 0; i + 1 < stops.size(); i++) {
+            boolean last = i + 2 == stops.size();
+            JarPort port = new JarPort(Exposure.snap(stops.get(i), loader), Exposure.snap(stops.get(i + 1), loader), Path.of(maps.get(i)));
+            if (loader != null) {
+                port.loader = loader;
+            }
+            port.runtimeNames = runtime && last;
+            port.originalsDir = originalsDir;
+            if ("fabric".equals(loader)) {
+                port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
+            }
+            if (book != null) {
+                port.fixes(Path.of(book));
+            }
+            for (Path jar : jars) {
+                if (errors.containsKey(jar)) {
+                    continue;
+                }
+                String name = jar.getFileName().toString();
+                try {
+                    byte[] in = i == 0 ? Files.readAllBytes(jar) : bytes.get(jar);
+                    if (i == 0) {
+                        originals.put(jar, port.originals(in, name));
+                    }
+                    List<Map<String, Object>> results = nested.computeIfAbsent(jar, k -> new ArrayList<>());
+                    bytes.put(jar, port.port(in, name, results, originals.get(jar), last));
+                } catch (IOException | RuntimeException failed) {
+                    errors.put(jar, String.valueOf(failed));
+                    bytes.remove(jar);
+                }
+            }
         }
         List<Object> rows = new ArrayList<>();
         int linked = 0;
@@ -374,17 +416,20 @@ public final class JarPort {
         for (Path jar : jars) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("mod", jar.getFileName().toString());
-            try {
-                List<Map<String, Object>> nested = new ArrayList<>();
-                byte[] ported = port.port(Files.readAllBytes(jar), jar.getFileName().toString(), nested);
+            if (errors.containsKey(jar)) {
+                row.put("error", errors.get(jar));
+            } else try {
+                byte[] ported = bytes.get(jar);
                 Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
                 Files.write(dest, ported);
+                // Every step's results: a reference one step could not link stays as it was, in that step's names, and breaks there.
                 Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>();
                 Map<String, Integer> changed = new TreeMap<>();
-                for (Map<String, Object> n : nested) {
+                for (Map<String, Object> n : nested.getOrDefault(jar, List.of())) {
                     for (Object u : Json.array(n.get("unlinked"))) {
-                        unlinked.add(n.get("jar") + ": " + u);
-                        byMods.computeIfAbsent(u.toString().replaceAll(" \\(in [^)]*\\)$", ""), k -> new TreeSet<>()).add(jar.getFileName().toString());
+                        if (unlinked.add(n.get("jar") + ": " + u)) {
+                            byMods.computeIfAbsent(u.toString().replaceAll(" \\(in [^)]*\\)$", ""), k -> new TreeSet<>()).add(jar.getFileName().toString());
+                        }
                     }
                     for (Object u : Json.array(n.get("silent"))) {
                         silent.add(n.get("jar") + ": " + u);
@@ -431,17 +476,30 @@ public final class JarPort {
 
     /** A whole jar, nested mods included; each jar's result is added to results. */
     byte[] port(byte[] jar, String name, List<Map<String, Object>> results) throws IOException {
-        boolean fabric = loader.equals("fabric");
-        // The jar's own intermediary method names, which the hand-back gives back where it cannot follow a class to the game:
-        // from the jar, or from the jar as it came where it was read into Mojang's names before (--originals).
+        return port(jar, name, results, originals(jar, name), true);
+    }
+
+    /**
+     * The jar's own intermediary method names, which the hand-back gives back where it cannot follow a class to the game:
+     * from the jar, or from the jar as it came where it was read into Mojang's names before (--originals). Read before
+     * the first step of a port, whose later steps read the jar in Mojang's names.
+     */
+    Map<String, Set<String>> originals(byte[] jar, String name) throws IOException {
+        if (!loader.equals("fabric")) {
+            return Map.of();
+        }
         Path came = originalsDir == null ? null : originalsDir.resolve(name);
-        Map<String, Set<String>> originals = !fabric ? Map.of() : intermediary(jar) ? ModNames.Back.methodNames(jar)
-            : came != null && Files.isRegularFile(came) ? ModNames.Back.methodNames(Files.readAllBytes(came)) : Map.of();
+        return intermediary(jar) ? ModNames.Back.methodNames(jar) : came != null && Files.isRegularFile(came) ? ModNames.Back.methodNames(Files.readAllBytes(came)) : Map.of();
+    }
+
+    /** One step of a port; last: the step into the release asked for, the only one a Fabric jar is handed back from. */
+    byte[] port(byte[] jar, String name, List<Map<String, Object>> results, Map<String, Set<String>> originals, boolean last) throws IOException {
+        boolean fabric = loader.equals("fabric");
         if (fabric && compareVersions(a.version, UNOBFUSCATED) < 0 && intermediary(jar)) {
             jar = fabricIn().jar(jar, new ModNames.Counts());
         }
         byte[] out = fitting(jar, name, results);
-        if (fabric && compareVersions(b.version, UNOBFUSCATED) < 0 && !results.isEmpty()) {
+        if (last && fabric && compareVersions(b.version, UNOBFUSCATED) < 0 && !results.isEmpty()) {
             // Fabric runs the jar in intermediary: a method whose name the hand-back cannot give is never called.
             @SuppressWarnings("unchecked") List<Object> unlinked = (List<Object>) results.get(results.size() - 1).get("unlinked");
             ModNames.Back back = handBack();
@@ -460,7 +518,7 @@ public final class JarPort {
                 return handed;
             }
         }
-        if (fabric && runtimeNames && compareVersions(b.version, UNOBFUSCATED) < 0) {
+        if (last && fabric && runtimeNames && compareVersions(b.version, UNOBFUSCATED) < 0) {
             out = fabricOut().jar(out, originals);
         }
         return out;
@@ -702,7 +760,9 @@ public final class JarPort {
             renamed = true;
         }
         Set<String> nested = nested(entries);
-        if (grants == null) {
+        boolean outermost = grants == null;
+        if (outermost) {
+            typesUsed = false;
             Map<String, GameDiff.RawCls> all = new HashMap<>();
             carried(entries, all);
             tree = all;
@@ -823,6 +883,24 @@ public final class JarPort {
                 platformNested.add(id);
             }
         }
+        // Nested jars first: whether any jar of the tree uses a stand-in type decides what the outermost one carries.
+        Map<String, byte[]> portedNested = new HashMap<>();
+        for (var e : entries.entrySet()) {
+            String n = e.getKey();
+            if ((nested.contains(n) || n.startsWith("META-INF/jarjar/") && n.endsWith(".jar")) && platformModule(e.getValue()) == null) {
+                portedNested.put(n, port(e.getValue(), name + "!" + n.substring(n.lastIndexOf('/') + 1), results, grants));
+            }
+        }
+        String typesPath = null;
+        if (outermost && typesUsed) {
+            try {
+                typesPath = carryTypes(entries, fmj != null);
+                mod.change("stand-in types carried in " + typesPath);
+            } catch (RuntimeException unreadable) {
+                // Metadata Json cannot read (a key given twice) cannot list the jar, and the loader loads no jar it does not list.
+                mod.unlinked.add("stand-in types not carried: the jar's metadata cannot be read (" + unreadable.getMessage() + ")");
+            }
+        }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (ZipOutputStream out = new ZipOutputStream(buffer)) {
             for (var e : entries.entrySet()) {
@@ -851,7 +929,7 @@ public final class JarPort {
                         // copy of that mod id instead, so this one is no part of the mod there.
                         mod.silent.add("nested platform module, the platform's own runs instead: " + nestedId + " (" + n + ")");
                     } else {
-                        data = port(data, name + "!" + n.substring(n.lastIndexOf('/') + 1), results, grants);
+                        data = portedNested.get(n);
                     }
                 } else if (rewritten.containsKey(n)) {
                     data = rewritten.get(n);
@@ -867,6 +945,14 @@ public final class JarPort {
                 entry.setTime(times.getOrDefault(n, 0L));
                 out.putNextEntry(entry);
                 out.write(data);
+                out.closeEntry();
+            }
+            if (typesPath != null) {
+                // Written after the loop: the types are on the new release already, so this step does not port them again.
+                ZipEntry entry = new ZipEntry(typesPath);
+                entry.setTime(0L);
+                out.putNextEntry(entry);
+                out.write(typesJar());
                 out.closeEntry();
             }
         }
@@ -1516,6 +1602,12 @@ public final class JarPort {
             GameDiff.Cls old = a.classes.get(k);
             if (old == null || b.classes.containsKey(k)) {
                 return "";
+            }
+            // The old class written on the new release: a mod's subclasses extend it, though the route moves the class's
+            // values elsewhere (1.19.4's GuiComponent, whose drawing went to GuiGraphics, an object the game passes in).
+            String standin = STANDIN + k;
+            if (standins.containsKey(standin) && extendable(standins.get(standin))) {
+                return standin.equals(classMap.get(k)) ? "" : standin;
             }
             Map<String, Integer> votes = new TreeMap<>();
             for (GameDiff.Cls x : a.classes.values()) {
@@ -3609,8 +3701,10 @@ public final class JarPort {
                         bridgeCode(super.visitMethod(br.access(), br.name(), oldDesc(br.desc()), null, null), self[0], mod.selfInterface, br);
                     }
                 }
+                // An interface's methods are public before Java 9 (fabric-permissions-api's Permissions, nested in many mods).
+                int open = mod.selfInterface && mod.selfVersion < Opcodes.V9 ? Opcodes.ACC_PUBLIC : Opcodes.ACC_PRIVATE;
                 for (Added m : mod.added.values()) {
-                    MethodVisitor mv = super.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, m.name(), m.desc(), null, null);
+                    MethodVisitor mv = super.visitMethod(open | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, m.name(), m.desc(), null, null);
                     mv.visitCode();
                     m.code().steps.forEach(step -> step.accept(mv));
                     mv.visitMaxs(m.code().max, m.locals());
@@ -6997,7 +7091,8 @@ public final class JarPort {
 
         /**
          * An instance member a class inherited from a superclass the game removed, called on that class: the class it extends
-         * now must have it, or the call cannot be carried.
+         * now must have it, or the call cannot be carried. True when the call is settled (reported, or left on the class
+         * because the stand-in it extends now declares it).
          */
         boolean inheritedGone(int opcode, String owner, String name, String desc, Decl decl) {
             if (opcode == Opcodes.INVOKESTATIC || decl == null || !decl.game()) {
@@ -7006,6 +7101,9 @@ public final class JarPort {
             for (GameDiff.RawCls own = mod.classes.get(owner); own != null && own.sup != null; own = mod.classes.get(own.sup)) {
                 String now = successor(own.sup);
                 if (now != null) {
+                    if (decl.owner().equals(own.sup) && now.startsWith(STANDIN) && b.method(now, name, desc(desc)) != null) {
+                        return true; // the old class's stand-in, which the class extends now, has it: the call stays on the class
+                    }
                     if (!decl.owner().equals(own.sup) || b.method(now, name, desc(desc)) != null) {
                         return false;
                     }
@@ -7505,8 +7603,8 @@ public final class JarPort {
         }
 
         String[] fix(Map<String, List<Fix>> book, List<String> owners, String name, String args, String opDesc, boolean receiver) {
-            if (mod.selfInterface && mod.selfVersion < Opcodes.V9) {
-                return null;
+            if (mod.selfInterface && mod.selfVersion < Opcodes.V1_8) {
+                return null; // an interface before Java 8 holds no static method to write the rule in
             }
             Type[] ops = Type.getArgumentTypes(opDesc);
             Type ret = Type.getReturnType(opDesc);
@@ -8200,6 +8298,15 @@ public final class JarPort {
             GameDiff.Cls c = standinCls(e.getValue());
             b.classes.put(c.name, c);
         }
+        for (String name : compiled.keySet()) {
+            String old = name.substring(STANDIN.length());
+            if (a.classes.containsKey(old) && !b.classes.containsKey(classMap.getOrDefault(old, old))) {
+                // The class is gone with nothing the route moves it to: the stand-in is the class. Settled before any
+                // member is matched, so a stand-in method taking another gone class matches in any order.
+                classMap.put(old, name);
+                inverse.put(name, old);
+            }
+        }
         for (var e : compiled.entrySet()) {
             String name = e.getKey();
             if (name.contains("$") && compiled.containsKey(name.substring(0, name.lastIndexOf('$'))) && !a.classes.containsKey(name.substring(STANDIN.length()))) {
@@ -8210,12 +8317,7 @@ public final class JarPort {
             if (was == null) {
                 continue;
             }
-            boolean gone = !b.classes.containsKey(classMap.getOrDefault(old, old));
-            if (gone) {
-                // The class is gone with nothing the route moves it to: the stand-in is the class.
-                classMap.put(old, name);
-                inverse.put(name, old);
-            }
+            boolean gone = name.equals(classMap.get(old));
             ClassModel cm = ClassFile.of().parse(e.getValue());
             for (MethodModel mm : cm.methods()) {
                 int flags = mm.flags().flagsMask();
@@ -8300,6 +8402,19 @@ public final class JarPort {
         return f != null && desc(f.desc).equals(newType);
     }
 
+    /**
+     * Whether a stand-in is a class a mod can extend: not final, not an interface, with a constructor a subclass can call
+     * (the old class written on the new release, as 1.19.4's abstract GuiComponent). A mod's subclasses of the old class
+     * extend it (successor), wherever the route moves the old class's values; a holder of static methods (a final class
+     * with a private constructor) answers members only.
+     */
+    static boolean extendable(byte[] bytes) {
+        ClassModel cm = ClassFile.of().parse(bytes);
+        int flags = cm.flags().flagsMask();
+        return (flags & (Opcodes.ACC_FINAL | Opcodes.ACC_INTERFACE)) == 0 && (flags & Opcodes.ACC_PUBLIC) != 0
+            && cm.methods().stream().anyMatch(m -> m.methodName().stringValue().equals("<init>") && (m.flags().flagsMask() & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED)) != 0);
+    }
+
     /** A compiled stand-in as the link check reads it: declarations, marked as not the game's so nothing in it is ported. */
     static GameDiff.Cls standinCls(byte[] bytes) {
         ClassModel cm = ClassFile.of().parse(bytes);
@@ -8331,7 +8446,7 @@ public final class JarPort {
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IOException(e);
         }
-        sha.update((release.version + "|" + release.loaderVersion + "|" + release.classes.size()).getBytes(StandardCharsets.UTF_8));
+        sha.update((release.version + "|" + release.loaderVersion + "|" + release.classes.size() + "|java " + standinJava(release.version)).getBytes(StandardCharsets.UTF_8));
         for (Path f : sources) {
             sha.update(dir.relativize(f).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
             sha.update(Files.readAllBytes(f));
@@ -8348,7 +8463,7 @@ public final class JarPort {
             if (javac == null) {
                 throw new IOException("stand-ins need a JDK's compiler (javax.tools), and this Java has none");
             }
-            List<String> command = new ArrayList<>(List.of("--release", "21", "-proc:none", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", out.toString()));
+            List<String> command = new ArrayList<>(List.of("--release", String.valueOf(standinJava(release.version)), "-proc:none", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", out.toString()));
             sources.forEach(f -> command.add(f.toString()));
             StringWriter errors = new StringWriter();
             int exit = javac.run(null, new PrintStream(OutputStream.nullOutputStream()), new PrintStream(new OutputStream() {
@@ -8377,6 +8492,20 @@ public final class JarPort {
                 walk.sorted(Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
             }
         }
+    }
+
+    /**
+     * The Java a stand-in is compiled for: the one the new release runs on (Java 8 before 1.17, 16 for 1.17, 17 from 1.18,
+     * 21 from 1.20.5, as Mojang's version files name), at most 21, which every later release runs too.
+     */
+    static int standinJava(String release) {
+        if (compareVersions(release, "1.20.5") >= 0) {
+            return 21;
+        }
+        if (compareVersions(release, "1.18") >= 0) {
+            return 17;
+        }
+        return compareVersions(release, "1.17") >= 0 ? 16 : 8;
     }
 
     static Map<String, byte[]> readClasses(Path root) throws IOException {
@@ -8495,7 +8624,7 @@ public final class JarPort {
 
     /**
      * The stand-ins a ported jar's classes call, carried in the jar under a package of its own (mmt.standin.mID, ID from the
-     * jar's name): two mods carrying one stand-in never put two copies of a package on the game. Adds them to entries and
+     * jar's whole name): two mods carrying one stand-in never put two copies of a package on the game. Adds them to entries and
      * points the classes that use them there; nothing when none is used.
      */
     void bundle(Mod mod, Map<String, byte[]> rewritten, Map<String, byte[]> entries, String jarName) {
@@ -8519,11 +8648,15 @@ public final class JarPort {
             return;
         }
         openFor(mod, used);
-        String home = STANDIN + "m" + Integer.toHexString(jarName.replaceAll("!.*", "").hashCode() & 0x7fffffff) + "/";
+        Set<String> types = standinTypes();
+        String home = standinHome(jarName, a.version, b.version);
+        // Only this update's stand-ins move: an earlier port's, carried in the jar already, are the mod's own classes now.
+        // A stand-in type goes where every jar's goes, so a mod's call and its nested library's declaration name one type.
         org.objectweb.asm.commons.Remapper move = new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
             @Override
             public String map(String name) {
-                return name.startsWith(STANDIN) && !name.startsWith(home) ? home + name.substring(STANDIN.length()) : name;
+                return types.contains(name) ? typesHome() + name.substring(STANDIN.length())
+                    : standins.containsKey(name) ? home + name.substring(STANDIN.length()) : name;
             }
         };
         for (var e : rewritten.entrySet()) {
@@ -8532,10 +8665,133 @@ public final class JarPort {
             }
         }
         for (String name : used) {
+            if (types.contains(name)) {
+                typesUsed = true;
+                continue;
+            }
             entries.put(move.map(name) + ".class", relocate(standins.get(name), move));
             rewritten.put(move.map(name) + ".class", relocate(standins.get(name), move));
         }
         mod.change("stand-ins carried: " + used.stream().filter(n -> !n.matches(".*\\$\\d+$")).map(n -> Exposure.dotted(n.substring(STANDIN.length()))).toList());
+    }
+
+    /**
+     * The package a jar carries one update's stand-ins under, from the jar's whole name and the update: a jar nested in a
+     * mod ("MOD.jar!INNER.jar") is a module of its own on NeoForge, which refuses one package in two modules, and a port
+     * across several updates carries each one's stand-in for a class (Screen in 1.20 and again in 1.21.11) side by side.
+     */
+    static String standinHome(String jarName, String from, String to) {
+        return STANDIN + "m" + Integer.toHexString((jarName + "|" + from + "-" + to).hashCode() & 0x7fffffff) + "/";
+    }
+
+    boolean typesUsed; // a jar of the tree being ported uses a stand-in type: its outermost jar carries typesJar
+
+    /**
+     * This update's stand-ins for classes it dropped, which stand in for the class itself, with their nested classes and
+     * every stand-in they use. Mods name these types in their own methods and fields, and so do the libraries nested in
+     * them, so all of them name one copy: a jar of its own (typesJar) the loader loads once, whichever mods carry it.
+     */
+    Set<String> standinTypes() {
+        if (types == null) {
+            types = new TreeSet<>();
+            Deque<String> todo = new ArrayDeque<>();
+            for (String name : standins.keySet()) {
+                String outer = name.contains("$") ? name.substring(0, name.indexOf('$')) : name;
+                if (classMap.containsValue(name) || classMap.containsValue(outer)) {
+                    todo.push(name);
+                }
+            }
+            Pattern ref = Pattern.compile(Pattern.quote(STANDIN) + "[\\w/$]+");
+            while (!todo.isEmpty()) {
+                String name = todo.pop();
+                if (!types.add(name)) {
+                    continue;
+                }
+                Matcher m = ref.matcher(new String(standins.get(name), StandardCharsets.ISO_8859_1));
+                while (m.find()) {
+                    for (String other : standins.keySet()) {
+                        if (other.equals(m.group()) || other.startsWith(m.group() + "$")) {
+                            todo.push(other);
+                        }
+                    }
+                }
+            }
+        }
+        return types;
+    }
+
+    Set<String> types;
+
+    /** The package of this update's stand-in types, the same in every jar (only its jar of types holds it). */
+    String typesHome() {
+        return STANDIN + "u" + typesTag() + "/";
+    }
+
+    String typesTag() {
+        return Integer.toHexString((a.version + "-" + b.version).hashCode() & 0x7fffffff);
+    }
+
+    /**
+     * Nests the update's jar of stand-in types in the outermost jar, as the loader's jar-in-jar does for any library
+     * (META-INF/jarjar/ and its metadata.json on NeoForge, META-INF/jars/ and fabric.mod.json's "jars" on Fabric): the
+     * loader loads one copy of a nested library however many mods carry it, so the types are one module on NeoForge
+     * and one class each on Fabric. Returns where the jar goes; the metadata is written into entries.
+     */
+    String carryTypes(Map<String, byte[]> entries, boolean fabric) {
+        String file = "mmt-standin-types-" + typesTag() + ".jar";
+        if (fabric) {
+            String path = "META-INF/jars/" + file;
+            Map<String, Object> meta = Json.object(Json.parse(new String(entries.get("fabric.mod.json"), StandardCharsets.UTF_8)));
+            List<Object> jars = new ArrayList<>(meta.get("jars") instanceof List<?> l ? l : List.of());
+            jars.add(new LinkedHashMap<>(Map.of("file", path)));
+            meta.put("jars", jars);
+            entries.put("fabric.mod.json", Json.write(meta).getBytes(StandardCharsets.UTF_8));
+            return path;
+        }
+        String path = "META-INF/jarjar/" + file;
+        byte[] list = entries.get("META-INF/jarjar/metadata.json");
+        Map<String, Object> meta = list == null ? new LinkedHashMap<>() : Json.object(Json.parse(new String(list, StandardCharsets.UTF_8)));
+        List<Object> jars = new ArrayList<>(meta.get("jars") instanceof List<?> l ? l : List.of());
+        Map<String, Object> jar = new LinkedHashMap<>();
+        jar.put("identifier", new LinkedHashMap<>(Map.of("group", "mmt.standin", "artifact", "types-" + typesTag())));
+        jar.put("version", new LinkedHashMap<>(Map.of("range", "[1,)", "artifactVersion", "1")));
+        jar.put("path", path);
+        jar.put("isObfuscated", false);
+        jars.add(jar);
+        meta.put("jars", jars);
+        entries.put("META-INF/jarjar/metadata.json", Json.write(meta).getBytes(StandardCharsets.UTF_8));
+        return path;
+    }
+
+    /**
+     * The jar of this update's stand-in types: every one of them, so the copy the loader picks holds what each mod
+     * carrying it needs. A game library on NeoForge (loaded with the game, whose classes it uses), a mod on Fabric.
+     */
+    byte[] typesJar() throws IOException {
+        org.objectweb.asm.commons.Remapper move = new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
+            @Override
+            public String map(String name) {
+                return standinTypes().contains(name) ? typesHome() + name.substring(STANDIN.length()) : name;
+            }
+        };
+        Map<String, byte[]> files = new LinkedHashMap<>();
+        files.put("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nFMLModType: GAMELIBRARY\n".getBytes(StandardCharsets.UTF_8));
+        files.put("fabric.mod.json", ("{\"schemaVersion\": 1, \"id\": \"mmt-standin-types-" + typesTag() + "\", \"version\": \"1\", \"name\": \"Stand-ins for "
+            + a.version + " -> " + b.version + "\"}").getBytes(StandardCharsets.UTF_8));
+        for (String name : standinTypes()) {
+            files.put(move.map(name) + ".class", relocate(standins.get(name), move));
+        }
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (ZipOutputStream out = new ZipOutputStream(buffer)) {
+            for (var e : files.entrySet()) {
+                ZipEntry entry = new ZipEntry(e.getKey());
+                entry.setTime(0L);
+                out.putNextEntry(entry);
+                out.write(e.getValue());
+                out.closeEntry();
+            }
+        }
+        return buffer.toByteArray();
     }
 
     static byte[] relocate(byte[] bytes, org.objectweb.asm.commons.Remapper move) {
@@ -8598,6 +8854,29 @@ public final class JarPort {
         if (!dirs.isEmpty()) {
             standins(dirs);
         }
+    }
+
+    /**
+     * The releases a port along chain (every release from the one ported from to the one ported to) stops at. An update
+     * with stand-ins (standins/FROM-TO/, or FROM-TO.LOADER/ for this loader) is a step of its own: its stand-ins answer
+     * that update's old members and are written on its new release, and the steps after it port them like the mod's own
+     * code. The updates between are one step on their composed route map.
+     */
+    static List<String> hops(List<String> chain, Path standins, String loader) {
+        List<String> stops = new ArrayList<>(List.of(chain.get(0)));
+        for (int i = 0; i + 1 < chain.size(); i++) {
+            String update = chain.get(i) + "-" + chain.get(i + 1);
+            if (Files.isDirectory(standins.resolve(update)) || !loader.isEmpty() && Files.isDirectory(standins.resolve(update + "." + loader))) {
+                if (!stops.get(stops.size() - 1).equals(chain.get(i))) {
+                    stops.add(chain.get(i));
+                }
+                stops.add(chain.get(i + 1));
+            }
+        }
+        if (!stops.get(stops.size() - 1).equals(chain.get(chain.size() - 1))) {
+            stops.add(chain.get(chain.size() - 1));
+        }
+        return stops;
     }
 
     /**
@@ -9251,6 +9530,11 @@ public final class JarPort {
         for (String line : text.split("\r?\n", -1)) {
             String body = line.replaceAll("#.*", "").trim();
             String[] p = body.split("\\s+");
+            if (p.length >= 3 && (p[0].equals("accessWidener") || p[0].equals("classTweaker")) && p[2].equals("named") && compareVersions(b.version, UNOBFUSCATED) >= 0) {
+                // From 26.1 the game runs in Mojang's names under Fabric's "official" namespace, and Fabric Loader refuses any other.
+                out.append(p[0]).append(' ').append(p[1]).append(" official\n");
+                continue;
+            }
             if (p.length < 3 || p[0].equals("accessWidener") || p[0].equals("classTweaker")) {
                 out.append(line).append('\n');
                 continue;

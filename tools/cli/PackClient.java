@@ -378,6 +378,9 @@ final class PackClient {
         CompletableFuture<Map<String, Object>> ready = agentWait.ready;
         Process process = PackChecks.windowless(new ProcessBuilder(command)).directory(instance.toFile()).redirectErrorStream(true).start();
         List<String> failed = owner.loader.failed();
+        // A line the loader logs as the game shuts down (NeoForge's "Closing FML Loader"): said before the title screen, the
+        // start is over even when nothing says why (the 1.21.11 client then hung for 15 minutes with its window gone).
+        List<String> shutdown = Json.array(((PackLoaders.Style) owner.loader).spec.getOrDefault("closing", List.of())).stream().map(String::valueOf).toList();
         // Programs a mod starts from the game, seen while it runs: one started as the game dies has no parent left to find it by.
         Set<ProcessHandle> started = ConcurrentHashMap.newKeySet();
         java.util.concurrent.atomic.AtomicReference<String> firstFailure = new java.util.concurrent.atomic.AtomicReference<>();
@@ -392,7 +395,7 @@ final class PackClient {
                     out.flush();
                     // The loader's error screen follows its fatal loading error; once it is said, nothing more will start.
                     // The agent answers during the loading screen, so a failure said after it answered still decides the start.
-                    String loading = loadingFailure(line, failed);
+                    String loading = loadingFailure(line, failed, shutdown, ready.isDone());
                     if (loading != null && firstFailure.compareAndSet(null, loading)) ready.completeExceptionally(new LoadingFailed(loading));
                 }
             } catch (Exception unreadable) {
@@ -419,6 +422,8 @@ final class PackClient {
                 session = ready.get(15, TimeUnit.MINUTES);
             } catch (ExecutionException stopped) {
                 throw stopped.getCause() instanceof Exception e ? e : stopped;
+            } catch (java.util.concurrent.TimeoutException silent) {
+                throw new IOException("the client showed no first frame in 15 minutes and said no failure; its log ends: " + lastLine(log));
             } finally {
                 agentWait.close();
             }
@@ -428,8 +433,14 @@ final class PackClient {
             if (screen.contains("Error") && !screen.equals("TitleScreen")) throw new IOException("the loader showed its error screen (" + screen + ") instead of the title screen");
             if (firstFailure.get() != null) throw new LoadingFailed(firstFailure.get());
             reached.add("title");
-            Game.request(session, Json.map("command", "open-world", "world", "lab"));
-            Game.request(session, Json.map("command", "ready", "expectWorld", true));
+            try {
+                Game.request(session, Json.map("command", "open-world", "world", "lab"));
+                Game.request(session, Json.map("command", "ready", "expectWorld", true));
+            } catch (IOException left) {
+                // The game left the world for a screen (the disconnected screen): what it shows is why.
+                String shown = screenText(session);
+                throw shown.isEmpty() ? left : new IOException(left.getMessage() + "; the screen says: " + shown);
+            }
             reached.add("world");
             // Snippets compile for the Java the game runs on, 8 before 1.17: no var.
             snippet(session, "net.minecraft.client.Minecraft game = net.minecraft.client.Minecraft.getInstance();\nshow(game, new net.minecraft.client.gui.screens.inventory.InventoryScreen(game.player));\nreturn true;");
@@ -509,6 +520,50 @@ final class PackClient {
         return result;
     }
 
+    /**
+     * The text the open screen shows: every Component it holds, and those of any game object it holds (1.20.5's
+     * DisconnectionDetails keeps the reason there). Read by type, not by field name, so one snippet serves every
+     * release; Java 8 source for the releases before 1.17. Empty when it cannot be read.
+     */
+    static String screenText(Map<String, Object> session) {
+        try {
+            return String.valueOf(snippet(session, String.join("\n",
+                "Object shown = screen(net.minecraft.client.Minecraft.getInstance());",
+                "if (shown == null) return \"(no screen is open)\";",
+                "java.util.List<String> texts = new java.util.ArrayList<String>();",
+                "java.util.List<Object> holders = new java.util.ArrayList<Object>();",
+                "holders.add(shown);",
+                "for (int h = 0; h < holders.size() && h < 8; h++) {",
+                "    Object holder = holders.get(h);",
+                "    for (Class<?> type = holder.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {",
+                "        for (java.lang.reflect.Field field : type.getDeclaredFields()) {",
+                "            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;",
+                "            Object value;",
+                "            try { field.setAccessible(true); value = field.get(holder); } catch (Throwable unreadable) { continue; }",
+                "            if (value instanceof net.minecraft.network.chat.Component) {",
+                "                String text = ((net.minecraft.network.chat.Component) value).getString();",
+                "                if (!text.isEmpty() && !texts.contains(text)) texts.add(text);",
+                "            } else if (value != null && h == 0 && value.getClass().getName().startsWith(\"net.minecraft.\") && !(value instanceof net.minecraft.client.gui.screens.Screen)) holders.add(value);",
+                "        }",
+                "    }",
+                "}",
+                "return texts.isEmpty() ? \"(\" + shown.getClass().getName() + \" holds no text)\" : String.join(\" | \", texts);"))).strip();
+        } catch (Exception unreadable) {
+            return "(its text could not be read: " + String.valueOf(unreadable.getMessage()).lines().limit(3).reduce((a, b) -> a + " " + b).orElse("") + ")";
+        }
+    }
+
+    /** The log's last line that is not blank. */
+    static String lastLine(Path log) {
+        try {
+            List<String> lines = Files.readAllLines(log, StandardCharsets.UTF_8);
+            for (int i = lines.size() - 1; i >= 0; i--) if (!lines.get(i).isBlank()) return lines.get(i).strip();
+        } catch (IOException | RuntimeException unreadable) {
+            // nothing to quote
+        }
+        return "(nothing)";
+    }
+
     /** The ASM library the launch puts on the class path (the loader's, as merged): the agent is built against it, so it reads the game's classes. */
     static Path asm(Path install, String minecraft) throws IOException {
         for (Object o : Json.array(merged(install, minecraft).get("libraries"))) {
@@ -538,6 +593,12 @@ final class PackClient {
     /** The line, when it says loading failed: one of the loader's own failure words, or a line logged at FATAL. Else null. */
     static String loadingFailure(String line, List<String> failed) {
         return PackChecks.fatal(line) || failed.stream().anyMatch(line::contains) ? line : null;
+    }
+
+    /** As above, and a line the loader logs as the game shuts down (closing) when it comes before the agent answered. */
+    static String loadingFailure(String line, List<String> failed, List<String> closing, boolean answered) {
+        String failure = loadingFailure(line, failed);
+        return failure != null || answered || closing.stream().noneMatch(line::contains) ? failure : line;
     }
 
     /**

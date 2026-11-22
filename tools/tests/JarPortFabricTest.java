@@ -122,6 +122,10 @@ final class JarPortFabricTest {
         String widener = new String(ported.get("m5.accesswidener"), StandardCharsets.UTF_8);
         JarPortTest.expect(widener.startsWith("accessWidener v2 intermediary\naccessible field net/minecraft/class_1297 field_6002 Lnet/minecraft/class_1937;"),
             "the access widener is written for the intermediary namespace: " + widener);
+        JarPort unobfuscated = new JarPort(new GameDiff.Snap("1.21.11"), new GameDiff.Snap("26.1"), map);
+        String official = unobfuscated.accessWidener(unobfuscated.new Mod(), "accessWidener v2 named\n");
+        JarPortTest.expect(official.startsWith("accessWidener v2 official\n"),
+            "a widener read in Mojang names is written for the official namespace from 26.1, which Fabric Loader runs there: " + official);
         JarPortTest.expect(new String(ported.get("m5-refmap.json"), StandardCharsets.UTF_8).contains("\"mappings\": {}") && !ported.containsKey("META-INF/accesstransformer.cfg")
             && new String(ported.get("fabric.mod.json"), StandardCharsets.UTF_8).contains("\"minecraft\":\"2.0\""),
             "the refmap is emptied, the access transformer Fabric never reads is dropped, and the metadata asks for the new release: " + ported.keySet());
