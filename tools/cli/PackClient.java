@@ -433,8 +433,8 @@ final class PackClient {
             if (screen.contains("Error") && !screen.equals("TitleScreen")) throw new IOException("the loader showed its error screen (" + screen + ") instead of the title screen");
             if (firstFailure.get() != null) throw new LoadingFailed(firstFailure.get());
             reached.add("title");
-            Game.request(session, Json.map("command", "open-world", "world", "lab"));
             try {
+                Game.request(session, Json.map("command", "open-world", "world", "lab"));
                 Game.request(session, Json.map("command", "ready", "expectWorld", true));
             } catch (IOException left) {
                 // The game left the world for a screen (the disconnected screen): what it shows is why.
@@ -529,7 +529,7 @@ final class PackClient {
         try {
             return String.valueOf(snippet(session, String.join("\n",
                 "Object shown = screen(net.minecraft.client.Minecraft.getInstance());",
-                "if (shown == null) return \"\";",
+                "if (shown == null) return \"(no screen is open)\";",
                 "java.util.List<String> texts = new java.util.ArrayList<String>();",
                 "java.util.List<Object> holders = new java.util.ArrayList<Object>();",
                 "holders.add(shown);",
@@ -547,7 +547,7 @@ final class PackClient {
                 "        }",
                 "    }",
                 "}",
-                "return String.join(\" | \", texts);"))).strip();
+                "return texts.isEmpty() ? \"(\" + shown.getClass().getName() + \" holds no text)\" : String.join(\" | \", texts);"))).strip();
         } catch (Exception unreadable) {
             return "(its text could not be read: " + String.valueOf(unreadable.getMessage()).lines().limit(3).reduce((a, b) -> a + " " + b).orElse("") + ")";
         }
