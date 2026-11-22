@@ -19,6 +19,10 @@ nest it.
   - `Owner init(A...)` the old constructor `new Owner(A...)` (not a `super(...)` call)
   - `boolean isInstance(Object)` what `x instanceof Owner` meant
   - A stand-in for a class the new release dropped, with nothing the route or a rule moves it to, stands in for the class.
+  - A stand-in for a class mods extend is written as that class (`public abstract class GuiComponent` with its `public`
+    constructor, not `final` with a private one): it stands in for the class even where the route moves the class's
+    members elsewhere, and mods' subclasses extend it. A mod extending a gone class whose stand-in cannot be extended
+    does not link.
   A method that answers no old member stops the port with its name.
 - **Closed members:** a stand-in may call what the new game keeps private or protected; the port opens it through the
   mod's access transformer, or reports it when the mod has none.

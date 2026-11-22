@@ -1350,6 +1350,10 @@ public final class JarPort {
             if (old == null || b.classes.containsKey(k)) {
                 return "";
             }
+            String standin = classMap.get(k);
+            if (standin != null && standins.containsKey(standin) && extendable(standins.get(standin))) {
+                return ""; // the old class, written on the new release: its subclasses extend it still
+            }
             Map<String, Integer> votes = new TreeMap<>();
             for (GameDiff.Cls x : a.classes.values()) {
                 GameDiff.Cls now = k.equals(x.sup) ? b.classes.get(cls(x.name)) : null;
@@ -8035,11 +8039,13 @@ public final class JarPort {
             GameDiff.Cls c = standinCls(e.getValue());
             b.classes.put(c.name, c);
         }
-        for (String name : compiled.keySet()) {
-            String old = name.substring(STANDIN.length());
-            if (a.classes.containsKey(old) && !b.classes.containsKey(classMap.getOrDefault(old, old))) {
-                // The class is gone with nothing the route moves it to: the stand-in is the class. Settled before any
-                // member is matched, so a stand-in method taking another gone class matches in any order.
+        for (var e : compiled.entrySet()) {
+            String name = e.getKey(), old = name.substring(STANDIN.length());
+            boolean gone = a.classes.containsKey(old) && !b.classes.containsKey(classMap.getOrDefault(old, old));
+            if (gone || a.classes.containsKey(old) && !b.classes.containsKey(old) && extendable(e.getValue())) {
+                // The class is gone with nothing the route moves it to, or its stand-in is the old class itself (one a mod
+                // can extend): the stand-in is the class, for its references, its members and the mods that subclass it.
+                // Settled before any member is matched, so a stand-in method taking another gone class matches in any order.
                 classMap.put(old, name);
                 inverse.put(name, old);
             }
@@ -8068,7 +8074,7 @@ public final class JarPort {
                         Exposure.dotted(name) + ".isInstance($1)"));
                     continue;
                 }
-                if (gone) {
+                if (gone && !extendable(e.getValue())) {
                     continue; // the class's own members, which references reach through the class map
                 }
                 // Matched in the new release's names: each old member's descriptor carried forward against the stand-in's.
@@ -8137,6 +8143,18 @@ public final class JarPort {
     boolean oldField(GameDiff.Cls was, String name, String newType) {
         GameDiff.Fld f = was.fields.get(name);
         return f != null && desc(f.desc).equals(newType);
+    }
+
+    /**
+     * Whether a stand-in is a class a mod can extend: not final, not an interface, with a constructor a subclass can call
+     * (the old class written on the new release, as 1.19.4's abstract GuiComponent). Mods subclass such a class, so the
+     * stand-in is their superclass; a holder of static methods (a final class with a private constructor) answers members only.
+     */
+    static boolean extendable(byte[] bytes) {
+        ClassModel cm = ClassFile.of().parse(bytes);
+        int flags = cm.flags().flagsMask();
+        return (flags & (Opcodes.ACC_FINAL | Opcodes.ACC_INTERFACE)) == 0 && (flags & Opcodes.ACC_PUBLIC) != 0
+            && cm.methods().stream().anyMatch(m -> m.methodName().stringValue().equals("<init>") && (m.flags().flagsMask() & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED)) != 0);
     }
 
     /** A compiled stand-in as the link check reads it: declarations, marked as not the game's so nothing in it is ported. */

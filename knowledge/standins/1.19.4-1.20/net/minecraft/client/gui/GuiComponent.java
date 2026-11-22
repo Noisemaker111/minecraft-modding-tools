@@ -34,7 +34,7 @@ import org.joml.Matrix4f;
  * of the texture RenderSystem.setShaderTexture had bound, blit of an atlas sprite, blitNineSliced, blitRepeating,
  * renderOutline, drawString and drawCenteredString, a scissor stack) and the shared texture names; each drew at once
  * through the Tesselator with the pose's matrix. 1.20 moved them onto GuiGraphics, which takes the texture with each blit
- * and batches into its buffer source; the port carries the GuiComponent type to GuiGraphics. These are 1.19.4's bodies on
+ * and batches into its buffer source. This is 1.19.4's abstract class (mods extend it), with 1.19.4's bodies on
  * 1.20: the same Tesselator, BufferBuilder, BufferUploader, RenderSystem and shader calls, which 1.20 keeps, so a blit
  * still draws the texture the mod bound; text goes through this update's Font stand-in, 1.19.4's Font.drawShadow. Each
  * public static method answers the old static method of its name, and the texture names (files 1.20 still ships) answer
@@ -44,9 +44,10 @@ import org.joml.Matrix4f;
  * frequently used by subclassing it, turned into an object passed to rendering methods: `DrawContext`." (GuiComponent
  * and GuiGraphics in Mojang's names.)
  */
-public final class GuiComponent {
+public abstract class GuiComponent {
 
-   private GuiComponent() {}
+   /** 1.19.4's: mods extend GuiComponent to reach its helpers by their plain names, as the game's own GUI classes did. */
+   public GuiComponent() {}
 
    public static final ResourceLocation BACKGROUND_LOCATION = new ResourceLocation("textures/gui/options_background.png");
    public static final ResourceLocation STATS_ICON_LOCATION = new ResourceLocation("textures/gui/container/stats_icons.png");
