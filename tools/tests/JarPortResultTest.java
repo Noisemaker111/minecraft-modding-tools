@@ -60,6 +60,11 @@ final class JarPortResultTest {
         port.port(JarPortTest.jar(Map.of("n12/Named.class", named())), "named.jar", maybe);
         List<String> left = Json.array(maybe.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(left.equals(List.of("call: r9.Store.name()Ljava/lang/String;")), "a result that may hold nothing (an Optional) stays reported: " + left);
+        List<Map<String, Object>> tested = new ArrayList<>();
+        port.port(JarPortTest.jar(Map.of("n12/Known.class", known())), "known.jar", tested);
+        List<String> testedLeft = Json.array(tested.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        JarPortTest.expect(testedLeft.equals(List.of("call: r9.Store.name()Ljava/lang/String;")),
+            "one only tested for null stays reported too: an empty Optional is no null: " + testedLeft);
 
         Map<String, byte[]> classes = new HashMap<>(JarPortTest.newGame());
         classes.putAll(game());
@@ -157,6 +162,26 @@ final class JarPortResultTest {
         m.visitVarInsn(Opcodes.ALOAD, 0);
         m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "r9/Store", "name", "()Ljava/lang/String;", false);
         m.visitInsn(Opcodes.ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** n12.Known: known(store) = store.name() != null. */
+    static byte[] known() {
+        ClassWriter w = JarPortRetypeTest.writer("n12/Known", "java/lang/Object");
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "known", "(Lr9/Store;)Z", null, null);
+        m.visitCode();
+        Label none = new Label();
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "r9/Store", "name", "()Ljava/lang/String;", false);
+        m.visitJumpInsn(Opcodes.IFNULL, none);
+        m.visitInsn(Opcodes.ICONST_1);
+        m.visitInsn(Opcodes.IRETURN);
+        m.visitLabel(none);
+        m.visitInsn(Opcodes.ICONST_0);
+        m.visitInsn(Opcodes.IRETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();
         w.visitEnd();

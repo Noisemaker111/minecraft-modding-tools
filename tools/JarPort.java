@@ -6166,7 +6166,9 @@ public final class JarPort {
             String[] t = route.method(declOwner, name, desc);
             Type[] before = Type.getArgumentTypes(desc(desc)), after = Type.getArgumentTypes(t[2]);
             Type was = Type.getReturnType(desc(desc)), now = Type.getReturnType(t[2]);
-            if (before.length != after.length || was.equals(now) || was.getSort() == Type.VOID || now.getSort() == Type.VOID || !isStatic && !isA(cls(owner), t[0])) {
+            if (before.length != after.length || was.equals(now) || was.getSort() == Type.VOID || now.getSort() == Type.VOID || !isStatic && !isA(cls(owner), t[0])
+                || now.getSort() == Type.OBJECT && MAYBE.contains(now.getInternalName())) {
+                // A result that may hold nothing is never null itself: even a null test of it would answer otherwise.
                 return false;
             }
             for (int i = 0; i < before.length; i++) {
@@ -6191,7 +6193,7 @@ public final class JarPort {
                 }
                 ReadUses.Read read = uses == null ? null : uses.results.get(callsSeen);
                 calls = read == null || read.bad || read.uses.isEmpty() ? null : onNewType(read, now);
-                steps = calls != null || MAYBE.contains(now.getInternalName()) ? null : unwrap(now.getDescriptor(), was.getDescriptor());
+                steps = calls != null ? null : unwrap(now.getDescriptor(), was.getDescriptor());
             }
             if (calls == null && steps == null && widen == null) {
                 return false;
