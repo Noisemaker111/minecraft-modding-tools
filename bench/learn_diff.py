@@ -53,7 +53,7 @@ def learned(classes, frm, to, loader, out):
     lines = {}
     for w in json.loads(out.read_text(encoding="utf-8")).get("learned", []):
         then = w.get("then") or {}
-        key = (w["owner"], w["from"], w.get("desc", ""), w.get("when"), then.get("owner"), then.get("from"))
+        key = (w["owner"], w["from"], w.get("desc", ""), w.get("when"), then.get("owner"), then.get("from") and f'{then.get("from")}@{then.get("at")}:{w.get("result")}')
         lines[key] = w.get("expr", "")
     return lines
 

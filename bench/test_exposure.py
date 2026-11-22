@@ -462,6 +462,17 @@ with tempfile.TemporaryDirectory() as tmp:
           and head[:10] in every[1]["source"], f"each sweep of main adds a point saying what moved: {every}")
     check(every[2]["note"] == "the same", f"a sweep that moved nothing says so: {every[2]}")
     check([p["value"] for p in points["port.jar-links.newest"]] == [1, 1, 1] and points["port.jar-links.big-updates"][1]["value"] == 6, "each measure reads its own total")
+    # Sweeps of main may finish out of order: an older commit's table never replaces a newer one's.
+    parent = os.popen(f'git -C "{Path(__file__).resolve().parent.parent}" rev-parse HEAD~1').read().strip()
+    repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
+    sys.stdout = io.StringIO()
+    try:
+        late = E.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", measures, main_table, "2026-02-03")
+    finally:
+        sys.stdout = sys.__stdout__
+        E.ROOT = repo
+    check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
+          and len(json.loads(measures.read_text(encoding="utf-8"))["measures"][0]["points"]) == 3, "a sweep of an older commit that finishes later is not recorded")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:
