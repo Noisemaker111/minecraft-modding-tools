@@ -1,0 +1,17 @@
+{
+ "id": "78d",
+ "title": "Trial: stand-ins for what the game's code does not answer",
+ "part": "Port by type of break",
+ "status": "done",
+ "done": "2026-11-21",
+ "text": "Trial of a method, judged on NeoForge 1.21.1 -> 1.21.2: for the old game classes the game's own code does not answer, ranked by the mods they finish together, write a stand-in (the old API implemented on the new game, written from both releases' code and the loaders' migration notes) that the porter compiles against the new release and carries in the ported jar (knowledge/standins/, JarPort.standins). Judged by: mods freed by the top 10 (fail under 8), agent time per stand-in (fail over about 45 minutes), and real-server starts of the freed mods (fail if they fail more often than 17 of 559).",
+ "start": "2026-11-21",
+ "target": "2026-11-22",
+ "finish": "10 stand-ins free at least 8 mods on NeoForge 1.21.1 -> 1.21.2, each written in under about 45 minutes, and the freed mods start on a real server as often as ported mods do today",
+ "wrongIf": "fewer than 8 mods freed, a stand-in takes over about 45 minutes, or the freed mods fail to start more often than 17 of 559",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates"
+ ],
+ "result": "Two of three held; the third failed as written, for reasons outside the stand-ins. 11 stand-ins freed 11 mods: NeoForge 1.21.1 -> 1.21.2 went 41 -> 52 of 147. The same game-only stand-ins took Fabric 1.21.1 -> 1.21.2 from 36 -> 41. Every update 6,145 -> 6,161, big updates 1,979 -> 1,995 (cloud run 44969588277 against main's 44960606918), none lower. The 11 took about 10 minutes together, 1-2 minutes each; the mechanism took about 1.5 hours once. Real starts: 9 of the 11 load on a real 1.21.2 server and client. 2 fail (18%, against 17 of 559 today): Natures Compass on 1.21.2's required item ids ('Item id not set', invisible to the link check), and Enchantment Descriptions on its Bookshelf library, whose ported 1.21.1 build fails. Neither is a stand-in's code. Ceiling: the top 10 classes each free one mod. Only 23 of 106 blocked mods are blocked solely by calls, fields and class uses; 83 also hold a mixin or override break, out of scope. So stand-ins alone top out around 64 of 147 on this update, at about one stand-in per mod, and the rewritten systems never reached the top 10. Receipts: bench/exposure/load-neoforge-1.21.1-1.21.2-0b47b4c3f7.json, bench/exposure/load-fabric-1.21.1-1.21.2-9adb993ed0.json."
+}

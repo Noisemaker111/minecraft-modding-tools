@@ -28,7 +28,7 @@ from porting_map import MAP_CSS, MAP_BODY, section, stonecutter_items  # noqa: E
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "index.html"
 ROADMAP_MD = ROOT / "ROADMAP.md"
-GOAL_AREAS = {"1": ("test", "plugin"), "2": ("port",), "3": ("pack",), "4": ("loader",)}
+GOAL_AREAS = {"1": ("test", "plugin"), "2": ("port",), "3": ("pack",), "4": ("loader",), "5": ("perf",)}
 _, _, MAP_JS = section()
 
 

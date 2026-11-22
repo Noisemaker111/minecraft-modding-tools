@@ -1,0 +1,13 @@
+{
+ "id": "78e",
+ "title": "Agents learn what a porting change did in seconds, from only what it can change",
+ "part": "Port by type of break",
+ "status": "done",
+ "text": "Agents waited on GitHub for most of their time (12 h, 12 agents: 23 of 33 tool-hours on cloud-run, gh run watch and sleeps; one agent called cloud-run 55 times) and reran the whole offline suite while iterating, because the only answer to 'what did my edit do' was a 20-126 minute cloud sweep (87 jobs, 280 CPU-minutes) that recomputed answers the edit could not move. Every stage of the scoreboard is now kept by the content of what it reads, so a local run computes only what the edit can change; jars names the mods that newly link, stop linking or changed their port against the run before and the load --mods that proves only those; --type ports only the mods a type of break held back; main's cloud sweep checks every kept answer it can (--verify); run_tests picks the checks the changed files can affect.",
+ "start": "2026-11-22",
+ "target": "2026-11-22",
+ "finish": "on #163 the fast path gives the same per-mod verdicts as a full uncached run; an agent learns its edit's effect in under a minute instead of a cloud sweep; main's sweep fails if a kept answer ever differs",
+ "wrongIf": "a kept answer differs from computing it again (main's --verify fails)",
+ "done": "2026-11-22",
+ "result": "#163 replayed on five updates (NeoForge 1.21.1->1.21.2, 1.21.10->1.21.11, 1.20.2->1.20.3, Fabric 1.21.10->1.21.11, 1.20.2->1.20.3): the fast path's per-mod verdicts equal a full run with an empty cache on all 738 mods, and its moves add up to #163's recorded +13. After a porter edit one update answers in 23-29 s (--type) and 25-38 s (the rest); a rerun with nothing changed takes 4 s (was 67-77 s). The whole NeoForge sweep here: 11.7 min after a porter edit, 19.3 after a learner edit, 40 s unchanged, every update equal to main's cloud table. Offline checks for a porter change: 21-35 s (was 169 s). Main's sweep with --verify caught two real faults on its second run, both fixed: PortChains wrote Balm's 1.21.1->26.3 port two ways run to run, and a failed port passed its cloud job; GameDiff wrote a different map each run (tied moves picked in hash order) and now writes one. Cloud run 44979077044 checked 450 of 450 kept ports equal."
+}

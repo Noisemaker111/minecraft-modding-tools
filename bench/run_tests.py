@@ -1,8 +1,16 @@
 """Every offline check, in one list: what CI runs on each pull request and what to run before pushing.
 
-    python bench/run_tests.py                  all of them (builds the jar first)
+    python bench/run_tests.py                  the checks this branch's changes can affect (all of them in CI)
+    python bench/run_tests.py --all            all of them (builds the jar first), as CI runs them
     python bench/run_tests.py --only NAME,...  some of them (package runs first when one needs the jar)
     python bench/run_tests.py --list           the names
+
+Outside CI, a run picks the checks from the files changed against origin/main (committed or not): each check that
+compiles its sources runs when one of them changed; the checks that use the packaged jar run when anything the jar
+carries changed; the python checks always run (about 10 s). A change to the porter's sources alone (what jar-port
+compiles) needs only jar-port and the self-test suite that runs it (port: mmt port --jar), as self-test has no game and
+no network to run the rest of them with. Agents reran the whole suite (about 3 minutes) 352 times in 36 hours while
+iterating; CI still runs all of it on every push.
 
 The self-test runs from the packaged jar, as users get it, not from the checkout. On Linux it runs with LC_ALL=C
 so a child's non-ASCII output is read through a non-UTF-8 console; Windows gives cp1252. No game, no network
@@ -49,9 +57,9 @@ def port_preflight():
     yield java("-cp", str(out), "LegacyMapTest")
 
 
-# The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test), found
+# The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test, SourceAnswers*Test), found
 # here rather than listed, so two pull requests that each add one never touch the same line. Each is a class with a main.
-JAR_PORT_TESTS = ("JarPort*Test.java", "Game*Test.java", "ModNames*Test.java")
+JAR_PORT_TESTS = ("JarPort*Test.java", "Game*Test.java", "ModNames*Test.java", "SourceAnswers*Test.java")
 
 
 def jar_port_tests(folder=ROOT / "tools" / "tests"):
@@ -63,7 +71,7 @@ def jar_port():
     asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
     tests = jar_port_tests()
     yield ["javac", "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
-           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", *tests]
+           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/SourceAnswers.java", *tests]
     for test in tests:
         yield java("-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch"))
 
@@ -116,9 +124,64 @@ CHECKS = {
 }
 
 
-def run(name):
+def jar_port_sources():
+    return ["tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java", "tools/GameDiff.java",
+            "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java"]
+
+
+ASM_JARS = ["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"]
+# The files each check that compiles its own sources reads; a check not named here uses the packaged jar.
+READS = {
+    "port-preflight": ["tools/VersionMap.java", "tools/cli/Route.java", "tools/cli/Json.java", "tools/cli/Versions.java",
+                       "tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"],
+    "jar-port": lambda: jar_port_sources() + jar_port_tests() + ASM_JARS,
+    "console-accessor": ["tools/agent/Console.java", "tools/tests/ConsoleAccessorTest.java"],
+    # Compiled with tools/agent, tools/cli and tools on its source path: any of them may be compiled in.
+    "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
+                                + ["tools/tests/AgentWorldOpenTest.java"] + ASM_JARS,
+}
+# Files no packaged jar carries and no jar check reads: the docs, the bench scripts and cloud-run (the python check runs those), CI,
+# the desktop app and the generated site.
+NOT_IN_JAR = ("docs/", "bench/", ".github/", ".claude/", "app/", "tools/cloud-run", "coverage/roadmap", "coverage/ledger.json", "coverage/measures.json",
+              "coverage/perf-runs.json", "ROADMAP.md")
+
+
+def git_files():
+    return subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+
+
+def changed_files():
+    """Files this branch changed against where it left origin/main, committed, staged, unstaged or new; None without git."""
+    base = subprocess.run(["git", "merge-base", "HEAD", "origin/main"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    if not base:
+        return None
+    listed = subprocess.run(["git", "diff", "--name-only", base], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    new = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    return sorted(set(listed) | set(new))
+
+
+def in_jar(path):
+    return not path.startswith(NOT_IN_JAR) and not (path.endswith(".md") and path != "PERFORMANCE.md")
+
+
+def affected(changed, names):
+    """The checks of names that changed files can affect, and what self-test runs: None for every suite, else a list."""
+    reads = {n: set(r() if callable(r) else r) for n, r in READS.items()}
+    picked = [n for n in names if n == "python" or n in reads and reads[n] & set(changed)]
+    porter = set(jar_port_sources()) | set(jar_port_tests())
+    jar = [f for f in changed if in_jar(f)]
+    if any(f not in porter for f in jar):
+        return picked + [n for n in names if n not in READS and n not in picked and n != "python"], None
+    if jar:
+        return picked + [n for n in ("package", "self-test") if n in names], ["port"]
+    return picked, None
+
+
+def run(name, suites=None):
     """Runs every command of one check, reporting each; False when any failed."""
     _, _, commands = CHECKS[name]
+    if name == "self-test" and suites:
+        commands = [(java("-jar", JAR, "self-test", "--root", ".", "--only", ",".join(suites)), {} if WINDOWS else {"LC_ALL": "C"})]
     passed = True
     for item in (commands() if callable(commands) else commands):
         command, env = item if isinstance(item, tuple) else (item, {})
@@ -141,6 +204,7 @@ def main(argv=None):
         stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", help="comma-separated check names")
+    ap.add_argument("--all", action="store_true", help="every check, as CI runs them (the default in CI)")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args(argv)
     here = "nt" if WINDOWS else "posix"
@@ -157,8 +221,15 @@ def main(argv=None):
         if any(CHECKS[x][0] for x in wanted) and "package" not in wanted:
             wanted.insert(0, "package")
         names = [n for n in names if n in wanted]
+    suites = None
+    changed = None if args.only or args.all or os.environ.get("CI") else changed_files()
+    if changed is not None:
+        names, suites = affected(changed, names)
+        names = [n for n in CHECKS if n in names]
+        print(f"{len(changed)} files changed against origin/main: running {', '.join(names)}"
+              + (f" (self-test: {', '.join(suites)})" if suites else "") + "; --all runs every check", flush=True)
     started = time.monotonic()
-    failed = [n for n in names if not run(n)]
+    failed = [n for n in names if not run(n, suites)]
     print(f"{len(names) - len(failed)} of {len(names)} checks passed in {time.monotonic() - started:.0f} s"
           + (f"; failed: {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0

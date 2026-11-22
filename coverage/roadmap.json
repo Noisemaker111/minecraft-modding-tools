@@ -1,6 +1,6 @@
 {
- "about": "The one roadmap: the four goals, each with its steps, dates and targets. ROADMAP.md and docs/index.html are generated from this file by python bench/bench_page.py. Every step belongs to one goal; 'part' groups steps inside a goal, 'headline' names the measures that say most about it, 'today' says in a sentence what works now, and 'try' is the commands the page shows for it. Status words: done (ran and checked), doing (being worked on), next, later. start/target/done are dates; a target is a proposal and may move, but the old one is kept in 'moved' when it does. measures are ids in coverage/measures.json.",
- "goal": "Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, and a modpack user never diagnoses a conflict by hand. Four goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, and move a project between loaders and platforms. Every result is proven in the real game or on a real server.",
+ "about": "The one roadmap: the five goals, each with its steps, dates and targets. ROADMAP.md and docs/index.html are generated from this file by python bench/bench_page.py. Every step belongs to one goal; 'part' groups steps inside a goal, 'headline' names the measures that say most about it, 'today' says in a sentence what works now, and 'try' is the commands the page shows for it. Status words: done (ran and checked), doing (being worked on), next, later. start/target/done are dates; a target is a proposal and may move, but the old one is kept in 'moved' when it does. measures are ids in coverage/measures.json.",
+ "goal": "Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, a modpack user never diagnoses a conflict by hand, and nobody hunts for lag by hand: point mmt at a mod and within about a minute it says what is causing the lag and the known way to make it faster, and makes the change itself wherever it can prove the mod still behaves the same. Five goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, move a project between loaders and platforms, and make any mod faster. Every result is proven in the real game or on a real server.",
  "targetsSet": "2026-11-06",
  "goals": [
   {
@@ -76,6 +76,27 @@
     {
      "say": "put every file back",
      "run": "mmt convert --root my-mod --undo"
+    }
+   ]
+  },
+  {
+   "id": "5",
+   "title": "Make any mod faster",
+   "intro": "Point mmt at a mod or a pack and, almost at once, get three things in this order: what is causing the lag (which mod, which feature, which method, and what it costs each tick or frame), how to make it faster (the fix that already worked on the same kind of slowness in another mod, with the gain it measured), and the fix made for you where mmt can prove the mod does exactly what it did before, only faster. The third is the one that matters most. It works like porting: an agent works out a kind of fix once and saves it as a tested rule, the tool applies it with no AI call, and the real game decides whether it stays. Commands: `perf`, `perf-optimize`.",
+   "headline": [
+    "perf.auto-fixed",
+    "perf.known-fixes",
+    "perf.accepted-speedups"
+   ],
+   "today": "The first works and the second has started; the third is not built. `mmt perf` attaches to a running game and after a 35-second capture ranks every mod and feature by CPU, server milliseconds per tick, render milliseconds per frame and memory. Its report names a known fix when the mod's slowness matches one of 14 saved patterns, which come from accepted speedups on 4 mods (Cyclic 15.7×, Simple Storage Network 5–6×, Diorama 1.6–2.2×, Pipez 1.2–1.3×). `mmt perf-optimize` proves a change is faster and behaves the same, but a person or their agent still writes the change: mmt edits no code for speed yet.",
+   "try": [
+    {
+     "say": "see which mod and feature is slow in a running game",
+     "run": "mmt perf"
+    },
+    {
+     "say": "prove a change you wrote is faster and behaves the same",
+     "run": "mmt perf-optimize --root my-mod --experiment experiment.json --patch candidate.diff"
     }
    ]
   }
@@ -185,6 +206,16 @@
    "question": "Why is the porting timeline months, and what is steered by now?",
    "choice": "Speed was never the gap: a .jar is ported in about ten seconds. The count was (Jon asked on 2026-11-20 why it would take months). The 62% headline was one update at a time, and half the updates change almost nothing; ported in one go to the newest game, 11 of 294 of the most-used releases' top mods link. And the to-do list was the reference the most mods share, which frees almost no mod: the 100 most shared freed 2. Steered by now: the jump to the newest game and the big updates (port.jar-links.newest, port.jar-links.big-updates), and the mods nearest to done as the order of work. Any mod, any version with nothing by hand is not a date on this roadmap: 53% of the broken references of a big update have no answer in the game's own code, and nobody ports arbitrary mods across one automatically. What is promised is a ported .jar in seconds with either every reference linked or the exact list of what is left",
    "date": "2026-11-20"
+  },
+  {
+   "question": "What is the performance work for?",
+   "choice": "Three things, in Jon's words on 2026-11-21: \"apply our thing to a mod and be able to almost instantly be able to tell 1. What's causing lag 2. How to optimize (insert known ways to make whatever faster) and 3. Auto optimize if possible (I really want this)\". Until then performance was not a goal on this roadmap: the docs described a profiler and a way to prove a hand-written change, and PERFORMANCE.md said mmt never writes or proposes code. It is now goal 5, and the third part reverses that line: mmt makes the change itself, from saved rules with no AI call, and keeps it only when the real game shows the same behaviour and a real speedup.",
+   "date": "2026-11-21"
+  },
+  {
+   "question": "Should porting, changing loader, testing and the lag work be built on one thing?",
+   "choice": "Jon asked on 2026-11-21: \"should these all use the same thing because that's what is happening… checking against the api and making it compatible, even with the performance thing it's about the right usage of the api\". Mostly yes. Port, convert and the checks all ask where a mod touches the game and what that part is on the other side, and five separate readers answer it today; step 83 makes it one record every command uses. The lag work shares less: a slow spot is found by measuring the running game, and the record only names the game call it sits on.",
+   "date": "2026-11-21"
   }
  ]
 }
