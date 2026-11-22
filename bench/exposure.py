@@ -1623,11 +1623,12 @@ def has_code(jar):
         return any(n.endswith(".class") and b"net/minecraft/" in z.read(n) for n in z.namelist())
 
 
-def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset()):
+def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(), run=None):
     """The same ported jars in a real client of the new release (mmt pack-check --side client): the title screen, a world, the
     inventory and every creative tab. A start that fails drops the jar its log names and starts again; each mod ends loaded or
     failed (with why). A server never runs client code, so this is where rendering and screen code is proven. The platform
-    (Fabric API) goes in as it did on the server and is not counted; kept names the jars of it that no failure drops."""
+    (Fabric API) goes in as it did on the server and is not counted; kept names the jars of it that no failure drops.
+    run: a stand-in for one pack-check of the client pack folder (tests), returning its JSON."""
     pack = server_pack.with_name(server_pack.name + "-client")
     if pack.exists():
         shutil.rmtree(pack)
@@ -1642,12 +1643,16 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset())
     verdicts = {}
 
     def start():
+        if run:
+            return run(pack), subprocess.CompletedProcess([], 1, "", "")
         done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--side", "client", "--json"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         at = done.stdout.find("{")
         return json.loads(done.stdout[at:]) if at >= 0 else {}, done
 
-    for attempt in range(len(names) + 1):
+    # Each failed start takes at least one jar out (a mod or a library), or ends the client proof with why, so the starts
+    # end; their number is not budgeted by the mods, which libraries failing would use up before every mod had a verdict.
+    while True:
         result, done = start()
         res = result.get("result", {})
         present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
@@ -1670,8 +1675,6 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset())
                     found.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
         if not found:
             found = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present + libraries, "*client*.log").items()}
-        if not found:
-            found = needs_other_java(res, present + libraries)
         failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
         if not found and not res.get("client", {}).get("toolError"):
             found = first_failing(pack, present + libraries, loader, start, failure)
@@ -1693,8 +1696,9 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset())
             print(res.get("details", done.stdout[-2000:]))
             print(f"a client start failed and named no mod; the client is not run: {failure}")
             return {"mods": len(names), "loaded": 0, "verdicts": {}, "notRun": failure, "receipt": result.get("receipt")}
+        java = built_for_newer_java(res)
         for name, why in blamed.items():
-            verdicts[name] = "failed: " + why
+            verdicts[name] = "failed: " + (java[name] + "; " if name in java else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
             print(f"  {name}: failed in the client")
     # As on the server, a dropped mod gets one more start with the mods that loaded: a log can name a bystander.
@@ -1706,6 +1710,8 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset())
             print(f"  {name}: loads in the client with the others on its own start")
         else:
             (pack / "mods" / name).rename(pack / "dropped" / name)
+    for name in names:
+        verdicts.setdefault(name, "not started: its jar is in neither the server's pack nor what it dropped")
     loaded = sorted(n for n, v in verdicts.items() if v == "loaded")
     return {"mods": len(names), "loaded": len(loaded), "verdicts": verdicts}
 
@@ -1841,10 +1847,12 @@ def named_in_errors(receipt, mods, present, logs="*server*.log"):
     return blamed
 
 
-def needs_other_java(res, present):
-    """The jars a failed start's pack-check result says are built for a newer Java than the release runs on, with why."""
+def built_for_newer_java(res):
+    """{jar: why} for the jars pack-check's static warning says are built for a newer Java than the release runs on. It
+    reads each jar's newest class, which the game may never load, so it is no evidence of a failure: it only says so
+    plainly beside a jar something else blamed."""
     return {s["jar"]: "; ".join(s.get("why", [])) for f in res.get("findings", []) if f.get("kind") == "java"
-            for s in f.get("suspects", []) if s.get("jar") in present}
+            for s in f.get("suspects", []) if s.get("jar")}
 
 
 def only_mods(linked, pins, wanted):
@@ -1944,7 +1952,8 @@ def load(loader, frm, to, save, mods=None, out=None):
         at = done.stdout.find("{")
         return json.loads(done.stdout[at:]) if at >= 0 else {}
 
-    for attempt in range(len(chosen) + len(libraries) + 1):
+    # Each failed start takes at least one jar out or stops the proof with why, so the starts end without a budget.
+    while True:
         done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         text = done.stdout[done.stdout.find("{"):]
@@ -1969,8 +1978,6 @@ def load(loader, frm, to, save, mods=None, out=None):
         if not culprits:
             culprits = named_in_errors(result.get("receipt"), pack / "mods", present + in_pack)
         if not culprits:
-            culprits = needs_other_java(res, present + in_pack)
-        if not culprits:
             culprits = first_failing(pack, present + in_pack, loader, lambda: (start_server(), None),
                                      str(res.get("details") or result.get("error"))[-300:], server_opened)
         blamed = {n: why for n, why in culprits.items() if n in present}
@@ -1986,8 +1993,9 @@ def load(loader, frm, to, save, mods=None, out=None):
         if not culprits:
             print(res.get("details", done.stdout[-2000:]))
             raise SystemExit(f"a start failed and named no mod; receipt {result.get('receipt')}")
+        java = built_for_newer_java(res)
         for name, why in blamed.items():
-            verdicts[name] = "failed: " + why
+            verdicts[name] = "failed: " + (java[name] + "; " if name in java else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
             print(f"  {name}: failed")
     # A failed start can name a bystander along with the mod at fault, so each dropped mod that links gets one more start
