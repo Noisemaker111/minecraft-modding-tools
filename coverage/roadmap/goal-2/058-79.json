@@ -1,0 +1,18 @@
+{
+ "id": "79",
+ "title": "Readings the game's uses show once uses that say nothing about them stand aside; a plain result wrapped in a record read back",
+ "part": "Port by changed game part",
+ "status": "done",
+ "done": "2026-11-21",
+ "text": "The learner's vote lets uses that say nothing about a reading stand aside, each kind from the game's own code: an unread use where the new code put a value of an unrelated type (1.21.5 reads a whole Vec3 with a codec where it read a ListTag), one making the reading's own call with a fixed value of its own place where the reading has one (getFloatOr(tag, \"walkSpeed\", 0.1F) on a tag getCompoundOrEmpty gave), and one insisting on the value with the member's own successor (getCompound(key).orElseThrow()). A literal the game passed differently at each use and that every use read the same may be dropped when the old member's body only tested it (getList(key, type) is getListOrEmpty(key)). Uses standing aside carry a reading only with three that agree, every operand kept but ones only tested, and the reading compiling for the declared types. A late chain needs a setter the update removed: a member nested in itself with a successor (getCompound(a).getCompound(b)) no longer throws its own reading away. A method whose plain result the update wrapped in a record (1.21.9's packVersion(type), a PackFormat) is read back through the component the record's one factory from that value fills (PackFormat.of(n) is new PackFormat(n, 0): packVersion(type).major()).",
+ "start": "2026-11-21",
+ "target": "2026-11-21",
+ "finish": "port.jar-links.newest up from 21, every update and big updates no lower, load on 26.3 server and client for newly linked mods",
+ "wrongIf": "a mod reading NBT values or a pack version behaves differently in game from its old version",
+ "measures": [
+  "port.jar-links.newest",
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates"
+ ],
+ "result": "2026-11-21 (on #163): newest 21 -> 22 (NeoForge jump 15 -> 16: veinminer), every update 6,145 -> 6,146, big updates 1,979 -> 1,980 (Fabric 1.21.4 -> 1.21.5 37 -> 38), none lower; 'call, game: linked' in 1,973 -> 1,959 mods. 1.21.5's getString, getList, getCompound, getFloat and getDouble are learned on both loaders. veinminer is a named false link: on a real 26.3 server it needs Kotlin for Forge's language loader, which does not register there ('needs language provider klf'), although Kotlin for Forge links and loads as a mod. learn_diff over 21 NeoForge and 43 Fabric updates: no plain reading lost; chains are replaced by the plain readings they repeated."
+}
