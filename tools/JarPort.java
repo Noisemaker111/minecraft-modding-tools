@@ -3587,10 +3587,9 @@ public final class JarPort {
     final Map<String, Optional<GameDiff.Meth>> movedCode = new HashMap<>();
 
     /**
-     * Where the code of a method the update dropped from its class (old names) went: the one method the new class gained
-     * (no method of the old class has its name and descriptor) whose instructions are mostly the old method's (alike),
-     * as when an update renames a method and changes its parameters at once. Null when no method or several read alike,
-     * or the old body is too short to tell one apart.
+     * Where the code of a method the update dropped from its class (old names) went: the one method of the new class whose
+     * instructions are mostly the old method's (alike) and were not before, as when an update renames a method and changes
+     * its parameters at once. Null when no method or several read alike, or the old body is too short to tell one apart.
      */
     GameDiff.Meth codeMoved(String owner, String name, String desc) {
         return movedCode.computeIfAbsent(owner + "." + name + desc, k -> {
@@ -3604,8 +3603,10 @@ public final class JarPort {
             }
             GameDiff.Meth found = null;
             for (GameDiff.Meth m : now.methods.values()) {
-                String body = after.get(m.name + m.desc);
-                if (m.name.startsWith("<") || before.containsKey(m.name + m.desc) || body == null || !alike(was, body)) {
+                // A method the class kept counts when it took the dropped one's code in (1.21.2 put _blitToScreen's code
+                // into the kept blitToScreen and the new blitAndBlendToScreen): then two read alike and neither is followed.
+                String body = after.get(m.name + m.desc), had = before.get(m.name + m.desc);
+                if (m.name.startsWith("<") || body == null || !alike(was, body) || had != null && alike(was, had)) {
                     continue;
                 }
                 if (found != null) {
