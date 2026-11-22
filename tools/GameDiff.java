@@ -4798,7 +4798,8 @@ public final class GameDiff {
                 List<Node> read = uses.entrySet().stream().filter(u -> !u.getValue().isEmpty()).map(Map.Entry::getKey).toList();
                 // Unless the game passed different values there, every one read the same, and the old member only tested
                 // it, never passed it on, kept or gave it back: 1.21.5's getList(key, type) is getListOrEmpty(key) for
-                // types 6, 8 and 10, and the old getList only compared the type with the list's.
+                // types 6, 8 and 10. The old getList compared the type with the list's and gave an empty list when they
+                // differed; the game dropped that check at each of its own uses, and the port drops it as the game did.
                 if (!used && read.stream().allMatch(u -> u.kids[k].op == 'k')
                     && (read.stream().map(u -> String.valueOf(u.kids[k].value)).distinct().count() < 2 || !tested.test(i + first))) {
                     return false;
