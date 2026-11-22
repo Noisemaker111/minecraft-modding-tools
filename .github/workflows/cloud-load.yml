@@ -53,7 +53,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          # Azul's builds, from Azul's own CDN: Temurin 8 comes from a GitHub release asset, which these runners got back
+          # as a 1,867-byte non-gzip body on four runs in a row (setup-java and mmt alike) on 2026-11-22.
+          distribution: zulu
           # Every Java a covered release runs on (1.14.4-1.16.5: 8, 1.17: 16, 1.18-1.20.4: 17, 1.20.5-1.21.11: 21, 26.x:
           # 25), from the runner's own tool cache; mmt finds them by setup-java's JAVA_HOME_<N>_X64. The last is the default.
           java-version: |
