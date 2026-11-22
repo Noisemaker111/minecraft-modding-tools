@@ -129,6 +129,8 @@ final class JarPortStandinTest {
         }
         JarPortTest.expect(trace.equals("42;true;false;45"), "the ported mod runs the stand-ins against the new release: " + trace);
 
+        nested(port);
+
         List<Map<String, Object>> plainRuns = new ArrayList<>();
         Map<String, byte[]> plain = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n9/Plain.class", plain())), "plain.jar", plainRuns));
         JarPortTest.expect(plain.keySet().stream().noneMatch(n -> n.startsWith("mmt/")), "a jar that needs no stand-in carries none: " + plain.keySet());
@@ -171,6 +173,86 @@ final class JarPortStandinTest {
         }
         JarPortTest.expect(majors.equals(Map.of("1.16.5", 52, "1.17.1", 60, "1.20.3", 61, "1.21.1", 65, "26.1", 65)),
             "each release's stand-ins are compiled for the Java it runs on: " + majors);
+    }
+
+    /**
+     * A library nested in a mod (jar-in-jar: META-INF/jarjar on NeoForge, fabric.mod.json's "jars" on Fabric) whose Java 8
+     * interface calls an old member, as fabric-permissions-api's Permissions (nested in spark, veinminer and others) calls
+     * Entity.createCommandSourceStack(): ported with the same stand-ins as its outer mod, written in a method the interface
+     * may hold (public: Java 8 has no private interface methods), and carried by the library itself, which the loader loads
+     * as a module, or a mod, of its own.
+     */
+    static void nested(JarPort port) throws Exception {
+        for (boolean fabric : List.of(false, true)) {
+            Map<String, byte[]> inner = new HashMap<>();
+            inner.put("n9/lib/Lib.class", java8Interface());
+            inner.put(fabric ? "fabric.mod.json" : "META-INF/neoforge.mods.toml", (fabric ? "{\"schemaVersion\": 1, \"id\": \"n9lib\", \"version\": \"1\"}"
+                : "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n9lib\"\n").getBytes(StandardCharsets.UTF_8));
+            String innerPath = fabric ? "META-INF/jars/n9lib.jar" : "META-INF/jarjar/n9lib.jar";
+            Map<String, byte[]> outer = new HashMap<>();
+            outer.put("n9/Plain.class", plain());
+            outer.put(innerPath, JarPortTest.jar(inner));
+            if (fabric) {
+                outer.put("fabric.mod.json", "{\"schemaVersion\": 1, \"id\": \"n9\", \"version\": \"1\", \"jars\": [{\"file\": \"META-INF/jars/n9lib.jar\"}]}".getBytes(StandardCharsets.UTF_8));
+            } else {
+                outer.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n9\"\n".getBytes(StandardCharsets.UTF_8));
+                outer.put("META-INF/jarjar/metadata.json", ("{\"jars\": [{\"identifier\": {\"group\": \"n9\", \"artifact\": \"n9lib\"}, \"path\": \"" + innerPath + "\"}]}").getBytes(StandardCharsets.UTF_8));
+            }
+            String saved = port.loader;
+            port.loader = fabric ? "fabric" : "neoforge";
+            List<Map<String, Object>> runs = new ArrayList<>();
+            Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(outer), "outer.jar", runs, null));
+            port.loader = saved;
+            List<String> unlinked = runs.stream().flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
+            JarPortTest.expect(unlinked.isEmpty(), (fabric ? "Fabric" : "NeoForge") + ": a nested library's references a stand-in answers link: " + unlinked);
+            Map<String, byte[]> lib2 = JarPortTest.entries(ported.get(innerPath));
+            List<String> carried = lib2.keySet().stream().filter(n -> n.startsWith("mmt/standin/")).sorted().toList();
+            JarPortTest.expect(carried.equals(List.of(JarPort.standinHome("outer.jar!n9lib.jar") + "s9/Gauge.class", JarPort.standinHome("outer.jar!n9lib.jar") + "s9/Zone.class")),
+                (fabric ? "Fabric" : "NeoForge") + ": the nested library carries the stand-ins it uses in its own package: " + carried);
+            JarPortTest.expect(ported.keySet().stream().noneMatch(n -> n.startsWith("mmt/")),
+                (fabric ? "Fabric" : "NeoForge") + ": the outer jar, which uses none, carries none: " + ported.keySet());
+            Map<String, byte[]> classes = new HashMap<>(game());
+            for (var e : lib2.entrySet()) {
+                if (e.getKey().endsWith(".class")) {
+                    classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+                }
+            }
+            String trace;
+            try {
+                ClassLoader loader = loader(classes);
+                Class<?> l = loader.loadClass("n9.lib.Lib"), gauge = loader.loadClass("s9.Gauge");
+                trace = String.valueOf(l.getMethod("read", gauge).invoke(null, gauge.getConstructor().newInstance()));
+            } catch (ReflectiveOperationException | LinkageError failed) {
+                trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+            }
+            JarPortTest.expect(trace.equals("42"), (fabric ? "Fabric" : "NeoForge") + ": the ported library runs its stand-ins: " + trace);
+        }
+    }
+
+    /** interface n9.lib.Lib, Java 8: static int read(Gauge g) { return g.read(); } */
+    static byte[] java8Interface() {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
+        w.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "n9/lib/Lib", null, "java/lang/Object", null);
+        MethodVisitor read = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "read", "(Ls9/Gauge;)I", null, null);
+        read.visitCode();
+        read.visitVarInsn(Opcodes.ALOAD, 0);
+        read.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "s9/Gauge", "read", "()I", false);
+        read.visitInsn(Opcodes.IRETURN);
+        read.visitMaxs(0, 0);
+        return end(w);
+    }
+
+    static ClassLoader loader(Map<String, byte[]> classes) {
+        return new ClassLoader(null) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                byte[] bytes = classes.get(name.replace('.', '/'));
+                if (bytes == null) {
+                    return Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                }
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        };
     }
 
     static void write(Path file, String text) throws Exception {

@@ -3305,8 +3305,10 @@ public final class JarPort {
                         bridgeCode(super.visitMethod(br.access(), br.name(), oldDesc(br.desc()), null, null), self[0], mod.selfInterface, br);
                     }
                 }
+                // An interface's methods are public before Java 9 (fabric-permissions-api's Permissions, nested in many mods).
+                int open = mod.selfInterface && mod.selfVersion < Opcodes.V9 ? Opcodes.ACC_PUBLIC : Opcodes.ACC_PRIVATE;
                 for (Added m : mod.added.values()) {
-                    MethodVisitor mv = super.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, m.name(), m.desc(), null, null);
+                    MethodVisitor mv = super.visitMethod(open | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, m.name(), m.desc(), null, null);
                     mv.visitCode();
                     m.code().steps.forEach(step -> step.accept(mv));
                     mv.visitMaxs(m.code().max, m.locals());
@@ -6935,8 +6937,8 @@ public final class JarPort {
         }
 
         String[] fix(Map<String, List<Fix>> book, List<String> owners, String name, String args, String opDesc, boolean receiver) {
-            if (mod.selfInterface && mod.selfVersion < Opcodes.V9) {
-                return null;
+            if (mod.selfInterface && mod.selfVersion < Opcodes.V1_8) {
+                return null; // an interface before Java 8 holds no static method to write the rule in
             }
             Type[] ops = Type.getArgumentTypes(opDesc);
             Type ret = Type.getReturnType(opDesc);
