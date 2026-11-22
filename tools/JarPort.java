@@ -8707,6 +8707,11 @@ public final class JarPort {
         for (String line : text.split("\r?\n", -1)) {
             String body = line.replaceAll("#.*", "").trim();
             String[] p = body.split("\\s+");
+            if (p.length >= 3 && (p[0].equals("accessWidener") || p[0].equals("classTweaker")) && p[2].equals("named") && compareVersions(b.version, UNOBFUSCATED) >= 0) {
+                // From 26.1 the game runs in Mojang's names under Fabric's "official" namespace, and Fabric Loader refuses any other.
+                out.append(p[0]).append(' ').append(p[1]).append(" official\n");
+                continue;
+            }
             if (p.length < 3 || p[0].equals("accessWidener") || p[0].equals("classTweaker")) {
                 out.append(line).append('\n');
                 continue;
