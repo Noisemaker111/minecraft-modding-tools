@@ -3739,6 +3739,71 @@ public final class JarPort {
         }
     }
 
+    /**
+     * The field a game method (old release) stored its parameter i in on its own object (this.minecraft = minecraft, as
+     * 1.21.10's Screen.init did), as a step for what this answers, when the new release's target class still has that
+     * field with that type, open to it, and the method stored nothing else there: the object kept what it was told, so a
+     * handler that took the parameter reads the field where the new method no longer passes it. Null otherwise.
+     */
+    String kept(GameDiff.Meth before, int i, String target) {
+        GameCode oldCode = code(a);
+        Map<String, String> bodies = oldCode == null || before.isStatic() ? null : oldCode.bodies(before.owner.name, this::cls);
+        String body = bodies == null ? null : bodies.get(before.name + desc(before.desc));
+        if (body == null) {
+            return null;
+        }
+        Type[] params = Type.getArgumentTypes(desc(before.desc));
+        int slot = 1;
+        for (int k = 0; k < i; k++) {
+            slot += params[k].getSize();
+        }
+        Matcher stored = Pattern.compile("(?:^|;)25:0;" + params[i].getOpcode(Opcodes.ILOAD) + ":" + slot + ";181:([^;]+)\\.(\\w+)" + Pattern.quote(params[i].getDescriptor()) + ";").matcher(body);
+        if (!stored.find()) {
+            return null;
+        }
+        String owner = stored.group(1), field = stored.group(2);
+        if (body.split(Pattern.quote(";181:" + owner + "." + field + params[i].getDescriptor() + ";"), -1).length != 2) {
+            return null;
+        }
+        GameDiff.Cls decl = Exposure.declaring(b, owner, 'f', field, null);
+        // The new release must set it before any method runs: only its constructors store it, so it holds the value at
+        // the new method's very start too.
+        Map<String, String> now = decl == null || code(b) == null ? null : code(b).bodies(decl.name, x -> x);
+        if (now == null || now.entrySet().stream().anyMatch(e -> !e.getKey().startsWith("<init>") && e.getValue().contains(";181:" + decl.name + "." + field + params[i].getDescriptor() + ";"))
+            || now.entrySet().stream().noneMatch(e -> e.getKey().startsWith("<init>") && e.getValue().contains(";181:" + decl.name + "." + field + params[i].getDescriptor() + ";"))) {
+            return null;
+        }
+        String step = "f:" + owner + "." + field + ":" + params[i].getDescriptor();
+        return decl != null && decl.fields.get(field).desc.equals(params[i].getDescriptor()) && subtype(b, target, owner)
+            && openTo(new String[][] { { String.valueOf(THIS), step } }, target) ? step : null;
+    }
+
+    /**
+     * Whether every member the readings of what this answers (THIS) go through is open to code in the class target (new
+     * names): public, declared by target, or protected and declared by one of its superclasses.
+     */
+    boolean openTo(String[][] via, String target) {
+        for (String[] v : via == null ? new String[0][] : via) {
+            if (v == null || Integer.parseInt(v[0]) != THIS) {
+                continue;
+            }
+            for (int i = 1; i < v.length; i++) {
+                if (v[i].startsWith("x:") || v[i].startsWith("k:")) {
+                    continue;
+                }
+                String[] st = Retype.step(v[i]);
+                GameDiff.Cls decl = Exposure.declaring(b, st[1], st[0].charAt(0), st[2], st[0].equals("m") ? st[3] : null);
+                int flags = decl == null ? -1 : st[0].equals("m") ? decl.methods.get(st[2] + st[3]).flags : decl.fields.get(st[2]).flags;
+                boolean open = flags >= 0 && ((flags & Opcodes.ACC_PUBLIC) != 0 || decl.name.equals(target)
+                    || (flags & Opcodes.ACC_PROTECTED) != 0 && subtype(b, target, decl.name));
+                if (!open) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     /** The first CallbackInfo parameter of a handler, or -1. */
     static int callbackAt(Type[] params) {
         for (int i = 0; i < params.length; i++) {
@@ -3873,7 +3938,10 @@ public final class JarPort {
                 if (from == null) {
                     // Arguments that changed type: worked out from the new ones as the game's own overrides do (Retype).
                     int[] paired = pair(now, was);
-                    String[][] learned = Retype.withoutThis(retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired));
+                    String[][] read = retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired);
+                    // A handler merged into its target runs on the target object, so what that object answers (Screen.init's
+                    // Minecraft, now this.minecraft) is read there, where the members read are open to the target's code.
+                    String[][] learned = (handler.flags & Opcodes.ACC_STATIC) == 0 && openTo(read, f.owner()) ? read : Retype.withoutThis(read);
                     from = new int[captured];
                     for (int i = 0; i < captured; i++) {
                         if (paired[i] >= 0) {
@@ -3883,6 +3951,9 @@ public final class JarPort {
                             via[i] = Arrays.copyOfRange(learned[i], 1, learned[i].length);
                         } else if (unread != null && unread[i]) {
                             from[i] = -1;
+                        } else if ((handler.flags & Opcodes.ACC_STATIC) == 0 && kept(before, i, f.owner()) != null) {
+                            from[i] = THIS;
+                            via[i] = new String[] { kept(before, i, f.owner()) };
                         } else {
                             { why(key, "I11"); return; }
                         }
@@ -5208,7 +5279,10 @@ public final class JarPort {
             }
             for (int j = 0; j < adapter.captured(); j++) {
                 int f = adapter.from()[j];
-                if (f < 0) {
+                if (f == THIS) {
+                    handler.visitVarInsn(Opcodes.ALOAD, 0);
+                    steps(handler, adapter.via()[j]);
+                } else if (f < 0) {
                     pushDefault(handler, was[j]);
                 } else {
                     handler.visitVarInsn(now[f].getOpcode(Opcodes.ILOAD), slots[f]);
