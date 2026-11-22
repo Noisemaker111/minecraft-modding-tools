@@ -51,9 +51,14 @@ In November 2026 the method for porting, converting and pack speed was each work
 chat and in draft PRs that stayed open for days, so `main` went on teaching the method that had just been replaced
 and every new session started from it. These four steps keep that from happening.
 
-1. **Pick a roadmap step.** Take the goal's `doing` step, or its first `next`. Work that has no step gets one first,
-   in the same PR. A step names its finish line before the work starts: one number, the value that ends the step,
-   and the result that would prove the method wrong.
+1. **Pick a roadmap step.** Take the goal's `doing` step, or its first `next`, and continue its open PR: a new
+   session or agent pushes to that branch, it doesn't open another. Work that has no step gets one first, in the same
+   PR. A step names its finish line before the work starts: one number, the value that ends the step, and the result
+   that would prove the method wrong. A step is a line of work (the learner, stand-ins, mixins), not one type of
+   break: between 2026-11-19 and 11-21 every type became its own step and PR (59 porting steps, 60 PRs in three
+   days), and each PR paid again for review, rebase, game proof and three to six full sweeps, for about one more mod
+   linking each. Several agents can push to one step's branch when they edit different files (stand-ins for
+   different updates); `git pull --rebase` before each push.
 2. **Follow the goal's workflow.** Each kind of work has one written workflow, and it is the current method:
 
    | Work | Workflow | Whole-goal number |
@@ -99,8 +104,8 @@ only helps the mod it was made on is a partial result: say so, and say what woul
 ## Making a change
 
 - **One roadmap step, one PR.** Not a string of PRs along the way, and not one PR that never ends. Open it as a
-  draft once there is a real result, push every commit of that step to it, and merge when its finish line is met
-  and proven. A tool you built along the way belongs in the same PR as the work that needed it.
+  draft once there is a real result, push every commit of that step to it, from every session and agent on the
+  step, and merge when its finish line is met and proven. A tool you built along the way belongs in the same PR as the work that needed it.
 - **Title it like a line in the release notes, because it becomes one.** Say what a user can now do, in plain words,
   under about 50 characters: "Diorama builds maps 2-3x faster", "Convert more Fabric mods to NeoForge".
   - No round or batch numbers.
@@ -111,8 +116,10 @@ only helps the mod it was made on is a partial result: say so, and say what woul
 - Use the PR template. It keeps the latest state only (step, approach, number now); a description that grows a new
   "update" section each day is a log nobody can steer by. Its **Carries over** line says what the next mod gets for
   free from your work.
-- Prove it the way a user would see it, at the smallest real scope. `AGENTS.md` has the commands. A change that can't
-  be run in the game says so plainly instead of claiming it works.
+- Prove it the way a user would see it, at the smallest real scope. `AGENTS.md` has the commands. A port is proven in
+  a real server and client on GitHub's runners (`tools/cloud-run load`), never by starting Minecraft on the maintainer's
+  PC, which many agents share; locally you edit, compile and run the offline checks. A change that can't be run in the
+  game says so plainly instead of claiming it works.
 - Keep tests few and meaningful: each proves something users depend on and fails on a wrong answer.
 - Never watch CI (`gh run watch`, sleeps, polls): push, hand the PR back, and the coordinator's PR watch merges it when every required check is green.
 - A setup or tooling trap you solved goes in `KNOWN_ISSUES.md`.

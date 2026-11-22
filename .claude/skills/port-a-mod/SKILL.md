@@ -19,19 +19,19 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   `port.jar-links.newest`), which is what people ask for; the **35 big updates**, each into a new family of releases
   (**1,861 of 5,149**, `port.jar-links.big-updates`); the 21 jumps from each family's most-used release to the next
   family's; and the 29 small updates, across which 93% link untouched. All updates together was the old headline (62%,
-  `port.jar-links.every-update`) and flattered the porter. Once, on your PR's last commit, sweep here, not in the cloud:
-  `python bench/exposure.py all --out .runs/exposure/branch.json`, `python bench/exposure.py all --at origin/main --out
-  .runs/exposure/base.json`, then `python bench/exposure.py compare .runs/exposure/base.json .runs/exposure/branch.json`
-  (every update and mod that moved; none may be lower) into the PR. Every stage is kept by the content it reads, so
-  only what your edit can change runs, and a base another agent swept takes seconds. Main's cloud sweep on every push
-  stays the record: never commit `bench/exposure/all.json` or add the `port.jar-links` points.
+  `port.jar-links.every-update`) and flattered the porter. Run `tools/cloud-run exposure` on your PR's last commit
+  and put what it prints against main in the PR. It runs only your branch: main's table for your base was made when
+  that commit reached main, and is found (or made once, for every PR on that base) without you running main. Never
+  commit `bench/exposure/all.json` or add the `port.jar-links` points: main's sweep writes both after the merge.
 - One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (a
   minute or two the first time, seconds when nothing it reads changed; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
   read in Mojang's names through intermediary first (tools/ModNames.java).
-- `python bench/exposure.py load ...` is the proof: the mods `jars` says link, with the libraries they require, are ported and started on a
-  real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side client`), each mod's two verdicts side by
-  side. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads
+- `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2` is the proof (`python bench/exposure.py load` on GitHub's
+  runners, one job per update; `-f mods=SLUG,...` for a few mods): the mods `jars` says link, with the libraries they
+  require, are ported and started on a real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side
+  client`), each mod's two verdicts side by side, in `.runs/cloud/load-RUNID/`, with what moved against the receipt main
+  keeps for the update in `compare.md`. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads
   on the server and links but fails in the client, because its injection point (a call 1.21.2's loading overlay no
   longer makes) is inside a method that still exists. The client covers the title screen, a world, the inventory and
   every creative tab, not a mod's own screens.
@@ -73,6 +73,7 @@ it, in every update. One changed part of the game as a rule comes second, for wh
 | Abstract methods the update added (Nov 21, step 76, PR #161): an override moves where the game's own subclasses moved theirs (JarPort.takeover: they stopped writing the old method, which is gone or final, and their new bodies are mostly the old), through override()'s rename or bridge; a parameter the object now answers is read from this (Bridge THIS); an override of a method the update made final is reported (finals) | finishes 39 -> 29, mods 750 -> 700; every update 6,134 -> 6,131 (9 freed, 12 false links caught), newest 19 -> 20. Left: overrides calling the now-final method back (1.21.11's buttons calling super.renderWidget, split into renderDefaultSprite and renderDefaultLabel), and new abstract methods with no old one behind them |
 | A call whose constant picks its replacement, and a moved method reached through what holds it (Nov 21, step 77, PR #162): per-constant readings from the game's uses or the class the enum builds the constant with; JarPort reads the constant at each call; a method moved to another class goes through the old class's one holder field or getter, never on the old receiver | newest 20 -> 21 (e4mc), every update 6,131 -> 6,132, big updates 1,965 -> 1,966; 5 named false links now reported. First tries: the holder pass asked Entity.getAllSlots() of getControllingPassenger() (a move down to a subclass, now refused); the receiver guard keyed on the call's class dropped mods calling withStyle on 1.18's TextComponent (now either class); a null placeholder fired on classes a mod ships itself. A new of an interface links but throws in game: check the verifier's view, not only the links |
 | Overrides of methods the update made final (Nov 21, step 78, PR #163): moved to the hook the final method calls (JarPort.finalHook, moveToHook), the super call to the hook above, the class's own renamed hook, or a copy of the parts the game split it into (defaultBody, copyBody) | finishes 11 -> 0, mods 131 -> 35; every update 6,132 -> 6,145. Left: final methods with no hook (1.21's Model.renderToBuffer) |
+| Readings lost to uses that said nothing about them (Nov 21, step 79, PR #166): unread uses of another value, the same call with a fixed default, an insisted value stand aside; a varied literal the old body only tests may drop; a late chain needs a removed setter; a plain result wrapped in a record reads back through the part its factory fills | newest 21 -> 22 (veinminer, a false link: Kotlin for Forge's language loader does not register on 26.3), every update 6,145 -> 6,146, big updates 1,979 -> 1,980; 1.21.5's NBT getters learned. First tries let abstentions carry wrong readings (CauldronInteraction.LAVA as EMPTY.map(), permute(axis) as axis, setUniform for bindTexture): abstentions now need three agreeing uses, every operand kept and a compiling reading. learn_diff caught each one |
 
 What they share: the work was chosen from a list nobody had checked against real builds. **A list may choose the
 work only after it predicts the result:** the mods it clears build, and the ones it doesn't have errors where it says.
@@ -113,24 +114,27 @@ the first row above.
    newly link, stopped linking or changed their port against the run before your edit: the type's mods must have moved
    and none may stop linking. If nothing moved, the change does not do what you think: fix it or take it out. For a learner change, also run
    `python bench/learn_diff.py --loader neoforge|fabric` and read every reading that is new, gone or changed against
-   main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()). The
-   learner is not yet the same run to run (a reading for Boat or AbstractMinecart, slotClicked), so a few lines differ
-   on main against itself.
-5. `python bench/exposure.py load --loader neoforge --from A --to B --changed --save` starts the mods your edit made
-   link or ported differently on a real server and client, with the library mods they require (each one's release for
-   B from Modrinth, or its A release ported with them); none may fail. `--save` keeps the receipt in `bench/exposure/`, named for the update and commit. `python bench/port_board.py --changed` runs the pinned source ports your rule crosses. Commit.
+   main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()).
+5. Push, then `tools/cloud-run load -f updates=LOADER:A:B -f mods=...`, with the mods step 4 printed as moved, starts
+   them on a real server and in a real client, with the library mods they require (each one's release for B from Modrinth, or its A release ported with
+   them); no mod that links may fail, and `compare.md` must show no mod that loaded on main failing now. To keep the
+   receipt, copy its `load-LOADER-A-B-COMMIT.json` into `bench/exposure/`. `python bench/port_board.py --changed` builds
+   the pinned source ports your rule crosses. Commit.
 
 Stop and tell Jon when: three parts in a row each freed no mod (the list has reached parts that need the game class
 read in both versions; say which); a rule needs to name a mod; or the count of mods with nothing left drops.
 
 ## Rules that don't bend
 
-- Sources are the game's and the loaders' own files (jars, mappings, starter projects). Never other people's porting
-  work: not guides or primers, not how another mod was ported. Mod jars are only counted.
+- Sources are the game's and the loaders' own files (jars, mappings, starter projects), and for stand-ins
+  (`knowledge/standins/README.md`) the loaders' published migration notes too (NeoForge's primers, Fabric's update
+  posts; Jon, 2026-11-21), quoted in the stand-in and checked against both releases' code. Never how another mod was
+  ported. Mod jars are only counted.
 - No AI call inside the tool. What you work out is saved as a rule with a test.
-- Prove in game at the smallest scope before the PR ends: the sweep without `--no-game` loads the ported mod and
-  checks what it registers; `./mmt game-stop` afterwards. The whole corpus runs in the cloud once, on the PR's final
-  commit: `tools/cloud-run ports`. Then push and hand back; never watch CI.
-- End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`, a new
-  step is a new file): its result says what the method freed and what it left, which is the table above from step 79
-  on (ROADMAP.md shows every step). This file changes only when the method does; the table above takes no new rows.
+- Prove in game before the PR ends, on GitHub's runners and never by starting Minecraft here: many agents share one PC.
+  `tools/cloud-run load` for the updates you changed (step 5); the whole corpus once, on the PR's final commit:
+  `tools/cloud-run ports`; then hand back, never watching CI. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
+- Each type of break is a commit on the step's open PR, not a new step or PR (`CONTRIBUTING.md`, "How the work
+  runs"). End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`):
+  its result says what the method freed and what it left, which is the table above from step 79 on (ROADMAP.md shows
+  every step). This file changes only when the method does; the table above takes no new rows.

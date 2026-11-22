@@ -8,7 +8,8 @@
     python bench/exposure.py record-main TABLE.json --commit SHA --run URL
     python bench/exposure.py fetch --loader neoforge|fabric --version 1.21.1 [--repin]
     python bench/exposure.py pin [--loader neoforge|fabric] [--version 1.21.1] [--repin]
-    python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--changed] [--save]
+    python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--mods SLUG,...] [--save] [--out FILE]
+    python bench/exposure.py load-plan neoforge:1.21.1:1.21.2,fabric:1.21.1
     python bench/exposure.py steps [--from 1.14.4] [--to 26.3]
 
 The mods are the 150 most downloaded of one loader and release on Modrinth, each in its newest file for that release,
@@ -36,8 +37,8 @@ Every stage is kept in ~/.mmt/exposure/ under the content of everything it reads
 the rules, the loaders' release lists, the JVM, each mod's jar), shared by every worktree and run on the machine, so a
 run computes only what an edit can change: an edit to JarPort ports every mod again (each one runs the code it touched),
 but reuses the downloads, the names, the map, the data check and most of Exposure's answers; an edit to anything else
-reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before; load
---changed starts only those. --verify computes everything again and fails where a kept answer differs (main's sweep).
+reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before, and the
+load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
 
 --save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
 requests proving the same update keep two receipts instead of conflicting on one.
@@ -486,8 +487,10 @@ def shipped_obfuscated(loader, version):
 def port_key(loader, frm, to, route, runtime=False):
     """Everything one port reads beside the mod's own jar: the porter's classes, the route map, the port rules, the loaders'
     release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
+    # The hand-back of an obfuscated release reads the jars as they came too: the release's pinned files.
+    pinned = (PINS / f"{loader}-{frm}.json").read_bytes() if shipped_obfuscated(loader, frm) and (PINS / f"{loader}-{frm}.json").is_file() else b""
     return content_key(tools_classes_key(), route.read_bytes(), (ROOT / "knowledge" / "fixes.json").read_bytes(), platform_key(loader, route),
-                       java_version(), loader, frm, to, runtime)
+                       java_version(), loader, frm, to, runtime, pinned)
 
 
 def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False):
@@ -512,6 +515,9 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     if todo:
         args = [java(), "-Xmx10g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--map", str(route), "--fixes", str(ROOT / "knowledge" / "fixes.json"),
                 "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else [])
+        if shipped_obfuscated(loader, frm):
+            # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
+            args += ["--originals", str(HOME / "jars" / f"{loader}-{frm}")]
         for m in side_by_side(args, todo, report):
             rows[m["mod"]] = m
             if cache:
@@ -942,6 +948,10 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     if not quiet:
         if VERIFY:
             print(f"--verify: {report.get('verified', 0)} kept ports were the same as porting them again")
+        if moved is not None and (moved["newly link"] or moved["link, port changed"]):
+            slugs = sorted({m.split("--", 1)[0] for m in moved["newly link"] + moved["link, port changed"]})
+            print(f"prove in game only those: python bench/exposure.py load --loader {loader} --from {frm} --to {to} --mods {','.join(slugs)}"
+                  f" (or tools/cloud-run load -f updates={loader}:{frm}:{to} -f mods={','.join(slugs)})")
         if moved is not None:
             print(f"against {'the run before' if not kind else 'the last whole run'} ({against}): "
                   + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
@@ -1198,6 +1208,11 @@ def record_main(table_path, commit, run, measures_path=None, main_table=MAIN_TAB
     table = json.loads(Path(table_path).read_text(encoding="utf-8"))
     table = {"commit": commit, "run": run, **{k: v for k, v in table.items() if k not in ("commit", "run")}}
     previous = json.loads(main_table.read_text(encoding="utf-8")) if main_table.is_file() else None
+    if previous and previous.get("commit") and previous["commit"] != commit and subprocess.run(
+            ["git", "merge-base", "--is-ancestor", previous["commit"], commit], cwd=ROOT, capture_output=True).returncode != 0:
+        # Sweeps of main can finish out of order: a newer commit's table is already there.
+        print(f"main's table already holds {previous['commit'][:10]}, which {commit[:10]} does not follow; not recorded")
+        return None
     data = json.loads(measures_path.read_text(encoding="utf-8"))
     by_id = {m["id"]: m for m in data["measures"]}
     subject = subprocess.run(["git", "log", "-1", "--format=%s", commit], cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -1405,6 +1420,10 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                     where = ready
                     if not got:
                         got, where = library(project, loader, frm), to_port
+                    if got and provides(got[0], loader) & own - {"loader:*"}:
+                        # The platform is this project (Fabric API): the pack has it already, and a second copy stops Fabric.
+                        asked_for[project] = None
+                        continue
                     asked_for[project] = got
                     if got:
                         where[got[0].name] = got[0]
@@ -1418,11 +1437,15 @@ def choose(loader, frm, to, linked, folder, pins, platform):
 
 
 def mod_ids(jar):
-    """The mod ids a NeoForge, Forge or Fabric jar declares, in any loader's metadata it carries."""
+    """The mod ids a NeoForge, Forge or Fabric jar declares, in any loader's metadata it carries, and those of the jars nested
+    in it (META-INF/jars/, META-INF/jarjar/): a log names a nested mod, and the jar that ships it is the one to drop."""
+    import io
     import zipfile
-    with zipfile.ZipFile(jar) as z:
+    with zipfile.ZipFile(jar if isinstance(jar, Path) else io.BytesIO(jar)) as z:
         fabric, toml = metadata(z, "fabric"), metadata(z, "neoforge")
-    return ({fabric.get("id"), *(fabric.get("provides") or [])} if fabric else set()) | ({m.get("modId") for m in toml.get("mods", [])} if toml else set())
+        nested = [z.read(n) for n in z.namelist() if n.startswith("META-INF/") and n.endswith(".jar")]
+    own = ({fabric.get("id"), *(fabric.get("provides") or [])} if fabric else set()) | ({m.get("modId") for m in toml.get("mods", [])} if toml else set())
+    return own.union(*(mod_ids(data) for data in nested))
 
 
 def has_code(jar):
@@ -1443,7 +1466,8 @@ def client_starts(loader, to, server_pack, names, platform=()):
     (pack / "mods").mkdir(parents=True)
     (pack / "dropped").mkdir()
     for name in list(names) + list(platform):
-        source = next((d / name for d in (server_pack / "mods", server_pack / "dropped") if (d / name).is_file()), None)
+        # A mod the server left out as client-only may be in dropped/; a library there failed and stays out.
+        source = next((d / name for d in (server_pack / "mods", server_pack / "dropped")[:1 if name in platform else 2] if (d / name).is_file()), None)
         if source:
             shutil.copy2(source, pack / "mods" / name)
     mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
@@ -1502,7 +1526,8 @@ def starts_alone(loader, to, pack, name, platform):
     (alone / "mods").mkdir(parents=True)
     shutil.copy(pack / "dropped" / name, alone / "mods" / name)
     for jar in platform:
-        shutil.copy(pack / "mods" / jar, alone / "mods" / jar)
+        if (pack / "mods" / jar).is_file():  # a library that failed was dropped with the mods that need it
+            shutil.copy(pack / "mods" / jar, alone / "mods" / jar)
     mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     done = subprocess.run([mmt, "pack-check", "--pack", str(alone), "--minecraft", to, "--loader", loader, "--json"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -1566,9 +1591,40 @@ def named_in_errors(receipt, mods, present):
     return blamed
 
 
-def load(loader, frm, to, save, changed=False):
+def only_mods(linked, pins, wanted):
+    """The linked jars of the wanted mods (Modrinth slugs), and {jar: [why]} for the wanted ones left out. A slug that is
+    not pinned for the release stops the run; one that is pinned and does not link is left out, as the whole run leaves it."""
+    pinned = {m["slug"]: f"{m['slug']}--{m['file']}" for m in pins}
+    unknown = sorted(set(wanted) - set(pinned))
+    if unknown:
+        raise SystemExit(f"not among this release's pinned mods: {', '.join(unknown)} (bench/exposure/mods/)")
+    skipped = {pinned[s]: ["it does not link after the port"] for s in sorted(wanted) if pinned[s] not in linked}
+    for name in skipped:
+        print(f"  {name}: does not link after the port, so it is not started")
+    return [name for name in linked if name in {pinned[s] for s in wanted}], skipped
+
+
+def load_plan(spec):
+    """The updates a game proof runs, as LOADER:FROM:TO: each item of spec is LOADER:FROM:TO, or LOADER:FROM for the next
+    release the scoreboard reads for that loader."""
+    out = []
+    for item in [x.strip() for x in spec.split(",") if x.strip()]:
+        parts = item.split(":")
+        if parts[0] not in FIRST or len(parts) not in (2, 3):
+            raise SystemExit(f"{item}: an update is LOADER:FROM:TO or LOADER:FROM, LOADER one of {', '.join(sorted(FIRST))}")
+        if len(parts) == 2:
+            nxt = dict(updates(parts[0])).get(parts[1])
+            if not nxt:
+                raise SystemExit(f"{item}: {parts[1]} is not a release the {parts[0]} scoreboard reads")
+            parts.append(nxt)
+        out.append(":".join(parts))
+    return out
+
+
+def load(loader, frm, to, save, mods=None, out=None):
     """The mods the jar scoreboard says link, ported as jars and started on a real server of the new release with the library
-    mods they need (choose), then in a real client of it (client_starts), with both verdicts side by side.
+    mods they need (choose), then in a real client of it (client_starts), with both verdicts side by side. mods: only these
+    (Modrinth slugs), with the libraries they need.
 
     One start holds them all; a start that fails drops the jar its log names and starts again, until a start opens a world,
     places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only."""
@@ -1576,15 +1632,9 @@ def load(loader, frm, to, save, changed=False):
     if not report.is_file():
         jars(loader, frm, to)
     linked = [m["mod"] for m in json.loads(report.read_text(encoding="utf-8"))["mods"] if "error" not in m and not m["unlinked"]]
-    if changed:
-        # A mod that linked before with the same port written was started then; only what the change moved is proved again.
-        moved = json.loads((report.parent / "last.json").read_text(encoding="utf-8")).get("moved") or {}
-        if not moved:
-            raise SystemExit("--changed needs a jars run before the change and one after it (before.json and last.json)")
-        linked = [m for m in linked if m in set(moved["newly link"]) | set(moved["link, port changed"])]
-        print(f"starting the {len(linked)} mods that newly link or link with another port: {', '.join(linked) or 'none'}")
-        if not linked:
-            return None
+    skipped = {}
+    if mods:
+        linked, skipped = only_mods(linked, json.loads((PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"], mods)
     folder = HOME / "jars" / f"{loader}-{frm}"
     # A Fabric mod that needs Fabric API needs nothing beyond the platform the pack starts with. A linked mod that is the
     # platform itself (Fabric API among the top mods) is not started twice: the loader refuses two jars with one mod id,
@@ -1594,6 +1644,18 @@ def load(loader, frm, to, save, changed=False):
     chosen, ready, to_port, left = choose(loader, frm, to, linked, folder, pins, set(platform_ids(loader, to)))
     for name, missing in sorted(left.items()):
         print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
+    left = {**skipped, **left}
+    # What the run was asked to prove: every mod that links, or these slugs; compare_loads reads a mod main started and
+    # this run did not as a regression only inside it.
+    scope = sorted(mods) if mods else "all"
+    if not chosen:
+        # Nothing to start (no asked mod links, or none has what it needs): a finished proof with no game verdicts.
+        print("no mod to start: " + ("; ".join(f"{n}: {', '.join(w)}" for n, w in sorted(left.items())) or "none links"))
+        summary = {"loader": loader, "from": frm, "to": to, "scope": scope, "mods": 0, "loaded": 0, "linkedAndLoaded": 0, "linked": 0,
+                   "failedButLinked": [], "clashOnly": [], "failedDataOnly": [], "verdicts": {}, "libraries": {}, "notStarted": left,
+                   "client": {"mods": 0, "loaded": 0, "verdicts": {}}, "loadedOnServerFailedInClient": []}
+        keep_load(summary, out, save)
+        return summary
     pack = ROOT / ".runs" / "exposure" / f"load-{loader}-{frm}-{to}"
     if pack.exists():
         shutil.rmtree(pack)
@@ -1616,7 +1678,7 @@ def load(loader, frm, to, save, changed=False):
             platform.append(api_jar.name)
     mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     verdicts = {}
-    for attempt in range(len(chosen) + 1):
+    for attempt in range(len(chosen) + len(libraries) + 1):
         done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         text = done.stdout[done.stdout.find("{"):]
@@ -1629,25 +1691,28 @@ def load(loader, frm, to, save, changed=False):
             for name in present:
                 verdicts.setdefault(name, "loaded")
             break
-        blamed = {}
+        in_pack = [n for n in libraries if (pack / "mods" / n).is_file()]
+        culprits = {}
         for finding in res.get("findings", []):
             if finding.get("severity") != "problem":
                 continue
             for s in finding.get("suspects", []):
-                top = s.get("jar", "").split("!")[0] or next((n for n in present + list(libraries) if s.get("mod") in mod_ids(pack / "mods" / n)), "")
-                if top in present:
-                    blamed.setdefault(top, "; ".join(s.get("why", []))[:400])
-                elif top in libraries and (pack / "mods" / top).is_file():
-                    # A library that fails takes the mods that need it along; each is failed with the library's reason.
-                    gives = provides(pack / "mods" / top, loader)
-                    (pack / "mods" / top).rename(pack / "dropped" / top)
-                    for name in present:
-                        asked = needs(pack / "mods" / name, loader) or set()
-                        if asked and len(unmet(asked, gives)) < len(asked):
-                            blamed.setdefault(name, f"needs the library {top}, which fails: " + "; ".join(s.get("why", []))[:300])
-        if not blamed:
-            blamed = named_in_errors(result.get("receipt"), pack / "mods", present)
-        if not blamed:
+                top = s.get("jar", "").split("!")[0] or next((n for n in present + in_pack if s.get("mod") in mod_ids(pack / "mods" / n)), "")
+                if top in present + in_pack:
+                    culprits.setdefault(top, "; ".join(s.get("why", []))[:400])
+        if not culprits:
+            culprits = named_in_errors(result.get("receipt"), pack / "mods", present + in_pack)
+        blamed = {n: why for n, why in culprits.items() if n in present}
+        for top in (n for n in culprits if n in in_pack):
+            # A library that fails takes the mods that need it along; each is failed with the library's reason.
+            gives = provides(pack / "mods" / top, loader)
+            (pack / "mods" / top).rename(pack / "dropped" / top)
+            print(f"  {top}: the library failed")
+            for name in present:
+                asked = needs(pack / "mods" / name, loader) or set()
+                if asked and len(unmet(asked, gives)) < len(asked):
+                    blamed.setdefault(name, f"needs the library {top}, which fails: " + culprits[top][:300])
+        if not culprits:
             print(res.get("details", done.stdout[-2000:]))
             raise SystemExit(f"a start failed and named no mod; receipt {result.get('receipt')}")
         for name, why in blamed.items():
@@ -1680,7 +1745,7 @@ def load(loader, frm, to, save, changed=False):
     client = client_starts(loader, to, pack, [n for n, v in verdicts.items() if v == "loaded" or v.startswith("client-only")], platform)
     loaded = [n for n, v in verdicts.items() if v == "loaded"]
     summary = {
-        "loader": loader, "from": frm, "to": to, "mods": len(chosen), "loaded": len(loaded),
+        "loader": loader, "from": frm, "to": to, "scope": scope, "mods": len(chosen), "loaded": len(loaded),
         "linkedAndLoaded": sum(1 for n in loaded if links.get(n)), "linked": sum(links.values()),
         "failedButLinked": sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and has_code(folder / n)),
         "clashOnly": sorted(n for n, v in verdicts.items() if v.startswith("clash") and links.get(n)),
@@ -1702,11 +1767,53 @@ def load(loader, frm, to, save, changed=False):
           f"{summary['linkedAndLoaded']} of them load; failed although they link: {summary['failedButLinked'] or 'none'}"
           + (f"; failed on their data, with no game code: {summary['failedDataOnly']}" if summary["failedDataOnly"] else "")
           + (f"; load alone but fail next to the others: {summary['clashOnly']}" if summary["clashOnly"] else ""))
-    if save:
-        path = receipt("load", loader, frm, to)
+    keep_load(summary, out, save)
+    return summary
+
+
+def keep_load(summary, out, save):
+    """Writes a load summary to --out and, with --save, to its receipt in bench/exposure/."""
+    for path in [p for p in (out, receipt("load", summary["loader"], summary["from"], summary["to"]) if save else None) if p]:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
         print(f"saved {path}")
-    return summary
+
+
+def kind(verdict):
+    """A verdict's kind (loaded, failed, client-only, clash), without the reason a run words its own way."""
+    return verdict.split(":")[0] if verdict else "not started"
+
+
+def compare_loads(before, after):
+    """What one game proof of an update changes against another, as lines: each mod's server and client verdict whose kind
+    moved, and the counts, over the mods both started. A mod the first run started and the second did not counts as moved
+    when the second was asked to prove it: every mod (scope "all", or a receipt from before scopes) or its slug."""
+    both = sorted(set(before["verdicts"]) & set(after["verdicts"]))
+    lines = [f"{after['loader']} {after['from']} -> {after['to']}: {len(both)} mods in both runs"]
+    moved = 0
+    for side in ("server", "client"):
+        pick = (lambda r: r["verdicts"]) if side == "server" else (lambda r: r.get("client", {}).get("verdicts", {}))
+        if side == "client" and (before.get("client", {}).get("notRun") or after.get("client", {}).get("notRun")):
+            lines.append("client: not run in one of them: " + str(before["client"].get("notRun") or after["client"].get("notRun"))[:200])
+            continue
+        old, new = pick(before), pick(after)
+        same = [n for n in both if kind(old.get(n)) == kind(new.get(n))]
+        lines.append(f"{side}: {len(same)}/{len(both)} the same; loaded {sum(kind(old.get(n)) == 'loaded' for n in both)} -> {sum(kind(new.get(n)) == 'loaded' for n in both)}")
+        for n in both:
+            if kind(old.get(n)) != kind(new.get(n)):
+                moved += 1
+                lines.append(f"  {n}: {kind(old.get(n))} -> {kind(new.get(n))}" + (f" ({new[n][:200]})" if new.get(n) and ":" in new[n] else ""))
+    scope = after.get("scope", "all")
+    gone = sorted(n for n in set(before["verdicts"]) - set(after["verdicts"]) if scope == "all" or n.split("--", 1)[0] in scope)
+    if gone:
+        lines.append("started before and not now:")
+    for n in gone:
+        moved += 1
+        why = after.get("notStarted", {}).get(n)
+        lines.append(f"  {n}: {kind(before['verdicts'][n])} -> not started" + (f" ({', '.join(why)[:200]})" if why else ""))
+    if not moved:
+        lines.append("no verdict moved")
+    return lines
 
 
 HOP = re.compile(r"linked (\d+)/(\d+) classes, (\d+)/(\d+) methods, (\d+)/(\d+) fields")
@@ -1798,12 +1905,14 @@ def main():
         j.add_argument("--from", dest="frm", required=True)
         j.add_argument("--to", required=True)
         j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
+        j.add_argument("--out", type=Path, help="write the summary to this file")
         if name == "jars":
-            j.add_argument("--out", type=Path, help="write the summary to this file")
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
             j.add_argument("--type", dest="kind", help="port only the mods the last whole run held back with this type of break (or part of its text)")
-        else:
-            j.add_argument("--changed", action="store_true", help="start only the mods whose verdict or port changed since the run before (jars' before.json)")
+        if name == "load":
+            j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated), with the libraries they need")
+    lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
+    lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     ls = sub.add_parser("updates", help="every LOADER:FROM:TO all runs, updates and jumps, as JSON (the cloud run's matrix)")
     ls.add_argument("--loader", choices=sorted(FIRST))
     ls.add_argument("--only", help="LOADER:FROM,...")
@@ -1842,7 +1951,9 @@ def main():
         print(json.dumps([f"{lo}:{x}:{y}" for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in updates(lo) + jumps(lo)
                           if not only or f"{lo}:{x}" in only]))
     elif a.command == "load":
-        load(a.loader, a.frm, a.to, a.save, a.changed)
+        load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
+    elif a.command == "load-plan":
+        print(json.dumps(load_plan(a.updates)))
     elif a.command == "all":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
         every_update([a.loader] if a.loader else sorted(FIRST), only, a.jobs, a.out)
@@ -1854,7 +1965,8 @@ def main():
     elif a.command == "join":
         join(a.folder, a.out)
     elif a.command == "compare":
-        print("\n".join(compare(*(json.loads(f.read_text(encoding="utf-8")) for f in (a.before, a.after)))))
+        before, after = (json.loads(f.read_text(encoding="utf-8")) for f in (a.before, a.after))
+        print("\n".join((compare_loads if "verdicts" in after else compare)(before, after)))
     elif a.command == "record-main":
         record_main(a.table, a.commit, a.run)
     else:

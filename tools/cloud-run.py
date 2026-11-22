@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run a full sweep (every pack, the whole port corpus, every convert) on GitHub's runners, wait, and download it.
+"""Run a sweep (every pack, the whole port corpus, every convert) or a port's game proof on GitHub's runners, wait, and download it.
 
     python tools/cloud-run.py packs [--ref BRANCH] [-f packs=atm10-neoforge-1.21.1] [-f focus=MODID] [-f fix=true]
     python tools/cloud-run.py ports [-f cases=jade-neoforge-1.21.1-1.21.6]
     python tools/cloud-run.py convert [-f mods=theoneprobe-fabric] [-f label=round-4]
     python tools/cloud-run.py exposure [-f only=fabric:1.21.1,neoforge:1.21.1]
+    python tools/cloud-run.py load -f updates=neoforge:1.21.1:1.21.2,fabric:1.21.1 [-f mods=chunky,clumps]
     python tools/cloud-run.py main-table [--commit SHA]   main's jar scoreboard for a commit (default this branch's base)
     python tools/cloud-run.py --run RUN_ID        wait for and download a run already started
     tools/cloud-run ... (POSIX) and tools\\cloud-run.cmd ... (Windows) are the same
@@ -21,10 +22,15 @@ It dispatches with a request id the workflow puts in its run name, finds that ru
 downloads every artifact to .runs/cloud/WORKFLOW-RUNID/ (--out). A summary artifact's summary.md is printed.
 Exit 0 when the run succeeded, 1 when it failed, 124 on the timeout. Needs the GitHub CLI (gh), logged in.
 
-exposure runs on main (every push starts it, cloud-exposure.yml) or for some updates (-f only=); a branch's whole sweep
-runs on this machine (bench/exposure.py all), where only what the branch changed is computed. main-table finds main's
-table for a commit: its run, or one for a commit that changed nothing the table reads (the workflow's paths-ignore),
-waiting for it if it is still going, and dispatching one for the commit only when none ran.
+exposure on a branch runs only the branch. Main's table for the branch's base is made once, by the sweep every push to
+main starts (cloud-exposure.yml); main_table finds that run, or one for a commit that changed nothing the table reads
+(the workflow's paths-ignore), waits for it if it is still going, and dispatches one for the base only when none ran.
+When both are in, python bench/exposure.py compare prints what the branch changes. main-table does the finding alone.
+
+load is cloud-load.yml, the game proof of a port (python bench/exposure.py load), one job per update: the update's mods
+that link (or only mods=), ported and started on a real server and in a real client of the new release. Each update's
+summary is copied to .runs/cloud/load-RUNID/ in the shape load writes, and compared with the receipt main keeps for that
+update (bench/exposure/load-*.json, the one main changed last) into compare.md.
 """
 import argparse
 import json
@@ -38,7 +44,8 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WORKFLOWS = {"packs": "cloud-packs.yml", "ports": "cloud-ports.yml", "convert": "cloud-convert.yml", "exposure": "cloud-exposure.yml"}
+WORKFLOWS = {"packs": "cloud-packs.yml", "ports": "cloud-ports.yml", "convert": "cloud-convert.yml", "exposure": "cloud-exposure.yml",
+             "load": "cloud-load.yml"}
 
 
 def gh_path():
@@ -212,7 +219,14 @@ def fetch_main_table(commit, timeout_minutes):
     print(f"main's table for {commit[:10]}: {how}", flush=True)
     out = ROOT / ".runs" / "cloud" / f"exposure-main-{commit[:10]}"
     if not (out / "all.json").is_file():
+        start = time.monotonic()
         view = wait(run_id, timeout_minutes, True)
+        if view.get("conclusion") == "cancelled":
+            # A newer push can cancel the sweep found: look again, and make one for the commit if none is left,
+            # within what is left of the one timeout.
+            run_id, how = main_table(commit)
+            print(f"main's sweep was cancelled; now {how}", flush=True)
+            view = wait(run_id, max(timeout_minutes - (time.monotonic() - start) / 60, 0), True)
         if view.get("conclusion") != "success":
             raise SystemExit(f"main's sweep {run_id} ended {view.get('conclusion')}")
         out.mkdir(parents=True, exist_ok=True)
@@ -233,9 +247,46 @@ def compare_with_main(branch_table, head, timeout_minutes):
     print(f"\nAgainst main at {base[:10]} ({main}):\n{done.stdout}{done.stderr}", flush=True)
 
 
+# ---- a game proof against main's receipt ------------------------------------------------------------------------------
+def receipt_of(name, update):
+    """Whether a file in bench/exposure/ is a load receipt of the update (LOADER-FROM-TO): load-, or the older
+    load-linked-, then the update, then the commit it ran or nothing."""
+    return re.fullmatch(rf"load-(linked-)?{re.escape(update)}(-[0-9a-f]{{7,40}})?\.json", name) is not None
+
+
+def main_receipt(update, git=git):
+    """The receipt main keeps for an update: the one of its bench/exposure/load-*.json files main changed last, or None."""
+    files = [f for f in git("ls-tree", "--name-only", "origin/main", "bench/exposure/").splitlines() if receipt_of(f.rsplit("/", 1)[-1], update)]
+    if not files:
+        return None
+    return max(files, key=lambda f: int(git("log", "-1", "--format=%ct", "origin/main", "--", f) or 0))
+
+
+def compare_loads_with_main(out):
+    """Each load summary the run brought back, compared with main's receipt for its update; written to out/compare.md."""
+    git("fetch", "--quiet", "origin", "main")
+    lines = []
+    for summary in sorted(out.glob("load-*/summary/load-*.json")):
+        shutil.copy2(summary, out / summary.name)
+        after = json.loads(summary.read_text(encoding="utf-8"))
+        update = f"{after['loader']}-{after['from']}-{after['to']}"
+        saved = main_receipt(update)
+        if not saved:
+            lines.append(f"{update}: main keeps no receipt for it yet")
+            continue
+        before = out / ("main-" + saved.rsplit("/", 1)[-1])
+        before.write_text(git("show", f"origin/main:{saved}") + "\n", encoding="utf-8")
+        done = subprocess.run([sys.executable, str(ROOT / "bench" / "exposure.py"), "compare", str(before), str(out / summary.name)],
+                              cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+        lines.append(f"Against main's {saved}:\n{done.stdout}{done.stderr}")
+    if lines:
+        (out / "compare.md").write_text("\n".join(lines), encoding="utf-8")
+        print("\n" + "\n".join(lines), flush=True)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("workflow", nargs="?", help="packs, ports, perf, or a workflow file name")
+    ap.add_argument("workflow", nargs="?", help="packs, ports, convert, exposure, load, or a workflow file name")
     ap.add_argument("-f", "--field", action="append", default=[], metavar="KEY=VALUE", help="a workflow input; repeat for more")
     ap.add_argument("--ref", help="the branch to run (default: the current one)")
     ap.add_argument("--run", type=int, help="wait for and download this run instead of starting one")
@@ -260,12 +311,9 @@ def main(argv=None):
         run_id = args.run
         workflow = json.loads(gh("run", "view", str(run_id), "--json", "workflowName"))["workflowName"]
     else:
-        if args.workflow == "exposure" and not any(f.startswith("only=") for f in args.field) and (args.ref or git("rev-parse", "--abbrev-ref", "HEAD")) != "main":
-            # The whole sweep of a branch took 20-115 min and 4.4 CPU-hours here; run where its answers are kept, only what
-            # the branch changed runs. Main's sweep runs on every push to main.
-            raise SystemExit("a branch's whole jar scoreboard runs on this machine: python bench/exposure.py all --out .runs/exposure/branch.json, "
-                             "python bench/exposure.py all --at origin/main --out .runs/exposure/base.json, then python bench/exposure.py compare "
-                             ".runs/exposure/base.json .runs/exposure/branch.json")
+        if args.workflow == "exposure" and not any(f.startswith("only=") for f in args.field):
+            # main's sweep for the base is started (or found) before the branch's, so the two run side by side.
+            main_table(branch_base(ref_on_origin(args.ref or git("rev-parse", "--abbrev-ref", "HEAD"), args.allow_unpushed)))
         workflow = WORKFLOWS.get(args.workflow, args.workflow)
         ref = args.ref or git("rev-parse", "--abbrev-ref", "HEAD")
         commit = ref_on_origin(ref, args.allow_unpushed)
@@ -289,6 +337,7 @@ def main(argv=None):
     table = out / "summary" / "all.json"
     if table.is_file() and view.get("headBranch") != "main" and "every update" in view.get("displayTitle", "") and " at " not in view.get("displayTitle", ""):
         compare_with_main(table, view["headSha"], args.timeout)
+    compare_loads_with_main(out)
     wall = seconds(view.get("createdAt"), view.get("updatedAt"))
     print(f"{view.get('conclusion')}: {view.get('url')} in {duration(wall)} (waited {duration(round(time.monotonic() - started))}); artifacts in {out}")
     return 0 if view.get("conclusion") == "success" else 124 if view.get("conclusion") == "timed out" else 1

@@ -322,6 +322,7 @@ public final class JarPort {
     public static void main(String[] args) throws Exception {
         String from = null, to = null, map = null, out = null, loader = null, report = null, book = null;
         boolean runtime = false;
+        Path originalsDir = null;
         List<Path> jars = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -334,6 +335,7 @@ public final class JarPort {
                 case "--report" -> report = args[++i];
                 case "--fixes" -> book = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
+                case "--originals" -> originalsDir = Path.of(args[++i]);
                 default -> jars.add(Path.of(args[i]));
             }
         }
@@ -346,6 +348,7 @@ public final class JarPort {
             port.loader = loader;
         }
         port.runtimeNames = runtime;
+        port.originalsDir = originalsDir;
         if ("fabric".equals(loader)) {
             port.platform(Exposure.fabricApi(from), Exposure.fabricApi(to));
         }
@@ -417,12 +420,24 @@ public final class JarPort {
     /** A whole jar, nested mods included; each jar's result is added to results. */
     byte[] port(byte[] jar, String name, List<Map<String, Object>> results) throws IOException {
         boolean fabric = loader.equals("fabric");
+        // The jar's own intermediary method names, which the hand-back gives back where it cannot follow a class to the game:
+        // from the jar, or from the jar as it came where it was read into Mojang's names before (--originals).
+        Path came = originalsDir == null ? null : originalsDir.resolve(name);
+        Map<String, Set<String>> originals = !fabric ? Map.of() : intermediary(jar) ? ModNames.Back.methodNames(jar)
+            : came != null && Files.isRegularFile(came) ? ModNames.Back.methodNames(Files.readAllBytes(came)) : Map.of();
         if (fabric && compareVersions(a.version, UNOBFUSCATED) < 0 && intermediary(jar)) {
             jar = fabricIn().jar(jar, new ModNames.Counts());
         }
         byte[] out = port(jar, name, results, null);
+        if (fabric && compareVersions(b.version, UNOBFUSCATED) < 0 && !results.isEmpty()) {
+            // Fabric runs the jar in intermediary: a method whose name the hand-back cannot give is never called.
+            @SuppressWarnings("unchecked") List<Object> unlinked = (List<Object>) results.get(results.size() - 1).get("unlinked");
+            for (String gap : handBack() instanceof ModNames.Back back ? back.gaps(out, originals) : List.<String>of()) {
+                unlinked.add("method name lost in the Fabric hand-back: " + gap);
+            }
+        }
         if (fabric && runtimeNames && compareVersions(b.version, UNOBFUSCATED) < 0) {
-            out = fabricOut().jar(out);
+            out = fabricOut().jar(out, originals);
         }
         return out;
     }
@@ -431,6 +446,7 @@ public final class JarPort {
     static final String UNOBFUSCATED = "26.1";
 
     boolean runtimeNames; // hand a Fabric jar back in the names Fabric runs, not Mojang's
+    Path originalsDir; // where each jar is as it came, by its file name, when the jars given were read into Mojang's names first
     ModNames in;
     ModNames.Back out;
 
@@ -441,6 +457,21 @@ public final class JarPort {
             throw new IOException("Fabric's intermediary names for " + a.version + " could not be read: " + unreadable.getMessage(), unreadable);
         }
     }
+
+    /** The hand-back to the target's intermediary, or null where a release has none to read (a test's made-up one). */
+    ModNames.Back handBack() {
+        if (handBackMissing) {
+            return null;
+        }
+        try {
+            return fabricOut();
+        } catch (IOException unreadable) {
+            handBackMissing = true;
+            return null;
+        }
+    }
+
+    boolean handBackMissing;
 
     ModNames.Back fabricOut() throws IOException {
         try {
@@ -5202,6 +5233,7 @@ public final class JarPort {
         }
 
         final List<Read> reads = new ArrayList<>(); // by field instruction number; null for a write or a primitive
+        final Map<Integer, Read> results = new HashMap<>(); // by call number: where a call's object result goes
         final Map<Object, Read> marks = new IdentityHashMap<>();
         int calls = -1;
 
@@ -5296,6 +5328,14 @@ public final class JarPort {
                 said.put(self, new String[] { "R", String.valueOf(calls), owner, name, desc });
             }
             step(said, () -> super.visitMethodInsn(opcode, owner, name, desc, itf));
+            Type result = Type.getReturnType(desc);
+            if (stack != null && (result.getSort() == Type.OBJECT || result.getSort() == Type.ARRAY) && !name.equals("<init>")) {
+                Object mark = new String(result.getSort() == Type.OBJECT ? result.getInternalName() : result.getDescriptor());
+                stack.set(stack.size() - 1, mark);
+                Read r = new Read();
+                marks.put(mark, r);
+                results.put(calls, r);
+            }
         }
 
         @Override
@@ -5371,7 +5411,7 @@ public final class JarPort {
         }
 
         /** What a method of a class's bytes does with each value it reads from a field, or null when it is not there. */
-        static List<Read> of(byte[] bytes, String name, String desc) {
+        static ReadUses of(byte[] bytes, String name, String desc) {
             if (bytes == null) {
                 return null;
             }
@@ -5386,7 +5426,7 @@ public final class JarPort {
                     return found[0] = new ReadUses(reader.getClassName(), access, n, d);
                 }
             }, ClassReader.EXPAND_FRAMES);
-            return found[0] == null ? null : found[0].reads;
+            return found[0];
         }
     }
 
@@ -5998,7 +6038,7 @@ public final class JarPort {
         int nextLocal;
         int extraStack; // what code written in place of an instruction may push beyond it
         int fieldsSeen = -1, callsSeen = -1; // the method's field and method instructions so far, as ReadUses numbers them
-        List<ReadUses.Read> reads;
+        ReadUses uses;
         boolean readsTried;
         final Map<Integer, String[]> onNewType = new HashMap<>(); // call number -> {opcode, owner, name, desc} on a retyped value
 
@@ -6126,8 +6166,9 @@ public final class JarPort {
             if (!readsTried) {
                 readsTried = true;
                 int dot = key.indexOf('.'), paren = key.indexOf('(');
-                reads = paren < 0 ? null : ReadUses.of(mod.bytes.get(key.substring(0, dot)), key.substring(dot + 1, paren), key.substring(paren));
+                uses = paren < 0 ? null : ReadUses.of(mod.bytes.get(key.substring(0, dot)), key.substring(dot + 1, paren), key.substring(paren));
             }
+            List<ReadUses.Read> reads = uses == null ? null : uses.reads;
             ReadUses.Read read = reads == null || fieldsSeen >= reads.size() ? null : reads.get(fieldsSeen);
             Map<Integer, String[]> calls = read == null || read.bad || read.uses.isEmpty() ? null : onNewType(read, type);
             String[] steps = calls != null ? null : unwrap(now[2], want);
@@ -6142,16 +6183,91 @@ public final class JarPort {
                 mod.change("field read as its new type");
                 return true;
             }
-            boolean itf = isInterface(mod, type.getInternalName());
-            String held = inverse.getOrDefault(type.getInternalName(), type.getInternalName());
-            super.visitMethodInsn(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, held, steps[0].substring(0, steps[0].indexOf('(')),
-                oldDesc(steps[0].substring(steps[0].indexOf('('))), itf);
+            unwrapping(type, steps);
+            mod.change("field read through what the game's code reads from its new type");
+            return true;
+        }
+
+        /** Writes what the game's code reads from a value of type held to get the one it holds (see unwrap). */
+        void unwrapping(Type held, String[] steps) {
+            boolean itf = isInterface(mod, held.getInternalName());
+            super.visitMethodInsn(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, inverse.getOrDefault(held.getInternalName(), held.getInternalName()),
+                steps[0].substring(0, steps[0].indexOf('(')), oldDesc(steps[0].substring(steps[0].indexOf('('))), itf);
             String cast = steps[1];
             super.visitTypeInsn(Opcodes.CHECKCAST, inverse.getOrDefault(cast, cast));
             if (steps.length > 2) {
                 super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, cast, steps[2].substring(0, steps[2].indexOf('(')), steps[2].substring(steps[2].indexOf('(')), false);
             }
-            mod.change("field read through what the game's code reads from its new type");
+        }
+
+        /** The exact JVM conversion from a call's new primitive result to the one the code used (1.21.6's Window.getGuiScale() int, read as the double it was). */
+        static final Map<String, Integer> WIDEN = Map.of("ID", Opcodes.I2D, "IJ", Opcodes.I2L, "FD", Opcodes.F2D, "BI", Opcodes.NOP, "SI", Opcodes.NOP, "CI", Opcodes.NOP);
+
+        /** Types whose value may hold nothing (an empty Optional, a failed DataResult): reading the value out could throw where the old call answered. */
+        static final Set<String> MAYBE = Set.of("java/util/Optional", "com/mojang/serialization/DataResult", "java/util/OptionalInt", "java/util/OptionalLong", "java/util/OptionalDouble");
+
+        /**
+         * A call whose method the update gave another result type, its arguments still fitting (1.19's getRandom: Random,
+         * then RandomSource; 1.21.6's getGuiScale: double, then int). The new result is taken as it is where every use
+         * of it means the same of its type (ReadUses, as a retyped field read), widened where a primitive converts exactly,
+         * or turned into the old type as the game's own code gets what a holder of it holds. Not a result that may hold
+         * nothing (Optional, DataResult): the old call answered there.
+         */
+        boolean resultConverted(int opcode, String owner, String declOwner, String name, String desc) {
+            if (moved != null || opcode == Opcodes.INVOKESPECIAL) {
+                return false;
+            }
+            boolean isStatic = opcode == Opcodes.INVOKESTATIC;
+            String[] t = route.method(declOwner, name, desc);
+            Type[] before = Type.getArgumentTypes(desc(desc)), after = Type.getArgumentTypes(t[2]);
+            Type was = Type.getReturnType(desc(desc)), now = Type.getReturnType(t[2]);
+            if (before.length != after.length || was.equals(now) || was.getSort() == Type.VOID || now.getSort() == Type.VOID || !isStatic && !isA(cls(owner), t[0])
+                || now.getSort() == Type.OBJECT && MAYBE.contains(now.getInternalName())) {
+                // A result that may hold nothing is never null itself: even a null test of it would answer otherwise.
+                return false;
+            }
+            for (int i = 0; i < before.length; i++) {
+                if (!usable(before[i], after[i])) {
+                    return false;
+                }
+            }
+            GameDiff.Cls holder = Exposure.declaring(b, t[0], 'm', t[1], t[2]);
+            GameDiff.Meth m = holder == null ? null : holder.methods.get(t[1] + t[2]);
+            if (m == null || m.isStatic() != isStatic || !linksNew(mod, callers, t[0], 'm', t[1], t[2])) {
+                return false;
+            }
+            boolean objects = now.getSort() == Type.OBJECT && (was.getSort() == Type.OBJECT || was.getSort() == Type.ARRAY);
+            Integer widen = WIDEN.get(now.getDescriptor() + was.getDescriptor());
+            Map<Integer, String[]> calls = null;
+            String[] steps = null;
+            if (objects) {
+                if (!readsTried) {
+                    readsTried = true;
+                    int dot = key.indexOf('.'), paren = key.indexOf('(');
+                    uses = paren < 0 ? null : ReadUses.of(mod.bytes.get(key.substring(0, dot)), key.substring(dot + 1, paren), key.substring(paren));
+                }
+                ReadUses.Read read = uses == null ? null : uses.results.get(callsSeen);
+                calls = read == null || read.bad || read.uses.isEmpty() ? null : onNewType(read, now);
+                steps = calls != null ? null : unwrap(now.getDescriptor(), was.getDescriptor());
+            }
+            if (calls == null && steps == null && widen == null) {
+                return false;
+            }
+            GameDiff.Cls named = b.classes.getOrDefault(t[0], holder);
+            boolean itf = (named.flags & Opcodes.ACC_INTERFACE) != 0;
+            super.visitMethodInsn(isStatic ? Opcodes.INVOKESTATIC : itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, inverse.getOrDefault(t[0], t[0]), t[1], oldDesc(t[2]), itf);
+            if (widen != null) {
+                if (widen != Opcodes.NOP) {
+                    super.visitInsn(widen);
+                }
+                mod.change("call whose result type changed, widened to the old one");
+            } else if (calls != null) {
+                onNewType.putAll(calls);
+                mod.change("call whose result type changed, its result used as the new type");
+            } else {
+                unwrapping(now, steps);
+                mod.change("call whose result type changed, read through what the game's code reads from it");
+            }
             return true;
         }
 
@@ -6448,6 +6564,9 @@ public final class JarPort {
                 }
                 String unlinked = "call: " + Exposure.dotted(decl.owner()) + "." + name + desc + (WHERE ? " @ " + where + (Sites.this.moved != null ? " (moved)" : "") : "");
                 if (converted(opcode, owner, decl.owner(), name, desc)) {
+                    return;
+                }
+                if (resultConverted(opcode, owner, decl.owner(), name, desc)) {
                     return;
                 }
                 if (relocated(decl.owner(), name, desc)) {
@@ -7578,6 +7697,39 @@ public final class JarPort {
     }
 
     final Map<String, FixExpr.Node> parsed = new HashMap<>(); // a rule's expression, filled, once parsed
+
+    /**
+     * Whether a port answer (a learned replacement or a rule's inClass, FixExpr) compiles against the new release for a use
+     * whose operands have opDesc's types (old names; the receiver first when receiver), as Sites.fix lowers it into a class:
+     * a source port (SourceAnswers) writes an answer only when a jar port of the same use would.
+     */
+    boolean answerLinks(String expr, String opDesc, boolean receiver) {
+        Type[] ops = Type.getArgumentTypes(opDesc);
+        Type ret = Type.getReturnType(opDesc);
+        Mod mod = new Mod();
+        Type[] params = new Type[ops.length];
+        for (int i = 0; i < ops.length; i++) {
+            params[i] = Type.getType(desc(ops[i].getDescriptor()));
+            if (!present(mod, params[i])) {
+                return false;
+            }
+        }
+        Type newRet = Type.getType(desc(ret.getDescriptor()));
+        try {
+            Lowering low = new Lowering(mod, List.of(), params, receiver, 0);
+            Type got = low.lower(parsed(expr), new Code());
+            return ret.getSort() == Type.VOID || got.getSort() != Type.VOID && present(mod, newRet) && low.fits(got, newRet);
+        } catch (RuntimeException refused) {
+            return false;
+        }
+    }
+
+    /** Whether the new release still has owner.name (old names) as the old release declared it: then a use links and needs no answer. */
+    boolean kept(String owner, boolean field, String name, String desc) {
+        String now = cls(owner);
+        GameDiff.Cls c = Exposure.declaring(b, now, field ? 'f' : 'm', name, field ? null : desc(desc));
+        return c != null && (field ? c.fields.get(name) != null && c.fields.get(name).desc.equals(desc(desc)) : c.methods.containsKey(name + desc(desc)));
+    }
 
     FixExpr.Node parsed(String expr) {
         FixExpr.Node n = parsed.get(expr);

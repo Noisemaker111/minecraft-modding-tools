@@ -57,9 +57,9 @@ def port_preflight():
     yield java("-cp", str(out), "LegacyMapTest")
 
 
-# The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test), found
+# The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test, SourceAnswers*Test), found
 # here rather than listed, so two pull requests that each add one never touch the same line. Each is a class with a main.
-JAR_PORT_TESTS = ("JarPort*Test.java", "Game*Test.java", "ModNames*Test.java")
+JAR_PORT_TESTS = ("JarPort*Test.java", "Game*Test.java", "ModNames*Test.java", "SourceAnswers*Test.java")
 
 
 def jar_port_tests(folder=ROOT / "tools" / "tests"):
@@ -71,7 +71,7 @@ def jar_port():
     asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
     tests = jar_port_tests()
     yield ["javac", "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
-           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", *tests]
+           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/SourceAnswers.java", *tests]
     for test in tests:
         yield java("-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch"))
 

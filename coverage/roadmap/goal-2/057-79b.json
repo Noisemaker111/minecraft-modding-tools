@@ -1,0 +1,13 @@
+{
+ "id": "79b",
+ "title": "Game calls whose result type changed",
+ "part": "Port by type of break",
+ "status": "done",
+ "done": "2026-11-22",
+ "text": "The part of `call, game: linked` where only a call's result type changed and its arguments still fit. The new result is taken as it is where every use of it means the same of its type (followed on the verifier's stack, as #157 does for a retyped field: 1.19's getRandom became a RandomSource), widened where a primitive converts exactly (1.21.6's Window.getGuiScale() became an int, read as the double it was), or turned into the old type as the game's own code gets what a holder of it holds (holder.value()). A result that may hold nothing (Optional, DataResult) stays reported: reading it out could throw where the old call answered with a default.",
+ "start": "2026-11-21",
+ "target": "2026-11-22",
+ "finish": "the type's finishes and mods fall, every update and big updates up, a freed mod loads on a real server and client",
+ "wrongIf": "a freed mod fails in game on the converted call",
+ "result": "Against main at 539cdb24e7 (run 44962948917): every update 6,145 -> 6,150, big updates 1,979 -> 1,983, newest 21; 'call, game: linked' finishes 199 -> 194, mods 1,973 -> 1,940; none lower. Clumps, freed on Fabric 1.18.2 -> 1.19 (its getRandom), passes on a real 1.19 server and client. Most of the type is redesigns (1.21.6's GuiGraphics.pose(), the render passes) and calls whose parameters changed, left for later steps."
+}

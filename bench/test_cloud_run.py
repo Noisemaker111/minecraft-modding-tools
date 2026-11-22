@@ -75,4 +75,47 @@ def fake_gh(*a):
 C.same_table = lambda commit, globs=None, git=None: [commit]
 check(C.main_table(D, gh=fake_gh)[0] == 4 and asked == [("run", "list")], f"a saved table is found without dispatching a sweep of main: {asked}")
 check(C.main_table("e" * 40, gh=fake_gh, dispatch=False) == (None, "none"), "a commit with no sweep has no table yet")
+
+# Waiting for main's table spends one timeout in all: a sweep still queued at it is not waited on again; a cancelled one
+# is replaced and waited on for what is left.
+waits = []
+ends = {}
+
+
+def fake_wait(run_id, minutes, keep):
+    waits.append((run_id, minutes))
+    return {"conclusion": ends[run_id]}
+
+
+saved_wait, saved_table = C.wait, C.main_table
+C.wait = fake_wait
+looks = iter([(7, "running"), (8, "dispatched")])
+C.main_table = lambda commit: next(looks)
+ends.update({7: "timed out"})
+try:
+    C.fetch_main_table("f" * 40, 2)
+    check(False, "a sweep still queued at the timeout ends the wait")
+except SystemExit:
+    pass
+check(waits == [(7, 2)], f"a sweep still queued at the timeout is not looked up and waited on again: {waits}")
+waits.clear()
+looks = iter([(7, "running"), (8, "dispatched")])
+ends.update({7: "cancelled", 8: "timed out"})
+try:
+    C.fetch_main_table("f" * 40, 2)
+except SystemExit:
+    pass
+check([w[0] for w in waits] == [7, 8] and waits[1][1] <= 2, f"a cancelled sweep is replaced within the same timeout: {waits}")
+C.wait, C.main_table = saved_wait, saved_table
+
+# A game proof is compared with the receipt main changed last for the same update, whatever commit or older name it has.
+tree = ["bench/exposure/load-neoforge-1.21.1-1.21.2.json", "bench/exposure/load-linked-neoforge-1.21.1-1.21.2.json",
+        "bench/exposure/load-neoforge-1.21.1-1.21.21.json", "bench/exposure/load-neoforge-1.21.1-1.21.2-e15ee907f4.json",
+        "bench/exposure/jars-neoforge-1.21.1-1.21.2.json", "bench/exposure/load-fabric-1.21.1-1.21.2.json"]
+when = {tree[0]: 100, tree[1]: 300, tree[3]: 200}
+tree_git = lambda *a: "\n".join(tree) if a[0] == "ls-tree" else str(when.get(a[-1], 0))  # noqa: E731
+check(C.main_receipt("neoforge-1.21.1-1.21.2", git=tree_git) == tree[1], "the receipt main changed last is the one compared")
+when[tree[3]] = 400
+check(C.main_receipt("neoforge-1.21.1-1.21.2", git=tree_git) == tree[3], "a newer receipt named for its commit replaces it")
+check(C.main_receipt("neoforge-1.21.2-1.21.3", git=tree_git) is None, "an update main keeps no receipt for has none")
 print(f"{checks} cloud-run checks passed")

@@ -1,0 +1,11 @@
+{
+ "id": "78d",
+ "title": "Agents learn what a porting change did in seconds, and the exact answer for every update here, not in the cloud",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "Half of a porting PR's 2.8 hours was waiting on measurement: 2-7 whole cloud sweeps a PR (87 jobs, about 4.7 CPU-hours and 20-115 minutes each), CI watched by hand, and the whole offline suite rerun after every edit. Almost all of a sweep recomputed answers the change could not move: the downloads, the mods' names, the game's change map, the data check and most of Exposure's answers do not depend on the porter, and a change frees 5-13 mods of 9,423. Now every stage is kept by the content of what it reads, so a run computes only what the edit can change; jars names the mods that moved against the run before, --type ports only the mods a type of break held back, load --changed starts only those, a branch sweeps here against its base (all --at origin/main), main's cloud sweep checks every kept answer it can (--verify), and the offline checks run what the changed files can affect.",
+ "start": "2026-11-22",
+ "target": "2026-11-22",
+ "finish": "on a real past change (#163) the fast path gives the same per-mod verdicts as a full uncached run; an agent's answer to 'what did my edit do' takes seconds to a minute instead of a 20-115 minute cloud sweep; main's sweep fails if a kept answer ever differs",
+ "wrongIf": "a kept answer differs from computing it again (main's --verify fails), or a branch's local sweep takes longer than the cloud's"
+}
