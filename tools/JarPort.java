@@ -54,6 +54,7 @@ public final class JarPort {
         final Set<String> widened = new HashSet<>(); // "owner.name" or "owner.name+desc" the mod's access transformer opens
         final Set<String> unlinked = new TreeSet<>();
         final Set<String> silent = new TreeSet<>(); // overrides the new release no longer calls: the mod loads, a hook is quiet
+        final Set<String> refused = new TreeSet<>(); // why a mixin handler did not follow its target (why), for the scoreboard
         final Map<String, Integer> changed = new TreeMap<>();
         String self; // the class being rewritten, and what a method added to it must respect
         boolean selfInterface;
@@ -368,7 +369,7 @@ public final class JarPort {
                 byte[] ported = port.port(Files.readAllBytes(jar), jar.getFileName().toString(), nested);
                 Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
                 Files.write(dest, ported);
-                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>();
+                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>();
                 Map<String, Integer> changed = new TreeMap<>();
                 for (Map<String, Object> n : nested) {
                     for (Object u : Json.array(n.get("unlinked"))) {
@@ -378,6 +379,9 @@ public final class JarPort {
                     for (Object u : Json.array(n.get("silent"))) {
                         silent.add(n.get("jar") + ": " + u);
                     }
+                    for (Object u : n.get("refused") == null ? List.of() : Json.array(n.get("refused"))) {
+                        refused.add(u.toString());
+                    }
                     for (var e : Json.object(n.get("changed")).entrySet()) {
                         changed.merge(e.getKey(), ((Number) e.getValue()).intValue(), Integer::sum);
                     }
@@ -386,6 +390,7 @@ public final class JarPort {
                 row.put("changed", changed);
                 row.put("unlinked", new ArrayList<>(unlinked));
                 row.put("silent", new ArrayList<>(silent));
+                row.put("refused", new ArrayList<>(refused));
                 linked += unlinked.isEmpty() ? 1 : 0;
             } catch (IOException | RuntimeException failed) {
                 row.put("error", String.valueOf(failed));
@@ -678,7 +683,12 @@ public final class JarPort {
             }
         }
         requires(mod, entries);
-        plan(mod);
+        planning = mod;
+        try {
+            plan(mod);
+        } finally {
+            planning = null;
+        }
         buses(mod);
         for (var e : mod.split.entrySet()) {
             String file = e.getKey() + "$ModBusListeners.class";
@@ -794,6 +804,7 @@ public final class JarPort {
         result.put("changed", mod.changed);
         result.put("unlinked", new ArrayList<>(mod.unlinked));
         result.put("silent", new ArrayList<>(mod.silent));
+        result.put("refused", new ArrayList<>(mod.refused));
         results.add(result);
         return buffer.toByteArray();
     }
@@ -1767,7 +1778,7 @@ public final class JarPort {
                         retargetOther(mod, key, targets, m, inj);
                     }
                     if (inj != null) {
-                        pointsGone(mod, rc.name, targets, inj, m.desc);
+                        pointsGone(mod, rc.name, key, targets, inj, m.desc);
                     }
                 }
                 continue;
@@ -3536,6 +3547,11 @@ public final class JarPort {
             List<GameDiff.Meth> sameName = named(b, cls(o), moved[1]);
             String report = "mixin target " + (sameName.isEmpty() ? "gone" : "changed signature") + ": " + Exposure.dotted(o) + "." + name + d;
             if (sameName.isEmpty()) {
+                GameDiff.Meth went = key.equals("method") && decl != null && decl.name.equals(o) ? codeMoved(o, name, d) : null;
+                if (went != null) {
+                    // Followed as a method whose parameters changed: the handler moves only where Mixin will accept it there.
+                    return new Found(text, report, null, 's', cls(o), went.name, went.desc, (owner == null ? "" : "L" + cls(o) + ";") + went.name + went.desc);
+                }
                 return new Found(text, report, null, (char) 0, null, null, null, null);
             }
             // Only its parameters changed: the route map's new signature, or the one method of that name on both sides.
@@ -3548,6 +3564,94 @@ public final class JarPort {
                 : new Found(text, report, null, 's', cls(o), now.name, now.desc, prefix + now.name + (mdesc == null ? "" : now.desc));
         }
         return keep(text);
+    }
+
+    final Map<String, Optional<GameDiff.Meth>> movedCode = new HashMap<>();
+
+    /**
+     * Where the code of a method the update dropped from its class (old names) went: the one method the new class gained
+     * (no method of the old class has its name and descriptor) whose instructions are mostly the old method's (alike),
+     * as when an update renames a method and changes its parameters at once. Null when no method or several read alike,
+     * or the old body is too short to tell one apart.
+     */
+    GameDiff.Meth codeMoved(String owner, String name, String desc) {
+        return movedCode.computeIfAbsent(owner + "." + name + desc, k -> {
+            GameCode oldCode = code(a), newCode = code(b);
+            GameDiff.Cls now = b.classes.get(cls(owner));
+            Map<String, String> before = oldCode == null ? null : oldCode.bodies(owner, this::cls);
+            Map<String, String> after = newCode == null || now == null ? null : newCode.bodies(cls(owner), x -> x);
+            String was = before == null || after == null ? null : before.get(name + desc(desc));
+            if (was == null || was.split(";").length < 6) {
+                return Optional.empty();
+            }
+            GameDiff.Meth found = null;
+            for (GameDiff.Meth m : now.methods.values()) {
+                String body = after.get(m.name + m.desc);
+                if (m.name.startsWith("<") || before.containsKey(m.name + m.desc) || body == null || !alike(was, body)) {
+                    continue;
+                }
+                if (found != null) {
+                    return Optional.empty();
+                }
+                found = m;
+            }
+            return Optional.ofNullable(found);
+        }).orElse(null);
+    }
+
+    /**
+     * An injector whose points all left the methods it names, followed into the helper each method now calls where the
+     * code around them went (1.21.2's Gui.renderPlayerHealth calls the new renderAirBubbles, which reads getMaxAirSupply
+     * now). Every point must be a call or field use; exactly one private method of the class that the new method calls
+     * must have them all (as often as the old method had, when an ordinal picks one), and nothing else in the class may
+     * call it, so the injector runs as often as before. into with each method as one whose parameters changed ('s'),
+     * which the handler follows only where Mixin will accept it, or null.
+     */
+    List<Found> deeper(List<String> targets, Injector inj, List<Found> into, List<Found> ats) {
+        if (into.isEmpty() || into.stream().anyMatch(f -> f.kind() != 'm' || f.desc() == null || f.name().startsWith("<"))
+            || inj.ats().isEmpty() || inj.ats().stream().anyMatch(at -> !Set.of("INVOKE", "INVOKE_ASSIGN", "FIELD").contains(at[0]))
+            || ats.stream().anyMatch(at -> at == null || at.kind() == 0 || at.desc() == null) || pointsKept(targets, inj, into, ats)) {
+            return null;
+        }
+        GameCode code = code(b);
+        List<Found> out = new ArrayList<>();
+        for (int i = 0; i < into.size(); i++) {
+            Found f = into.get(i);
+            GameDiff.Meth before = oldMethod(targets, inj.methods().get(i));
+            List<String[]> refs = code == null || before == null ? null : code.refs(f.owner(), f.name(), f.desc());
+            Map<String, String> bodies = refs == null ? null : code.bodies(f.owner(), x -> x);
+            if (bodies == null) {
+                return null;
+            }
+            GameDiff.Meth found = null;
+            Set<String> seen = new HashSet<>();
+            for (String[] r : refs) {
+                GameDiff.Meth n = r[0].equals("m") && r[1].equals(f.owner()) && seen.add(r[2] + r[3]) ? b.method(f.owner(), r[2], r[3]) : null;
+                if (n == null || (n.flags & Opcodes.ACC_PRIVATE) == 0 || n.name.startsWith("<")) {
+                    continue;
+                }
+                String call = ":" + f.owner() + "." + n.name + n.desc + ";";
+                long callers = bodies.values().stream().mapToLong(body -> body.split(Pattern.quote(call), -1).length - 1).sum();
+                boolean all = callers == 1;
+                for (int k = 0; all && k < ats.size(); k++) {
+                    all = pointKept(inj.ats().get(k), ats.get(k), new GameDiff.Meth[] { n, before });
+                }
+                if (!all) {
+                    continue;
+                }
+                if (found != null) {
+                    return null;
+                }
+                found = n;
+            }
+            if (found == null) {
+                return null;
+            }
+            String text = inj.methods().get(i);
+            String prefix = text.startsWith("L") && text.indexOf(';') > 0 ? "L" + f.owner() + ";" : "";
+            out.add(new Found(text, null, null, 's', f.owner(), found.name, found.desc, prefix + found.name + found.desc));
+        }
+        return out;
     }
 
     /** Every method of that name a call on owner reaches through its superclasses in one release. */
@@ -3580,9 +3684,13 @@ public final class JarPort {
      * the new method, its result and staticness are, and its injection points are still in the new method.
      */
     static final boolean WHY = Boolean.getBoolean("jarport.why");
+    static Mod planning; // the mod plan is reading, whose refusals why records
 
     /** Why a mixin handler did not follow its target's new signature, for -Djarport.why (the type's design work). */
     static void why(String key, String reason) {
+        if (planning != null && !reason.equals("O1")) { // O1: nothing to follow
+            planning.refused.add(reason.split(" ", 2)[0] + " | " + key);
+        }
         if (WHY) {
             System.err.println("WHY " + reason + " | " + key);
         }
@@ -3590,6 +3698,8 @@ public final class JarPort {
 
     void retargetOther(Mod mod, String key, List<String> targets, GameDiff.RawMeth handler, Injector inj) {
         List<Found> into = inj.methods().stream().map(s -> find(targets, "method", s)).toList();
+        List<Found> points = inj.ats().stream().map(at -> at[1] == null ? null : find(targets, "target", at[1])).toList();
+        into = Objects.requireNonNullElse(deeper(targets, inj, into, points), into);
         if (into.stream().noneMatch(f -> f.kind() == 's')) {
             { why(key, "O1"); return; }
         }
@@ -3714,6 +3824,7 @@ public final class JarPort {
         // An @Inject takes only a place, not a call's arguments: an @At at a call the game replaced finds its place at the
         // replacement (font.draw(pose, ...) is graphics.drawString(font, ...) in the new method).
         List<Found> ats = inj.ats().stream().map(at -> at[1] == null ? null : replacedAt(at, find(targets, "target", at[1]))).toList();
+        into = Objects.requireNonNullElse(deeper(targets, inj, into, ats), into);
         boolean moving = into.stream().anyMatch(f -> f.kind() == 's');
         if (moving) {
             Type[] params = Type.getArgumentTypes(handler.desc);
@@ -3874,9 +3985,9 @@ public final class JarPort {
         return n;
     }
 
-    void pointsGone(Mod mod, String mixin, List<String> targets, Injector inj, String handlerDesc) {
+    void pointsGone(Mod mod, String mixin, String key, List<String> targets, Injector inj, String handlerDesc) {
         for (String text : inj.methods()) {
-            List<List<GameDiff.Meth>> into = selected(targets, text);
+            List<List<GameDiff.Meth>> into = mod.retargets.containsKey(key + " " + text) ? null : selected(targets, text);
             if (into == null) {
                 continue;
             }
