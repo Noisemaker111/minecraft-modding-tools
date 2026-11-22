@@ -7725,6 +7725,22 @@ public final class JarPort {
         try (var walk = Files.walk(dir)) {
             sources = walk.filter(f -> f.toString().endsWith(".java")).sorted().toList();
         }
+        // Kept by what they are compiled from (the sources and the release read), so the processes of one sweep compile once.
+        java.security.MessageDigest sha;
+        try {
+            sha = java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException(e);
+        }
+        sha.update((release.version + "|" + release.loaderVersion + "|" + release.classes.size()).getBytes(StandardCharsets.UTF_8));
+        for (Path f : sources) {
+            sha.update(dir.relativize(f).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
+            sha.update(Files.readAllBytes(f));
+        }
+        Path kept = Path.of(System.getProperty("user.home"), ".mmt", "jar-port", "standins", HexFormat.of().formatHex(sha.digest()).substring(0, 24));
+        if (Files.isDirectory(kept)) {
+            return readClasses(kept);
+        }
         Path work = Files.createTempDirectory("mmt-standins");
         try {
             Path stubs = work.resolve("stubs.jar"), out = Files.createDirectories(work.resolve("classes"));
@@ -7744,17 +7760,17 @@ public final class JarPort {
             if (exit != 0) {
                 throw new IOException("stand-ins in " + dir + " do not compile against " + release.version + ":\n" + errors);
             }
-            Map<String, byte[]> classes = new TreeMap<>();
-            try (var walk = Files.walk(out)) {
-                for (Path f : walk.filter(x -> x.toString().endsWith(".class")).toList()) {
-                    String name = out.relativize(f).toString().replace('\\', '/');
-                    classes.put(name.substring(0, name.length() - 6), Files.readAllBytes(f));
-                }
-            }
+            Map<String, byte[]> classes = readClasses(out);
             for (String name : classes.keySet()) {
                 if (!name.startsWith(STANDIN)) {
                     throw new IOException("stand-in " + name + " is not in the package " + STANDIN.replace('/', '.'));
                 }
+            }
+            Files.createDirectories(kept.getParent());
+            try {
+                Files.move(out, kept);
+            } catch (IOException another) {
+                // Another process kept the same classes first.
             }
             return classes;
         } finally {
@@ -7762,6 +7778,17 @@ public final class JarPort {
                 walk.sorted(Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
             }
         }
+    }
+
+    static Map<String, byte[]> readClasses(Path root) throws IOException {
+        Map<String, byte[]> classes = new TreeMap<>();
+        try (var walk = Files.walk(root)) {
+            for (Path f : walk.filter(x -> x.toString().endsWith(".class")).toList()) {
+                String name = root.relativize(f).toString().replace('\\', '/');
+                classes.put(name.substring(0, name.length() - 6), Files.readAllBytes(f));
+            }
+        }
+        return classes;
     }
 
     /**
