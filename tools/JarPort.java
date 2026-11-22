@@ -622,15 +622,25 @@ public final class JarPort {
         return false;
     }
 
+    /** Where mark first is in data, or -1 (Boyer-Moore-Horspool: every class of a jar is searched at every step of a long port). */
     static int indexOf(byte[] data, byte[] mark) {
-        outer:
-        for (int i = 0; i + mark.length <= data.length; i++) {
-            for (int j = 0; j < mark.length; j++) {
-                if (data[i + j] != mark[j]) {
-                    continue outer;
-                }
+        int m = mark.length;
+        if (m == 0) {
+            return 0;
+        }
+        int[] skip = new int[256];
+        Arrays.fill(skip, m);
+        for (int j = 0; j < m - 1; j++) {
+            skip[mark[j] & 0xFF] = m - 1 - j;
+        }
+        for (int i = 0; i + m <= data.length; i += skip[data[i + m - 1] & 0xFF]) {
+            int j = m - 1;
+            while (j >= 0 && data[i + j] == mark[j]) {
+                j--;
             }
-            return i;
+            if (j < 0) {
+                return i;
+            }
         }
         return -1;
     }
