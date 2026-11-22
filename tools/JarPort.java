@@ -624,16 +624,20 @@ public final class JarPort {
 
     /** Where mark first is in data, or -1 (Boyer-Moore-Horspool: every class of a jar is searched at every step of a long port). */
     static int indexOf(byte[] data, byte[] mark) {
+        return indexOf(data, mark, 0);
+    }
+
+    static int indexOf(byte[] data, byte[] mark, int from) {
         int m = mark.length;
         if (m == 0) {
-            return 0;
+            return from;
         }
         int[] skip = new int[256];
         Arrays.fill(skip, m);
         for (int j = 0; j < m - 1; j++) {
             skip[mark[j] & 0xFF] = m - 1 - j;
         }
-        for (int i = 0; i + m <= data.length; i += skip[data[i + m - 1] & 0xFF]) {
+        for (int i = from; i + m <= data.length; i += skip[data[i + m - 1] & 0xFF]) {
             int j = m - 1;
             while (j >= 0 && data[i + j] == mark[j]) {
                 j--;
@@ -714,7 +718,35 @@ public final class JarPort {
 
     static final Pattern SRG = Pattern.compile("\\b[mf]_\\d+_\\b");
     static final Pattern INTERMEDIARY = Pattern.compile("net/minecraft/class_\\d+");
-    static final Pattern SRG_ANYWHERE = Pattern.compile("[mf]_\\d+_"); // SRG without its word bounds, which raw bytes beside a name can break
+
+    /** Whether the bytes hold m_N_ or f_N_ anywhere: SRG without its word bounds, which raw bytes beside a name can break. */
+    static boolean srgAnywhere(byte[] b) {
+        for (int i = 0; i + 3 < b.length; i++) {
+            if ((b[i] == 'm' || b[i] == 'f') && b[i + 1] == '_' && b[i + 2] >= '0' && b[i + 2] <= '9') {
+                int j = i + 3;
+                while (j < b.length && b[j] >= '0' && b[j] <= '9') {
+                    j++;
+                }
+                if (j < b.length && b[j] == '_') {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    static final byte[] INTERMEDIARY_CLASS = "net/minecraft/class_".getBytes(StandardCharsets.ISO_8859_1);
+
+    /** Whether the bytes hold net/minecraft/class_N anywhere. */
+    static boolean intermediaryAnywhere(byte[] b) {
+        for (int i = indexOf(b, INTERMEDIARY_CLASS, 0); i >= 0; i = indexOf(b, INTERMEDIARY_CLASS, i + 1)) {
+            int next = i + INTERMEDIARY_CLASS.length;
+            if (next < b.length && b[next] >= '0' && b[next] <= '9') {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * A class a jar for several loaders carries for another one (a Forge class beside the Fabric ones), which the loader
@@ -730,7 +762,7 @@ public final class JarPort {
         Pattern other = loader.equals("fabric") ? SRG : INTERMEDIARY;
         // Every name the class links is text in its constant pool: a class whose bytes hold no such name anywhere has none,
         // and reading every class of every jar at every step of a long port was a tenth of the port.
-        if (!(loader.equals("fabric") ? SRG_ANYWHERE : INTERMEDIARY).matcher(new String(bytes, StandardCharsets.ISO_8859_1)).find()) {
+        if (!(loader.equals("fabric") ? srgAnywhere(bytes) : intermediaryAnywhere(bytes))) {
             return false;
         }
         boolean[] found = new boolean[1];
@@ -804,9 +836,9 @@ public final class JarPort {
         boolean outermost = grants == null;
         if (outermost) {
             typesUsed = false;
-            Map<String, GameDiff.RawCls> all = new HashMap<>();
+            Map<String, List<byte[]>> all = new HashMap<>();
             carried(entries, all);
-            tree = all;
+            tree = new Carried(all);
             grants = new HashSet<>();
             for (String text : accessTransformers(entries, name)) {
                 widen(grants, text);
@@ -1487,7 +1519,34 @@ public final class JarPort {
 
     record Decl(String owner, boolean game) {}
 
-    Map<String, GameDiff.RawCls> tree = Map.of(); // every class the jar being ported and its nested jars carry
+    Carried tree = new Carried(Map.of()); // every class the jar being ported and its nested jars carry
+
+    /**
+     * The classes a jar and its nested jars carry, each read only when asked for: a long port asked for few of them at each
+     * step, and reading every class of every jar at every step was a twentieth of the port. A name carried twice is the
+     * first copy that reads.
+     */
+    static final class Carried {
+        final Map<String, List<byte[]>> copies;
+        final Map<String, Optional<GameDiff.RawCls>> read = new HashMap<>();
+
+        Carried(Map<String, List<byte[]>> copies) {
+            this.copies = copies;
+        }
+
+        GameDiff.RawCls get(String name) {
+            return read.computeIfAbsent(name, n -> {
+                for (byte[] bytes : copies.getOrDefault(n, List.of())) {
+                    try {
+                        return Optional.of(GameDiff.parse(bytes));
+                    } catch (RuntimeException unreadable) {
+                        // read() skips such a class too
+                    }
+                }
+                return Optional.empty();
+            }).orElse(null);
+        }
+    }
 
     /**
      * A class the jar carries in one of its own nested jars, which the new release lacks and whose package the new release
@@ -1513,12 +1572,11 @@ public final class JarPort {
     }
 
     /** Every class in a jar and its nested jars, by name. */
-    static void carried(Map<String, byte[]> entries, Map<String, GameDiff.RawCls> out) throws IOException {
+    static void carried(Map<String, byte[]> entries, Map<String, List<byte[]>> out) throws IOException {
         for (var e : entries.entrySet()) {
             if (e.getKey().endsWith(".class") && !e.getKey().startsWith("META-INF/versions/")) {
                 try {
-                    GameDiff.RawCls rc = GameDiff.parse(e.getValue());
-                    out.putIfAbsent(rc.name, rc);
+                    out.computeIfAbsent(ClassFile.of().parse(e.getValue()).thisClass().asInternalName(), k -> new ArrayList<>()).add(e.getValue());
                 } catch (RuntimeException unreadable) {
                     // read() skips such a class too
                 }
