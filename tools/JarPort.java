@@ -3605,10 +3605,11 @@ public final class JarPort {
      * now). Every point must be a call or field use; exactly one private method of the class that the new method calls
      * must have them all (as often as the old method had, when an ordinal picks one), and nothing else in the class may
      * call it, so the injector runs as often as before. into with each method as one whose parameters changed ('s'),
-     * which the handler follows only where Mixin will accept it, or null.
+     * which the handler follows only where Mixin will accept it, or null. A method whose own parameters changed too is
+     * followed from its new signature.
      */
     List<Found> deeper(List<String> targets, Injector inj, List<Found> into, List<Found> ats) {
-        if (into.isEmpty() || into.stream().anyMatch(f -> f.kind() != 'm' || f.desc() == null || f.name().startsWith("<"))
+        if (into.isEmpty() || into.stream().anyMatch(f -> f.kind() != 'm' && f.kind() != 's' || f.desc() == null || f.name().startsWith("<"))
             || inj.ats().isEmpty() || inj.ats().stream().anyMatch(at -> !Set.of("INVOKE", "INVOKE_ASSIGN", "FIELD").contains(at[0]))
             || ats.stream().anyMatch(at -> at == null || at.kind() == 0 || at.desc() == null) || pointsKept(targets, inj, into, ats)) {
             return null;
