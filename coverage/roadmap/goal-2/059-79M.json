@@ -1,0 +1,11 @@
+{
+ "id": "79M",
+ "title": "The link check reads the libraries each release ships",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "On 1.20.4 -> 1.20.5 DataFixerUpper removed DataResult.PartialResult. Resourceful Config names it, was counted as linking, and crashed on both loaders in a real game; about a dozen other top mods per loader name it too. The link check read the libraries each release lists, but it copied every library class the old release had and the new one lacked into the new release, meant for a library the new release no longer lists at all (the loader brings ASM). That also hid every class a library both releases list had removed. A library class now carries over only when the new release lists no jar of that library, and a reference into a library is its own type of break on the scoreboard.",
+ "start": "2026-11-22",
+ "target": "2026-11-23",
+ "finish": "No mod the scoreboard counts as linking on 1.20.4 -> 1.20.5 names a library member 1.20.5 removed (Resourceful Config and the mods naming DataResult.PartialResult stop linking on both loaders); the false links removed are counted over every update and the big updates; no mod that still links crashes in game on a removed library member",
+ "wrongIf": "a mod still counted as linking on 1.20.5 crashes on a removed library class or member, or a mod naming a library the new release dropped entirely (one the loader brings) stops linking"
+}
