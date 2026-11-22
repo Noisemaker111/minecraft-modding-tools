@@ -50,6 +50,12 @@ client: the title screen, a world, the inventory and every creative tab), since 
 failed start drops the mod its log names and starts again. It reports each mod's server and client verdicts side by
 side, and any mod that loaded on the server and failed in the client.
 
+jars also runs the JVM's verifier (the JDK's copy of HotSpot's) over every ported class against the new release, as the
+game would when it loads the class: a value of a type the instruction using it does not accept, or a method declared
+twice, is a VerifyError or ClassFormatError in game though every reference links, and the mod does not link. A class
+route (a removed class moved to the class the game put in its place) the verifier refuses for a mod is left out for that
+mod, and the old class is then a stand-in's (knowledge/standins) or reported gone.
+
 jars also checks each mod's data files against the new release: a built-in game id (an enchantment effect type, a loot
 function, a data component) that the old release registers and the new one does not, read from each release's own
 data generator report. A server refuses such a file, which the link check cannot see; modsThatLinkAndData counts the
@@ -484,13 +490,50 @@ def shipped_obfuscated(loader, version):
     return vkey(version) < vkey(UNOBFUSCATED) if loader == "fabric" else vkey(version) < vkey(MOJANG_NEOFORGE)
 
 
-def port_key(loader, frm, to, route, runtime=False):
-    """Everything one port reads beside the mod's own jar: the porter's classes, the route map, the port rules, the loaders'
-    release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
+def stops(loader, frm, to):
+    """The releases a port from frm to to stops at (tools/JarPort.java, hops): each update with stand-ins is a step of its
+    own, so its stand-ins run and the steps after it port them; the updates between are one step on their composed map."""
+    key = (loader, frm, to)
+    if key not in STOPS:
+        if len(chain(frm, to)) <= 2:
+            STOPS[key] = [frm, to]
+        else:
+            planned = subprocess.run([java(), "-cp", jar_tools(), "JarPort", "--hops", "--chain", ",".join(chain(frm, to)),
+                                      "--fixes", str(ROOT / "knowledge" / "fixes.json"), "--loader", loader], capture_output=True, text=True, check=True)
+            STOPS[key] = planned.stdout.strip().splitlines()[-1].split(",")
+    return STOPS[key]
+
+
+STOPS = {}
+
+
+def routes(loader, frm, to):
+    """The route map of each step of a port from frm to to."""
+    steps = stops(loader, frm, to)
+    return [route_map(a, b, loader, compile_tools()) for a, b in zip(steps, steps[1:])]
+
+
+def port_key(loader, frm, to, runtime=False):
+    """Everything one port reads beside the mod's own jar: the porter's classes, each step's route map and stand-ins, the
+    port rules, the loaders' release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
     # The hand-back of an obfuscated release reads the jars as they came too: the release's pinned files.
     pinned = (PINS / f"{loader}-{frm}.json").read_bytes() if shipped_obfuscated(loader, frm) and (PINS / f"{loader}-{frm}.json").is_file() else b""
-    return content_key(tools_classes_key(), route.read_bytes(), (ROOT / "knowledge" / "fixes.json").read_bytes(), platform_key(loader, route),
+    steps = stops(loader, frm, to)
+    maps = routes(loader, frm, to)
+    return content_key(tools_classes_key(), *(r.read_bytes() for r in maps), (ROOT / "knowledge" / "fixes.json").read_bytes(),
+                       *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), *(platform_key(loader, r) for r in maps),
                        java_version(), loader, frm, to, runtime, pinned)
+
+
+def standins_key(loader, frm, to):
+    """The stand-ins JarPort reads for one update and loader (knowledge/standins/FROM-TO/ and FROM-TO.LOADER/), each file's
+    path and content."""
+    parts = []
+    for folder in (ROOT / "knowledge" / "standins" / f"{frm}-{to}", ROOT / "knowledge" / "standins" / f"{frm}-{to}.{loader}"):
+        if folder.is_dir():
+            for f in sorted(folder.rglob("*.java")):
+                parts += [f.relative_to(folder.parent).as_posix().encode(), f.read_bytes()]
+    return content_key(*parts)
 
 
 def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False):
@@ -499,11 +542,12 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     wanted, so a mod whose port (port_key and its jar's content) was made before, by any run on this machine, is read from
     ~/.mmt/exposure/ports/ instead of ported again; only the rest go to JarPort."""
     classpath = jar_tools()
-    route = route_map(frm, to, loader, compile_tools())
+    steps = stops(loader, frm, to)
+    maps = routes(loader, frm, to)
     out_dir.mkdir(parents=True, exist_ok=True)
     rows, todo, keys, checked = {}, [], {}, 0
     if cache:
-        folder = keyed_at("ports", port_key(loader, frm, to, route, runtime))
+        folder = keyed_at("ports", port_key(loader, frm, to, runtime))
         for jar in jars:
             keys[jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
             if keys[jar.name].is_file() and not VERIFY:
@@ -513,8 +557,12 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     else:
         todo = list(jars)
     if todo:
-        args = [java(), "-Xmx10g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--map", str(route), "--fixes", str(ROOT / "knowledge" / "fixes.json"),
+        args = [java(), "-Xmx10g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--fixes", str(ROOT / "knowledge" / "fixes.json"),
                 "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else [])
+        if len(steps) > 2:
+            args += ["--via", ",".join(steps[1:-1])]
+        for route in maps:
+            args += ["--map", str(route)]
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
             args += ["--originals", str(HOME / "jars" / f"{loader}-{frm}")]
@@ -827,8 +875,17 @@ ANSWERED = {"replaced", "split", "linked", "template"}
 def kind_of(member, said):
     """The type of break a reference is: what it is (a call, a mixin target whose signature changed, an abstract method
     not written ...) and what the game's own code did about it. A way to handle a type frees every mod held by it, in
-    every update; a rule for one member frees the mods that use that member."""
-    return f"{member.split(': ', 1)[0]}, game: {said.get(member, {}).get('game') or 'not read'}"
+    every update; a rule for one member frees the mods that use that member. A reference into one of the libraries the
+    release ships (DataFixerUpper, Brigadier...) is a type of its own: the answer to it lives in that library, not the game."""
+    row = said.get(member, {})
+    return f"{member.split(': ', 1)[0]}{' (library)' if row.get('part') == 'library' else ''}, game: {row.get('game') or 'not read'}"
+
+
+def held_by(row, data, said):
+    by = {}
+    for ref in sorted(left(row, data)):
+        by.setdefault(kind_of(ref, said), []).append(ref)
+    return by
 
 
 def by_type(rows, data, said):
@@ -926,6 +983,10 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     }
     order = nearest(rows, data, said)
     summary["types"] = by_type(rows, data, said)
+    # Every blocked mod's references by type, so a way to handle several types can be counted by the mods it frees.
+    summary["held"] = {m["mod"]: held_by(m, data, said) for m in rows if left(m, data)}
+    # Why each blocked mod's mixin handlers did not follow their targets (JarPort.why), for designing the mixin types.
+    summary["refused"] = {m["mod"]: m["refused"] for m in rows if left(m, data) and m.get("refused")}
     summary["nearest"] = [{**turn, "members": turn["members"][:25]} for turn in order[:40]]
     summary["finishing"] = [[turn["fixes"], turn["modsDone"]] for turn in order]
     # Each mod's verdict: the references it still needs, the types of break they are, and what its port wrote. Two runs
@@ -933,7 +994,7 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     summary["links"] = sorted(m["mod"] for m in rows if not left(m, data))
     summary["verdicts"] = {m["mod"]: {"left": sorted(left(m, data)), "types": sorted({kind_of(r, said) for r in left(m, data)}), "ported": m.get("ported")}
                            for m in rows}
-    summary["porter"] = port_key(loader, frm, to, route_map(frm, to, loader, classes)) + " " + content_key(*(p.read_bytes() for p in mods))
+    summary["porter"] = port_key(loader, frm, to) + " " + content_key(*(p.read_bytes() for p in mods))
     if kind:
         summary["partial"] = f"only the {len(mods)} mods the last run held back with '{kind}'"
     before = work / "before.json"
@@ -1411,6 +1472,18 @@ def provides(jar, loader, release=None):
         return {i for i in read(z) if i}
 
 
+def own_ids(jar, loader):
+    """The mod ids a jar's own metadata declares (its id and what it says it provides), without the jars nested in it."""
+    import zipfile
+    with zipfile.ZipFile(jar) as z:
+        meta = metadata(z, loader)
+    if meta is None:
+        return set()
+    if loader == "fabric":
+        return {i for i in (meta.get("id"), *(meta.get("provides") or [])) if i}
+    return {m.get("modId") for m in meta.get("mods", []) if m.get("modId")}
+
+
 def unmet(asked, provided):
     """What of a mod's needs nothing provided answers. A language loader is answered by the jar that registers it under the
     name the mod's modLoader asks for (Kotlin for Forge's is kotlinforforge, KotlinLangForge's klf), or by one whose name
@@ -1526,7 +1599,13 @@ def choose(loader, frm, to, linked, folder, pins, platform):
     own = set(platform)
     candidates = [folder / n for n in linked if (folder / n).is_file()]
     unread = {j.name: [f"metadata for {loader}"] for j in candidates if needs(j, loader) is None}
-    candidates = [j for j in candidates if j.name not in unread and not provides(j, loader) & own - {"loader:*"}]
+    unread |= {n: [f"it is not started: its jar is not in {folder}"] for n in linked if not (folder / n).is_file()}
+    # A top mod that is the platform itself (Fabric API) is not started twice. Only the jar's own ids say so: a mod that
+    # nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod, and the
+    # loader keeps the platform's newer copy of that module.
+    unread |= {j.name: ["it is not started twice: it is the platform itself, which the pack runs for the new release"]
+               for j in candidates if j.name not in unread and own_ids(j, loader) & own - {"loader:*"}}
+    candidates = [j for j in candidates if j.name not in unread]
     by_jar = {folder / f"{m['slug']}--{m['file']}": m for m in pins}
     while True:
         more = [j for j in candidates if j not in chosen and not unmet(needs(j, loader), provided)]
@@ -1592,11 +1671,12 @@ def has_code(jar):
         return any(n.endswith(".class") and b"net/minecraft/" in z.read(n) for n in z.namelist())
 
 
-def client_starts(loader, to, server_pack, names, platform=()):
+def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(), run=None):
     """The same ported jars in a real client of the new release (mmt pack-check --side client): the title screen, a world, the
     inventory and every creative tab. A start that fails drops the jar its log names and starts again; each mod ends loaded or
     failed (with why). A server never runs client code, so this is where rendering and screen code is proven. The platform
-    (Fabric API) goes in as it did on the server and is not counted."""
+    (Fabric API) goes in as it did on the server and is not counted; kept names the jars of it that no failure drops.
+    run: a stand-in for one pack-check of the client pack folder (tests), returning its JSON."""
     pack = server_pack.with_name(server_pack.name + "-client")
     if pack.exists():
         shutil.rmtree(pack)
@@ -1611,12 +1691,16 @@ def client_starts(loader, to, server_pack, names, platform=()):
     verdicts = {}
 
     def start():
+        if run:
+            return run(pack), subprocess.CompletedProcess([], 1, "", "")
         done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--side", "client", "--json"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         at = done.stdout.find("{")
         return json.loads(done.stdout[at:]) if at >= 0 else {}, done
 
-    for attempt in range(len(names) + 1):
+    # Each failed start takes at least one jar out (a mod or a library), or ends the client proof with why, so the starts
+    # end; their number is not budgeted by the mods, which libraries failing would use up before every mod had a verdict.
+    while True:
         result, done = start()
         res = result.get("result", {})
         present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
@@ -1624,23 +1708,45 @@ def client_starts(loader, to, server_pack, names, platform=()):
             for name in present:
                 verdicts.setdefault(name, "loaded")
             break
-        blamed = {}
+        # The libraries can be what fails too; the platform (kept: Fabric API, whose own id was "fabric" before 1.18.2)
+        # cannot be left out.
+        libraries = [n for n in platform if (pack / "mods" / n).is_file() and n not in kept]
+        found = {}
         for finding in res.get("findings", []):
             if finding.get("severity") != "problem" or finding.get("kind") != "client-start":
                 continue
             for s in finding.get("suspects", []):
-                top = s.get("jar", "").split("!")[0] or next((n for n in present if s.get("mod") in mod_ids(pack / "mods" / n)), "")
-                if top in present:
-                    blamed.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
+                top = s.get("jar", "").split("!")[0]
+                if top not in present + libraries:
+                    top = next((n for n in present + libraries if s.get("mod") in mod_ids(pack / "mods" / n)), "")
+                if top:
+                    found.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
+        if not found:
+            found = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present + libraries, "*client*.log").items()}
+        failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
+        if not found and not res.get("client", {}).get("toolError"):
+            found = first_failing(pack, present + libraries, loader, start, failure)
+        for library in [n for n in found if n in libraries]:
+            gives = provides(pack / "mods" / library, loader, to)
+            (pack / "mods" / library).rename(pack / "dropped" / library)
+            platform = [n for n in platform if n != library]
+            print(f"  {library}: the library fails in the client")
+            for name in present:
+                asked = needs(pack / "mods" / name, loader) or set()
+                if asked & gives:
+                    found.setdefault(name, f"needs the library {library}, which fails in the client: " + found[library][:300])
+        blamed = {n: why for n, why in found.items() if n in present}
+        if not blamed and any(n in libraries for n in found):
+            continue  # only a library failed: the next start runs without it
         if not blamed:
-            # The client itself could not be driven (the start names no mod, say an older release the driver cannot open a
-            # world in): the server's verdicts stand, and the client is reported as not run, with why.
+            # The client itself could not be driven (no mod set makes it fail or pass, or mmt's own step does not fit this
+            # release): the server's verdicts stand, and the client is reported as not run, with why.
             print(res.get("details", done.stdout[-2000:]))
-            failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
             print(f"a client start failed and named no mod; the client is not run: {failure}")
             return {"mods": len(names), "loaded": 0, "verdicts": {}, "notRun": failure, "receipt": result.get("receipt")}
+        java = built_for_newer_java(res)
         for name, why in blamed.items():
-            verdicts[name] = "failed: " + why
+            verdicts[name] = "failed: " + (java[name] + "; " if name in java else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
             print(f"  {name}: failed in the client")
     # As on the server, a dropped mod gets one more start with the mods that loaded: a log can name a bystander.
@@ -1652,8 +1758,69 @@ def client_starts(loader, to, server_pack, names, platform=()):
             print(f"  {name}: loads in the client with the others on its own start")
         else:
             (pack / "mods" / name).rename(pack / "dropped" / name)
+    for name in names:
+        verdicts.setdefault(name, "not started: its jar is in neither the server's pack nor what it dropped")
     loaded = sorted(n for n, v in verdicts.items() if v == "loaded")
     return {"mods": len(names), "loaded": len(loaded), "verdicts": verdicts}
+
+
+def with_needs(chosen, asks, gives):
+    """chosen and every jar that provides what they need, and what those need in turn: asks and gives map each jar to
+    what it needs and provides."""
+    out = list(chosen)
+    while True:
+        asked = set().union(*(asks[n] for n in out))
+        more = [n for n in gives if n not in out and gives[n] & asked]
+        if not more:
+            return out
+        out += more
+
+
+def client_opened(result):
+    return bool(result.get("result", {}).get("client", {}).get("opened"))
+
+
+def server_opened(result):
+    return bool(result.get("ok"))
+
+
+def first_failing(pack, present, loader, start, failure, opened=client_opened):
+    """When a start fails and nothing names a mod (a client sent back to the disconnected screen with no reason, a server
+    whose new world does not open), the jar whose arrival makes it fail: the shortest run of present, each with the jars it needs, whose start fails, found by
+    halving (about log2 of the mods in starts). Returns {jar: why}, or {} when the client fails with no mod at all: the
+    fault is not a mod's."""
+    mods, held = pack / "mods", pack / "held"
+    held.mkdir(exist_ok=True)
+    asks = {n: needs(mods / n, loader) or set() for n in present}
+    gives = {n: provides(mods / n, loader) for n in present}
+
+    def fails(count):
+        keep = set(with_needs(present[:count], asks, gives))
+        for n in present:
+            if n not in keep and (mods / n).is_file():
+                (mods / n).rename(held / n)
+            elif n in keep and (held / n).is_file():
+                (held / n).rename(mods / n)
+        result, _ = start()
+        return not opened(result)
+
+    low, high = 0, len(present)
+    try:
+        if fails(0):
+            return {}
+        while high - low > 1:
+            middle = (low + high) // 2
+            if fails(middle):
+                high = middle
+            else:
+                low = middle
+    finally:
+        for n in present:
+            if (held / n).is_file():
+                (held / n).rename(mods / n)
+    culprit = present[high - 1]
+    print(f"  {culprit}: the game starts with the jars before it and fails once it is added")
+    return {culprit: f"the game starts without it and fails with it (named by halving; the start alone said: {failure[:300]})"}
 
 
 def starts_alone(loader, to, pack, name, platform):
@@ -1690,14 +1857,14 @@ def display_name(jar):
     return None
 
 
-def named_in_errors(receipt, mods, present):
+def named_in_errors(receipt, mods, present, logs="*server*.log"):
     """The jars a failed start's errors name by the name a mod shows players ("Architectury API is a required dependency
     of Roughly Enough Items 14.0.680 but it is not installed!"), when the start's own findings name none: from the lines
     after the loader's "Found N error(s)" in the server log beside the receipt."""
     if not receipt:
         return {}
     errors, packs, mixins = [], [], []
-    for log in sorted(Path(receipt).parent.glob("*server*.log")):
+    for log in sorted(Path(receipt).parent.glob(logs)):
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
         at = next((i for i, line in enumerate(lines) if re.search(r"Found \d+ error\(s\)", line)), None)
         if at is not None:
@@ -1726,6 +1893,14 @@ def named_in_errors(receipt, mods, present):
             if shown and re.search(r"\bof " + re.escape(shown) + r"\b", line):
                 blamed[name] = "the loader names it: " + line[2:300]
     return blamed
+
+
+def built_for_newer_java(res):
+    """{jar: why} for the jars pack-check's static warning says are built for a newer Java than the release runs on. It
+    reads each jar's newest class, which the game may never load, so it is no evidence of a failure: it only says so
+    plainly beside a jar something else blamed."""
+    return {s["jar"]: "; ".join(s.get("why", [])) for f in res.get("findings", []) if f.get("kind") == "java"
+            for s in f.get("suspects", []) if s.get("jar")}
 
 
 def only_mods(linked, pins, wanted):
@@ -1780,7 +1955,10 @@ def load(loader, frm, to, save, mods=None, out=None):
     pins = json.loads((PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"]
     chosen, ready, to_port, left = choose(loader, frm, to, linked, folder, pins, set(platform_ids(loader, to)))
     for name, missing in sorted(left.items()):
-        print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
+        if missing[0].startswith("it is not started"):
+            print(f"  {name}: {missing[0][3:]}")
+        else:
+            print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
     left = {**skipped, **left}
     # What the run was asked to prove: every mod that links, or these slugs; compare_loads reads a mod main started and
     # this run did not as a regression only inside it.
@@ -1815,7 +1993,15 @@ def load(loader, frm, to, save, mods=None, out=None):
             platform.append(api_jar.name)
     mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     verdicts = {}
-    for attempt in range(len(chosen) + len(libraries) + 1):
+
+    def start_server():
+        done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        at = done.stdout.find("{")
+        return json.loads(done.stdout[at:]) if at >= 0 else {}
+
+    # Each failed start takes at least one jar out or stops the proof with why, so the starts end without a budget.
+    while True:
         done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         text = done.stdout[done.stdout.find("{"):]
@@ -1839,6 +2025,9 @@ def load(loader, frm, to, save, mods=None, out=None):
                     culprits.setdefault(top, "; ".join(s.get("why", []))[:400])
         if not culprits:
             culprits = named_in_errors(result.get("receipt"), pack / "mods", present + in_pack)
+        if not culprits:
+            culprits = first_failing(pack, present + in_pack, loader, lambda: (start_server(), None),
+                                     str(res.get("details") or result.get("error"))[-300:], server_opened)
         blamed = {n: why for n, why in culprits.items() if n in present}
         for top in (n for n in culprits if n in in_pack):
             # A library that fails takes the mods that need it along; each is failed with the library's reason.
@@ -1852,8 +2041,9 @@ def load(loader, frm, to, save, mods=None, out=None):
         if not culprits:
             print(res.get("details", done.stdout[-2000:]))
             raise SystemExit(f"a start failed and named no mod; receipt {result.get('receipt')}")
+        java = built_for_newer_java(res)
         for name, why in blamed.items():
-            verdicts[name] = "failed: " + why
+            verdicts[name] = "failed: " + (java[name] + "; " if name in java else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
             print(f"  {name}: failed")
     # A failed start can name a bystander along with the mod at fault, so each dropped mod that links gets one more start
@@ -1880,7 +2070,7 @@ def load(loader, frm, to, save, mods=None, out=None):
                     verdicts[name] = "clash: loads alone, fails next to the other mods: " + verdicts[name][len("failed: "):]
                     print(f"  {name}: loads alone, fails next to the others")
     client = client_starts(loader, to, pack, [n for n, v in verdicts.items() if v == "loaded" or v.startswith("client-only")],
-                           [n for n in platform if (pack / "mods" / n).is_file()])
+                           [n for n in platform if (pack / "mods" / n).is_file()], set(platform) - set(libraries))
     loaded = [n for n, v in verdicts.items() if v == "loaded"]
     summary = {
         "loader": loader, "from": frm, "to": to, "scope": scope, "mods": len(chosen), "loaded": len(loaded),
@@ -2053,7 +2243,7 @@ def main():
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     ls = sub.add_parser("updates", help="every LOADER:FROM:TO all runs, updates and jumps, as JSON (the cloud run's matrix)")
     ls.add_argument("--loader", choices=sorted(FIRST))
-    ls.add_argument("--only", help="LOADER:FROM,...")
+    ls.add_argument("--only", help="LOADER:FROM or LOADER:FROM:TO, comma-separated")
     pn = sub.add_parser("pin")
     pn.add_argument("--loader", choices=sorted(FIRST), help="one loader (default both)")
     pn.add_argument("--version", help="one release (default every one the loader is read for)")
@@ -2086,8 +2276,13 @@ def main():
         jars(a.loader, a.frm, a.to, a.save, a.out, kind=a.kind)
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
-        print(json.dumps([f"{lo}:{x}:{y}" for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in updates(lo) + jumps(lo)
-                          if not only or f"{lo}:{x}" in only]))
+        every = [(lo, x, y) for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in updates(lo) + jumps(lo)]
+        picked = [f"{lo}:{x}:{y}" for lo, x, y in every if not only or f"{lo}:{x}" in only or f"{lo}:{x}:{y}" in only]
+        # A name that picks nothing ran an empty sweep that looked like a result (0 of 0); say which instead.
+        unknown = sorted(o for o in only or () if not any(o in (f"{lo}:{x}", f"{lo}:{x}:{y}") for lo, x, y in every))
+        if unknown:
+            raise SystemExit(f"--only names no update: {', '.join(unknown)} (LOADER:FROM for every update from it, or LOADER:FROM:TO)")
+        print(json.dumps(picked))
     elif a.command == "load":
         load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
     elif a.command == "load-plan":

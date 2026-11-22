@@ -122,6 +122,10 @@ final class JarPortFabricTest {
         String widener = new String(ported.get("m5.accesswidener"), StandardCharsets.UTF_8);
         JarPortTest.expect(widener.startsWith("accessWidener v2 intermediary\naccessible field net/minecraft/class_1297 field_6002 Lnet/minecraft/class_1937;"),
             "the access widener is written for the intermediary namespace: " + widener);
+        JarPort unobfuscated = new JarPort(new GameDiff.Snap("1.21.11"), new GameDiff.Snap("26.1"), map);
+        String official = unobfuscated.accessWidener(unobfuscated.new Mod(), "accessWidener v2 named\n");
+        JarPortTest.expect(official.startsWith("accessWidener v2 official\n"),
+            "a widener read in Mojang names is written for the official namespace from 26.1, which Fabric Loader runs there: " + official);
         JarPortTest.expect(new String(ported.get("m5-refmap.json"), StandardCharsets.UTF_8).contains("\"mappings\": {}") && !ported.containsKey("META-INF/accesstransformer.cfg")
             && new String(ported.get("fabric.mod.json"), StandardCharsets.UTF_8).contains("\"minecraft\":\"2.0\""),
             "the refmap is emptied, the access transformer Fabric never reads is dropped, and the metadata asks for the new release: " + ported.keySet());
@@ -233,6 +237,42 @@ final class JarPortFabricTest {
             }
         }, 0);
         JarPortTest.expect(superCalls.equals(List.of("method_100")), "a restored override's super call to the other mod's method takes the same intermediary name: " + superCalls);
+
+        // A call to the game method a class inherits through another mod's class (Waystones' getBlockState() through Balm)
+        // goes back to the id the jar as it came called it by, read from its call sites as well as its declarations.
+        byte[] inherits = JarPortTest.jar(Map.of("m6x/User.class", JarPortTest.real("m6x/User", "other/Base", 0, new String[0], w -> {
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "use", "()Lnet/minecraft/world/Item;", null, null);
+            m.visitCode();
+            m.visitVarInsn(Opcodes.ALOAD, 0);
+            m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "m6x/User", "make", "()Lnet/minecraft/world/Item;", false);
+            m.visitInsn(Opcodes.ARETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        })));
+        byte[] asCame = JarPortTest.jar(Map.of("m6x/User.class", JarPortTest.real("m6x/User", "other/Base", 0, new String[0], w -> {
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "use", "()Lnet/minecraft/class_9;", null, null);
+            m.visitCode();
+            m.visitVarInsn(Opcodes.ALOAD, 0);
+            m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "m6x/User", "method_100", "()Lnet/minecraft/class_9;", false);
+            m.visitInsn(Opcodes.ARETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        })));
+        List<String> inheritedCalls = new ArrayList<>();
+        new ClassReader(JarPortTest.entries(back.jar(inherits, ModNames.Back.methodNames(asCame))).get("m6x/User.class")).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String n, String d, boolean itf) {
+                        if (!n.startsWith("<")) {
+                            inheritedCalls.add(n);
+                        }
+                    }
+                };
+            }
+        }, 0);
+        JarPortTest.expect(inheritedCalls.equals(List.of("method_100")), "a call to a game method inherited through another mod's class goes back to the id the jar called it by: " + inheritedCalls);
     }
 
     static Set<String> methods(byte[] bytes) {

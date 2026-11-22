@@ -54,21 +54,21 @@ public final class Exposure {
             row.put("game", game[0]);
             row.put("gameDetail", game[1]);
             row.put("portable", portable.contains(key));
-            row.put("part", loaderPart(a, key) ? "loader" : "game");
+            row.put("part", part(a, key));
             said.put(member, row);
         }
         Files.writeString(Path.of(out), Json.write(said), StandardCharsets.UTF_8);
         System.out.printf("%s -> %s: what the game's own code did, for %d references%n", from, to, said.size());
     }
 
-    /** Whether a key (a class, or owner.member) names the loader's API rather than the game's. */
-    static boolean loaderPart(GameDiff.Snap a, String key) {
+    /** What a key (a class, or owner.member) names: the game's, the loader's API, or one of the libraries the release ships (DataFixerUpper, Brigadier...). */
+    static String part(GameDiff.Snap a, String key) {
         String k = key.contains("(") ? key.substring(0, key.indexOf('(')) : key;
         GameDiff.Cls c = a.classes.get(k.replace('.', '/'));
         if (c == null && k.lastIndexOf('.') > 0) {
             c = a.classes.get(k.substring(0, k.lastIndexOf('.')).replace('.', '/'));
         }
-        return c != null && c.loader;
+        return c == null ? "game" : c.library ? "library" : c.loader ? "loader" : "game";
     }
 
     static final Pattern REFERENCE = Pattern.compile("^[^:]+: ([\\w.$]+?)(?:\\.([\\w$<>]+)(\\(.*)?)?$");
@@ -155,9 +155,10 @@ public final class Exposure {
             if (!d[0].startsWith("net.neoforged") || d[1].equals("neoform") || d[1].equals("neoforge")) {
                 continue;
             }
-            String path = d[0].replace('.', '/') + "/" + d[1] + "/" + d[2] + "/" + d[1] + "-" + d[2] + ".jar";
+            String file = d[1] + "-" + d[2] + (d[3] == null ? "" : "-" + d[3]) + ".jar";
+            String path = d[0].replace('.', '/') + "/" + d[1] + "/" + d[2] + "/" + file;
             try {
-                classes.addAll(classes(Files.readAllBytes(VersionMap.fetch(NEOFORGED + path, d[0] + "-" + d[1] + "-" + d[2] + ".jar")), "net/neoforged/"));
+                classes.addAll(classes(Files.readAllBytes(VersionMap.fetch(NEOFORGED + path, d[0] + "-" + file)), "net/neoforged/"));
             } catch (java.io.IOException notPublished) {
                 System.out.println("  " + path + ": " + notPublished.getMessage()); // a build-time library with no plain jar
             }
@@ -207,15 +208,18 @@ public final class Exposure {
         return VersionMap.fetchText(GameDiff.NEOFORGE + lv + "/neoforge-" + lv + ".pom", "neoforge-" + lv + ".pom");
     }
 
-    /** {group, artifact, version} of each plain jar dependency a pom lists (none with a type or classifier). */
+    /**
+     * {group, artifact, version, classifier or null} of each jar dependency a pom lists. A classifier names another jar of
+     * the artifact that the loader runs with: NeoForge's Dist and OnlyIn are in mergetool's "api" jar, nowhere else.
+     */
     static List<String[]> dependencies(String pom) {
         List<String[]> out = new ArrayList<>();
         Matcher d = Pattern.compile("<dependency>(.*?)</dependency>", Pattern.DOTALL).matcher(pom);
         while (d.find()) {
             String body = d.group(1); // its own coordinates come before any exclusion it lists
-            String g = tag(body, "groupId"), a = tag(body, "artifactId"), v = tag(body, "version");
-            if (g != null && a != null && v != null && tag(body, "type") == null && tag(body, "classifier") == null) {
-                out.add(new String[] {g, a, v});
+            String g = tag(body, "groupId"), a = tag(body, "artifactId"), v = tag(body, "version"), type = tag(body, "type");
+            if (g != null && a != null && v != null && (type == null || type.equals("jar"))) {
+                out.add(new String[] {g, a, v, tag(body, "classifier")});
             }
         }
         return out;
@@ -715,6 +719,41 @@ public final class Exposure {
     static String dotted(String internal) {
         return internal.replace('/', '.');
     }
+
+    /**
+     * What the JVM's verifier says of one class when it loads it, with no game running: the JDK's own copy of HotSpot's
+     * verifier (java.lang.classfile), given the class hierarchy a release and a mod's classes make. It checks what a link
+     * check cannot: that each value on the stack is of a type the instruction using it accepts (a mod's TranslatableComponent
+     * passed where 1.19 wants a MutableComponent, after the route moved the class to TranslatableContents, which is none),
+     * and that no class declares a method twice. A class that names a type neither knows (another mod's) is taken to accept
+     * it, as a check that cannot load that class cannot say otherwise. Each line is "reason in Class::method(...) ...".
+     */
+    static List<String> verify(byte[] bytes, java.util.function.Function<String, GameDiff.Cls> known) {
+        java.lang.classfile.ClassHierarchyResolver resolver = desc -> {
+            String name = desc.descriptorString().substring(1, desc.descriptorString().length() - 1);
+            GameDiff.Cls c = known.apply(name);
+            if (c != null) {
+                return (c.flags & 0x0200) != 0 ? java.lang.classfile.ClassHierarchyResolver.ClassHierarchyInfo.ofInterface()
+                    : java.lang.classfile.ClassHierarchyResolver.ClassHierarchyInfo.ofClass(c.sup == null ? null : java.lang.constant.ClassDesc.ofInternalName(c.sup));
+            }
+            return null;
+        };
+        var all = resolver.orElse(JDK_CLASSES).orElse(desc -> java.lang.classfile.ClassHierarchyResolver.ClassHierarchyInfo.ofClass(null));
+        List<String> out = new ArrayList<>();
+        try {
+            for (VerifyError e : java.lang.classfile.ClassFile.of(java.lang.classfile.ClassFile.ClassHierarchyResolverOption.of(all)).verify(bytes)) {
+                out.add(String.valueOf(e.getMessage()));
+            }
+        } catch (RuntimeException unreadable) {
+            out.add("unreadable by the verifier: " + unreadable.getMessage());
+        }
+        return out;
+    }
+
+    static final java.lang.classfile.ClassHierarchyResolver JDK_CLASSES =
+        java.lang.classfile.ClassHierarchyResolver.ofResourceParsing(ClassLoader.getPlatformClassLoader()).cached();
+
+    static final Pattern VERIFIED_METHOD = Pattern.compile(" in ([\\w/$]+)::([^(\\s]+)\\(");
 
     /** A GameDiff route map read for lookups: classes, members (by old owner, name, descriptor) and rewrites. */
     static final class Route {

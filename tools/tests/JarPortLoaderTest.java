@@ -7,7 +7,7 @@ import org.objectweb.asm.*;
  * The loader a mod runs on, read and linked like the game, each part on this JVM with real class files:
  * - a mod's call to a loader method the new release dropped (NeoForge's FML, Fabric API) is reported, and one it kept links;
  * - an interface Fabric API adds to a game class ("loom:injected_interfaces") makes the mod's call through the game class link;
- * - NeoForge's own pom names the libraries its loader is made of, and NeoForm's mappings the SRG names its mods use;
+ * - NeoForge's own pom names the libraries its loader is made of (classifier jars too), and NeoForm's mappings the SRG names its mods use;
  * - a NeoForge mod in SRG names (classes, access transformer, nested jars) is read in Mojang's names, the SRG ids from NeoForm
  * as it writes them before 1.20.2 and as numbers after.
  */
@@ -90,7 +90,7 @@ final class JarPortLoaderTest {
         GameDiff.Cls stack = snaps[1].classes.get("net/minecraft/Stack");
         expect(stack != null && stack.ifaces.contains("net/fabricmc/fabric/api/item/FabricStack") && !stack.loader,
             "the game class carries the injected interface and stays the game's: " + (stack == null ? null : stack.ifaces));
-        expect(Exposure.loaderPart(snaps[0], "net.neoforged.fml.ModLoadingContext.registerConfig(I)V") && !Exposure.loaderPart(snaps[0], "net.minecraft.Stack"),
+        expect(Exposure.part(snaps[0], "net.neoforged.fml.ModLoadingContext.registerConfig(I)V").equals("loader") && Exposure.part(snaps[0], "net.minecraft.Stack").equals("game"),
             "the scoreboard labels a loader member as the loader's and a game class as the game's");
     }
 
@@ -110,11 +110,13 @@ final class JarPortLoaderTest {
             + "\r\nName: net/neoforged/neoforge/versions/neoform/\r\nImplementation-Title: MCP\r\nImplementation-Version: 1.20.2-20231019.153440\r\n";
         expect("1.20.2-20231019.153440".equals(Exposure.manifestVersion(manifest, "net/neoforged/neoforge/versions/neoform/")),
             "NeoForge's own manifest names the NeoForm build it was made from, in its own section: " + Exposure.manifestVersion(manifest, "net/neoforged/neoforge/versions/neoform/"));
-        List<String> found = Exposure.dependencies(pom).stream().map(d -> String.join(":", d)).toList();
+        List<String> found = Exposure.dependencies(pom).stream().map(d -> String.join(":", Arrays.stream(d).filter(Objects::nonNull).toList())).toList();
         expect(found.contains("net.neoforged.fancymodloader:loader:4.0.23") && found.contains("net.neoforged:bus:8.0.1"),
             "NeoForge's pom gives its loader and event bus with their versions: " + found);
-        expect(found.stream().noneMatch(d -> d.contains("mergetool") || d.startsWith("*") || d.startsWith("org.slf4j")) && found.stream().filter(d -> d.contains("neoform")).count() == 1,
-            "a dependency with a classifier or a zip type, and the groups an exclusion names, are not libraries a mod links against: " + found);
+        expect(found.contains("net.neoforged:mergetool:2.0.0:api"),
+            "a dependency's classifier jar is one the loader runs with (Dist and OnlyIn are only in mergetool's api jar): " + found);
+        expect(found.stream().noneMatch(d -> d.startsWith("*") || d.startsWith("org.slf4j")) && found.stream().filter(d -> d.contains("neoform")).count() == 1,
+            "a zip type, and the groups an exclusion names, are not libraries a mod links against: " + found);
     }
 
     static void srg() throws Exception {

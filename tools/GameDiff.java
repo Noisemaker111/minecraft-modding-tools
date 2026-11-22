@@ -251,6 +251,7 @@ public final class GameDiff {
         final List<Cls> children = new ArrayList<>();
         String id;
         boolean library; // read from one of the release's library jars (addLibraries)
+        String artifact; // that library's Maven group and name, its version left out (com/mojang/datafixerupper)
 
         Cls(String name, int flags, String sup, List<String> ifaces, boolean loader) {
             this.name = name;
@@ -804,12 +805,15 @@ public final class GameDiff {
         return new String[] { VersionMap.jsonString(obj, "url", 0), VersionMap.jsonString(obj, "sha1", 0) };
     }
 
+    /** One library jar a release lists, with its Maven group and name (com/mojang/datafixerupper): the same library in another version shares it. */
+    record Library(String artifact, Path jar) {}
+
     /**
      * The jars of the libraries a release runs with (JOML, DataFixerUpper, Brigadier, fastutil, LWJGL...), as its
      * version json lists them, each fetched once and checked by its sha1. Natives are left out: they hold no classes.
      */
-    static List<Path> libraries(String versionJson) throws Exception {
-        List<Path> out = new ArrayList<>();
+    static List<Library> libraries(String versionJson) throws Exception {
+        List<Library> out = new ArrayList<>();
         Matcher m = Pattern.compile("\"artifact\"\\s*:\\s*\\{([^}]*)}").matcher(versionJson);
         Set<String> seen = new HashSet<>();
         while (m.find()) {
@@ -818,8 +822,9 @@ public final class GameDiff {
             if (path == null || !path.endsWith(".jar") || path.contains("natives") || !seen.add(path)) {
                 continue;
             }
-            out.add(verified(new String[] { VersionMap.jsonString(obj, "url", 0), VersionMap.jsonString(obj, "sha1", 0) },
-                "lib-" + path.substring(path.lastIndexOf('/') + 1)));
+            String version = path.substring(0, path.lastIndexOf('/'));
+            out.add(new Library(version.substring(0, version.lastIndexOf('/')), verified(new String[] { VersionMap.jsonString(obj, "url", 0), VersionMap.jsonString(obj, "sha1", 0) },
+                "lib-" + path.substring(path.lastIndexOf('/') + 1))));
         }
         return out;
     }
@@ -828,9 +833,9 @@ public final class GameDiff {
      * Library classes as the JVM resolves a mod's references against them: declarations only, no code, marked as not the
      * game's (as the loader's are). A class the snapshot already has (the game's, the loader's, an earlier jar's) is kept.
      */
-    static void addLibraries(Map<String, Cls> into, List<Path> jars) throws IOException {
-        for (Path jar : jars) {
-            for (byte[] bytes : classes(jar, null)) {
+    static void addLibraries(Map<String, Cls> into, List<Library> jars) throws IOException {
+        for (Library lib : jars) {
+            for (byte[] bytes : classes(lib.jar(), null)) {
                 ClassModel cm = ClassFile.of().parse(bytes);
                 String name = cm.thisClass().asInternalName();
                 if (into.containsKey(name)) {
@@ -842,6 +847,7 @@ public final class GameDiff {
                 }
                 Cls c = new Cls(name, cm.flags().flagsMask(), cm.superclass().map(ClassEntry::asInternalName).orElse(null), ifs, true);
                 c.library = true;
+                c.artifact = lib.artifact();
                 for (FieldModel fm : cm.fields()) {
                     c.fields.put(fm.fieldName().stringValue(), new Fld(c, fm.fieldName().stringValue(), fm.fieldType().stringValue(), fm.flags().flagsMask()));
                 }
