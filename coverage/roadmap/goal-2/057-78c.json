@@ -2,10 +2,12 @@
  "id": "78c",
  "title": "Porting agents prove ports in a real game on GitHub's runners, not on the maintainer's PC",
  "part": "Port by type of break",
- "status": "doing",
+ "status": "done",
  "text": "Every porting agent proved its port by starting real Minecraft servers and clients on the one PC they all share (python bench/exposure.py load), so a dozen agents at once would throttle it. tools/cloud-run load runs that same proof on GitHub's runners, one job per update (and only the chosen mods with -f mods=), with the client on a virtual display with software OpenGL, and brings each update's verdicts back into .runs/cloud/ in the shape load writes, compared with the receipt main keeps for the update. The port-a-mod workflow, CONTRIBUTING.md and AGENTS.md now send port proofs there; locally agents edit, compile and run the offline checks.",
  "start": "2026-11-21",
  "target": "2026-11-22",
  "finish": "tools/cloud-run load on NeoForge and Fabric 1.21.1 -> 1.21.2 gives every mod the same server verdict, and the same client verdict, as a local exposure.py load of the same commit",
- "wrongIf": "a mod's server or client verdict differs between the runner and the PC for a reason other than the runner itself (its software graphics), or the runner cannot start the client"
+ "wrongIf": "a mod's server or client verdict differs between the runner and the PC for a reason other than the runner itself (its software graphics), or the runner cannot start the client",
+ "done": "2026-11-21",
+ "result": "tools/cloud-run load gave the same verdicts as a local exposure.py load of the same porter, mod for mod. NeoForge 1.21.1 -> 1.21.2 (run 44962634432): 42 mods, server 30 load, client 28 of 32, every server and client verdict the same as on the PC. Fabric 1.21.1 -> 1.21.2 (run 44963807589): 32 mods, server 14 load, all 32 the same; the client drops Forge Config API Port and Better Mount HUD in both, then is disconnected joining its world (Krypton and e4mc redirect the same login encryption call) in both, so neither reports client verdicts. Wall time: 13m21s for both updates in parallel (jobs 12m35s and 11m52s), 12m57s for Fabric alone; locally 13m07s NeoForge and 10m10s Fabric, one after the other. To make it work on main, load now drops a failing library a log names through a nested jar, keeps a failed library out of later starts, and no longer adds Fabric API twice."
 }
