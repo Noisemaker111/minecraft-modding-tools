@@ -93,9 +93,16 @@ public final class JarPort {
         loaderTo = b.loaderVersion;
         route = Exposure.Route.read(map);
         // A library the new release no longer lists may still be there at run time (the loader brings ASM, for one): only
-        // what changed inside a library both releases list is checked.
+        // what changed inside a library both releases list is checked. A class gone from a library the new release still
+        // lists is gone at run time (1.20.5's DataFixerUpper dropped DataResult.PartialResult).
+        Set<String> listed = new HashSet<>();
+        for (GameDiff.Cls c : b.classes.values()) {
+            if (c.library && c.artifact != null) {
+                listed.add(c.artifact);
+            }
+        }
         for (GameDiff.Cls c : a.classes.values()) {
-            if (c.library && !b.classes.containsKey(c.name)) {
+            if (c.library && !b.classes.containsKey(c.name) && !listed.contains(c.artifact)) {
                 b.classes.put(c.name, c);
             }
         }
