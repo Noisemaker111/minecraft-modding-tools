@@ -1144,18 +1144,20 @@ public final class GameDiff {
                     tokens(m, true);
                 }
             }
-            for (Cls ca : a.classes.values()) {
-                Cls cb = b.classes.get(ca.name);
-                if (cb != null) {
-                    link(ca, cb, "name");
-                }
-            }
+            // published first: a rename can hand its old name to another class (Fabric 26.1's FabricServerRecipeManager
+            // became FabricRecipeManager, whose old class became FabricRecipeAccess), and the name would claim both ends
             published.classes().forEach((x, y) -> {
                 Cls ca = a.classes.get(x), cb = b.classes.get(y);
                 if (ca != null && cb != null) {
                     link(ca, cb, "published");
                 }
             });
+            for (Cls ca : a.classes.values()) {
+                Cls cb = b.classes.get(ca.name);
+                if (cb != null) {
+                    link(ca, cb, "name");
+                }
+            }
             for (int round = 0; round < 8; round++) {
                 int before = total();
                 descCache = new HashMap<>();

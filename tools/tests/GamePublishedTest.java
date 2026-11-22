@@ -8,7 +8,8 @@ import org.objectweb.asm.*;
  * and a porting page listing each class's members. Here a two-release loader is built whose renamed classes share no
  * name and no code with the old ones: linking alone leaves them apart, and the list read in Fabric's own formats links
  * the class, the method (its descriptor read through the renamed class) and the field. A member the list renames in a
- * class it does not rename (relative name on the page) is linked too.
+ * class it does not rename (relative name on the page) is linked too, and so is a rename whose old name another renamed
+ * class took (FabricServerRecipeManager -> FabricRecipeManager, whose old class became FabricRecipeAccess).
  *
  *   java -cp asm.jar:CLASSES GamePublishedTest   (in the jar-port check of bench/run_tests.py)
  */
@@ -17,6 +18,7 @@ final class GamePublishedTest {
     static final String OLD = "net/fabricmc/fabric/api/client/keybinding/v1/KeyBindingHelper";
     static final String NEW = "net/fabricmc/fabric/api/client/keymapping/v1/KeyMappingHelper";
     static final String TICKS = "net/fabricmc/fabric/api/event/lifecycle/v1/ServerTickEvents";
+    static final String RECIPES = "net/fabricmc/fabric/api/recipe/v1/";
 
     static final String CLASS_MAP = """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -57,10 +59,21 @@ final class GamePublishedTest {
         JarPortTest.expect(field.equals("START_LEVEL_TICK"), "the published field rename is linked: " + field);
         String kept = hop.mAB.entrySet().stream().filter(e -> e.getKey().name.equals("startWorld")).map(e -> e.getValue().name).findFirst().orElse("none");
         JarPortTest.expect(kept.equals("startLevel"), "a member renamed in a class that kept its name is linked: " + kept);
+
+        // one rename's old name is another's new name: the name alone would pair the two FabricRecipeManagers
+        Map<String, String> chained = new LinkedHashMap<>();
+        chained.put(RECIPES + "FabricRecipeManager", RECIPES + "FabricRecipeAccess");
+        chained.put(RECIPES + "FabricServerRecipeManager", RECIPES + "FabricRecipeManager");
+        GameDiff.Hop chain = new GameDiff.Hop(GameDiff.read("1.0", List.of(), null, List.of(type("FabricRecipeManager", "getAllMatches"), type("FabricServerRecipeManager", "getAllOfType"))),
+            GameDiff.read("2.0", List.of(), null, List.of(type("FabricRecipeAccess", "getAllMatches"), type("FabricRecipeManager", "getAllOfType"))));
+        chain.published = new GameDiff.Published(chained, Map.of());
+        chain.run();
+        JarPortTest.expect(linked(chain, RECIPES + "FabricRecipeManager", RECIPES + "FabricRecipeAccess"), "a renamed class whose old name another class took is linked to its new name");
+        JarPortTest.expect(linked(chain, RECIPES + "FabricServerRecipeManager", RECIPES + "FabricRecipeManager"), "the class that took the old name is linked to it");
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
-        System.out.println("game-published: 8 checks passed");
+        System.out.println("game-published: 10 checks passed");
     }
 
     static GameDiff.Hop hop(GameDiff.Published published) {
@@ -74,6 +87,15 @@ final class GamePublishedTest {
 
     static boolean linked(GameDiff.Hop hop, String from, String to) {
         return hop.cAB.entrySet().stream().anyMatch(e -> e.getKey().name.equals(from) && e.getValue().name.equals(to));
+    }
+
+    /** An interface in the recipe package with one method of its own. */
+    static byte[] type(String name, String method) {
+        ClassWriter w = new ClassWriter(0);
+        w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, RECIPES + name, null, "java/lang/Object", null);
+        w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, method, "()Ljava/util/List;", null, null).visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
     }
 
     /** The old loader, or the new one: the helper renamed with its method, and the tick events with a field and a method renamed. */
