@@ -423,8 +423,9 @@ def jar_tools():
     return CLASSES["path"]
 
 
-# Each process that reads jars loads two releases of the game first and starts cold, so more piles stop paying:
-# on 24 processors 150 NeoForge mods took 144 s in one pile, 66 s in four and 75 s in nine.
+# Each process that reads jars (ModNames; JarPort ports on every processor in one process) starts cold and reads a
+# release first, so more piles stop paying: when JarPort ran in piles, 150 NeoForge mods took 144 s in one pile on 24
+# processors, 66 s in four and 75 s in nine.
 PILE = 36
 # A pile only pays with processors to spare for its start: on GitHub's 4-processor runners four piles took 104 s
 # where one had taken about 90.
