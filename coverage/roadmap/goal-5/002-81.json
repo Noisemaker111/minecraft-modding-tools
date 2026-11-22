@@ -1,0 +1,11 @@
+{
+ "id": "81",
+ "title": "Say how to fix it, from fixes that already worked",
+ "part": "How to fix it",
+ "status": "later",
+ "text": "Every cause named in step 80 comes with the known way to make it faster: what to change, the mod it worked on and the gain measured there. Today 14 patterns exist, each written from one accepted speedup, and nobody has checked how often they match a mod they were not written on. The step measures that on mods held out from the pattern library, and grows the library by the kind of slowness (the game call misused, the cache dropped, the work repeated every tick), ranked by how many of the most-downloaded mods show it, never by one mod's profile.",
+ "finish": "On 10 most-downloaded mods no pattern was written from, at least half of the first causes named come with a known fix, and that fix, applied by hand, is accepted by perf-optimize on at least 3. Not measured yet; the first held-out run replaces these numbers if they are far off",
+ "wrongIf": "the patterns match only the mods they were written on",
+ "start": "2026-12-01",
+ "target": "2026-12-19"
+}

@@ -1,4 +1,11 @@
-# Profile a mod or modpack locally
+# Find what makes a mod lag, and fix it
+
+Where this is going (roadmap goal 5): point mmt at a mod and, almost at once, it says what is causing the lag, how
+to make it faster, and makes the fix itself where the real game proves the mod behaves the same and runs faster.
+Today the first works (`perf`, below), the second has started (the report's **Known patterns**, 14 fixes proven on 4
+mods), and the third is not built: `perf-optimize` proves a change that you or your agent wrote.
+
+## Profile a mod or modpack locally
 
 Requires a **JDK 17 or newer**, a game/server using Java 17+, and the same OS user
 for the game and profiler. Start Minecraft normally through your preferred launcher.
@@ -320,8 +327,8 @@ require additional tools or domain-specific probes.
 ## Accept a change only when it is equivalent and faster
 
 `perf-optimize` decides one candidate change. You, or your own agent, write the
-change from what the report shows and save it as a git diff; mmt never writes
-or proposes code, and makes no network or model calls.
+change from what the report shows and save it as a git diff; mmt does not write
+the change yet (that is roadmap step 82), and makes no network or model calls.
 
 ```sh
 git -C my-mod diff > candidate.diff && git -C my-mod checkout -- .

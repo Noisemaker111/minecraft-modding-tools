@@ -1,7 +1,7 @@
 {
  "about": "Every number mmt shows: on the roadmap page, in ROADMAP.md, in a PR or a report. One entry per thing measured, with every point it ever had and the target it is heading for. Record a point with python bench/measures.py add; print a table for a PR with python bench/measures.py table. A point carries its date, value, how many runs (n), what it was measured on, and where the receipt is. Cold and warm are separate measures, and so is the same check on another loader: a measure only ever compares the same work. A measure with 'computed' gets its points from the ledger or the roadmap at render time instead of from 'points'. A target with value null is set once its step measures a baseline. 'context' measures are other people's numbers we compare against, and 'info' measures are facts worth showing; neither has a target. Every other measure has one. The measures that say most about each goal are named in that goal's 'headline' in coverage/roadmap.json.",
  "machines": {"jon-pc": "Ryzen 9 3900X, Windows 11, JDK 25 (JDK 21 for NeoForge 1.21.1)", "ci": "GitHub-hosted runners (windows, macos, ubuntu)", "boat": "boat.dev default machine: 4 vCPU, 8 GB, Ubuntu, idle apart from the check", "boat-host": "boat.dev Linux T3 host: 8 cores, 16 GB, Ubuntu 24.04, Temurin 21, idle apart from one thread's work"},
- "areas": {"test": "Goal 1 · Testing mods", "plugin": "Goal 1 · Testing plugins", "port": "Goal 2 · Porting versions", "pack": "Goal 3 · Modpacks", "loader": "Goal 4 · Loaders and platforms", "ci": "CI", "roadmap": "Roadmap", "context": "Compared with"},
+ "areas": {"test": "Goal 1 · Testing mods", "plugin": "Goal 1 · Testing plugins", "port": "Goal 2 · Porting versions", "pack": "Goal 3 · Modpacks", "loader": "Goal 4 · Loaders and platforms", "perf": "Goal 5 · Making mods faster", "ci": "CI", "roadmap": "Roadmap", "context": "Compared with"},
  "measures": [
   {
    "id": "roadmap.steps-done",
@@ -2052,6 +2052,41 @@
     {"date": "2026-11-19", "value": 8, "n": 8, "note": "8 more are client-only; on 1.20.6 -> 1.21 10 of 10 load (11 client-only); none fails", "source": "python bench/exposure.py load --loader fabric --from 1.21.1 --to 1.21.2 (bench/exposure/load-fabric-1.21.1-1.21.2.json, load-fabric-1.20.6-1.21.json)"}
    ],
    "target": {"value": 8, "by": "2026-11-26", "step": "52"}
+  },
+  {
+   "id": "perf.auto-fixed",
+   "area": "perf",
+   "name": "Mods made faster with no hand edit, proven in the game",
+   "unit": "mods",
+   "better": "higher",
+   "explain": "Mods where one mmt command found the slow spot, made the change itself and kept it because the real game showed the same behaviour and a real speedup. Mods a pattern was written from do not count.",
+   "points": [
+    {"date": "2026-11-21", "value": 0, "note": "not built: every accepted speedup so far was written by an agent or a person", "source": "coverage/perf-runs.json"}
+   ],
+   "target": {"value": 3, "by": "2027-01-16", "step": "82"}
+  },
+  {
+   "id": "perf.known-fixes",
+   "area": "perf",
+   "name": "Known fixes mmt can name for a kind of slowness",
+   "unit": "rules",
+   "better": "higher",
+   "info": true,
+   "explain": "Entries in knowledge/perf-patterns.json. Each was written from an accepted perf-optimize run and names a symptom a capture of any mod can show. How often they match a mod they were not written on is not measured yet (step 81).",
+   "points": [
+    {"date": "2026-11-21", "value": 14, "note": "written from accepted speedups on 4 mods", "source": "knowledge/perf-patterns.json"}
+   ]
+  },
+  {
+   "id": "perf.accepted-speedups",
+   "area": "perf",
+   "name": "Mods with a speedup accepted by perf-optimize, written by hand",
+   "unit": "mods",
+   "better": "higher",
+   "info": true,
+   "points": [
+    {"date": "2026-11-21", "value": 4, "note": "Cyclic 15.7×, Simple Storage Network 5–6×, Diorama 1.6–2.2×, Pipez 1.2–1.3×", "source": "coverage/perf-runs.json"}
+   ]
   }
  ]
 }

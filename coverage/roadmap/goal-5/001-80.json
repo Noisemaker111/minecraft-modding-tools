@@ -1,0 +1,11 @@
+{
+ "id": "80",
+ "title": "Say what is causing the lag in under a minute",
+ "part": "What is slow",
+ "status": "next",
+ "text": "`mmt perf` already ranks mods and features, but the answer is a long report someone has to read, and it starts from a game the person launched and played. The step is the answer as a short list at the top, in the command line and the desktop app: this mod, this feature, this method, this many milliseconds a tick or a frame, worst first, within a minute of pointing mmt at a mod, a pack or a running game. It names the game or loader call the slow method sits on, so the same cause is recognised in the next mod.",
+ "finish": "On the 4 mods with an accepted speedup (Cyclic, Simple Storage Network, Diorama, Pipez), run before their fix, the first cause named is the method the accepted change edited, in under 60 seconds from a running game. Not measured yet",
+ "wrongIf": "the first cause named is somewhere other than where the accepted speedups were found, on 2 or more of the 4",
+ "start": "2026-11-24",
+ "target": "2026-12-05"
+}
