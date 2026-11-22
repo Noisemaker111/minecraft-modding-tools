@@ -140,9 +140,9 @@ READS = {
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
                                 + ["tools/tests/AgentWorldOpenTest.java"] + ASM_JARS,
 }
-# Files no packaged jar carries and no jar check reads: the docs, the bench scripts (the python check runs those), CI,
+# Files no packaged jar carries and no jar check reads: the docs, the bench scripts and cloud-run (the python check runs those), CI,
 # the desktop app and the generated site.
-NOT_IN_JAR = ("docs/", "bench/", ".github/", ".claude/", "app/", "coverage/roadmap", "coverage/ledger.json", "coverage/measures.json",
+NOT_IN_JAR = ("docs/", "bench/", ".github/", ".claude/", "app/", "tools/cloud-run", "coverage/roadmap", "coverage/ledger.json", "coverage/measures.json",
               "coverage/perf-runs.json", "ROADMAP.md")
 
 
