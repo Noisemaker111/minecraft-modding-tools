@@ -1953,7 +1953,16 @@ def load(loader, frm, to, save, mods=None, out=None):
     # and the platform's copy for the new release is the one players run. Other mods start with the mods and libraries
     # they need.
     pins = json.loads((PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"]
-    chosen, ready, to_port, left = choose(loader, frm, to, linked, folder, pins, set(platform_ids(loader, to)))
+    pack = ROOT / ".runs" / "exposure" / f"load-{loader}-{frm}-{to}"
+    if pack.exists():
+        shutil.rmtree(pack)
+    # What a mod needs is read from its ported jar, the one the game is given: the port renames the platform modules it
+    # asks for (Fabric API's 26.1 renames) and its game range, which its jar as it came still names the old way.
+    # A Fabric jar is ported in Mojang's names (read as jars does) and handed back in the names Fabric runs.
+    read, _ = mojang_names(loader, frm, [folder / n for n in linked if (folder / n).is_file()])
+    ported = pack / "ported"
+    report = jar_port(loader, frm, to, read, ported, pack / "report-mods.json", runtime=loader == "fabric")
+    chosen, ready, to_port, left = choose(loader, frm, to, linked, ported, pins, set(platform_ids(loader, to)))
     for name, missing in sorted(left.items()):
         if missing[0].startswith("it is not started"):
             print(f"  {name}: {missing[0][3:]}")
@@ -1971,13 +1980,14 @@ def load(loader, frm, to, save, mods=None, out=None):
                    "client": {"mods": 0, "loaded": 0, "verdicts": {}}, "loadedOnServerFailedInClient": []}
         keep_load(summary, out, save)
         return summary
-    pack = ROOT / ".runs" / "exposure" / f"load-{loader}-{frm}-{to}"
-    if pack.exists():
-        shutil.rmtree(pack)
-    # A Fabric jar is ported in Mojang's names (read as jars does) and handed back in the names Fabric runs.
-    read, _ = mojang_names(loader, frm, chosen + list(to_port.values()))
-    report = jar_port(loader, frm, to, read, pack / "mods", pack / "report.json", runtime=loader == "fabric")
-    links = {m["mod"]: not m.get("unlinked") and "error" not in m for m in report["mods"]}
+    (pack / "mods").mkdir()
+    for jar in chosen:
+        shutil.move(jar, pack / "mods" / jar.name)
+    rows = [m for m in report["mods"] if m["mod"] in {j.name for j in chosen}]
+    if to_port:
+        read, _ = mojang_names(loader, frm, list(to_port.values()))
+        rows = rows + jar_port(loader, frm, to, read, pack / "mods", pack / "report-libraries.json", runtime=loader == "fabric")["mods"]
+    links = {m["mod"]: not m.get("unlinked") and "error" not in m for m in rows}
     (pack / "dropped").mkdir()
     # The libraries are in the pack as the platform is, and not counted: the mods are the top mods that link.
     for name, jar in ready.items():
