@@ -6,14 +6,14 @@
 
 **The goal:** Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, and a modpack user never diagnoses a conflict by hand. Four goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, and move a project between loaders and platforms. Every result is proven in the real game or on a real server.
 
-**58 of 86 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
+**59 of 87 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
 
 ## Where each goal stands
 
 | Goal | Steps done | Now |
 |---|---|---|
 | **[1. Test a mod in seconds](#goal-1--test-a-mod-in-seconds)** | `██████░░░░`&nbsp;7&nbsp;of&nbsp;11 | ⚪ 27 · The bot joins a modded server<br>⚪ 26 · The bot on older Paper versions, on demand |
-| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `████████░░`&nbsp;46&nbsp;of&nbsp;60 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
+| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `████████░░`&nbsp;47&nbsp;of&nbsp;61 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
 | **[3. Make modpacks work together](#goal-3--make-modpacks-work-together)** | `██░░░░░░░░`&nbsp;1&nbsp;of&nbsp;4 | 🔵 29 · Reproduce Sismeel's Forge 1.20.1 pack problems<br>🔵 30 · Detect and repair the failure, checked in the game<br>🔵 31 · Any installed pack or export as input |
 | **[4. Change loader or platform](#goal-4--change-loader-or-platform)** | `████░░░░░░`&nbsp;4&nbsp;of&nbsp;11 | ⚪ 48 · What the most-downloaded mods need from the bridge, most-used first<br>⚪ 19 · Forge → NeoForge, proven on DragonMine Z |
 
@@ -262,6 +262,12 @@ One command moves a mod's source from any version to any other, forward or back,
 |---|---|---|---|
 | 79 | Readings the game's uses show once uses that say nothing about them stand aside; a plain result wrapped in a record read back | 🟢 done | Nov 21 |
 
+### Port by type of break
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 79L | Mods written in Kotlin start with the language loader they name | 🟢 done | Nov 22 |
+
 <details><summary>What each step is, and how far it got</summary>
 
 **1 · F3Nope 1.21.5 → 1.21.6 on Fabric** (done). Port a real Fabric mod one minor forward: F3Nope 1.21.5 → 1.21.6, build + mixin audit.
@@ -383,6 +389,8 @@ One command moves a mod's source from any version to any other, forward or back,
 **79b · Game calls whose result type changed** (done). The part of `call, game: linked` where only a call's result type changed and its arguments still fit. The new result is taken as it is where every use of it means the same of its type (followed on the verifier's stack, as #157 does for a retyped field: 1.19's getRandom became a RandomSource), widened where a primitive converts exactly (1.21.6's Window.getGuiScale() became an int, read as the double it was), or turned into the old type as the game's own code gets what a holder of it holds (holder.value()). A result that may hold nothing (Optional, DataResult) stays reported: reading it out could throw where the old call answered with a default. *So far:* Against main at 539cdb24e7 (run 44962948917): every update 6,145 -> 6,150, big updates 1,979 -> 1,983, newest 21; 'call, game: linked' finishes 199 -> 194, mods 1,973 -> 1,940; none lower. Clumps, freed on Fabric 1.18.2 -> 1.19 (its getRandom), passes on a real 1.19 server and client. Most of the type is redesigns (1.21.6's GuiGraphics.pose(), the render passes) and calls whose parameters changed, left for later steps.
 
 **79 · Readings the game's uses show once uses that say nothing about them stand aside; a plain result wrapped in a record read back** (done). The learner's vote lets uses that say nothing about a reading stand aside, each kind from the game's own code: an unread use where the new code put a value of an unrelated type (1.21.5 reads a whole Vec3 with a codec where it read a ListTag), one making the reading's own call with a fixed value of its own place where the reading has one (getFloatOr(tag, "walkSpeed", 0.1F) on a tag getCompoundOrEmpty gave), and one insisting on the value with the member's own successor (getCompound(key).orElseThrow()). A literal the game passed differently at each use and that every use read the same may be dropped when the old member's body only tested it (getList(key, type) is getListOrEmpty(key)). Uses standing aside carry a reading only with three that agree, every operand kept but ones only tested, and the reading compiling for the declared types. A late chain needs a setter the update removed: a member nested in itself with a successor (getCompound(a).getCompound(b)) no longer throws its own reading away. A method whose plain result the update wrapped in a record (1.21.9's packVersion(type), a PackFormat) is read back through the component the record's one factory from that value fills (PackFormat.of(n) is new PackFormat(n, 0): packVersion(type).major()). *So far:* 2026-11-21 (on #163): newest 21 -> 22 (NeoForge jump 15 -> 16: veinminer), every update 6,145 -> 6,146, big updates 1,979 -> 1,980 (Fabric 1.21.4 -> 1.21.5 37 -> 38), none lower; 'call, game: linked' in 1,973 -> 1,959 mods. 1.21.5's getString, getList, getCompound, getFloat and getDouble are learned on both loaders. veinminer is a named false link: on a real 26.3 server it needs Kotlin for Forge's language loader, which does not register there ('needs language provider klf'), although Kotlin for Forge links and loads as a mod. learn_diff over 21 NeoForge and 43 Fabric updates: no plain reading lost; chains are replaced by the plain readings they repeated.
+
+**79L · Mods written in Kotlin start with the language loader they name** (done). PR #166 named veinminer a false link on NeoForge 1.21.1 -> 26.3: started with Kotlin for Forge, it fails with 'needs language provider klf'. veinminer's modLoader is klf, which is KotlinLangForge's loader, not Kotlin for Forge's (kotlinforforge). The game proof (exposure.py load) counted any jar carrying a language loader as every language loader, so it started veinminer beside Kotlin for Forge and never fetched KotlinLangForge. NeoForge's own loader code reads language loaders the same way in FML 4 (1.21.1) and FML 12 (26.3): the same IModLanguageLoader service, the same FMLModType LIBRARY plugin layer. The load step now knows each loader by the name its class returns. *So far:* The false link was a wrong library, not a lost loader. On real NeoForge 26.3 (cloud-load run 44971629617, this branch with #166), the ported Kotlin for Forge 5.13.0 loads on the server and in the client, its own mod running on its kotlinforforge loader, and veinminer (1.21.1, ported) loads in both with KotlinLangForge's 26.3 release beside it; main's load step pairs veinminer with Kotlin for Forge and fetches no KotlinLangForge. On 1.21.2 (run 44969075956) veinminer and veinminer-client load on server and client with KotlinLangForge. No Kotlin for Forge mod links on 1.21.1 -> 26.3 yet (Cobblemon 898 references, Inventory Profiles Next 51, libIPN 33). The language SPI did change once, at Minecraft 1.21 (FML 3 -> 4: IModLanguageProvider -> IModLanguageLoader), a redesign no port rewrites; the load step now counts a loader only through the service its target release reads. Left: the whole 26.3 game proof stops at startup on a ported 1.21.1 Sinytra Connector (continuity's library), which needs cpw.mods.jarhandling that FML 12 removed, on main as here.
 
 </details>
 
@@ -551,7 +559,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 
 | Measure | First | Now | Target | Status |
 |---|---|---|---|---|
-| Roadmap steps done | 5 steps (Oct 24) | 58 steps (Nov 22) | 86 steps by Mar 26, 2027 | 65% of the way |
+| Roadmap steps done | 5 steps (Oct 24) | 59 steps (Nov 22) | 87 steps by Mar 26, 2027 | 66% of the way |
 | PR checks, start to finish | 2.0 min (Oct 27) | 3.9 min (Nov 5) | 5.0 min (hold) by Nov 5 | Met |
 | Multi-version Stonecutter run, start to finish (nightly until Nov 7, on demand since) | 45.9 min (Oct 28) | 41.7 min (Nov 6) | — | Fact |
 
