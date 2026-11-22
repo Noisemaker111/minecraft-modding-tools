@@ -95,13 +95,18 @@ final class JarPortStandinTest {
         List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(unlinked.isEmpty(), "every reference a stand-in answers links: " + unlinked);
         List<String> carried = ported.keySet().stream().filter(n -> n.startsWith("mmt/standin/")).sorted().toList();
-        JarPortTest.expect(carried.size() == 4 && carried.stream().allMatch(n -> n.matches("mmt/standin/m[0-9a-f]+/s9/(Gauge|OldBook|Vault|Zone)\\.class")),
+        JarPortTest.expect(carried.size() == 2 && carried.stream().allMatch(n -> n.matches("mmt/standin/m[0-9a-f]+/s9/(Gauge|Vault)\\.class")),
             "the jar carries each stand-in it uses under a package of its own: " + carried);
+        Map<String, byte[]> types = types(ported, false);
+        JarPortTest.expect(types.keySet().stream().filter(n -> n.endsWith(".class")).toList().size() == 2 && types.keySet().stream().filter(n -> n.matches("mmt/standin/u[0-9a-f]+/s9/(OldBook|Zone)\\.class")).count() == 2,
+            "the stand-in types (Zone and OldBook, classes the update dropped) are carried in the update's jar of types, nested as a library: " + types.keySet());
         String at = new String(ported.getOrDefault("META-INF/accesstransformer.cfg", new byte[0]), StandardCharsets.UTF_8);
         JarPortTest.expect(at.contains("public s9.Vault secret()I"), "the closed member a stand-in reaches is opened through the mod's access transformer: " + at);
 
         Map<String, byte[]> classes = new HashMap<>(game());
-        for (var e : ported.entrySet()) {
+        Map<String, byte[]> all = new HashMap<>(ported);
+        all.putAll(types);
+        for (var e : all.entrySet()) {
             if (e.getKey().endsWith(".class")) {
                 classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
             }
@@ -152,7 +157,7 @@ final class JarPortStandinTest {
         }
         JarPortTest.expect(refused.contains("answers no member of s9.Gauge"), "a stand-in that answers no old member is refused, not ignored: " + refused);
 
-        String outer = JarPort.standinHome("mod.jar"), inner = JarPort.standinHome("mod.jar!library.jar");
+        String outer = JarPort.standinHome("mod.jar", "1.0", "2.0"), inner = JarPort.standinHome("mod.jar!library.jar", "1.0", "2.0");
         JarPortTest.expect(!outer.equals(inner) && outer.matches("mmt/standin/m[0-9a-f]+/") && inner.matches("mmt/standin/m[0-9a-f]+/"),
             "a mod and a jar nested in it carry their stand-ins in packages of their own (one module each on NeoForge): " + outer + " " + inner);
 
@@ -186,11 +191,13 @@ final class JarPortStandinTest {
         for (boolean fabric : List.of(false, true)) {
             Map<String, byte[]> inner = new HashMap<>();
             inner.put("n9/lib/Lib.class", java8Interface());
+            inner.put("n9/lib/Maker.class", maker());
             inner.put(fabric ? "fabric.mod.json" : "META-INF/neoforge.mods.toml", (fabric ? "{\"schemaVersion\": 1, \"id\": \"n9lib\", \"version\": \"1\"}"
                 : "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n9lib\"\n").getBytes(StandardCharsets.UTF_8));
             String innerPath = fabric ? "META-INF/jars/n9lib.jar" : "META-INF/jarjar/n9lib.jar";
             Map<String, byte[]> outer = new HashMap<>();
             outer.put("n9/Plain.class", plain());
+            outer.put("n9/Use.class", use());
             outer.put(innerPath, JarPortTest.jar(inner));
             if (fabric) {
                 outer.put("fabric.mod.json", "{\"schemaVersion\": 1, \"id\": \"n9\", \"version\": \"1\", \"jars\": [{\"file\": \"META-INF/jars/n9lib.jar\"}]}".getBytes(StandardCharsets.UTF_8));
@@ -207,12 +214,15 @@ final class JarPortStandinTest {
             JarPortTest.expect(unlinked.isEmpty(), (fabric ? "Fabric" : "NeoForge") + ": a nested library's references a stand-in answers link: " + unlinked);
             Map<String, byte[]> lib2 = JarPortTest.entries(ported.get(innerPath));
             List<String> carried = lib2.keySet().stream().filter(n -> n.startsWith("mmt/standin/")).sorted().toList();
-            JarPortTest.expect(carried.equals(List.of(JarPort.standinHome("outer.jar!n9lib.jar") + "s9/Gauge.class", JarPort.standinHome("outer.jar!n9lib.jar") + "s9/Zone.class")),
+            JarPortTest.expect(carried.equals(List.of(JarPort.standinHome("outer.jar!n9lib.jar", "1.0", "2.0") + "s9/Gauge.class")),
                 (fabric ? "Fabric" : "NeoForge") + ": the nested library carries the stand-ins it uses in its own package: " + carried);
             JarPortTest.expect(ported.keySet().stream().noneMatch(n -> n.startsWith("mmt/")),
-                (fabric ? "Fabric" : "NeoForge") + ": the outer jar, which uses none, carries none: " + ported.keySet());
+                (fabric ? "Fabric" : "NeoForge") + ": the outer jar, which calls no stand-in, carries none of its own: " + ported.keySet());
             Map<String, byte[]> classes = new HashMap<>(game());
-            for (var e : lib2.entrySet()) {
+            Map<String, byte[]> all = new HashMap<>(lib2);
+            all.putAll(types(ported, fabric));
+            all.putAll(ported);
+            for (var e : all.entrySet()) {
                 if (e.getKey().endsWith(".class")) {
                     classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
                 }
@@ -226,7 +236,56 @@ final class JarPortStandinTest {
                 trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
             }
             JarPortTest.expect(trace.equals("42"), (fabric ? "Fabric" : "NeoForge") + ": the ported library runs its stand-ins: " + trace);
+            // The mod calls the library's Zone make(): both name the one stand-in type, so the call finds the declaration.
+            try {
+                Object zone = loader(classes).loadClass("n9.Use").getMethod("made").invoke(null);
+                trace = zone.getClass().getName() + " " + zone.getClass().getMethod("size").invoke(zone);
+            } catch (ReflectiveOperationException | LinkageError failed) {
+                trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+            }
+            JarPortTest.expect(trace.matches("mmt\\.standin\\.u[0-9a-f]+\\.s9\\.Zone 3"),
+                (fabric ? "Fabric" : "NeoForge") + ": a mod's call of its nested library's method that returns a stand-in type links: " + trace);
         }
+    }
+
+    /** The update's jar of stand-in types a ported jar nests, as its metadata lists it, read into its files. */
+    static Map<String, byte[]> types(Map<String, byte[]> ported, boolean fabric) throws Exception {
+        String list = new String(ported.getOrDefault(fabric ? "fabric.mod.json" : "META-INF/jarjar/metadata.json", new byte[0]), StandardCharsets.UTF_8);
+        for (String n : ported.keySet()) {
+            if (n.matches("META-INF/(jarjar|jars)/mmt-standin-types-[0-9a-f]+\\.jar")) {
+                JarPortTest.expect(list.contains(n), "the jar of types is listed where the loader reads nested jars: " + list);
+                Map<String, byte[]> files = JarPortTest.entries(ported.get(n));
+                String manifest = new String(files.getOrDefault("META-INF/MANIFEST.MF", new byte[0]), StandardCharsets.UTF_8);
+                JarPortTest.expect(manifest.contains("FMLModType: GAMELIBRARY") && files.containsKey("fabric.mod.json"),
+                    "the jar of types loads with the game on NeoForge and as a mod on Fabric: " + files.keySet());
+                return files;
+            }
+        }
+        return Map.of();
+    }
+
+    /** class n9.lib.Maker: static Zone make() { return new Zone(); } (Zone, a class the update dropped). */
+    static byte[] maker() {
+        ClassWriter w = start("n9/lib/Maker");
+        MethodVisitor make = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "make", "()Ls9/Zone;", null, null);
+        make.visitCode();
+        make.visitTypeInsn(Opcodes.NEW, "s9/Zone");
+        make.visitInsn(Opcodes.DUP);
+        make.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Zone", "<init>", "()V", false);
+        make.visitInsn(Opcodes.ARETURN);
+        make.visitMaxs(0, 0);
+        return end(w);
+    }
+
+    /** class n9.Use, in the outer mod: static Object made() { return Maker.make(); } */
+    static byte[] use() {
+        ClassWriter w = start("n9/Use");
+        MethodVisitor made = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "made", "()Ljava/lang/Object;", null, null);
+        made.visitCode();
+        made.visitMethodInsn(Opcodes.INVOKESTATIC, "n9/lib/Maker", "make", "()Ls9/Zone;", false);
+        made.visitInsn(Opcodes.ARETURN);
+        made.visitMaxs(0, 0);
+        return end(w);
     }
 
     /** interface n9.lib.Lib, Java 8: static int read(Gauge g) { return g.read(); } */

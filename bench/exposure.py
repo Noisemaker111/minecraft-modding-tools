@@ -484,13 +484,39 @@ def shipped_obfuscated(loader, version):
     return vkey(version) < vkey(UNOBFUSCATED) if loader == "fabric" else vkey(version) < vkey(MOJANG_NEOFORGE)
 
 
-def port_key(loader, frm, to, route, runtime=False):
-    """Everything one port reads beside the mod's own jar: the porter's classes, the route map, the port rules, the update's
-    stand-ins, the loaders' release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
+def stops(loader, frm, to):
+    """The releases a port from frm to to stops at (tools/JarPort.java, hops): each update with stand-ins is a step of its
+    own, so its stand-ins run and the steps after it port them; the updates between are one step on their composed map."""
+    key = (loader, frm, to)
+    if key not in STOPS:
+        if len(chain(frm, to)) <= 2:
+            STOPS[key] = [frm, to]
+        else:
+            planned = subprocess.run([java(), "-cp", jar_tools(), "JarPort", "--hops", "--chain", ",".join(chain(frm, to)),
+                                      "--fixes", str(ROOT / "knowledge" / "fixes.json"), "--loader", loader], capture_output=True, text=True, check=True)
+            STOPS[key] = planned.stdout.strip().splitlines()[-1].split(",")
+    return STOPS[key]
+
+
+STOPS = {}
+
+
+def routes(loader, frm, to):
+    """The route map of each step of a port from frm to to."""
+    steps = stops(loader, frm, to)
+    return [route_map(a, b, loader, compile_tools()) for a, b in zip(steps, steps[1:])]
+
+
+def port_key(loader, frm, to, runtime=False):
+    """Everything one port reads beside the mod's own jar: the porter's classes, each step's route map and stand-ins, the
+    port rules, the loaders' release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
     # The hand-back of an obfuscated release reads the jars as they came too: the release's pinned files.
     pinned = (PINS / f"{loader}-{frm}.json").read_bytes() if shipped_obfuscated(loader, frm) and (PINS / f"{loader}-{frm}.json").is_file() else b""
-    return content_key(tools_classes_key(), route.read_bytes(), (ROOT / "knowledge" / "fixes.json").read_bytes(), standins_key(loader, frm, to),
-                       platform_key(loader, route), java_version(), loader, frm, to, runtime, pinned)
+    steps = stops(loader, frm, to)
+    maps = routes(loader, frm, to)
+    return content_key(tools_classes_key(), *(r.read_bytes() for r in maps), (ROOT / "knowledge" / "fixes.json").read_bytes(),
+                       *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), *(platform_key(loader, r) for r in maps),
+                       java_version(), loader, frm, to, runtime, pinned)
 
 
 def standins_key(loader, frm, to):
@@ -510,11 +536,12 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     wanted, so a mod whose port (port_key and its jar's content) was made before, by any run on this machine, is read from
     ~/.mmt/exposure/ports/ instead of ported again; only the rest go to JarPort."""
     classpath = jar_tools()
-    route = route_map(frm, to, loader, compile_tools())
+    steps = stops(loader, frm, to)
+    maps = routes(loader, frm, to)
     out_dir.mkdir(parents=True, exist_ok=True)
     rows, todo, keys, checked = {}, [], {}, 0
     if cache:
-        folder = keyed_at("ports", port_key(loader, frm, to, route, runtime))
+        folder = keyed_at("ports", port_key(loader, frm, to, runtime))
         for jar in jars:
             keys[jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
             if keys[jar.name].is_file() and not VERIFY:
@@ -524,8 +551,12 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     else:
         todo = list(jars)
     if todo:
-        args = [java(), "-Xmx10g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--map", str(route), "--fixes", str(ROOT / "knowledge" / "fixes.json"),
+        args = [java(), "-Xmx10g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--fixes", str(ROOT / "knowledge" / "fixes.json"),
                 "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else [])
+        if len(steps) > 2:
+            args += ["--via", ",".join(steps[1:-1])]
+        for route in maps:
+            args += ["--map", str(route)]
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
             args += ["--originals", str(HOME / "jars" / f"{loader}-{frm}")]
@@ -957,7 +988,7 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     summary["links"] = sorted(m["mod"] for m in rows if not left(m, data))
     summary["verdicts"] = {m["mod"]: {"left": sorted(left(m, data)), "types": sorted({kind_of(r, said) for r in left(m, data)}), "ported": m.get("ported")}
                            for m in rows}
-    summary["porter"] = port_key(loader, frm, to, route_map(frm, to, loader, classes)) + " " + content_key(*(p.read_bytes() for p in mods))
+    summary["porter"] = port_key(loader, frm, to) + " " + content_key(*(p.read_bytes() for p in mods))
     if kind:
         summary["partial"] = f"only the {len(mods)} mods the last run held back with '{kind}'"
     before = work / "before.json"
