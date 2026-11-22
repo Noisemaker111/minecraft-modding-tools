@@ -530,7 +530,55 @@ public final class JarPort {
                 aliases.put(alias, owner);
             }
         });
+        // A module the new platform no longer has by its id was renamed or merged (26.1's fabric-key-binding-api-v1 became
+        // fabric-key-mapping-api-v1): it is the module that now holds most of its classes, in the new release's names. One
+        // whose classes no module holds was removed, and is asked of no one: what the mod used of it is reported where used.
+        if (was != null) {
+            Map<String, Set<String>> before = modules(Files.readAllBytes(was)), after = modules(Files.readAllBytes(now));
+            Map<String, String> holder = new HashMap<>();
+            after.forEach((id, classes) -> classes.forEach(c -> holder.putIfAbsent(c, id)));
+            before.forEach((id, classes) -> {
+                if (has.containsKey(id) || aliases.containsKey(id)) {
+                    return;
+                }
+                Map<String, Integer> votes = new TreeMap<>();
+                classes.forEach(c -> {
+                    String to = holder.get(cls(c));
+                    if (to != null) {
+                        votes.merge(to, 1, Integer::sum);
+                    }
+                });
+                aliases.put(id, votes.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(""));
+            });
+        }
         platformAliases = aliases;
+    }
+
+    /** The classes each module of a platform jar declares (its own and its nested jars'), by mod id; mixins left out. */
+    static Map<String, Set<String>> modules(byte[] jar) throws IOException {
+        Map<String, Set<String>> out = new TreeMap<>();
+        String id = null;
+        Set<String> classes = new TreeSet<>();
+        try (ZipInputStream z = new ZipInputStream(new ByteArrayInputStream(jar))) {
+            for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                String n = e.getName();
+                if (n.equals("fabric.mod.json")) {
+                    try {
+                        id = Json.object(Json.parse(new String(z.readAllBytes(), StandardCharsets.UTF_8))).get("id") instanceof String s ? s : null;
+                    } catch (RuntimeException unreadable) {
+                        id = null;
+                    }
+                } else if (n.endsWith(".class") && !n.contains("/mixin/") && !n.startsWith("META-INF/")) {
+                    classes.add(n.substring(0, n.length() - 6));
+                } else if (n.startsWith("META-INF/jars/") && n.endsWith(".jar")) {
+                    modules(z.readAllBytes()).forEach((k, v) -> out.computeIfAbsent(k, x -> new TreeSet<>()).addAll(v));
+                }
+            }
+        }
+        if (id != null) {
+            out.computeIfAbsent(id, x -> new TreeSet<>()).addAll(classes);
+        }
+        return out;
     }
 
     /** Every id a jar and the jars nested in it answer to (its own and what it provides), each with the module that answers. */
@@ -8661,7 +8709,7 @@ public final class JarPort {
                 }
             }
             for (var alias : platformAliases.entrySet()) {
-                if (asks.remove(alias.getKey()) != null) {
+                if (asks.remove(alias.getKey()) != null && !alias.getValue().isEmpty()) {
                     asks.put(alias.getValue(), "*");
                 }
             }
