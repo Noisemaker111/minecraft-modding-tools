@@ -1411,6 +1411,18 @@ def provides(jar, loader, release=None):
         return {i for i in read(z) if i}
 
 
+def own_ids(jar, loader):
+    """The mod ids a jar's own metadata declares (its id and what it says it provides), without the jars nested in it."""
+    import zipfile
+    with zipfile.ZipFile(jar) as z:
+        meta = metadata(z, loader)
+    if meta is None:
+        return set()
+    if loader == "fabric":
+        return {i for i in (meta.get("id"), *(meta.get("provides") or [])) if i}
+    return {m.get("modId") for m in meta.get("mods", []) if m.get("modId")}
+
+
 def unmet(asked, provided):
     """What of a mod's needs nothing provided answers. A language loader is answered by the jar that registers it under the
     name the mod's modLoader asks for (Kotlin for Forge's is kotlinforforge, KotlinLangForge's klf), or by one whose name
@@ -1526,7 +1538,13 @@ def choose(loader, frm, to, linked, folder, pins, platform):
     own = set(platform)
     candidates = [folder / n for n in linked if (folder / n).is_file()]
     unread = {j.name: [f"metadata for {loader}"] for j in candidates if needs(j, loader) is None}
-    candidates = [j for j in candidates if j.name not in unread and not provides(j, loader) & own - {"loader:*"}]
+    unread |= {n: [f"it is not started: its jar is not in {folder}"] for n in linked if not (folder / n).is_file()}
+    # A top mod that is the platform itself (Fabric API) is not started twice. Only the jar's own ids say so: a mod that
+    # nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod, and the
+    # loader keeps the platform's newer copy of that module.
+    unread |= {j.name: ["it is not started twice: it is the platform itself, which the pack runs for the new release"]
+               for j in candidates if j.name not in unread and own_ids(j, loader) & own - {"loader:*"}}
+    candidates = [j for j in candidates if j.name not in unread]
     by_jar = {folder / f"{m['slug']}--{m['file']}": m for m in pins}
     while True:
         more = [j for j in candidates if j not in chosen and not unmet(needs(j, loader), provided)]
@@ -1633,6 +1651,8 @@ def client_starts(loader, to, server_pack, names, platform=()):
                 if top in present:
                     blamed.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
         if not blamed:
+            blamed = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present, "*client*.log").items()}
+        if not blamed:
             # The client itself could not be driven (the start names no mod, say an older release the driver cannot open a
             # world in): the server's verdicts stand, and the client is reported as not run, with why.
             print(res.get("details", done.stdout[-2000:]))
@@ -1690,14 +1710,14 @@ def display_name(jar):
     return None
 
 
-def named_in_errors(receipt, mods, present):
+def named_in_errors(receipt, mods, present, logs="*server*.log"):
     """The jars a failed start's errors name by the name a mod shows players ("Architectury API is a required dependency
     of Roughly Enough Items 14.0.680 but it is not installed!"), when the start's own findings name none: from the lines
     after the loader's "Found N error(s)" in the server log beside the receipt."""
     if not receipt:
         return {}
     errors, packs, mixins = [], [], []
-    for log in sorted(Path(receipt).parent.glob("*server*.log")):
+    for log in sorted(Path(receipt).parent.glob(logs)):
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
         at = next((i for i, line in enumerate(lines) if re.search(r"Found \d+ error\(s\)", line)), None)
         if at is not None:
@@ -1780,7 +1800,10 @@ def load(loader, frm, to, save, mods=None, out=None):
     pins = json.loads((PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"]
     chosen, ready, to_port, left = choose(loader, frm, to, linked, folder, pins, set(platform_ids(loader, to)))
     for name, missing in sorted(left.items()):
-        print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
+        if missing[0].startswith("it is not started"):
+            print(f"  {name}: {missing[0][3:]}")
+        else:
+            print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
     left = {**skipped, **left}
     # What the run was asked to prove: every mod that links, or these slugs; compare_loads reads a mod main started and
     # this run did not as a regression only inside it.

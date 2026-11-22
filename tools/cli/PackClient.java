@@ -419,6 +419,8 @@ final class PackClient {
                 session = ready.get(15, TimeUnit.MINUTES);
             } catch (ExecutionException stopped) {
                 throw stopped.getCause() instanceof Exception e ? e : stopped;
+            } catch (java.util.concurrent.TimeoutException silent) {
+                throw new IOException("the client showed no first frame in 15 minutes and said no failure; its log ends: " + lastLine(log));
             } finally {
                 agentWait.close();
             }
@@ -429,7 +431,13 @@ final class PackClient {
             if (firstFailure.get() != null) throw new LoadingFailed(firstFailure.get());
             reached.add("title");
             Game.request(session, Json.map("command", "open-world", "world", "lab"));
-            Game.request(session, Json.map("command", "ready", "expectWorld", true));
+            try {
+                Game.request(session, Json.map("command", "ready", "expectWorld", true));
+            } catch (IOException left) {
+                // The game left the world for a screen (the disconnected screen): what it shows is why.
+                String shown = screenText(session);
+                throw shown.isEmpty() ? left : new IOException(left.getMessage() + "; the screen says: " + shown);
+            }
             reached.add("world");
             // Snippets compile for the Java the game runs on, 8 before 1.17: no var.
             snippet(session, "net.minecraft.client.Minecraft game = net.minecraft.client.Minecraft.getInstance();\nshow(game, new net.minecraft.client.gui.screens.inventory.InventoryScreen(game.player));\nreturn true;");
@@ -507,6 +515,50 @@ final class PackClient {
             result.put("seconds", (System.nanoTime() - began) / 1e9);
         }
         return result;
+    }
+
+    /**
+     * The text the open screen shows: every Component it holds, and those of any game object it holds (1.20.5's
+     * DisconnectionDetails keeps the reason there). Read by type, not by field name, so one snippet serves every
+     * release; Java 8 source for the releases before 1.17. Empty when it cannot be read.
+     */
+    static String screenText(Map<String, Object> session) {
+        try {
+            return String.valueOf(snippet(session, String.join("\n",
+                "Object screen = net.minecraft.client.Minecraft.getInstance().screen;",
+                "if (screen == null) return \"\";",
+                "java.util.List<String> out = new java.util.ArrayList<String>();",
+                "java.util.List<Object> holders = new java.util.ArrayList<Object>();",
+                "holders.add(screen);",
+                "for (int h = 0; h < holders.size() && h < 8; h++) {",
+                "    Object holder = holders.get(h);",
+                "    for (Class<?> type = holder.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {",
+                "        for (java.lang.reflect.Field field : type.getDeclaredFields()) {",
+                "            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;",
+                "            Object value;",
+                "            try { field.setAccessible(true); value = field.get(holder); } catch (Throwable unreadable) { continue; }",
+                "            if (value instanceof net.minecraft.network.chat.Component) {",
+                "                String text = ((net.minecraft.network.chat.Component) value).getString();",
+                "                if (!text.isEmpty() && !out.contains(text)) out.add(text);",
+                "            } else if (value != null && h == 0 && value.getClass().getName().startsWith(\"net.minecraft.\") && !(value instanceof net.minecraft.client.gui.screens.Screen)) holders.add(value);",
+                "        }",
+                "    }",
+                "}",
+                "return String.join(\" | \", out);"))).strip();
+        } catch (Exception unreadable) {
+            return "";
+        }
+    }
+
+    /** The log's last line that is not blank. */
+    static String lastLine(Path log) {
+        try {
+            List<String> lines = Files.readAllLines(log, StandardCharsets.UTF_8);
+            for (int i = lines.size() - 1; i >= 0; i--) if (!lines.get(i).isBlank()) return lines.get(i).strip();
+        } catch (IOException | RuntimeException unreadable) {
+            // nothing to quote
+        }
+        return "(nothing)";
     }
 
     /** The ASM library the launch puts on the class path (the loader's, as merged): the agent is built against it, so it reads the game's classes. */

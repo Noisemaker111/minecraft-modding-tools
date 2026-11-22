@@ -246,6 +246,20 @@ with tempfile.TemporaryDirectory() as tmp:
         E.required_projects, E.library = real
     check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
           f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
+    # A mod that nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod
+    # and starts; a top mod that is the platform itself is left out with that reason, never silently.
+    (folder / "presence--presence.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "presence"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
+    (folder / "api--fabric-api.jar").write_bytes(api.read_bytes())
+    pins = [{"slug": "presence", "file": "presence.jar", "project": "P-presence", "version": "v-presence"},
+            {"slug": "api", "file": "fabric-api.jar", "project": "P-api", "version": "v-api"}]
+    E.required_projects, E.library = (lambda v: []), (lambda project, loader, version: None)
+    try:
+        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["presence--presence.jar", "api--fabric-api.jar", "gone--gone.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        E.required_projects, E.library = real
+    check([j.name for j in chosen] == ["presence--presence.jar"] and sorted(left) == ["api--fabric-api.jar", "gone--gone.jar"]
+          and "platform itself" in left["api--fabric-api.jar"][0] and "not in" in left["gone--gone.jar"][0],
+          f"a mod nesting a platform module starts; the platform itself and a missing jar are each named with why: {chosen} {left}")
     # A library's release for the new version outside the range the mod asks for is not taken: its old release is ported.
     check(E.in_range("21.1.9", "[21.1,21.2)") and not E.in_range("21.2.3", "[21.1,21.2)") and E.in_range("1.3", "1.2") and not E.in_range("1.21.2", "[1.21.1]"),
           "versions are read against Maven ranges as NeoForge reads them")
