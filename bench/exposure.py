@@ -1961,7 +1961,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     # A Fabric jar is ported in Mojang's names (read as jars does) and handed back in the names Fabric runs.
     read, _ = mojang_names(loader, frm, [folder / n for n in linked if (folder / n).is_file()])
     ported = pack / "ported"
-    report = jar_port(loader, frm, to, read, ported, pack / "report-mods.json", runtime=loader == "fabric")
+    report = jar_port(loader, frm, to, read, ported, pack / "report-mods.json", runtime=loader == "fabric") if read else {"mods": []}
     chosen, ready, to_port, left = choose(loader, frm, to, linked, ported, pins, set(platform_ids(loader, to)))
     for name, missing in sorted(left.items()):
         if missing[0].startswith("it is not started"):
