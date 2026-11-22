@@ -863,8 +863,13 @@ public final class JarPort {
         }
         String typesPath = null;
         if (outermost && typesUsed) {
-            typesPath = carryTypes(entries, fmj != null);
-            mod.change("stand-in types carried in " + typesPath);
+            try {
+                typesPath = carryTypes(entries, fmj != null);
+                mod.change("stand-in types carried in " + typesPath);
+            } catch (RuntimeException unreadable) {
+                // Metadata Json cannot read (a key given twice) cannot list the jar, and the loader loads no jar it does not list.
+                mod.unlinked.add("stand-in types not carried: the jar's metadata cannot be read (" + unreadable.getMessage() + ")");
+            }
         }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (ZipOutputStream out = new ZipOutputStream(buffer)) {

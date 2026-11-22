@@ -136,6 +136,18 @@ final class JarPortStandinTest {
 
         nested(port);
 
+        // A jar whose fabric.mod.json gives a key twice (Physics Mod's "environment"), which Json refuses: the types cannot be
+        // listed, so the port says so instead of failing the jar.
+        String saved = port.loader;
+        port.loader = "fabric";
+        List<Map<String, Object>> twiceRuns = new ArrayList<>();
+        Map<String, byte[]> twiceFiles = new HashMap<>(Map.of("n9/Mod.class", mod(),
+            "fabric.mod.json", "{\"schemaVersion\": 1, \"id\": \"n9\", \"version\": \"1\", \"environment\": \"*\", \"environment\": \"*\"}".getBytes(StandardCharsets.UTF_8)));
+        port.port(JarPortTest.jar(twiceFiles), "twice.jar", twiceRuns, null);
+        port.loader = saved;
+        List<String> twice = twiceRuns.stream().flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
+        JarPortTest.expect(twice.stream().anyMatch(u -> u.startsWith("stand-in types not carried")), "a jar whose metadata cannot be read is ported, its types reported: " + twice);
+
         List<Map<String, Object>> plainRuns = new ArrayList<>();
         Map<String, byte[]> plain = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n9/Plain.class", plain())), "plain.jar", plainRuns));
         JarPortTest.expect(plain.keySet().stream().noneMatch(n -> n.startsWith("mmt/")), "a jar that needs no stand-in carries none: " + plain.keySet());
