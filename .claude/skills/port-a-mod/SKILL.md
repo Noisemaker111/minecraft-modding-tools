@@ -127,8 +127,10 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
 
 ## Rules that don't bend
 
-- Sources are the game's and the loaders' own files (jars, mappings, starter projects). Never other people's porting
-  work: not guides or primers, not how another mod was ported. Mod jars are only counted.
+- Sources are the game's and the loaders' own files (jars, mappings, starter projects), and for stand-ins
+  (`knowledge/standins/README.md`) the loaders' published migration notes too (NeoForge's primers, Fabric's update
+  posts; Jon, 2026-11-21), quoted in the stand-in and checked against both releases' code. Never how another mod was
+  ported. Mod jars are only counted.
 - No AI call inside the tool. What you work out is saved as a rule with a test.
 - Prove in game before the PR ends, on GitHub's runners and never by starting Minecraft here: many agents share one PC.
   `tools/cloud-run load` for the updates you changed (step 5); the whole corpus once, on the PR's final commit:
