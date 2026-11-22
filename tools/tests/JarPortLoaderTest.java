@@ -19,6 +19,7 @@ final class JarPortLoaderTest {
         Path scratch = Files.createDirectories(Path.of(args[0]));
         loaderLinks(scratch);
         pom();
+        languageVersion(scratch);
         srg();
         if (failures > 0) {
             System.out.println(failures + " loader checks failed");
@@ -117,6 +118,29 @@ final class JarPortLoaderTest {
             "a dependency's classifier jar is one the loader runs with (Dist and OnlyIn are only in mergetool's api jar): " + found);
         expect(found.stream().noneMatch(d -> d.startsWith("*") || d.startsWith("org.slf4j")) && found.stream().filter(d -> d.contains("neoform")).count() == 1,
             "a zip type, and the groups an exclusion names, are not libraries a mod links against: " + found);
+    }
+
+    /**
+     * A Forge jar asks javafml for Forge's version ([47,)), which no NeoForge release answers to: ported, it asks for the
+     * FancyModLoader version the new release's pom names. Another language loader's range is its own and stays.
+     */
+    static void languageVersion(Path scratch) throws Exception {
+        String pom = "<project><dependencies><dependency><groupId>net.neoforged.fancymodloader</groupId><artifactId>loader</artifactId>"
+            + "<version>1.0.16</version></dependency></dependencies></project>";
+        expect("[1,)".equals(JarPort.languageRange(pom)), "NeoForge's pom gives the language version its loader answers: " + JarPort.languageRange(pom));
+        expect("".equals(JarPort.languageRange("<project></project>")), "a pom naming no FancyModLoader gives none");
+        Path map = scratch.resolve("route-language.json");
+        Files.writeString(map, "{}");
+        JarPort port = new JarPort(new GameDiff.Snap("1.0"), new GameDiff.Snap("2.0"), map);
+        port.languageRange = "[1,)";
+        String forge = "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n[[mods]]\nmodId=\"m\"\n";
+        String ported = port.metadata(forge);
+        expect(ported.contains("loaderVersion=\"[1,)\"") && ported.contains("license=\"MIT\"") && !ported.contains("[47,)"),
+            "a javafml jar asks for the new release's language version: " + ported);
+        String kotlin = "modLoader=\"kotlinforforge\"\nloaderVersion=\"[4,)\"\n";
+        expect(port.metadata(kotlin).equals(kotlin), "another language loader keeps its own range: " + port.metadata(kotlin));
+        port.languageRange = "";
+        expect(port.metadata(forge).equals(forge), "with no version known the file is left as it was");
     }
 
     static void srg() throws Exception {

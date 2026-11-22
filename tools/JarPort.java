@@ -9563,8 +9563,42 @@ public final class JarPort {
 
     static final Pattern BLOCK = Pattern.compile("(?ms)^\\s*\\[\\[dependencies\\.[^\\]]+\\]\\].*?(?=^\\s*\\[|\\z)");
 
-    /** The loader metadata asks for the new release: the game's and the loader's version ranges of each dependency block. */
+    String languageRange; // the loaderVersion the new release's javafml answers, "[N,)"; "" when unknown
+
+    /**
+     * NeoForge's javafml and lowcodefml answer to the version of the FancyModLoader that release is built on (1 for
+     * 20.2-20.3, 2 for 20.4, 11 for 26.1), which its own pom names; a Forge jar asks for Forge's ([47,)), which no
+     * NeoForge release answers to. "" when the pom names none.
+     */
+    static String languageRange(String pom) {
+        for (String[] d : Exposure.dependencies(pom)) {
+            if (d[0].equals("net.neoforged.fancymodloader") && d[1].equals("loader")) {
+                return "[" + d[2].replaceAll("\\..*", "") + ",)";
+            }
+        }
+        return "";
+    }
+
+    String languageRange() {
+        if (languageRange == null) {
+            try {
+                languageRange = loader.equals("neoforge") && loaderTo != null ? languageRange(Exposure.neoforgePom(loaderTo)) : "";
+            } catch (Exception unreadable) {
+                languageRange = "";
+            }
+        }
+        return languageRange;
+    }
+
+    /**
+     * The loader metadata asks for the new release: the game's and the loader's version ranges of each dependency block,
+     * and the version of the loader's own language provider.
+     */
     String metadata(String toml) {
+        String language = languageRange();
+        if (!language.isEmpty() && Pattern.compile("(?m)^\\s*modLoader\\s*=\\s*\"(javafml|lowcodefml)\"").matcher(toml).find()) {
+            toml = toml.replaceFirst("(?m)^(\\s*loaderVersion\\s*=\\s*)\"[^\"]*\"", "$1" + Matcher.quoteReplacement("\"" + language + "\""));
+        }
         Matcher m = BLOCK.matcher(toml);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
