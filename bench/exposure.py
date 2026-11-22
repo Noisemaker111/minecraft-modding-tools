@@ -1653,10 +1653,14 @@ def client_starts(loader, to, server_pack, names, platform=()):
         if not blamed:
             blamed = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present, "*client*.log").items()}
         if not blamed:
-            # The client itself could not be driven (the start names no mod, say an older release the driver cannot open a
-            # world in): the server's verdicts stand, and the client is reported as not run, with why.
+            blamed = needs_other_java(res, present)
+        failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
+        if not blamed and not res.get("client", {}).get("toolError") and len(present) > 1:
+            blamed = first_failing(pack, present, loader, start, failure)
+        if not blamed:
+            # The client itself could not be driven (no mod set makes it fail or pass, or mmt's own step does not fit this
+            # release): the server's verdicts stand, and the client is reported as not run, with why.
             print(res.get("details", done.stdout[-2000:]))
-            failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
             print(f"a client start failed and named no mod; the client is not run: {failure}")
             return {"mods": len(names), "loaded": 0, "verdicts": {}, "notRun": failure, "receipt": result.get("receipt")}
         for name, why in blamed.items():
@@ -1674,6 +1678,57 @@ def client_starts(loader, to, server_pack, names, platform=()):
             (pack / "mods" / name).rename(pack / "dropped" / name)
     loaded = sorted(n for n, v in verdicts.items() if v == "loaded")
     return {"mods": len(names), "loaded": len(loaded), "verdicts": verdicts}
+
+
+def with_needs(chosen, asks, gives):
+    """chosen and every jar that provides what they need, and what those need in turn: asks and gives map each jar to
+    what it needs and provides."""
+    out = list(chosen)
+    while True:
+        asked = set().union(*(asks[n] for n in out))
+        more = [n for n in gives if n not in out and gives[n] & asked]
+        if not more:
+            return out
+        out += more
+
+
+def first_failing(pack, present, loader, start, failure):
+    """When a client start fails and nothing names a mod (sent back to the disconnected screen with no reason), the mod
+    whose arrival makes it fail: the shortest run of present, each with the jars it needs, whose start fails, found by
+    halving (about log2 of the mods in starts). Returns {jar: why}, or {} when the client fails with no mod at all: the
+    fault is not a mod's."""
+    mods, held = pack / "mods", pack / "held"
+    held.mkdir(exist_ok=True)
+    asks = {n: needs(mods / n, loader) or set() for n in present}
+    gives = {n: provides(mods / n, loader) for n in present}
+
+    def fails(count):
+        keep = set(with_needs(present[:count], asks, gives))
+        for n in present:
+            if n not in keep and (mods / n).is_file():
+                (mods / n).rename(held / n)
+            elif n in keep and (held / n).is_file():
+                (held / n).rename(mods / n)
+        result, _ = start()
+        return not result.get("result", {}).get("client", {}).get("opened")
+
+    low, high = 0, len(present)
+    try:
+        if fails(0):
+            return {}
+        while high - low > 1:
+            middle = (low + high) // 2
+            if fails(middle):
+                high = middle
+            else:
+                low = middle
+    finally:
+        for n in present:
+            if (held / n).is_file():
+                (held / n).rename(mods / n)
+    culprit = present[high - 1]
+    print(f"  {culprit}: the client starts with the mods before it and fails once it is added")
+    return {culprit: f"the client starts without it and fails with it (named by halving; the start alone said: {failure[:300]})"}
 
 
 def starts_alone(loader, to, pack, name, platform):
@@ -1746,6 +1801,12 @@ def named_in_errors(receipt, mods, present, logs="*server*.log"):
             if shown and re.search(r"\bof " + re.escape(shown) + r"\b", line):
                 blamed[name] = "the loader names it: " + line[2:300]
     return blamed
+
+
+def needs_other_java(res, present):
+    """The jars a failed start's pack-check result says are built for a newer Java than the release runs on, with why."""
+    return {s["jar"]: "; ".join(s.get("why", [])) for f in res.get("findings", []) if f.get("kind") == "java"
+            for s in f.get("suspects", []) if s.get("jar") in present}
 
 
 def only_mods(linked, pins, wanted):
@@ -1862,6 +1923,8 @@ def load(loader, frm, to, save, mods=None, out=None):
                     culprits.setdefault(top, "; ".join(s.get("why", []))[:400])
         if not culprits:
             culprits = named_in_errors(result.get("receipt"), pack / "mods", present + in_pack)
+        if not culprits:
+            culprits = needs_other_java(res, present + in_pack)
         blamed = {n: why for n, why in culprits.items() if n in present}
         for top in (n for n in culprits if n in in_pack):
             # A library that fails takes the mods that need it along; each is failed with the library's reason.

@@ -378,6 +378,9 @@ final class PackClient {
         CompletableFuture<Map<String, Object>> ready = agentWait.ready;
         Process process = PackChecks.windowless(new ProcessBuilder(command)).directory(instance.toFile()).redirectErrorStream(true).start();
         List<String> failed = owner.loader.failed();
+        // A line the loader logs as the game shuts down (NeoForge's "Closing FML Loader"): said before the title screen, the
+        // start is over even when nothing says why (the 1.21.11 client then hung for 15 minutes with its window gone).
+        List<String> shutdown = Json.array(((PackLoaders.Style) owner.loader).spec.getOrDefault("closing", List.of())).stream().map(String::valueOf).toList();
         // Programs a mod starts from the game, seen while it runs: one started as the game dies has no parent left to find it by.
         Set<ProcessHandle> started = ConcurrentHashMap.newKeySet();
         java.util.concurrent.atomic.AtomicReference<String> firstFailure = new java.util.concurrent.atomic.AtomicReference<>();
@@ -392,7 +395,7 @@ final class PackClient {
                     out.flush();
                     // The loader's error screen follows its fatal loading error; once it is said, nothing more will start.
                     // The agent answers during the loading screen, so a failure said after it answered still decides the start.
-                    String loading = loadingFailure(line, failed);
+                    String loading = loadingFailure(line, failed, shutdown, ready.isDone());
                     if (loading != null && firstFailure.compareAndSet(null, loading)) ready.completeExceptionally(new LoadingFailed(loading));
                 }
             } catch (Exception unreadable) {
@@ -525,11 +528,11 @@ final class PackClient {
     static String screenText(Map<String, Object> session) {
         try {
             return String.valueOf(snippet(session, String.join("\n",
-                "Object screen = net.minecraft.client.Minecraft.getInstance().screen;",
-                "if (screen == null) return \"\";",
-                "java.util.List<String> out = new java.util.ArrayList<String>();",
+                "Object shown = screen(net.minecraft.client.Minecraft.getInstance());",
+                "if (shown == null) return \"\";",
+                "java.util.List<String> texts = new java.util.ArrayList<String>();",
                 "java.util.List<Object> holders = new java.util.ArrayList<Object>();",
-                "holders.add(screen);",
+                "holders.add(shown);",
                 "for (int h = 0; h < holders.size() && h < 8; h++) {",
                 "    Object holder = holders.get(h);",
                 "    for (Class<?> type = holder.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {",
@@ -539,14 +542,14 @@ final class PackClient {
                 "            try { field.setAccessible(true); value = field.get(holder); } catch (Throwable unreadable) { continue; }",
                 "            if (value instanceof net.minecraft.network.chat.Component) {",
                 "                String text = ((net.minecraft.network.chat.Component) value).getString();",
-                "                if (!text.isEmpty() && !out.contains(text)) out.add(text);",
+                "                if (!text.isEmpty() && !texts.contains(text)) texts.add(text);",
                 "            } else if (value != null && h == 0 && value.getClass().getName().startsWith(\"net.minecraft.\") && !(value instanceof net.minecraft.client.gui.screens.Screen)) holders.add(value);",
                 "        }",
                 "    }",
                 "}",
-                "return String.join(\" | \", out);"))).strip();
+                "return String.join(\" | \", texts);"))).strip();
         } catch (Exception unreadable) {
-            return "";
+            return "(its text could not be read: " + String.valueOf(unreadable.getMessage()).lines().limit(3).reduce((a, b) -> a + " " + b).orElse("") + ")";
         }
     }
 
@@ -590,6 +593,12 @@ final class PackClient {
     /** The line, when it says loading failed: one of the loader's own failure words, or a line logged at FATAL. Else null. */
     static String loadingFailure(String line, List<String> failed) {
         return PackChecks.fatal(line) || failed.stream().anyMatch(line::contains) ? line : null;
+    }
+
+    /** As above, and a line the loader logs as the game shuts down (closing) when it comes before the agent answered. */
+    static String loadingFailure(String line, List<String> failed, List<String> closing, boolean answered) {
+        String failure = loadingFailure(line, failed);
+        return failure != null || answered || closing.stream().noneMatch(line::contains) ? failure : line;
     }
 
     /**

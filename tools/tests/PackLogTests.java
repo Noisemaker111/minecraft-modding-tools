@@ -238,6 +238,12 @@ public final class PackLogTests extends PackCheckFixtures {
             "[04:42:36] [main/INFO]: Reason: [NEG_HARD_DEP iceberg 1.2.7 {breaks advancementplaques @ [<1.6.3]}]");
         var resolved = PackChecks.suspects(resolution, List.of(), scan, fabric);
         expect(resolved.size() == 1 && "advancementplaques".equals(resolved.get(0).get("mod")), "Fabric's resolver names the mod a library breaks: " + resolved);
+        // ...and a mod built for a newer Java than the release runs on (BlueMap for Java 11 on 1.16.2), by its class.
+        scan.packages.put("de.bluecolored.bluemap.fabric", "BlueMap-3.0.jar");
+        scan.providers.put("bluemap", new ArrayList<>(List.of(new PackMods.Provider("BlueMap-3.0.jar", "3.0", false, "fabric.mod.json"))));
+        String newerJava = "Caused by: java.lang.UnsupportedClassVersionError: de/bluecolored/bluemap/fabric/FabricMod has been compiled by a more recent version of the Java Runtime (class file version 55.0), this version of the Java Runtime only recognizes class file versions up to 52.0";
+        var javaSuspects = PackChecks.suspects(newerJava, List.of(), scan, fabric);
+        expect(javaSuspects.stream().anyMatch(s -> "BlueMap-3.0.jar".equals(s.get("jar"))), "a class built for a newer Java names its jar: " + javaSuspects);
         // ...and a mod whose data the new game cannot read only by its data pack (TerraBlender's biome on 1.21.2).
         neo.providers.put("terrablender", new ArrayList<>(List.of(new PackMods.Provider("TerraBlender.jar", "4.1", false, "META-INF/neoforge.mods.toml"))));
         String badData = "[main/ERROR] [minecraft/RegistryDataLoader]: Registry loading errors:\n>> Errors in element terrablender:deferred_placeholder:\njava.lang.IllegalStateException: Failed to parse terrablender:worldgen/biome/deferred_placeholder.json from pack mod/terrablender\n[main/WARN] [minecraft/Main]: Failed to load datapacks, can't proceed with server load.";

@@ -261,6 +261,11 @@ public final class PackServerTests extends PackCheckFixtures {
         expect(PackClient.loadingFailure("[11:51:11] [Render thread/WARN] [minecraft/Pack]: Missing metadata in pack programmer_art", failedWords) == null
                 && PackClient.loadingFailure("[main/FATAL] [cpw.mods.modlauncher.RuntimeDistCleaner/DISTXFORM]: Attempted to load class net/minecraft/client/A for invalid dist DEDICATED_SERVER", failedWords) == null,
             "a warning, or Forge's FATAL for a class a mixin only probed for, does not end it");
+        // The NeoForge 1.21.11 client closed its loader before the title screen and then hung for 15 minutes saying nothing.
+        List<String> closing = Json.array(((PackLoaders.Style) PackLoaders.find(harness, "neoforge")).spec.get("closing")).stream().map(String::valueOf).toList();
+        String closed = "[06:58:19] [Render thread/INFO] [ne.ne.fm.lo.FMLLoader/]: Closing FML Loader 18d610e1";
+        expect(PackClient.loadingFailure(closed, failedWords, closing, false) != null && PackClient.loadingFailure(closed, failedWords, closing, true) == null,
+            "the loader closing before the client answered ends the wait; closing as it quits afterwards does not");
     }
 
     // ------------------------------------------------------------------ the game's assets

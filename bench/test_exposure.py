@@ -623,4 +623,27 @@ after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y
 check(E.verdicts_moved(before, after) == {"newly link": ["a"], "no longer link": ["b"], "other references left": ["c"], "link, port changed": ["d"], "same": 1},
       f"each mod both runs read is named once by how its verdict moved: {E.verdicts_moved(before, after)}")
 
+# A client sent back to the disconnected screen names no mod: the mod whose arrival makes it fail is found by halving,
+# each set started with the jars it needs; a client that fails with no mod at all blames none.
+with tempfile.TemporaryDirectory() as tmp:
+    pack = Path(tmp)
+    (pack / "mods").mkdir()
+    names = ["a.jar", "krypton.jar", "b.jar", "lib.jar", "z.jar"]
+    for n, meta in zip(names, [{"id": "a"}, {"id": "krypton", "depends": {"lib": "*"}}, {"id": "b", "depends": {"lib": "*"}}, {"id": "lib"}, {"id": "z"}]):
+        (pack / "mods" / n).write_bytes(jar({"fabric.mod.json": json.dumps(meta)}))
+    seen = []
+
+    def start(bad=("krypton.jar",)):
+        here = {p.name for p in (pack / "mods").glob("*.jar")}
+        seen.append(sorted(here))
+        if "krypton.jar" in here and "lib.jar" not in here:
+            raise AssertionError("a mod was started without the jar it needs")
+        return {"result": {"client": {"opened": not here & set(bad)}}}, None
+
+    blamed = E.first_failing(pack, names, "fabric", start, "DisconnectedScreen")
+    check(list(blamed) == ["krypton.jar"] and len(seen) <= 4 and sorted(p.name for p in (pack / "mods").glob("*.jar")) == sorted(names),
+          f"halving names the mod a silent client fails on, in few starts, and puts every jar back: {blamed} {len(seen)}")
+    check(E.first_failing(pack, names, "fabric", lambda: ({"result": {"client": {"opened": False}}}, None), "x") == {},
+          "a client that fails with no mod at all blames none")
+
 print(f"exposure: {checks} checks passed")
