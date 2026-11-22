@@ -759,6 +759,7 @@ public final class JarPort {
             mod.changed.clear();
             mod.changed.putAll(wasChanged);
         }
+        bundle(mod, rewritten, entries, name);
         List<String> atFiles = atFiles(entries);
         String widener = fmj == null ? null : widenerFile(fmj);
         if (fmj != null && widener == null && !mod.grants.isEmpty()) {
@@ -7445,6 +7446,16 @@ public final class JarPort {
 
         @Override
         public void visitTypeInsn(int opcode, String type) {
+            if (opcode == Opcodes.INSTANCEOF && !type.startsWith("[") && !mod.classes.containsKey(type)) {
+                String[] added = fix(List.of(type), "instanceof", null, "(Ljava/lang/Object;)Z", false);
+                if (added != null) {
+                    invokeAdded(added);
+                    mod.change("instanceof answered by a stand-in");
+                    lastLabel = null;
+                    fresh = false;
+                    return;
+                }
+            }
             types(mod, type.startsWith("[") ? type : "L" + type + ";", where);
             boolean unmakeable = opcode == Opcodes.NEW && becameUnmakeable(type);
             if (unmakeable) {
@@ -7592,6 +7603,378 @@ public final class JarPort {
         }
     }
 
+    // ---- Stand-ins: the old API written on top of the new game, bundled into the ported jar.
+
+    /** The package every stand-in is written in; the bundled copy is moved under one of the jar's own (bundle). */
+    static final String STANDIN = "mmt/standin/";
+
+    final Map<String, byte[]> standins = new HashMap<>(); // stand-in class (internal, unrelocated) -> its bytes
+
+    /**
+     * Reads the stand-ins written for this update (knowledge/standins/FROM-TO/): Java sources, one class per old game
+     * class, in the package mmt.standin + the old class's package. Where the game's own code has no answer for an old
+     * member (a system the update rewrote), a stand-in implements it on the new game, written from both releases' code.
+     *
+     * Each is compiled here against the new release as the porter reads it (stubs made from the snapshot, so no game jar
+     * in Mojang names is needed), and its public static methods become port rules for the old class's members:
+     *   R name(Owner self, A...)   the old instance method Owner.name(A...)R      (a field: T name(Owner self), void name(Owner, T))
+     *   R name(A...)               the old static method, or static field read
+     *   Owner init(A...)           the old constructor Owner(A...)
+     * A stand-in whose old class the new release no longer has stands in for the class itself: references to the class
+     * are moved to it. A port that uses a stand-in carries its classes (bundle), so a later update ports them as mod code.
+     */
+    void standins(List<Path> dirs) throws IOException {
+        Map<String, byte[]> compiled = compileStandins(dirs, b);
+        standins.putAll(compiled);
+        for (var e : compiled.entrySet()) {
+            GameDiff.Cls c = standinCls(e.getValue());
+            b.classes.put(c.name, c);
+        }
+        for (var e : compiled.entrySet()) {
+            String name = e.getKey();
+            if (name.contains("$") && compiled.containsKey(name.substring(0, name.lastIndexOf('$'))) && !a.classes.containsKey(name.substring(STANDIN.length()))) {
+                continue; // a stand-in's own nested or lambda class
+            }
+            String old = name.substring(STANDIN.length());
+            GameDiff.Cls was = a.classes.get(old);
+            if (was == null) {
+                continue;
+            }
+            boolean gone = !b.classes.containsKey(classMap.getOrDefault(old, old));
+            if (gone) {
+                // The class is gone with nothing the route moves it to: the stand-in is the class.
+                classMap.put(old, name);
+                inverse.put(name, old);
+            }
+            ClassModel cm = ClassFile.of().parse(e.getValue());
+            for (MethodModel mm : cm.methods()) {
+                int flags = mm.flags().flagsMask();
+                String n = mm.methodName().stringValue();
+                if ((flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC)) != (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC) || (flags & Opcodes.ACC_SYNTHETIC) != 0) {
+                    continue;
+                }
+                if (n.equals("isInstance") && mm.methodType().stringValue().equals("(Ljava/lang/Object;)Z")) {
+                    // x instanceof Old: what the old class meant, asked of the new game (an item that was its own class is one item now).
+                    fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, new Fix("standin " + Exposure.dotted(old) + " instanceof", Pattern.compile("instanceof"), null,
+                        Exposure.dotted(name) + ".isInstance($1)"));
+                    continue;
+                }
+                if (gone) {
+                    continue; // the class's own members, which references reach through the class map
+                }
+                // Matched in the new release's names: each old member's descriptor carried forward against the stand-in's.
+                // (Carrying the stand-in's back is ambiguous where an old class now goes by a name another old class had.)
+                String desc = mm.methodType().stringValue();
+                Type[] params = Type.getArgumentTypes(desc);
+                Type ret = Type.getReturnType(desc);
+                String self = params.length > 0 && params[0].getSort() == Type.OBJECT ? params[0].getInternalName() : null;
+                String now = classMap.getOrDefault(old, old);
+                boolean onOld = self != null && (self.equals(now) || isA(new Mod(), now, self));
+                String rest = onOld ? "(" + String.join("", Arrays.stream(params).skip(1).map(Type::getDescriptor).toList()) + ")" : null;
+                String all = "(" + String.join("", Arrays.stream(params).map(Type::getDescriptor).toList()) + ")";
+                String target = Exposure.dotted(name) + "." + n;
+                StringBuilder args = new StringBuilder();
+                String member = null, matched = null, found;
+                boolean receiver = false;
+                if (n.equals("init") && ret.getSort() == Type.OBJECT && (found = oldMember(old, "<init>", false, all + "V")) != null) {
+                    member = "<init>";
+                    matched = found.substring(0, found.indexOf(')') + 1);
+                } else if (onOld && (found = oldMember(old, n, false, rest + ret.getDescriptor())) != null) {
+                    member = n;
+                    matched = found.substring(0, found.indexOf(')') + 1);
+                    receiver = true;
+                } else if ((found = oldMember(old, n, true, desc)) != null) {
+                    member = n;
+                    matched = found.substring(0, found.indexOf(')') + 1);
+                } else if (onOld && params.length == 1 && oldField(was, n, ret.getDescriptor())) {
+                    member = n;
+                    receiver = true;
+                } else if (onOld && params.length == 2 && ret.getSort() == Type.VOID && oldField(was, n, params[1].getDescriptor())) {
+                    member = n + "=";
+                    receiver = true;
+                } else if (params.length == 0 && oldField(was, n, ret.getDescriptor())) {
+                    member = n;
+                } else if (params.length == 1 && ret.getSort() == Type.VOID && oldField(was, n, params[0].getDescriptor())) {
+                    member = n + "=";
+                }
+                if (member == null) {
+                    throw new IllegalArgumentException("stand-in " + Exposure.dotted(name) + "." + n + desc + " answers no member of " + Exposure.dotted(old) + " in " + a.version);
+                }
+                for (int i = receiver ? 0 : 1; i < (receiver ? params.length : params.length + 1); i++) {
+                    args.append(args.isEmpty() ? "" : ", ").append('$').append(i);
+                }
+                fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, new Fix("standin " + Exposure.dotted(old) + "." + member, Pattern.compile(Pattern.quote(member)),
+                    matched, target + "(" + args + ")"));
+            }
+        }
+    }
+
+    /**
+     * The old release's descriptor of a method of an old class (or one it inherits) whose descriptor, carried into the new
+     * release's names, is newDesc; null if none. A constructor is looked up on the class itself.
+     */
+    String oldMember(String old, String name, boolean isStatic, String newDesc) {
+        for (GameDiff.Cls c = a.classes.get(old); c != null; c = name.equals("<init>") || c.sup == null ? null : a.classes.get(c.sup)) {
+            for (GameDiff.Meth m : c.methods.values()) {
+                if (m.name.equals(name) && ((m.flags & Opcodes.ACC_STATIC) != 0) == isStatic && desc(m.desc).equals(newDesc)) {
+                    return m.desc;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Whether the old class has a field of that name whose type, carried into the new release's names, is newType. */
+    boolean oldField(GameDiff.Cls was, String name, String newType) {
+        GameDiff.Fld f = was.fields.get(name);
+        return f != null && desc(f.desc).equals(newType);
+    }
+
+    /** A compiled stand-in as the link check reads it: declarations, marked as not the game's so nothing in it is ported. */
+    static GameDiff.Cls standinCls(byte[] bytes) {
+        ClassModel cm = ClassFile.of().parse(bytes);
+        List<String> ifs = new ArrayList<>();
+        cm.interfaces().forEach(i -> ifs.add(i.asInternalName()));
+        GameDiff.Cls c = new GameDiff.Cls(cm.thisClass().asInternalName(), cm.flags().flagsMask(), cm.superclass().map(x -> x.asInternalName()).orElse(null), ifs, true);
+        c.library = true;
+        cm.fields().forEach(f -> c.fields.put(f.fieldName().stringValue(), new GameDiff.Fld(c, f.fieldName().stringValue(), f.fieldType().stringValue(), f.flags().flagsMask())));
+        for (MethodModel mm : cm.methods()) {
+            GameDiff.Meth m = new GameDiff.Meth(c, mm.methodName().stringValue(), mm.methodType().stringValue(), mm.flags().flagsMask());
+            c.methods.put(m.name + m.desc, m);
+        }
+        return c;
+    }
+
+    /** The stand-in sources under dir compiled against stubs of the release (its classes' declarations, no code). */
+    static Map<String, byte[]> compileStandins(List<Path> dirs, GameDiff.Snap release) throws IOException {
+        List<Path> sources = new ArrayList<>();
+        for (Path dir : dirs) {
+            try (var walk = Files.walk(dir)) {
+                walk.filter(f -> f.toString().endsWith(".java")).sorted().forEach(sources::add);
+            }
+        }
+        Path dir = dirs.get(0).getParent();
+        // Kept by what they are compiled from (the sources and the release read), so the processes of one sweep compile once.
+        java.security.MessageDigest sha;
+        try {
+            sha = java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException(e);
+        }
+        sha.update((release.version + "|" + release.loaderVersion + "|" + release.classes.size()).getBytes(StandardCharsets.UTF_8));
+        for (Path f : sources) {
+            sha.update(dir.relativize(f).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
+            sha.update(Files.readAllBytes(f));
+        }
+        Path kept = Path.of(System.getProperty("user.home"), ".mmt", "jar-port", "standins", HexFormat.of().formatHex(sha.digest()).substring(0, 24));
+        if (Files.isDirectory(kept)) {
+            return readClasses(kept);
+        }
+        Path work = Files.createTempDirectory("mmt-standins");
+        try {
+            Path stubs = work.resolve("stubs.jar"), out = Files.createDirectories(work.resolve("classes"));
+            writeStubs(release, stubs);
+            javax.tools.JavaCompiler javac = javax.tools.ToolProvider.getSystemJavaCompiler();
+            if (javac == null) {
+                throw new IOException("stand-ins need a JDK's compiler (javax.tools), and this Java has none");
+            }
+            List<String> command = new ArrayList<>(List.of("--release", "21", "-proc:none", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", out.toString()));
+            sources.forEach(f -> command.add(f.toString()));
+            StringWriter errors = new StringWriter();
+            int exit = javac.run(null, new PrintStream(OutputStream.nullOutputStream()), new PrintStream(new OutputStream() {
+                public void write(int x) {
+                    errors.write(x);
+                }
+            }, true), command.toArray(String[]::new));
+            if (exit != 0) {
+                throw new IOException("stand-ins in " + dir + " do not compile against " + release.version + ":\n" + errors);
+            }
+            Map<String, byte[]> classes = readClasses(out);
+            for (String name : classes.keySet()) {
+                if (!name.startsWith(STANDIN)) {
+                    throw new IOException("stand-in " + name + " is not in the package " + STANDIN.replace('/', '.'));
+                }
+            }
+            Files.createDirectories(kept.getParent());
+            try {
+                Files.move(out, kept);
+            } catch (IOException another) {
+                // Another process kept the same classes first.
+            }
+            return classes;
+        } finally {
+            try (var walk = Files.walk(work)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
+            }
+        }
+    }
+
+    static Map<String, byte[]> readClasses(Path root) throws IOException {
+        Map<String, byte[]> classes = new TreeMap<>();
+        try (var walk = Files.walk(root)) {
+            for (Path f : walk.filter(x -> x.toString().endsWith(".class")).toList()) {
+                String name = root.relativize(f).toString().replace('\\', '/');
+                classes.put(name.substring(0, name.length() - 6), Files.readAllBytes(f));
+            }
+        }
+        return classes;
+    }
+
+    /**
+     * A jar javac can compile against in place of the release: every class's declarations (flags, supertypes, fields,
+     * methods) with no code and no generic signatures, and the nesting javac needs to read Outer.Inner.
+     */
+    static void writeStubs(GameDiff.Snap release, Path jar) throws IOException {
+        Map<String, List<String>> nestedIn = new HashMap<>();
+        for (String name : release.classes.keySet()) {
+            int at = name.lastIndexOf('$');
+            if (at > 0 && release.classes.containsKey(name.substring(0, at)) && !Character.isDigit(name.charAt(at + 1))) {
+                nestedIn.computeIfAbsent(name.substring(0, at), k -> new ArrayList<>()).add(name);
+            }
+        }
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(jar))) {
+            for (GameDiff.Cls c : release.classes.values()) {
+                if (c.name.startsWith("java/") || c.name.startsWith("javax/") || c.name.startsWith("jdk/") || c.name.startsWith("sun/")) {
+                    continue;
+                }
+                ClassWriter w = new ClassWriter(0);
+                // Everything is public here: a stand-in may use what the game keeps closed, which the port then opens
+                // through the mod's access transformer (bundle).
+                int flags = c.flags & ~(Opcodes.ACC_SUPER | 0x10000 | Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED) | Opcodes.ACC_PUBLIC;
+                w.visit(Opcodes.V21, flags, c.name, null, c.sup == null && !c.name.equals("java/lang/Object") ? "java/lang/Object" : c.sup,
+                    c.ifaces.toArray(String[]::new));
+                List<String> inner = new ArrayList<>(nestedIn.getOrDefault(c.name, List.of()));
+                int at = c.name.lastIndexOf('$');
+                if (at > 0 && nestedIn.getOrDefault(c.name.substring(0, at), List.of()).contains(c.name)) {
+                    inner.add(c.name);
+                }
+                for (String n : inner) {
+                    GameDiff.Cls ic = release.classes.get(n);
+                    String outer = n.substring(0, n.lastIndexOf('$'));
+                    boolean takesOuter = ic.methods.values().stream().anyMatch(m -> m.name.equals("<init>") && m.desc.startsWith("(L" + outer + ";"));
+                    int innerFlags = ic.flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED | Opcodes.ACC_FINAL | Opcodes.ACC_INTERFACE
+                        | Opcodes.ACC_ABSTRACT | Opcodes.ACC_ENUM | Opcodes.ACC_ANNOTATION);
+                    w.visitInnerClass(n, outer, n.substring(n.lastIndexOf('$') + 1), innerFlags | (takesOuter && (ic.flags & Opcodes.ACC_INTERFACE) == 0 ? 0 : Opcodes.ACC_STATIC));
+                }
+                for (GameDiff.Fld f : c.fields.values()) {
+                    w.visitField(open(f.flags), f.name, f.desc, null, null).visitEnd();
+                }
+                for (GameDiff.Meth m : c.methods.values()) {
+                    w.visitMethod(open(m.flags), m.name, m.desc, null, null).visitEnd();
+                }
+                w.visitEnd();
+                out.putNextEntry(new ZipEntry(c.name + ".class"));
+                out.write(w.toByteArray());
+                out.closeEntry();
+            }
+        }
+    }
+
+    static int open(int flags) {
+        return flags & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED) | Opcodes.ACC_PUBLIC;
+    }
+
+    /**
+     * The game members the stand-ins use that the game keeps closed: opened through the mod's access transformer when the
+     * loader reads it, else each is reported, since the stand-in would fail where it reaches the member.
+     */
+    void openFor(Mod mod, Collection<String> used) {
+        for (String name : used) {
+            new ClassReader(standins.get(name)).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String n, String d, String sig, String[] ex) {
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override
+                        public void visitMethodInsn(int op, String owner, String mn, String md, boolean itf) {
+                            need(owner, 'm', mn, md);
+                        }
+
+                        @Override
+                        public void visitFieldInsn(int op, String owner, String fn, String fd) {
+                            need(owner, 'f', fn, fd);
+                        }
+                    };
+                }
+
+                void need(String owner, char kind, String member, String desc) {
+                    GameDiff.Cls site = b.classes.get(owner);
+                    GameDiff.Cls holder = site == null || site.library ? null : Exposure.declaring(b, owner, kind, member, kind == 'f' ? null : desc);
+                    if (holder == null || holder.library) {
+                        return;
+                    }
+                    int flags = kind == 'f' ? holder.fields.get(member).flags : holder.methods.get(member + desc).flags;
+                    boolean classOpen = (site.flags & Opcodes.ACC_PUBLIC) != 0, memberOpen = (flags & Opcodes.ACC_PUBLIC) != 0;
+                    if (classOpen && memberOpen) {
+                        return;
+                    }
+                    String line = Exposure.dotted(holder.name) + " " + member + (kind == 'f' ? "" : desc);
+                    if (!mod.canWiden || holder.loader) {
+                        mod.unlinked.add("stand-in uses a closed member this mod cannot open: " + line + " (in " + Exposure.dotted(name) + ")");
+                        return;
+                    }
+                    if (!classOpen) {
+                        mod.grants.add("public " + Exposure.dotted(owner));
+                    }
+                    if (!memberOpen) {
+                        mod.grants.add("public " + line);
+                    }
+                }
+            }, ClassReader.SKIP_DEBUG);
+        }
+    }
+
+    /**
+     * The stand-ins a ported jar's classes call, carried in the jar under a package of its own (mmt.standin.mID, ID from the
+     * jar's name): two mods carrying one stand-in never put two copies of a package on the game. Adds them to entries and
+     * points the classes that use them there; nothing when none is used.
+     */
+    void bundle(Mod mod, Map<String, byte[]> rewritten, Map<String, byte[]> entries, String jarName) {
+        if (standins.isEmpty()) {
+            return;
+        }
+        Pattern ref = Pattern.compile(Pattern.quote(STANDIN) + "[\\w/$]+");
+        Set<String> used = new TreeSet<>();
+        Deque<byte[]> todo = new ArrayDeque<>(rewritten.values());
+        while (!todo.isEmpty()) {
+            Matcher m = ref.matcher(new String(todo.pop(), StandardCharsets.ISO_8859_1));
+            while (m.find()) {
+                for (String name : standins.keySet()) {
+                    if ((name.equals(m.group()) || name.startsWith(m.group() + "$")) && used.add(name)) {
+                        todo.push(standins.get(name));
+                    }
+                }
+            }
+        }
+        if (used.isEmpty()) {
+            return;
+        }
+        openFor(mod, used);
+        String home = STANDIN + "m" + Integer.toHexString(jarName.replaceAll("!.*", "").hashCode() & 0x7fffffff) + "/";
+        org.objectweb.asm.commons.Remapper move = new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
+            @Override
+            public String map(String name) {
+                return name.startsWith(STANDIN) && !name.startsWith(home) ? home + name.substring(STANDIN.length()) : name;
+            }
+        };
+        for (var e : rewritten.entrySet()) {
+            if (new String(e.getValue(), StandardCharsets.ISO_8859_1).contains(STANDIN)) {
+                e.setValue(relocate(e.getValue(), move));
+            }
+        }
+        for (String name : used) {
+            entries.put(move.map(name) + ".class", relocate(standins.get(name), move));
+            rewritten.put(move.map(name) + ".class", relocate(standins.get(name), move));
+        }
+        mod.change("stand-ins carried: " + used.stream().filter(n -> !n.matches(".*\\$\\d+$")).map(n -> Exposure.dotted(n.substring(STANDIN.length()))).toList());
+    }
+
+    static byte[] relocate(byte[] bytes, org.objectweb.asm.commons.Remapper move) {
+        ClassReader r = new ClassReader(bytes);
+        ClassWriter w = new ClassWriter(0);
+        r.accept(new ClassRemapper(w, move), 0);
+        return w.toByteArray();
+    }
+
     // ---- Port rules applied in the class.
 
     /** A port rule's replacement for game members of one old class ("inClass"): name is a regex, args a descriptor's start or null. */
@@ -7632,6 +8015,18 @@ public final class JarPort {
                 Fix fix = new Fix(Json.text(rule, "id", ""), Pattern.compile(described ? Pattern.quote(d.group(1)) : rest), described ? d.group(2) : null, String.valueOf(e.getValue()));
                 fixes.computeIfAbsent(e.getKey().substring(0, dot).replace('.', '/'), k -> new ArrayList<>()).add(fix);
             }
+        }
+        // After the rules: a class a rule moves (InteractionResultHolder -> InteractionResult) is no gone class to stand in for.
+        // FROM-TO/ holds stand-ins written on the game alone, for every loader; FROM-TO.LOADER/ those that use a loader's classes.
+        Path root = book.resolveSibling("standins");
+        List<Path> dirs = new ArrayList<>();
+        for (Path d : List.of(root.resolve(a.version + "-" + b.version), root.resolve(a.version + "-" + b.version + "." + loader))) {
+            if (Files.isDirectory(d)) {
+                dirs.add(d);
+            }
+        }
+        if (!dirs.isEmpty()) {
+            standins(dirs);
         }
     }
 
