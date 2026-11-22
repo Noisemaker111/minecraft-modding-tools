@@ -1037,8 +1037,18 @@ def fabric_api(version):
 BUILT_IN = {"minecraft", "java", "neoforge", "forge", "fabricloader", "mixinextras"}
 # NeoForge's own language loaders; another (kotlinforforge) comes with a mod.
 OWN_LOADERS = {"javafml", "lowcodefml"}
-LANGUAGE_SERVICES = ("META-INF/services/net.neoforged.neoforgespi.language.IModLanguageLoader",
-                     "META-INF/services/net.minecraftforge.forgespi.language.IModLanguageProvider")
+# The service file NeoForge's loader (FML) reads language loaders from. FML 4 (NeoForge 21.0, Minecraft 1.21) replaced
+# IModLanguageProvider with IModLanguageLoader, another interface with other methods, which no port rewrites: a loader
+# registered only the old way is not there on 1.21 and later, and the reverse. Forge's own service NeoForge never reads.
+LANGUAGE_SERVICES = {"old": "META-INF/services/net.neoforged.neoforgespi.language.IModLanguageProvider",
+                     "new": "META-INF/services/net.neoforged.neoforgespi.language.IModLanguageLoader"}
+
+
+def language_services(release):
+    """The service files a NeoForge release reads language loaders from; both when the release is not known."""
+    if release is None:
+        return tuple(LANGUAGE_SERVICES.values())
+    return (LANGUAGE_SERVICES["new" if vkey(release) >= vkey("1.21") else "old"],)
 
 
 def metadata(z, loader):
@@ -1078,9 +1088,72 @@ def needs(jar, loader):
     return {a for a in asked if a and a not in BUILT_IN and a not in own}
 
 
-def provides(jar, loader):
+def constant_name(data):
+    """The string a class's name() method returns, when its body is only that constant (ldc, areturn), as javac and kotlinc
+    write a NeoForge language loader's name; else None."""
+    import struct
+    if data[:4] != b"\xca\xfe\xba\xbe":
+        return None
+    pool, i, at = [None], 1, 10
+    count = struct.unpack_from(">H", data, 8)[0]
+    while i < count:
+        tag = data[at]
+        if tag == 1:
+            size = struct.unpack_from(">H", data, at + 1)[0]
+            pool.append(data[at + 3:at + 3 + size].decode("utf-8", "replace"))
+            at += 3 + size
+        else:
+            pool.append((tag, struct.unpack_from(">H", data, at + 1)[0]) if tag == 8 else None)
+            at += {3: 5, 4: 5, 5: 9, 6: 9, 7: 3, 8: 3, 9: 5, 10: 5, 11: 5, 12: 5, 15: 4, 16: 3, 17: 5, 18: 5, 19: 3, 20: 3}[tag]
+        if tag in (5, 6):  # a long or a double takes two slots
+            pool.append(None)
+            i += 1
+        i += 1
+    at += 6
+    at += 2 + 2 * struct.unpack_from(">H", data, at)[0]
+
+    def members(at, look):
+        found, count = None, struct.unpack_from(">H", data, at)[0]
+        at += 2
+        for _ in range(count):
+            name, desc = (pool[k] for k in struct.unpack_from(">HH", data, at + 2))
+            attrs = struct.unpack_from(">H", data, at + 6)[0]
+            at += 8
+            for _ in range(attrs):
+                kind, size = pool[struct.unpack_from(">H", data, at)[0]], struct.unpack_from(">I", data, at + 2)[0]
+                if look and kind == "Code" and name == "name" and desc == "()Ljava/lang/String;":
+                    code = data[at + 14:at + 14 + struct.unpack_from(">I", data, at + 10)[0]]
+                    index = code[1] if code[:1] == b"\x12" and code[2:3] == b"\xb0" else \
+                        struct.unpack_from(">H", code, 1)[0] if code[:1] == b"\x13" and code[3:4] == b"\xb0" else None
+                    entry = pool[index] if index is not None and index < len(pool) else None
+                    found = pool[entry[1]] if isinstance(entry, tuple) else None
+                at += 6 + size
+        return at, found
+
+    at, _ = members(at, False)
+    return members(at, True)[1]
+
+
+def language_loaders(z, release=None):
+    """The names of the NeoForge language loaders a jar (an open ZipFile) registers on a release: "loader:NAME" for each
+    class the service file that release reads lists whose name() is a constant, "loader:*" for one whose name only running
+    it would tell."""
+    out = set()
+    for service in (n for n in language_services(release) if n in z.namelist()):
+        for line in z.read(service).decode("utf-8", "replace").splitlines():
+            cls = line.split("#")[0].strip()
+            if not cls:
+                continue
+            path = cls.replace(".", "/") + ".class"
+            name = constant_name(z.read(path)) if path in z.namelist() else None
+            out.add("loader:" + (name or "*"))
+    return out
+
+
+def provides(jar, loader, release=None):
     """What a jar gives the mods beside it: its mod ids and those of the jars nested in it, "adapter:K" for each Fabric
-    language adapter, and "loader:*" when it or a nested jar carries a NeoForge language loader (whose name only its code says)."""
+    language adapter, and "loader:NAME" for each NeoForge language loader it or a nested jar registers on the release
+    (language_loaders)."""
     import io
     import zipfile
 
@@ -1091,8 +1164,8 @@ def provides(jar, loader):
             out |= {meta.get("id"), *(meta.get("provides") or []), *("adapter:" + k for k in (meta.get("languageAdapters") or {}))}
         elif meta is not None:
             out |= {m.get("modId") for m in meta.get("mods", [])}
-        if any(n in z.namelist() for n in LANGUAGE_SERVICES):
-            out.add("loader:*")
+        if loader != "fabric":
+            out |= language_loaders(z, release)
         for entry in z.namelist():
             if entry.endswith(".jar") and entry.startswith(("META-INF/jars/", "META-INF/jarjar/")):
                 try:
@@ -1106,7 +1179,9 @@ def provides(jar, loader):
 
 
 def unmet(asked, provided):
-    """What of a mod's needs nothing provided answers; a language loader is answered by any jar that carries one."""
+    """What of a mod's needs nothing provided answers. A language loader is answered by the jar that registers it under the
+    name the mod's modLoader asks for (Kotlin for Forge's is kotlinforforge, KotlinLangForge's klf), or by one whose name
+    only running it would tell."""
     return {a for a in asked if a not in provided and not (a.startswith("loader:") and ("loader:*" in provided or a[7:] in provided))}
 
 
@@ -1169,7 +1244,7 @@ def choose(loader, frm, to, linked, folder, pins, platform):
         more = [j for j in candidates if j not in chosen and not unmet(needs(j, loader), provided)]
         for j in more:
             chosen.append(j)
-            provided |= provides(j, loader)
+            provided |= provides(j, loader, to)
         if more:
             continue
         waiting = [j for j in candidates if j not in chosen]
@@ -1195,7 +1270,7 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                     asked_for[project] = got
                     if got:
                         where[got[0].name] = got[0]
-                        provided |= provides(got[0], loader)
+                        provided |= provides(got[0], loader, to)
                         todo.append(got[1])
                         found = True
         if not found:
@@ -1473,7 +1548,7 @@ def load(loader, frm, to, save, mods=None, out=None):
         blamed = {n: why for n, why in culprits.items() if n in present}
         for top in (n for n in culprits if n in in_pack):
             # A library that fails takes the mods that need it along; each is failed with the library's reason.
-            gives = provides(pack / "mods" / top, loader)
+            gives = provides(pack / "mods" / top, loader, to)
             (pack / "mods" / top).rename(pack / "dropped" / top)
             print(f"  {top}: the library failed")
             for name in present:
