@@ -112,11 +112,13 @@ final class PortChains {
         Map<GameDiff.Node, List<GameDiff.Node>> parents = new IdentityHashMap<>();
         Set<GameDiff.Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         Deque<GameDiff.Node> todo = new ArrayDeque<>(body.statements);
+        List<GameDiff.Node> inOrder = new ArrayList<>();
         while (!todo.isEmpty()) {
             GameDiff.Node n = todo.pop();
             if (!seen.add(n)) {
                 continue;
             }
+            inOrder.add(n);
             for (GameDiff.Node k : n.kids) {
                 parents.computeIfAbsent(k, x -> new ArrayList<>()).add(n);
                 todo.push(k);
@@ -131,7 +133,10 @@ final class PortChains {
             }
         }
         Map<Integer, Edit> out = new HashMap<>();
-        for (GameDiff.Node y : seen) {
+        // In the order the method runs them: where two chains overlap (tag.getCompound(a).getCompound(b)) the first pair
+        // found wins, and an identity set's order changed run to run, so one jar was ported two ways.
+        inOrder.sort(Comparator.comparingInt(n -> n.at));
+        for (GameDiff.Node y : inOrder) {
             if (y.op != 'v' && y.op != 's' || y.kids.length == 0 || y.at < 0) {
                 continue;
             }

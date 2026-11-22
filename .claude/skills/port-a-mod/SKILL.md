@@ -23,8 +23,8 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   and put what it prints against main in the PR. It runs only your branch: main's table for your base was made when
   that commit reached main, and is found (or made once, for every PR on that base) without you running main. Never
   commit `bench/exposure/all.json` or add the `port.jar-links` points: main's sweep writes both after the merge.
-- One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (about
-  2 minutes; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
+- One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (a
+  minute or two the first time, seconds when nothing it reads changed; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
   read in Mojang's names through intermediary first (tools/ModNames.java).
 - `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2` is the proof (`python bench/exposure.py load` on GitHub's
@@ -110,14 +110,13 @@ the first row above.
    `redesigned` or `unused` reference unless you can say what replaces it. A wrong answer is worse than none.
 3. For a rule: write it in `knowledge/fixes.json` with `members` naming that game part, then
    `python bench/rule_test.py --only ID --write`. Copy the nearest rule that has `members`; never name a mod.
-4. Run step 1 again. The type's count of mods (or the part) must have fallen and the mods that link must not drop. If
-   neither moved, the change does not do what you think: fix it or take it out. For a learner change, also run
+4. Run step 1 again, or with `--type "TYPE"` to port only the mods that type held back (seconds). It prints which mods
+   newly link, stopped linking or changed their port against the run before your edit: the type's mods must have moved
+   and none may stop linking. If nothing moved, the change does not do what you think: fix it or take it out. For a learner change, also run
    `python bench/learn_diff.py --loader neoforge|fabric` and read every reading that is new, gone or changed against
-   main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()). The
-   learner is not yet the same run to run (a reading for Boat or AbstractMinecart, slotClicked), so a few lines differ
-   on main against itself.
-5. Push, then `tools/cloud-run load -f updates=LOADER:A:B` starts the ported mods that link on a real server and in a
-   real client, with the library mods they require (each one's release for B from Modrinth, or its A release ported with
+   main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()).
+5. Push, then `tools/cloud-run load -f updates=LOADER:A:B -f mods=...`, with the mods step 4 printed as moved, starts
+   them on a real server and in a real client, with the library mods they require (each one's release for B from Modrinth, or its A release ported with
    them); no mod that links may fail, and `compare.md` must show no mod that loaded on main failing now. To keep the
    receipt, copy its `load-LOADER-A-B-COMMIT.json` into `bench/exposure/`. `python bench/port_board.py --changed` builds
    the pinned source ports your rule crosses. Commit.
@@ -134,7 +133,7 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
 - No AI call inside the tool. What you work out is saved as a rule with a test.
 - Prove in game before the PR ends, on GitHub's runners and never by starting Minecraft here: many agents share one PC.
   `tools/cloud-run load` for the updates you changed (step 5); the whole corpus once, on the PR's final commit:
-  `tools/cloud-run ports`. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
+  `tools/cloud-run ports`; then hand back, never watching CI. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
 - Each type of break is a commit on the step's open PR, not a new step or PR (`CONTRIBUTING.md`, "How the work
   runs"). End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`):
   its result says what the method freed and what it left, which is the table above from step 79 on (ROADMAP.md shows
