@@ -447,6 +447,63 @@ public final class JarPort {
 
     boolean runtimeNames; // hand a Fabric jar back in the names Fabric runs, not Mojang's
     Path originalsDir; // where each jar is as it came, by its file name, when the jars given were read into Mojang's names first
+    int[] packFormats; // the release ported to: its resource and data pack formats when its reader takes min_format/max_format, else {}
+
+    /**
+     * The pack formats of the release ported to, as its own version.json gives them ("pack_version"), when that release reads
+     * pack.mcmeta's min_format and max_format (1.21.9 on, where the formats have a minor part); empty before.
+     */
+    int[] packFormats() {
+        if (packFormats == null) {
+            try {
+                Path client = GameDiff.verified(GameDiff.download(GameDiff.versionJson(to), "client"), "client-" + to + ".jar");
+                Map<String, Object> v = Json.object(Json.parse(VersionMap.zipEntry(client, "version.json")));
+                Map<String, Object> pv = v.get("pack_version") instanceof Map<?, ?> m ? Json.object(m) : Map.of();
+                packFormats = pv.containsKey("resource_minor") && pv.get("resource_major") instanceof Number r && pv.get("data_major") instanceof Number d
+                    ? new int[] { r.intValue(), d.intValue() } : new int[0];
+            } catch (Exception unreadable) {
+                packFormats = new int[0];
+            }
+        }
+        return packFormats;
+    }
+
+    /**
+     * A mod's pack.mcmeta declares the formats of the release it was built for, and 1.21.9's reader refuses some shapes the
+     * releases before took: a pack_format above the last format without minor versions (64 for resources, 81 for data)
+     * with no min_format/max_format, or a min_format/max_format range reaching below them with no supported_formats. A
+     * mod's jar is one pack read as both kinds, so a declaration fine for one kind is refused for the other. Ported, it
+     * declares the release's own two formats as its range, which that reader takes for both kinds; anything else in the
+     * section is kept, and an unreadable file is left as it is.
+     */
+    byte[] packMetadata(Mod mod, byte[] data) {
+        int[] formats = packFormats();
+        if (formats.length < 2) {
+            return data;
+        }
+        Map<String, Object> meta;
+        try {
+            meta = Json.object(Json.parse(new String(data, StandardCharsets.UTF_8).replaceFirst("^\uFEFF", "")));
+        } catch (RuntimeException unreadable) {
+            return data;
+        }
+        if (!(meta.get("pack") instanceof Map<?, ?> section)) {
+            return data;
+        }
+        Map<String, Object> pack = Json.object(section);
+        List<Object> was = new ArrayList<>(List.of(String.valueOf(pack.get("pack_format")), String.valueOf(pack.get("min_format")), String.valueOf(pack.get("max_format")),
+            String.valueOf(pack.get("supported_formats"))));
+        pack.remove("pack_format");
+        pack.remove("supported_formats");
+        pack.put("min_format", Math.min(formats[0], formats[1]));
+        pack.put("max_format", Math.max(formats[0], formats[1]));
+        List<Object> now = List.of("null", String.valueOf(pack.get("min_format")), String.valueOf(pack.get("max_format")), "null");
+        if (was.equals(now)) {
+            return data;
+        }
+        mod.change("pack formats declared for " + to);
+        return Json.write(meta).getBytes(StandardCharsets.UTF_8);
+    }
     ModNames in;
     ModNames.Back out;
 
@@ -838,6 +895,8 @@ public final class JarPort {
                     data = metadata(new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
                 } else if (n.equals("fabric.mod.json")) {
                     data = fabricMetadata(data, widener, platformNested);
+                } else if (n.equals("pack.mcmeta")) {
+                    data = packMetadata(mod, data);
                 } else if (n.equals(widener)) {
                     String text = accessWidener(mod, new String(data, StandardCharsets.UTF_8));
                     if (!mod.grants.isEmpty()) {
