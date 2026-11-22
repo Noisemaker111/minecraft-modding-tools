@@ -1184,10 +1184,16 @@ def in_range(version, spec):
         return [int(p) if p.isdigit() else p for p in re.split(r"[.\-+]", str(v)) if p]
 
     def cmp(x, y):
-        for p, q in zip(key(x), key(y)):
+        # As Maven orders them: a qualifier (beta, rc) comes before any number, so 0.6.0-beta.5 is below 0.6.0.
+        a, b = key(x), key(y)
+        for p, q in zip(a, b):
             if p != q:
-                return (p > q) - (p < q) if type(p) is type(q) else (isinstance(p, str)) - (isinstance(q, str))
-        return 0
+                return (p > q) - (p < q) if type(p) is type(q) else (isinstance(q, str)) - (isinstance(p, str))
+        rest = a[len(b):] or b[len(a):]
+        if not rest or all(r == 0 for r in rest):
+            return 0
+        longer = 1 if len(a) > len(b) else -1
+        return -longer if isinstance(rest[0], str) else longer
 
     if not version or not spec or spec.strip() == "*":
         return True
@@ -1238,8 +1244,11 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                         continue
                     got = library(project, loader, to)
                     where = ready
-                    asked_range = {mid: r for w in waiting for mid, r in ranges(w, loader).items()}
-                    if got and any(not in_range(v, asked_range[mid]) for mid, v in versions(got[0], loader).items() if mid in asked_range):
+                    asked_range = {}
+                    for w in waiting:
+                        for mid, r in ranges(w, loader).items():
+                            asked_range.setdefault(mid, []).append(r)
+                    if got and any(not in_range(v, r) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
                         got = None  # its release for the new version is outside the range the mod asks for: the old one, ported
                     if not got:
                         got, where = library(project, loader, frm), to_port

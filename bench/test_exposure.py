@@ -205,6 +205,9 @@ with tempfile.TemporaryDirectory() as tmp:
     # A library's release for the new version outside the range the mod asks for is not taken: its old release is ported.
     check(E.in_range("21.1.9", "[21.1,21.2)") and not E.in_range("21.2.3", "[21.1,21.2)") and E.in_range("1.3", "1.2") and not E.in_range("1.21.2", "[1.21.1]"),
           "versions are read against Maven ranges as NeoForge reads them")
+    check(not E.in_range("0.6.0-beta.5", "[0.6.0,)") and E.in_range("0.6.0", "[0.6.0,)") and E.in_range("0.6.1-beta.1", "[0.6.0,)")
+          and E.in_range("1.0.0", "[1.0,)") and not E.in_range("1.0-rc1", "1.0"),
+          "a prerelease is below the release it leads to, as NeoForge orders versions")
     strict = Path(tmp) / "strict.jar"
     strict.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("strict") + '[[dependencies.strict]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,2.0)"\n'}))
     (folder / "strict--strict.jar").write_bytes(strict.read_bytes())
@@ -222,6 +225,19 @@ with tempfile.TemporaryDirectory() as tmp:
         E.required_projects, E.library = real
     check([j.name for j in chosen] == ["strict--strict.jar"] and not ready and list(to_port) == ["libipn-1.jar"],
           f"a library outside the mod's range for the new version is ported from the old one: {ready} {to_port}")
+    # Two mods needing the same library: the release for the new version has to fit both ranges, not the last one read.
+    loose = Path(tmp) / "loose.jar"
+    loose.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("loose") + '[[dependencies.loose]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,)"\n'}))
+    (folder / "loose--loose.jar").write_bytes(loose.read_bytes())
+    pins.append({"slug": "loose", "file": "loose.jar", "project": "P-loose", "version": "v-loose"})
+    listed["v-loose"] = ["P-libipn"]
+    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["strict--strict.jar", "loose--loose.jar"], folder, pins, set())
+    finally:
+        E.required_projects, E.library = real
+    check(not ready and list(to_port) == ["libipn-1.jar"],
+          f"a library two mods need fits every range they ask for: {ready} {to_port}")
 
 # A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
 # server lacks, from another mod, does not.
