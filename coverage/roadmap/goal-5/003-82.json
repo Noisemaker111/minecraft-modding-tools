@@ -1,0 +1,14 @@
+{
+ "id": "82",
+ "title": "Make the fix automatically and prove it",
+ "part": "Fix it automatically",
+ "status": "later",
+ "text": "The part Jon wants most. A pattern today is advice for a person. Here a pattern also carries the edit, written once by an agent as a tested rule the way a port rule is, and applied by mmt with no AI call. One command finds the slow spot, makes the edit, and runs the proof perf-optimize already does: baseline and changed mod in alternating fresh games, every behaviour gate passing, the speedup interval above 1. The change is kept only when that passes and can be undone; when it does not pass, mmt says so and leaves the mod as it was. Behaviour gates are written by hand per mod today, so this step also needs them made for any mod (the behaviour fingerprint is the starting point).",
+ "finish": "On 3 mods nobody edited by hand and no pattern was written from, one command returns the mod measurably faster with the same behaviour, proven in the real game. Not measured yet",
+ "wrongIf": "the saved patterns are too particular to one mod's code to be written as an edit; the count of patterns that can be automated then says how far this goes",
+ "start": "2026-12-08",
+ "target": "2027-01-16",
+ "measures": [
+  "perf.auto-fixed"
+ ]
+}

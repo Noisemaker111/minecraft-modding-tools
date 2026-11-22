@@ -2,7 +2,10 @@ name: Cloud jar scoreboard
 # The jar scoreboard (python bench/exposure.py all) on GitHub's runners: one ubuntu-latest job per update and loader
 # (python bench/exposure.py updates), each downloading its release's pinned mods (bench/exposure/mods/), porting them
 # with JarPort and linking them against the next release; the summary job joins them into the all-updates table
-# (python bench/exposure.py join). No caches: a job downloads about 1 GB (the game twice, its loader, 150 mods) in under a minute.
+# (python bench/exposure.py join). A job downloads about 1 GB (the game twice, its loader, 150 mods) in under a minute, so
+# only small kept answers are cached: each release's registry report (its data generator, a third of a job's time) and the
+# ports and Exposure answers of the sweep before. The sweep ports every mod and asks Exposure everything again (--verify)
+# and fails where a kept answer with the same key differs: the check that the cache agents use locally is exact.
 #
 # Main's table is made once per commit: every push to main runs this, and the record job saves the table as
 # bench/exposure/all.json on main with the port.jar-links measures (python bench/exposure.py record-main), pushed with the
@@ -78,11 +81,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.mmt/exposure/registries
+            ~/.mmt/exposure/ports
+            ~/.mmt/exposure/game
+          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}
+          restore-keys: exposure-kept-${{ matrix.update }}-
       - name: Port and link this update's mods
+        # bash by name runs with pipefail: without it the tee below hid a failed port, and the job passed with no summary.
+        shell: bash
         run: |
           IFS=: read -r LOADER FROM TO <<< "$UPDATE"
           mkdir -p summary
-          python bench/exposure.py jars --loader "$LOADER" --from "$FROM" --to "$TO" --out "summary/$LOADER-$FROM-$TO.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          python bench/exposure.py jars --verify --loader "$LOADER" --from "$FROM" --to "$TO" --out "summary/$LOADER-$FROM-$TO.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: |
+            ~/.mmt/exposure/registries
+            ~/.mmt/exposure/ports
+            ~/.mmt/exposure/game
+          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

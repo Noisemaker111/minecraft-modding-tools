@@ -1,0 +1,11 @@
+{
+ "id": "83",
+ "title": "One reading of a mod that every command uses",
+ "part": "One place for both",
+ "status": "later",
+ "text": "Porting, changing loader, the mixin and pack checks and the lag work all start from the same question: where does this mod touch the game or its loader, and what is that part on the other side. Today that question is answered five separate ways. `port` on source asks the compiler for every call, field, class and override (`port-plan`); `port --jar` reads the compiled classes its own way; `convert` matches the source as text against its loader rules; convert's to-do list reads class files with a reader written in Python; and `pack-check` reads them with another written in Java. A use one of them misses or misreads is fixed in that one only. The step is one record per mod, made once from its source or its .jar: every place it touches the game or a loader, with exactly which class, method or field. Port looks each entry up in the game's change map, convert looks it up in the loader bridge, the checks look it up in the target, and the lag report names the game call a slow method sits on. The lag work shares only that last part: what is slow is still found by measuring the running game. Step 49's one front door is built on this record. First job, before any command is moved: on the 13 corpus mods convert accepts that do not compile and load after converting, count how many fail at a use the text matching missed and the record names.",
+ "finish": "port (source and .jar), convert, convert's to-do list and pack-check read a mod through one record and the two hand-written class-file readers are deleted, with no mod lost: the convert corpus still has at least 15 of 28 compiling and loading, and the port scoreboard still links at least 11 of 294. The number it should raise is convert's 15; by how much is not measured yet, and the first job's count sets it",
+ "wrongIf": "fewer than 3 of those 13 fail at a use the record names; then convert's gap is the bridge (step 48), not how the mod is read, and this step shrinks to deleting the two duplicate readers",
+ "start": "2026-12-08",
+ "target": "2027-01-09"
+}

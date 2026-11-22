@@ -4,18 +4,19 @@
 > `python bench/bench_page.py --roadmap`. Edit those two files, not this one. Live charts and
 > porting map: **<https://noisemaker111.github.io/minecraft-modding-tools/>**
 
-**The goal:** Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, and a modpack user never diagnoses a conflict by hand. Four goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, and move a project between loaders and platforms. Every result is proven in the real game or on a real server.
+**The goal:** Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, a modpack user never diagnoses a conflict by hand, and nobody hunts for lag by hand: point mmt at a mod and within about a minute it says what is causing the lag and the known way to make it faster, and makes the change itself wherever it can prove the mod still behaves the same. Five goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, move a project between loaders and platforms, and make any mod faster. Every result is proven in the real game or on a real server.
 
-**57 of 85 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
+**59 of 91 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
 
 ## Where each goal stands
 
 | Goal | Steps done | Now |
 |---|---|---|
 | **[1. Test a mod in seconds](#goal-1--test-a-mod-in-seconds)** | `██████░░░░`&nbsp;7&nbsp;of&nbsp;11 | ⚪ 27 · The bot joins a modded server<br>⚪ 26 · The bot on older Paper versions, on demand |
-| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `████████░░`&nbsp;45&nbsp;of&nbsp;59 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
+| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `████████░░`&nbsp;47&nbsp;of&nbsp;61 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
 | **[3. Make modpacks work together](#goal-3--make-modpacks-work-together)** | `██░░░░░░░░`&nbsp;1&nbsp;of&nbsp;4 | 🔵 29 · Reproduce Sismeel's Forge 1.20.1 pack problems<br>🔵 30 · Detect and repair the failure, checked in the game<br>🔵 31 · Any installed pack or export as input |
-| **[4. Change loader or platform](#goal-4--change-loader-or-platform)** | `████░░░░░░`&nbsp;4&nbsp;of&nbsp;11 | ⚪ 48 · What the most-downloaded mods need from the bridge, most-used first<br>⚪ 19 · Forge → NeoForge, proven on DragonMine Z |
+| **[4. Change loader or platform](#goal-4--change-loader-or-platform)** | `███░░░░░░░`&nbsp;4&nbsp;of&nbsp;12 | ⚪ 48 · What the most-downloaded mods need from the bridge, most-used first<br>⚪ 19 · Forge → NeoForge, proven on DragonMine Z |
+| **[5. Make any mod faster](#goal-5--make-any-mod-faster)** | `░░░░░░░░░░`&nbsp;0&nbsp;of&nbsp;3 | ⚪ 80 · Say what is causing the lag in under a minute |
 
 ## Goal 1 — Test a mod in seconds
 
@@ -253,6 +254,7 @@ One command moves a mod's source from any version to any other, forward or back,
 | 78 | Overrides of game methods the update made final | 🟢 done | Nov 21 |
 | 78b | Porting PRs merge without rebasing, run one sweep, and start mods that need libraries | 🟢 done | Nov 21 |
 | 78c | Porting agents prove ports in a real game on GitHub's runners, not on the maintainer's PC | 🟢 done | Nov 21 |
+| 78d | Trial: stand-ins for what the game's code does not answer | 🟢 done | Nov 21 |
 | 79b | Game calls whose result type changed | 🟢 done | Nov 22 |
 
 ### Port by changed game part
@@ -260,6 +262,12 @@ One command moves a mod's source from any version to any other, forward or back,
 | # | Step | Status | When |
 |---|---|---|---|
 | 79 | Readings the game's uses show once uses that say nothing about them stand aside; a plain result wrapped in a record read back | 🟢 done | Nov 21 |
+
+### Port by type of break
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 79L | Mods written in Kotlin start with the language loader they name | 🟢 done | Nov 22 |
 
 <details><summary>What each step is, and how far it got</summary>
 
@@ -377,9 +385,13 @@ One command moves a mod's source from any version to any other, forward or back,
 
 **78c · Porting agents prove ports in a real game on GitHub's runners, not on the maintainer's PC** (done). Every porting agent proved its port by starting real Minecraft servers and clients on the one PC they all share (python bench/exposure.py load), so a dozen agents at once would throttle it. tools/cloud-run load runs that same proof on GitHub's runners, one job per update (and only the chosen mods with -f mods=), with the client on a virtual display with software OpenGL, and brings each update's verdicts back into .runs/cloud/ in the shape load writes, compared with the receipt main keeps for the update. The port-a-mod workflow, CONTRIBUTING.md and AGENTS.md now send port proofs there; locally agents edit, compile and run the offline checks. *So far:* tools/cloud-run load gave the same verdicts as a local exposure.py load of the same porter, mod for mod. NeoForge 1.21.1 -> 1.21.2 (run 44962634432): 42 mods, server 30 load, client 28 of 32, every server and client verdict the same as on the PC. Fabric 1.21.1 -> 1.21.2 (run 44963807589): 32 mods, server 14 load, all 32 the same; the client drops Forge Config API Port and Better Mount HUD in both, then is disconnected joining its world (Krypton and e4mc redirect the same login encryption call) in both, so neither reports client verdicts. Wall time: 13m21s for both updates in parallel (jobs 12m35s and 11m52s), 12m57s for Fabric alone; locally 13m07s NeoForge and 10m10s Fabric, one after the other. To make it work on main, load now drops a failing library a log names through a nested jar, keeps a failed library out of later starts, and no longer adds Fabric API twice.
 
+**78d · Trial: stand-ins for what the game's code does not answer** (done). Trial of a method, judged on NeoForge 1.21.1 -> 1.21.2: for the old game classes the game's own code does not answer, ranked by the mods they finish together, write a stand-in (the old API implemented on the new game, written from both releases' code and the loaders' migration notes) that the porter compiles against the new release and carries in the ported jar (knowledge/standins/, JarPort.standins). Judged by: mods freed by the top 10 (fail under 8), agent time per stand-in (fail over about 45 minutes), and real-server starts of the freed mods (fail if they fail more often than 17 of 559). *So far:* Two of three held; the third failed as written, for reasons outside the stand-ins. 11 stand-ins freed 11 mods: NeoForge 1.21.1 -> 1.21.2 went 41 -> 52 of 147. The same game-only stand-ins took Fabric 1.21.1 -> 1.21.2 from 36 -> 41. Every update 6,145 -> 6,161, big updates 1,979 -> 1,995 (cloud run 44969588277 against main's 44960606918), none lower. The 11 took about 10 minutes together, 1-2 minutes each; the mechanism took about 1.5 hours once. Real starts: 9 of the 11 load on a real 1.21.2 server and client. 2 fail (18%, against 17 of 559 today): Natures Compass on 1.21.2's required item ids ('Item id not set', invisible to the link check), and Enchantment Descriptions on its Bookshelf library, whose ported 1.21.1 build fails. Neither is a stand-in's code. Ceiling: the top 10 classes each free one mod. Only 23 of 106 blocked mods are blocked solely by calls, fields and class uses; 83 also hold a mixin or override break, out of scope. So stand-ins alone top out around 64 of 147 on this update, at about one stand-in per mod, and the rewritten systems never reached the top 10. Receipts: bench/exposure/load-neoforge-1.21.1-1.21.2-0b47b4c3f7.json, bench/exposure/load-fabric-1.21.1-1.21.2-9adb993ed0.json.
+
 **79b · Game calls whose result type changed** (done). The part of `call, game: linked` where only a call's result type changed and its arguments still fit. The new result is taken as it is where every use of it means the same of its type (followed on the verifier's stack, as #157 does for a retyped field: 1.19's getRandom became a RandomSource), widened where a primitive converts exactly (1.21.6's Window.getGuiScale() became an int, read as the double it was), or turned into the old type as the game's own code gets what a holder of it holds (holder.value()). A result that may hold nothing (Optional, DataResult) stays reported: reading it out could throw where the old call answered with a default. *So far:* Against main at 539cdb24e7 (run 44962948917): every update 6,145 -> 6,150, big updates 1,979 -> 1,983, newest 21; 'call, game: linked' finishes 199 -> 194, mods 1,973 -> 1,940; none lower. Clumps, freed on Fabric 1.18.2 -> 1.19 (its getRandom), passes on a real 1.19 server and client. Most of the type is redesigns (1.21.6's GuiGraphics.pose(), the render passes) and calls whose parameters changed, left for later steps.
 
 **79 · Readings the game's uses show once uses that say nothing about them stand aside; a plain result wrapped in a record read back** (done). The learner's vote lets uses that say nothing about a reading stand aside, each kind from the game's own code: an unread use where the new code put a value of an unrelated type (1.21.5 reads a whole Vec3 with a codec where it read a ListTag), one making the reading's own call with a fixed value of its own place where the reading has one (getFloatOr(tag, "walkSpeed", 0.1F) on a tag getCompoundOrEmpty gave), and one insisting on the value with the member's own successor (getCompound(key).orElseThrow()). A literal the game passed differently at each use and that every use read the same may be dropped when the old member's body only tested it (getList(key, type) is getListOrEmpty(key)). Uses standing aside carry a reading only with three that agree, every operand kept but ones only tested, and the reading compiling for the declared types. A late chain needs a setter the update removed: a member nested in itself with a successor (getCompound(a).getCompound(b)) no longer throws its own reading away. A method whose plain result the update wrapped in a record (1.21.9's packVersion(type), a PackFormat) is read back through the component the record's one factory from that value fills (PackFormat.of(n) is new PackFormat(n, 0): packVersion(type).major()). *So far:* 2026-11-21 (on #163): newest 21 -> 22 (NeoForge jump 15 -> 16: veinminer), every update 6,145 -> 6,146, big updates 1,979 -> 1,980 (Fabric 1.21.4 -> 1.21.5 37 -> 38), none lower; 'call, game: linked' in 1,973 -> 1,959 mods. 1.21.5's getString, getList, getCompound, getFloat and getDouble are learned on both loaders. veinminer is a named false link: on a real 26.3 server it needs Kotlin for Forge's language loader, which does not register there ('needs language provider klf'), although Kotlin for Forge links and loads as a mod. learn_diff over 21 NeoForge and 43 Fabric updates: no plain reading lost; chains are replaced by the plain readings they repeated.
+
+**79L · Mods written in Kotlin start with the language loader they name** (done). PR #166 named veinminer a false link on NeoForge 1.21.1 -> 26.3: started with Kotlin for Forge, it fails with 'needs language provider klf'. veinminer's modLoader is klf, which is KotlinLangForge's loader, not Kotlin for Forge's (kotlinforforge). The game proof (exposure.py load) counted any jar carrying a language loader as every language loader, so it started veinminer beside Kotlin for Forge and never fetched KotlinLangForge. NeoForge's own loader code reads language loaders the same way in FML 4 (1.21.1) and FML 12 (26.3): the same IModLanguageLoader service, the same FMLModType LIBRARY plugin layer. The load step now knows each loader by the name its class returns. *So far:* The false link was a wrong library, not a lost loader. On real NeoForge 26.3 (cloud-load run 44971629617, this branch with #166), the ported Kotlin for Forge 5.13.0 loads on the server and in the client, its own mod running on its kotlinforforge loader, and veinminer (1.21.1, ported) loads in both with KotlinLangForge's 26.3 release beside it; main's load step pairs veinminer with Kotlin for Forge and fetches no KotlinLangForge. On 1.21.2 (run 44969075956) veinminer and veinminer-client load on server and client with KotlinLangForge. No Kotlin for Forge mod links on 1.21.1 -> 26.3 yet (Cobblemon 898 references, Inventory Profiles Next 51, libIPN 33). The language SPI did change once, at Minecraft 1.21 (FML 3 -> 4: IModLanguageProvider -> IModLanguageLoader), a redesign no port rewrites; the load step now counts a loader only through the service its target release reads. Left: the whole 26.3 game proof stops at startup on a ported 1.21.1 Sinytra Connector (continuity's library), which needs cpw.mods.jarhandling that FML 12 removed, on main as here.
 
 </details>
 
@@ -483,6 +495,7 @@ The same project moved between Fabric, NeoForge, Forge, Quilt and Paper. A separ
 |---|---|---|---|
 | 50 | A mod's .jar works as well as its source | 🟢 done | Nov 18 |
 | 49 | Drop a mod in, pick a version and a loader, get it back | ⚫ later | Dec 8 → Jan 15, 2027 |
+| 83 | One reading of a mod that every command uses | ⚫ later | Dec 8 → Jan 9, 2027 |
 
 ### Loader pairs
 
@@ -519,6 +532,8 @@ The same project moved between Fabric, NeoForge, Forge, Quilt and Paper. A separ
 
 **49 · Drop a mod in, pick a version and a loader, get it back** (later). Porting and converting are two commands today, each with its own from and to. The destination is one place, in the command line and in the desktop app: a mod goes in as its source folder or its .jar, the person picks the Minecraft version and the loader they want, and it comes back the same way for that version and loader, checked in the game, in minutes. It chains the port and the conversion in whichever order has a route. It waits on step 50 (a .jar in and out) and on steps 46 and 48, which decide how many mods come back with nothing left to do by hand.
 
+**83 · One reading of a mod that every command uses** (later). Porting, changing loader, the mixin and pack checks and the lag work all start from the same question: where does this mod touch the game or its loader, and what is that part on the other side. Today that question is answered five separate ways. `port` on source asks the compiler for every call, field, class and override (`port-plan`); `port --jar` reads the compiled classes its own way; `convert` matches the source as text against its loader rules; convert's to-do list reads class files with a reader written in Python; and `pack-check` reads them with another written in Java. A use one of them misses or misreads is fixed in that one only. The step is one record per mod, made once from its source or its .jar: every place it touches the game or a loader, with exactly which class, method or field. Port looks each entry up in the game's change map, convert looks it up in the loader bridge, the checks look it up in the target, and the lag report names the game call a slow method sits on. The lag work shares only that last part: what is slow is still found by measuring the running game. Step 49's one front door is built on this record. First job, before any command is moved: on the 13 corpus mods convert accepts that do not compile and load after converting, count how many fail at a use the text matching missed and the record names.
+
 **19 · Forge → NeoForge, proven on DragonMine Z** (next). Forge 1.20.1 holds the largest set of mods that never moved to NeoForge, and their players are asked for it. DragonMine Z (Forge 1.20.1, about 960,000 downloads, GPL) shows the cost: a contributor re-ports every release to NeoForge 1.21.1 by hand (its pull requests 265, 269 and 303, the last 760 files). mmt convert takes the mod's Forge source to NeoForge with the rules read from the loaders' own files, as steps 40 and 41 did for Fabric and NeoForge (NeoForge forked from Forge at 1.20.1, so every rename since is in its own history), and the porter carries the result on to 1.21.1. What Forge mods use that the rules lack is listed from the most-downloaded Forge 1.20.1 jars, most-used first, as step 48 does for the bridge. DragonMine Z is the proof mod, in the convert corpus (Forge) and the port corpus (its hand-made NeoForge 1.21.1 port); nothing is made for it alone.
 
 **19b · Fabric → Quilt** (later). Fabric → Quilt, a close pair: Quilt loads most Fabric mods as they are.
@@ -540,6 +555,53 @@ The same project moved between Fabric, NeoForge, Forge, Quilt and Paper. A separ
 
 </details>
 
+## Goal 5 — Make any mod faster
+
+Point mmt at a mod or a pack and, almost at once, get three things in this order: what is causing the lag (which mod, which feature, which method, and what it costs each tick or frame), how to make it faster (the fix that already worked on the same kind of slowness in another mod, with the gain it measured), and the fix made for you where mmt can prove the mod does exactly what it did before, only faster. The third is the one that matters most. It works like porting: an agent works out a kind of fix once and saves it as a tested rule, the tool applies it with no AI call, and the real game decides whether it stays. Commands: `perf`, `perf-optimize`.
+
+- **Today:** The first works and the second has started; the third is not built. `mmt perf` attaches to a running game and after a 35-second capture ranks every mod and feature by CPU, server milliseconds per tick, render milliseconds per frame and memory. Its report names a known fix when the mod's slowness matches one of 14 saved patterns, which come from accepted speedups on 4 mods (Cyclic 15.7×, Simple Storage Network 5–6×, Diorama 1.6–2.2×, Pipez 1.2–1.3×). `mmt perf-optimize` proves a change is faster and behaves the same, but a person or their agent still writes the change: mmt edits no code for speed yet.
+- **The number that says most:** Mods made faster with no hand edit, proven in the game is **0 mods**, target 3 mods by Jan 16, 2027, step 82
+- **Also:** Known fixes mmt can name for a kind of slowness is **14 rules**
+- **Also:** Mods with a speedup accepted by perf-optimize, written by hand is **4 mods**
+
+### What is slow
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 80 | Say what is causing the lag in under a minute | ⚪ next | Nov 24 → Dec 5 |
+
+### How to fix it
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 81 | Say how to fix it, from fixes that already worked | ⚫ later | Dec 1 → Dec 19 |
+
+### Fix it automatically
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 82 | Make the fix automatically and prove it | ⚫ later | Dec 8 → Jan 16, 2027 |
+
+<details><summary>What each step is, and how far it got</summary>
+
+**80 · Say what is causing the lag in under a minute** (next). `mmt perf` already ranks mods and features, but the answer is a long report someone has to read, and it starts from a game the person launched and played. The step is the answer as a short list at the top, in the command line and the desktop app: this mod, this feature, this method, this many milliseconds a tick or a frame, worst first, within a minute of pointing mmt at a mod, a pack or a running game. It names the game or loader call the slow method sits on, so the same cause is recognised in the next mod.
+
+**81 · Say how to fix it, from fixes that already worked** (later). Every cause named in step 80 comes with the known way to make it faster: what to change, the mod it worked on and the gain measured there. Today 14 patterns exist, each written from one accepted speedup, and nobody has checked how often they match a mod they were not written on. The step measures that on mods held out from the pattern library, and grows the library by the kind of slowness (the game call misused, the cache dropped, the work repeated every tick), ranked by how many of the most-downloaded mods show it, never by one mod's profile.
+
+**82 · Make the fix automatically and prove it** (later). The part Jon wants most. A pattern today is advice for a person. Here a pattern also carries the edit, written once by an agent as a tested rule the way a port rule is, and applied by mmt with no AI call. One command finds the slow spot, makes the edit, and runs the proof perf-optimize already does: baseline and changed mod in alternating fresh games, every behaviour gate passing, the speedup interval above 1. The change is kept only when that passes and can be undone; when it does not pass, mmt says so and leaves the mod as it was. Behaviour gates are written by hand per mod today, so this step also needs them made for any mod (the behaviour fingerprint is the starting point).
+
+</details>
+
+<details><summary>Every number for this goal (3)</summary>
+
+| Measure | First | Now | Target | Status |
+|---|---|---|---|---|
+| Mods made faster with no hand edit, proven in the game | — | 0 mods (Nov 21) | 3 mods by Jan 16, 2027, step 82 | Baseline |
+| Known fixes mmt can name for a kind of slowness | — | 14 rules (Nov 21) | — | Fact |
+| Mods with a speedup accepted by perf-optimize, written by hand | — | 4 mods (Nov 21) | — | Fact |
+
+</details>
+
 ## Other numbers
 
 The same table for a PR or a report: `python bench/measures.py table [ID ...] [--area AREA] [--step STEP]`.
@@ -548,7 +610,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 
 | Measure | First | Now | Target | Status |
 |---|---|---|---|---|
-| Roadmap steps done | 5 steps (Oct 24) | 57 steps (Nov 22) | 85 steps by Mar 26, 2027 | 65% of the way |
+| Roadmap steps done | 5 steps (Oct 24) | 59 steps (Nov 22) | 91 steps by Mar 26, 2027 | 63% of the way |
 | PR checks, start to finish | 2.0 min (Oct 27) | 3.9 min (Nov 5) | 5.0 min (hold) by Nov 5 | Met |
 | Multi-version Stonecutter run, start to finish (nightly until Nov 7, on demand since) | 45.9 min (Oct 28) | 41.7 min (Nov 6) | — | Fact |
 
@@ -556,7 +618,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 
 ## Decisions
 
-<details><summary>21 decisions, oldest first</summary>
+<details><summary>23 decisions, oldest first</summary>
 
 | Date | Question | Choice |
 |---|---|---|
@@ -581,5 +643,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 | 2026-11-18 | What does someone hand over: the mod's source, or its .jar? | Either (Jon, 2026-11-18): the mod's source folder, which comes back as source, or its .jar, which comes back as a .jar, through the command line and the desktop app. Until now port and convert took a source folder only, so only a mod's author could use them. Step 50 adds the .jar and comes first, because how it is done decides whether the source-based steps 44 and 47 stay as written |
 | 2026-11-20 | Does Forge → NeoForge get its own step, and which mod proves it? | Yes (Jon, 2026-11-20): Forge → NeoForge is the next loader pair after Fabric and NeoForge, proven on DragonMine Z, whose NeoForge port is redone by hand each release. DragonMine Z joins the convert and port corpora as a test input; the rules stay general (step 19) |
 | 2026-11-20 | Why is the porting timeline months, and what is steered by now? | Speed was never the gap: a .jar is ported in about ten seconds. The count was (Jon asked on 2026-11-20 why it would take months). The 62% headline was one update at a time, and half the updates change almost nothing; ported in one go to the newest game, 11 of 294 of the most-used releases' top mods link. And the to-do list was the reference the most mods share, which frees almost no mod: the 100 most shared freed 2. Steered by now: the jump to the newest game and the big updates (port.jar-links.newest, port.jar-links.big-updates), and the mods nearest to done as the order of work. Any mod, any version with nothing by hand is not a date on this roadmap: 53% of the broken references of a big update have no answer in the game's own code, and nobody ports arbitrary mods across one automatically. What is promised is a ported .jar in seconds with either every reference linked or the exact list of what is left |
+| 2026-11-21 | What is the performance work for? | Three things, in Jon's words on 2026-11-21: "apply our thing to a mod and be able to almost instantly be able to tell 1. What's causing lag 2. How to optimize (insert known ways to make whatever faster) and 3. Auto optimize if possible (I really want this)". Until then performance was not a goal on this roadmap: the docs described a profiler and a way to prove a hand-written change, and PERFORMANCE.md said mmt never writes or proposes code. It is now goal 5, and the third part reverses that line: mmt makes the change itself, from saved rules with no AI call, and keeps it only when the real game shows the same behaviour and a real speedup. |
+| 2026-11-21 | Should porting, changing loader, testing and the lag work be built on one thing? | Jon asked on 2026-11-21: "should these all use the same thing because that's what is happening… checking against the api and making it compatible, even with the performance thing it's about the right usage of the api". Mostly yes. Port, convert and the checks all ask where a mod touches the game and what that part is on the other side, and five separate readers answer it today; step 83 makes it one record every command uses. The lag work shares less: a slow spot is found by measuring the running game, and the record only names the game call it sits on. |
 
 </details>

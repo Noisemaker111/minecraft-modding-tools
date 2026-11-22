@@ -67,7 +67,7 @@ and every new session started from it. These four steps keep that from happening
    | Port between game versions | `.claude/skills/port-a-mod` | most-downloaded mods with nothing left to port by hand, per update |
    | Convert between loaders | `.claude/skills/convert-a-mod` | most-downloaded mods that use nothing the bridge lacks |
    | Modpacks | `tools/packcheck/CONTRIBUTING.md` | packs that pass as shipped, and with repairs |
-   | Make a mod faster | `.claude/skills/optimize-a-mod` | accepted speedups with exact gates, patterns saved |
+   | Make a mod faster | `.claude/skills/optimize-a-mod` | mods told what is slow and how to fix it, and mods fixed with no hand edit (0 today) |
 
 3. **Choose the work from a list of what real mods use, and only once that list predicts the result.** The list comes
    from a source that names the whole job (what the 150 most-downloaded mods use of the game or of a loader, read
@@ -89,6 +89,13 @@ The destination: someone drops a mod in, as its source folder or as its `.jar`, 
 app, picks the Minecraft version and the loader they want, and gets it back the same way in minutes, so nobody has to
 think about versions or loaders. It must work for any mod anyone makes, including ones we
 have never seen, which rules out anything made by hand for one mod.
+
+Speed has the same shape (roadmap goal 5). Point mmt at a mod and, almost at once, it says (1) what is causing the
+lag, (2) how to make it faster, from fixes that already worked on the same kind of slowness, and (3) makes the fix
+itself wherever the real game proves the mod behaves the same and runs faster. The third is the one the maker wants
+most, and it is not built: today an agent writes each change and `perf-optimize` proves it. So a speedup to one mod
+is finished only when its pattern is saved in a form the tool can match on the next mod, and written so it could
+later be applied as an edit, the way a port rule is: worked out once by an agent, run by the tool with no AI call.
 
 Whatever mod you work on, the real product is making the *next* mod better, even a totally different kind of mod.
 A speedup to one mod, a port or a loader conversion is only half done until it leaves something behind for every
@@ -121,7 +128,7 @@ only helps the mod it was made on is a partial result: say so, and say what woul
   PC, which many agents share; locally you edit, compile and run the offline checks. A change that can't be run in the
   game says so plainly instead of claiming it works.
 - Keep tests few and meaningful: each proves something users depend on and fails on a wrong answer.
-- Merge only when every required check is green.
+- Never watch CI (`gh run watch`, sleeps, polls): push, hand the PR back, and the coordinator's PR watch merges it when every required check is green.
 - A setup or tooling trap you solved goes in `KNOWN_ISSUES.md`.
 
 ## Releases

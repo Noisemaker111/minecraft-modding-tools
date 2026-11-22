@@ -1015,14 +1015,14 @@ public final class GameDiff {
 
         final Snap a;
         final Snap b;
-        final Map<Cls, Cls> cAB = new HashMap<>();
-        final Map<Cls, Cls> cBA = new HashMap<>();
-        final Map<Meth, Meth> mAB = new HashMap<>();
-        final Map<Meth, Meth> mBA = new HashMap<>();
-        final Map<Fld, Fld> fAB = new HashMap<>();
-        final Map<Fld, Fld> fBA = new HashMap<>();
+        final Map<Cls, Cls> cAB = new LinkedHashMap<>();
+        final Map<Cls, Cls> cBA = new LinkedHashMap<>();
+        final Map<Meth, Meth> mAB = new LinkedHashMap<>();
+        final Map<Meth, Meth> mBA = new LinkedHashMap<>();
+        final Map<Fld, Fld> fAB = new LinkedHashMap<>();
+        final Map<Fld, Fld> fBA = new LinkedHashMap<>();
         final Map<Object, String> how = new HashMap<>();
-        final Map<Cls, Cls> outerVote = new HashMap<>();
+        final Map<Cls, Cls> outerVote = new LinkedHashMap<>();
         Map<String, String> descCache = new HashMap<>();
         Map<String, String> idRenames;
 
@@ -1255,7 +1255,7 @@ public final class GameDiff {
             }
             // Nested classes that moved together vote for their outer classes; the vote is evidence for fuzzyClasses, not a link.
             outerVote.clear();
-            Map<Cls, Set<Cls>> votes = new HashMap<>();
+            Map<Cls, Set<Cls>> votes = new LinkedHashMap<>();
             for (var e : cAB.entrySet()) {
                 String o = e.getKey().name;
                 String n = e.getValue().name;
@@ -1271,7 +1271,7 @@ public final class GameDiff {
                 }
                 votes.computeIfAbsent(oa, x -> new HashSet<>()).add(ob);
             }
-            Map<Cls, Integer> claimed = new HashMap<>();
+            Map<Cls, Integer> claimed = new LinkedHashMap<>();
             for (Set<Cls> v : votes.values()) {
                 if (v.size() == 1) {
                     claimed.merge(v.iterator().next(), 1, Integer::sum);
@@ -1329,8 +1329,8 @@ public final class GameDiff {
             if (ga.isEmpty() || gb.isEmpty()) {
                 return;
             }
-            Map<Cls, Set<String>> names = new HashMap<>();
-            Map<Cls, Set<Long>> hashes = new HashMap<>();
+            Map<Cls, Set<String>> names = new LinkedHashMap<>();
+            Map<Cls, Set<Long>> hashes = new LinkedHashMap<>();
             Map<String, Integer> df = new HashMap<>();
             for (Cls c : ga) {
                 names.put(c, memberNames(c));
@@ -1370,9 +1370,9 @@ public final class GameDiff {
                 }
                 index.computeIfAbsent("@" + c.simple(), x -> new ArrayList<>()).add(c);
             }
-            Map<Cls, Map<Cls, Score>> scores = new HashMap<>();
+            Map<Cls, Map<Cls, Score>> scores = new LinkedHashMap<>();
             for (Cls ca : ga) {
-                Set<Cls> cand = new HashSet<>();
+                Set<Cls> cand = new LinkedHashSet<>();
                 for (String n : names.get(ca)) {
                     cand.addAll(index.getOrDefault(n, List.of()));
                 }
@@ -1383,7 +1383,7 @@ public final class GameDiff {
                     cand.add(outerVote.get(ca));
                 }
                 cand.addAll(index.getOrDefault("@" + ca.simple(), List.of()));
-                Map<Cls, Score> row = new HashMap<>();
+                Map<Cls, Score> row = new LinkedHashMap<>();
                 for (Cls cb : cand) {
                     if (cb.loader != ca.loader || cb.kind() != ca.kind()) {
                         continue;
@@ -1395,8 +1395,8 @@ public final class GameDiff {
                 }
                 scores.put(ca, row);
             }
-            Map<Cls, double[]> bestB = new HashMap<>(); // b -> best, second
-            Map<Cls, Cls> bestBA = new HashMap<>();
+            Map<Cls, double[]> bestB = new LinkedHashMap<>(); // b -> best, second
+            Map<Cls, Cls> bestBA = new LinkedHashMap<>();
             for (var e : scores.entrySet()) {
                 for (var f : e.getValue().entrySet()) {
                     double s = f.getValue().s();
@@ -1836,8 +1836,8 @@ public final class GameDiff {
                 return;
             }
             for (int pass = 0; pass < 2; pass++) {
-                Map<Fld, Set<Fld>> ab = new HashMap<>();
-                Map<Fld, Set<Fld>> ba = new HashMap<>();
+                Map<Fld, Set<Fld>> ab = new LinkedHashMap<>();
+                Map<Fld, Set<Fld>> ba = new LinkedHashMap<>();
                 for (var e : ia.entrySet()) {
                     String other = pass == 0 ? e.getKey() : idRenames.get(e.getKey());
                     List<Fld> l = other == null ? null : ib.get(other);
@@ -1964,8 +1964,8 @@ public final class GameDiff {
          * agree and 80% of the removed method's aligned call sites name the same replacement.
          */
         List<Rewrite> rewrites() {
-            Map<Meth, Map<Meth, Integer>> votes = new HashMap<>();
-            Map<Meth, Integer> totals = new HashMap<>();
+            Map<Meth, Map<Meth, Integer>> votes = new LinkedHashMap<>();
+            Map<Meth, Integer> totals = new LinkedHashMap<>();
             for (var e : mAB.entrySet()) {
                 Meth x = e.getKey();
                 Meth y = e.getValue();
@@ -1997,7 +1997,7 @@ public final class GameDiff {
             }
             // Calls the game deleted: a removed void method whose call sites in linked methods lost the call while what was
             // around it stayed (1.21.2: RenderSystem.applyModelViewMatrix()). Counted against every call site seen.
-            Map<Meth, Integer> dropped = new HashMap<>(), seen = new HashMap<>();
+            Map<Meth, Integer> dropped = new LinkedHashMap<>(), seen = new LinkedHashMap<>();
             for (var e : mAB.entrySet()) {
                 Meth x = e.getKey();
                 Meth y = e.getValue();
@@ -2071,7 +2071,7 @@ public final class GameDiff {
          */
         Set<String> portable() {
             Set<String> out = new HashSet<>();
-            Map<Meth, Boolean> memo = new HashMap<>();
+            Map<Meth, Boolean> memo = new LinkedHashMap<>();
             for (Cls c : a.classes.values()) {
                 for (Meth m : c.methods.values()) {
                     if (!mAB.containsKey(m) && (m.flags & ACC_PUBLIC) != 0 && portable(m, memo, 0)) {
@@ -2581,7 +2581,7 @@ public final class GameDiff {
          * functional interface; at 80% of all calls, as above.
          */
         List<ArgDefault> passedByNewCalls(List<Rewrite> rewrites, List<ArgDefault> known) {
-            Map<Meth, Meth> pairs = new HashMap<>();
+            Map<Meth, Meth> pairs = new LinkedHashMap<>();
             for (Rewrite r : rewrites) {
                 if (r.to() != null && gainedOne(r.from(), r.to())) {
                     pairs.put(r.to(), r.from());
@@ -2590,8 +2590,8 @@ public final class GameDiff {
             for (ArgDefault d : known) {
                 pairs.remove(d.to());
             }
-            Map<Meth, Map<String, Integer>> votes = new HashMap<>();
-            Map<Meth, Integer> totals = new HashMap<>();
+            Map<Meth, Map<String, Integer>> votes = new LinkedHashMap<>();
+            Map<Meth, Integer> totals = new LinkedHashMap<>();
             for (Cls c : b.classes.values()) {
                 for (Meth y : c.methods.values()) {
                     for (int j = 0; j < y.refs.length; j++) {
@@ -2720,8 +2720,8 @@ public final class GameDiff {
          * agreeing votes and 80% agreement.
          */
         List<ClassRewrite> classRewrites() {
-            Map<Cls, Map<Cls, Integer>> votes = new HashMap<>();
-            Map<Cls, Integer> totals = new HashMap<>();
+            Map<Cls, Map<Cls, Integer>> votes = new LinkedHashMap<>();
+            Map<Cls, Integer> totals = new LinkedHashMap<>();
             for (var e : mAB.entrySet()) {
                 Meth x = e.getKey();
                 Meth y = e.getValue();
@@ -2966,7 +2966,7 @@ public final class GameDiff {
          * ordinary method: constructors and static initialisers touch every field and prove nothing alone.
          */
         double accessorScore(Fld x, Fld y) {
-            Set<Meth> ax = new HashSet<>();
+            Set<Meth> ax = new LinkedHashSet<>();
             for (Meth m : x.accessors) {
                 if (mAB.containsKey(m)) {
                     ax.add(m);
@@ -3000,7 +3000,7 @@ public final class GameDiff {
                     if (mAB.containsKey(ma) || ma.special() || ma.isStatic() || (ma.flags & ACC_PRIVATE) != 0) {
                         continue;
                     }
-                    Set<Meth> candidates = new HashSet<>();
+                    Set<Meth> candidates = new LinkedHashSet<>();
                     boolean conflict = false;
                     for (Meth rel : related(ca, ma.name + ma.desc)) {
                         Meth rb = mAB.get(rel);
@@ -3024,7 +3024,7 @@ public final class GameDiff {
         /** Methods with the same name and descriptor in supertypes and subtypes of c (in a). */
         List<Meth> related(Cls c, String key) {
             List<Meth> out = new ArrayList<>();
-            Set<Cls> seen = new HashSet<>();
+            Set<Cls> seen = new LinkedHashSet<>();
             ArrayDeque<Cls> up = new ArrayDeque<>();
             for (String s : supertypes(c)) {
                 Cls p = a.classes.get(s);
@@ -3607,7 +3607,7 @@ public final class GameDiff {
         final Hop h;
         final Map<String, ClassModel> models = new HashMap<>();
         final Map<Node, Long> hashA = new IdentityHashMap<>(), hashB = new IdentityHashMap<>();
-        final Map<Ref, Boolean> brokenRefs = new HashMap<>();
+        final Map<Ref, Boolean> brokenRefs = new LinkedHashMap<>();
         final Map<Node, Boolean> holed = new IdentityHashMap<>();
         final Map<String, Map<Node, Set<String>>> sites = new HashMap<>(); // member key -> use in a -> its readings in b
         final Map<Node, String> aside = new IdentityHashMap<>(); // an unread use -> the call or field b makes there on a value of its own method
@@ -4662,7 +4662,7 @@ public final class GameDiff {
             return old.length == 0 ? 0 : (double) both / old.length;
         }
 
-        final Map<Meth, long[]> meanings = new HashMap<>();
+        final Map<Meth, long[]> meanings = new LinkedHashMap<>();
 
         /**
          * The distinct things a body references, with the game methods it calls written in five deep, each in a's names: a
@@ -6418,7 +6418,7 @@ public final class GameDiff {
         List<Node[]> deferred = new ArrayList<>(); // uses whose new value fits only once the class map is known
         List<Node[]> later = new ArrayList<>(); // uses with an operand whose new value no statement had shown yet
         boolean weak; // the statement lined up only by standing next to the same anchor: chains only, no vote
-        final Map<Cls, Map<Cls, Integer>> typeVotes = new HashMap<>();
+        final Map<Cls, Map<Cls, Integer>> typeVotes = new LinkedHashMap<>();
         final List<Hop.ClassRewrite> typeRewrites = new ArrayList<>();
 
         /**
@@ -7075,8 +7075,8 @@ public final class GameDiff {
 
         final Hop h;
         final Learner learner;
-        final Map<Meth, List<String>> solved = new HashMap<>();
-        final Set<Meth> solving = new HashSet<>();
+        final Map<Meth, List<String>> solved = new LinkedHashMap<>();
+        final Set<Meth> solving = new LinkedHashSet<>();
         final Map<String, List<Cls>> declaring = new HashMap<>(); // name + desc -> b's classes that declare it
         static final String WHY = System.getProperty("gamediff.samecall", ""); // a method name: why it is or is not solved
 
@@ -8382,8 +8382,9 @@ public final class GameDiff {
                     prev.fieldCount(),
                     (System.nanoTime() - t0) / 1e9
                 );
-                hops.add(line);
                 System.out.println("  " + line);
+                // The map holds no time, so the same releases and tools write the same bytes, and what is cached by them is found again.
+                hops.add(line.substring(0, line.lastIndexOf(" (")));
                 String step = prev.version + " -> " + s.version;
                 List<Hop.Rewrite> found = h.rewrites();
                 for (Hop.ArgDefault d : h.argDefaults(found)) {
@@ -8548,14 +8549,17 @@ public final class GameDiff {
                 head.append(i == 0 ? "\n    " : ",\n    ").append(classRewrites.get(i));
             }
             head.append(classRewrites.isEmpty() ? "],\n" : "\n  ],\n");
+            // Learned in parallel, so in no fixed order: written sorted, so one run's map is every run's.
+            List<String> learnedLines = learned.stream().map(l -> l.json()).sorted().toList();
             head.append("  \"learned\": [");
-            for (int i = 0; i < learned.size(); i++) {
-                head.append(i == 0 ? "\n    " : ",\n    ").append(learned.get(i).json());
+            for (int i = 0; i < learnedLines.size(); i++) {
+                head.append(i == 0 ? "\n    " : ",\n    ").append(learnedLines.get(i));
             }
             head.append(learned.isEmpty() ? "],\n" : "\n  ],\n");
+            List<String> retypedLines = retyped.stream().sorted().toList();
             head.append("  \"retyped\": [");
-            for (int i = 0; i < retyped.size(); i++) {
-                head.append(i == 0 ? "\n    " : ",\n    ").append(retyped.get(i));
+            for (int i = 0; i < retypedLines.size(); i++) {
+                head.append(i == 0 ? "\n    " : ",\n    ").append(retypedLines.get(i));
             }
             head.append(retyped.isEmpty() ? "],\n" : "\n  ],\n");
             if (loader != null) {
@@ -8656,9 +8660,9 @@ public final class GameDiff {
             Map<String, String> fieldKey = new HashMap<>();
             ta.fields.forEach((k, m) -> fieldKey.put(m.owner() + "." + m.name(), k));
             // Intermediary's answer for every class and member we read (all of them, for the conflict check).
-            Map<Cls, String> classTruth = new HashMap<>();
-            Map<Meth, VersionMap.Member> methodTruth = new HashMap<>();
-            Map<Fld, VersionMap.Member> fieldTruth = new HashMap<>();
+            Map<Cls, String> classTruth = new LinkedHashMap<>();
+            Map<Meth, VersionMap.Member> methodTruth = new LinkedHashMap<>();
+            Map<Fld, VersionMap.Member> fieldTruth = new LinkedHashMap<>();
             Set<String> classTaken = new HashSet<>();
             Set<String> methodTaken = new HashSet<>();
             Set<String> fieldTaken = new HashSet<>();

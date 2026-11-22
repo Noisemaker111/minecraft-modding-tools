@@ -7,6 +7,10 @@ Done means: one accepted `perf-optimize` run (cold and warm 95% intervals above 
 `coverage/perf-runs.json`, and a `knowledge/perf-patterns.json` entry when the change generalises. You write the
 change; mmt only profiles, measures and gates. Reference: PERFORMANCE.md.
 
+What this is for (roadmap goal 5): mmt tells anyone what makes their mod lag, how to fix it, and in the end makes the
+fix itself. Each pattern you save is what the tool will match, and later apply, on mods you never see, so describe
+the kind of slowness and the edit in terms of the game call and the code shape, never this mod's names.
+
 1. Clone the mod into `.runs/<mod>` at a pinned commit; `mmt compile --root R`. Pick a mod whose cost is in
    server ticks or worker threads (a hidden client draws ~8 fps). Make the run a player's: drop optional
    `localRuntime` test mods, log level INFO, one local commit both arms share.
