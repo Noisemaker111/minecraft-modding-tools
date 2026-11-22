@@ -1610,11 +1610,11 @@ def has_code(jar):
         return any(n.endswith(".class") and b"net/minecraft/" in z.read(n) for n in z.namelist())
 
 
-def client_starts(loader, to, server_pack, names, platform=()):
+def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset()):
     """The same ported jars in a real client of the new release (mmt pack-check --side client): the title screen, a world, the
     inventory and every creative tab. A start that fails drops the jar its log names and starts again; each mod ends loaded or
     failed (with why). A server never runs client code, so this is where rendering and screen code is proven. The platform
-    (Fabric API) goes in as it did on the server and is not counted."""
+    (Fabric API) goes in as it did on the server and is not counted; kept names the jars of it that no failure drops."""
     pack = server_pack.with_name(server_pack.name + "-client")
     if pack.exists():
         shutil.rmtree(pack)
@@ -1642,8 +1642,9 @@ def client_starts(loader, to, server_pack, names, platform=()):
             for name in present:
                 verdicts.setdefault(name, "loaded")
             break
-        # The libraries can be what fails too (Fabric API, the platform, cannot be left out).
-        libraries = [n for n in platform if (pack / "mods" / n).is_file() and not own_ids(pack / "mods" / n, loader) & {"fabric-api"}]
+        # The libraries can be what fails too; the platform (kept: Fabric API, whose own id was "fabric" before 1.18.2)
+        # cannot be left out.
+        libraries = [n for n in platform if (pack / "mods" / n).is_file() and n not in kept]
         found = {}
         for finding in res.get("findings", []):
             if finding.get("severity") != "problem" or finding.get("kind") != "client-start":
@@ -2000,7 +2001,7 @@ def load(loader, frm, to, save, mods=None, out=None):
                     verdicts[name] = "clash: loads alone, fails next to the other mods: " + verdicts[name][len("failed: "):]
                     print(f"  {name}: loads alone, fails next to the others")
     client = client_starts(loader, to, pack, [n for n, v in verdicts.items() if v == "loaded" or v.startswith("client-only")],
-                           [n for n in platform if (pack / "mods" / n).is_file()])
+                           [n for n in platform if (pack / "mods" / n).is_file()], set(platform) - set(libraries))
     loaded = [n for n, v in verdicts.items() if v == "loaded"]
     summary = {
         "loader": loader, "from": frm, "to": to, "scope": scope, "mods": len(chosen), "loaded": len(loaded),
