@@ -221,6 +221,11 @@ def fetch_main_table(commit, timeout_minutes):
     if not (out / "all.json").is_file():
         view = wait(run_id, timeout_minutes, True)
         if view.get("conclusion") != "success":
+            # A sweep found still waiting can end cancelled: look again, and make one for the commit if none is left.
+            run_id, how = main_table(commit)
+            print(f"main's sweep ended {view.get('conclusion')}; now {how}", flush=True)
+            view = wait(run_id, timeout_minutes, True)
+        if view.get("conclusion") != "success":
             raise SystemExit(f"main's sweep {run_id} ended {view.get('conclusion')}")
         out.mkdir(parents=True, exist_ok=True)
         gh("run", "download", str(run_id), "-n", "summary", "--dir", str(out))
