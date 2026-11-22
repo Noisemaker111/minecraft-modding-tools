@@ -5,7 +5,8 @@ import org.objectweb.asm.*;
 /**
  * Mixins into game code the update moved, followed to where the game's own code went:
  * - f8.Hud.tick(int) is gone and the new update(int, float) has its code: an @Inject into tick follows to update, its
- *   handler re-declared for the new parameters. f8.Bar.go() is gone with two new methods that read like it, so nothing
+ *   handler re-declared for the new parameters, though the new other() shares half its code. f8.Bar.go() is gone with two
+ *   new methods that read like it equally, so nothing
  *   says which one took its code and it stays reported.
  * - f8.Hud.render() no longer calls air() itself: it calls the new private renderAir(), which does (1.21.2's
  *   Gui.renderPlayerHealth and renderAirBubbles). An @Inject at that call follows into renderAir. f8.Bar.draw() moved its
@@ -220,7 +221,8 @@ final class JarPortFollowTest {
         ClassWriter w = JarPortRetypeTest.writer("f8/Hud", "java/lang/Object");
         method(w, old ? "tick" : "update", old ? "(I)V" : "(IF)V", Opcodes.ACC_PUBLIC, m -> sinks(m, "a", "b", "c", "d"));
         if (!old) {
-            method(w, "other", "()V", Opcodes.ACC_PUBLIC, m -> call(m, "f8/Hud", "render", "()V"));
+            // Shares half of tick's code: alike, but update(int, float) is the clear one.
+            method(w, "other", "()V", Opcodes.ACC_PUBLIC, m -> sinks(m, "a", "b"));
         }
         method(w, "air", "()I", Opcodes.ACC_PUBLIC, null);
         method(w, "render", "()V", Opcodes.ACC_PUBLIC, m -> call(m, "f8/Hud", old ? "air" : "renderAir", old ? "()I" : "()V"));

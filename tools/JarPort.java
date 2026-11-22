@@ -2602,6 +2602,24 @@ public final class JarPort {
         return mine.length >= 6 && common * 5 >= mine.length * 4;
     }
 
+    /** The share of the longer of two bodies' instructions the other has too, counted as multisets. */
+    static double likeness(String x, String y) {
+        Map<String, Integer> left = new HashMap<>();
+        String[] a = GameCode.instructions(x), b = GameCode.instructions(y);
+        for (String t : a) {
+            left.merge(t, 1, Integer::sum);
+        }
+        int common = 0;
+        for (String t : b) {
+            Integer n = left.get(t);
+            if (n != null && n > 0) {
+                common++;
+                left.put(t, n - 1);
+            }
+        }
+        return Math.max(a.length, b.length) == 0 ? 0 : (double) common / Math.max(a.length, b.length);
+    }
+
     /** At least half of two bodies' instructions (as GameCode.bodies writes them) in common, counted as multisets. */
     static boolean alike(String x, String y) {
         Map<String, Integer> left = new HashMap<>();
@@ -3643,7 +3661,8 @@ public final class JarPort {
     /**
      * Where the code of a method the update dropped from its class (old names) went: the one method of the new class whose
      * instructions are mostly the old method's (alike) and were not before, as when an update renames a method and changes
-     * its parameters at once. Null when no method or several read alike, or the old body is too short to tell one apart.
+     * its parameters at once. Where several read alike, the one that shares four in five of its instructions while no
+     * other does. Null when none, or no clear one, reads alike, or the old body is too short to tell one apart.
      */
     GameDiff.Meth codeMoved(String owner, String name, String desc) {
         return movedCode.computeIfAbsent(owner + "." + name + desc, k -> {
@@ -3656,6 +3675,7 @@ public final class JarPort {
                 return Optional.empty();
             }
             GameDiff.Meth found = null;
+            double best = 0, next = 0;
             for (GameDiff.Meth m : now.methods.values()) {
                 // A method the class kept counts when it took the dropped one's code in (1.21.2 put _blitToScreen's code
                 // into the kept blitToScreen and the new blitAndBlendToScreen): then two read alike and neither is followed.
@@ -3663,12 +3683,18 @@ public final class JarPort {
                 if (m.name.startsWith("<") || body == null || !alike(was, body) || had != null && alike(was, had)) {
                     continue;
                 }
-                if (found != null) {
-                    return Optional.empty();
+                double like = likeness(was, body);
+                if (like > best) {
+                    next = best;
+                    best = like;
+                    found = m;
+                } else {
+                    next = Math.max(next, like);
                 }
-                found = m;
             }
-            return Optional.ofNullable(found);
+            // Several read alike: only a clear winner took the code (1.21.2's setShaderTexture(int, ResourceLocation) is
+            // _setShaderTexture's body plus one call; setShaderTexture(int, int) shares half of it).
+            return next > 0 && (best < 0.8 || next >= 0.8) ? Optional.empty() : Optional.ofNullable(found);
         }).orElse(null);
     }
 
