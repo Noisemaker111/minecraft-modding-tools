@@ -55,6 +55,10 @@ final class MmtPackGame {
         return level.dimensionType().minY() + level.dimensionType().height() - 1;
     }
 
+    static ServerLevel overworld(MinecraftServer server) {
+        return server.overworld();
+    }
+
     static long chunkKey(int x, int z) {
         return net.minecraft.world.level.ChunkPos.asLong(x, z);
     }

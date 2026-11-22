@@ -206,6 +206,44 @@ public final class PackLogTests extends PackCheckFixtures {
             serviceSuspects.size() == 1 && serviceSuspects.get(0).get("jar").equals("csl-15.1.jar"),
             "a crash in a mod's loader service is the jar its frame ran from, not the loader's own jar: " + serviceSuspects
         );
+        // ...and a mod whose early service crashes the NeoForge 1.21.11 client before any window (Ixeris), by the jar of its
+        // frames, whose class loader is named with spaces ("FML Early Services//"); the loader says it at ERROR, not FATAL.
+        neo.packages.put("me.decce.ixeris.core.transform", "Ixeris-4.6.11.jar");
+        neo.providers.put("ixeris", new ArrayList<>(List.of(new PackMods.Provider("Ixeris-4.6.11.jar", "4.6.11", false, "META-INF/neoforge.mods.toml"))));
+        String early = String.join("\n",
+            "[04:04:18] [main/ERROR] [ne.ne.fm.st.Entrypoint/]: Failed to start FML: java.lang.RuntimeException: java.lang.NullPointerException",
+            "\tat FML Early Services//me.decce.ixeris.core.transform.ClassLoaderHandler.getClassesStream(ClassLoaderHandler.java:74)",
+            "\tat net.neoforged.fml.loading.ImmediateWindowHandler.load(ImmediateWindowHandler.java:30)",
+            "Caused by: java.lang.NullPointerException",
+            "\tat java.base/java.util.Objects.requireNonNull(Objects.java:233)",
+            "\tat FML Early Services//me.decce.ixeris.core.transform.ClassLoaderHandler.getClassesStream(ClassLoaderHandler.java:72)");
+        var earlySuspects = PackChecks.suspects(early, List.of(), neo, PackLoaders.find(harness, "neoforge"));
+        expect(
+            earlySuspects.size() == 1 && earlySuspects.get(0).get("jar").equals("Ixeris-4.6.11.jar") &&
+            PackClient.loadingFailure(early.lines().findFirst().get(), PackLoaders.find(harness, "neoforge").failed()) != null,
+            "an early service that stops the client is a failed start, named by its frames' jar: " + earlySuspects
+        );
+        // ...and a client mixin that fails to prepare (Sodium on 1.21.9), by the mod the line names.
+        neo.providers.put("sodium", new ArrayList<>(List.of(new PackMods.Provider("sodium-0.7.jar", "0.7", false, "META-INF/neoforge.mods.toml"))));
+        String prepare = "[03:48:25] [main/FATAL] [mixin/]: Mixin prepare for mod sodium failed preparing features.render.gui.font.BakedGlyphMixin in sodium-common.mixins.json: org.spongepowered.asm.mixin.transformer.throwables.InvalidMixinException @Mixin target type mismatch";
+        var prepareSuspects = PackChecks.suspects(prepare, List.of(), neo, PackLoaders.find(harness, "neoforge"));
+        expect(prepareSuspects.stream().anyMatch(s -> "sodium".equals(s.get("mod"))), "a mixin that fails to prepare names its mod: " + prepareSuspects);
+        // ...and of two Fabric mods the resolver refuses together, the one a library breaks (Iceberg 1.2.7 breaks
+        // AdvancementPlaques below 1.6.3, on the 1.21 client), from the lines Fabric logs before its error screen.
+        scan.providers.put("advancementplaques", new ArrayList<>(List.of(new PackMods.Provider("AdvancementPlaques-1.6.2.jar", "1.6.2", false, "fabric.mod.json"))));
+        scan.providers.put("iceberg", new ArrayList<>(List.of(new PackMods.Provider("Iceberg-1.2.7.jar", "1.2.7", false, "fabric.mod.json"))));
+        String resolution = String.join("\n",
+            "[04:42:36] [main/WARN]: Mod resolution failed",
+            "[04:42:36] [main/INFO]: Immediate reason: [HARD_DEP advancementplaques 1.6.2 {depends iceberg @ [>=1.1.19]}, NEG_HARD_DEP iceberg 1.2.7 {breaks advancementplaques @ [<1.6.3]}, ROOT_FORCELOAD_SINGLE advancementplaques 1.6.2]",
+            "[04:42:36] [main/INFO]: Reason: [NEG_HARD_DEP iceberg 1.2.7 {breaks advancementplaques @ [<1.6.3]}]");
+        var resolved = PackChecks.suspects(resolution, List.of(), scan, fabric);
+        expect(resolved.size() == 1 && "advancementplaques".equals(resolved.get(0).get("mod")), "Fabric's resolver names the mod a library breaks: " + resolved);
+        // ...and a mod built for a newer Java than the release runs on (BlueMap for Java 11 on 1.16.2), by its class.
+        scan.packages.put("de.bluecolored.bluemap.fabric", "BlueMap-3.0.jar");
+        scan.providers.put("bluemap", new ArrayList<>(List.of(new PackMods.Provider("BlueMap-3.0.jar", "3.0", false, "fabric.mod.json"))));
+        String newerJava = "Caused by: java.lang.UnsupportedClassVersionError: de/bluecolored/bluemap/fabric/FabricMod has been compiled by a more recent version of the Java Runtime (class file version 55.0), this version of the Java Runtime only recognizes class file versions up to 52.0";
+        var javaSuspects = PackChecks.suspects(newerJava, List.of(), scan, fabric);
+        expect(javaSuspects.stream().anyMatch(s -> "BlueMap-3.0.jar".equals(s.get("jar"))), "a class built for a newer Java names its jar: " + javaSuspects);
         // ...and a mod whose data the new game cannot read only by its data pack (TerraBlender's biome on 1.21.2).
         neo.providers.put("terrablender", new ArrayList<>(List.of(new PackMods.Provider("TerraBlender.jar", "4.1", false, "META-INF/neoforge.mods.toml"))));
         String badData = "[main/ERROR] [minecraft/RegistryDataLoader]: Registry loading errors:\n>> Errors in element terrablender:deferred_placeholder:\njava.lang.IllegalStateException: Failed to parse terrablender:worldgen/biome/deferred_placeholder.json from pack mod/terrablender\n[main/WARN] [minecraft/Main]: Failed to load datapacks, can't proceed with server load.";

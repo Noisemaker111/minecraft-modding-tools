@@ -646,8 +646,8 @@ final class PackLoaders {
     static Path probe(Context context, Loader loader, String minecraft, Path install) throws Exception {
         MessageDigest hash = MessageDigest.getInstance("SHA-256");
         for (String source : PROBE) hash.update(Files.readAllBytes(context.harness().resolve(source)));
-        Path layer = gameLayer(context.harness(), minecraft);
-        hash.update(Files.readAllBytes(layer));
+        List<Path> layers = gameLayers(context.harness(), minecraft);
+        for (Path candidate : layers) hash.update(Files.readAllBytes(candidate));
         // The behaviour fingerprint (MmtFingerprint) goes in the same jar when it has a layer for this version.
         List<String> fingerprint = new ArrayList<>();
         try {
@@ -679,25 +679,43 @@ final class PackLoaders {
         step(context, "probe-stubs", compileStubs, dir);
         List<String> classpath = new ArrayList<>(List.of(game.mojang.toString(), stubs.toString()));
         for (Path lib : game.libraries) classpath.add(lib.toString());
-        List<String> compileProbe = new ArrayList<>(List.of(javac(context), "-nowarn", "-proc:none"));
-        compileProbe.addAll(javaTarget);
-        compileProbe.addAll(
-            List.of(
-                "-encoding",
-                "UTF-8",
-                "-cp",
-                String.join(File.pathSeparator, classpath),
-                "-d",
-                classes.toString(),
-                context.harness().resolve("tools/packcheck/MmtPackProbe.java").toString(),
-                context.harness().resolve("tools/packcheck/MmtPackProbeFabric.java").toString(),
-                layer.toString()
-            )
+        // The layer is the newest one whose calls this game's own jar has: the compiler reads them from it. A layer
+        // that does not compile here (a patch release that moved one call) gives way to the one before it.
+        List<String> compileProbe = null;
+        List<String> refused = new ArrayList<>();
+        for (Path candidate : layers) {
+            List<String> command = new ArrayList<>(List.of(javac(context), "-nowarn", "-proc:none"));
+            command.addAll(javaTarget);
+            command.addAll(
+                List.of(
+                    "-encoding",
+                    "UTF-8",
+                    "-cp",
+                    String.join(File.pathSeparator, classpath),
+                    "-d",
+                    classes.toString(),
+                    context.harness().resolve("tools/packcheck/MmtPackProbe.java").toString(),
+                    context.harness().resolve("tools/packcheck/MmtPackProbeFabric.java").toString(),
+                    candidate.toString()
+                )
+            );
+            String name = "probe-layer-" + candidate.getParent().getFileName();
+            var tried = Run.command(command, dir, Map.of(), context.report().log(name), 600);
+            context.report().stage(name, tried, Map.of("compiles", tried.exit() == 0));
+            if (tried.exit() == 0) {
+                compileProbe = command;
+                break;
+            }
+            PackCheck.deleteTree(classes);
+            Files.createDirectories(classes);
+            refused.add(candidate.getParent().getFileName() + ": " + Run.failure(tried.log()).lines().findFirst().orElse(""));
+        }
+        if (compileProbe == null) throw new IOException(
+            "pack-check's probe compiles against Minecraft " + minecraft + " with none of its game layers (tools/packcheck/game): " + String.join("; ", refused)
         );
         List<String> withFingerprint = new ArrayList<>(compileProbe);
         withFingerprint.addAll(fingerprint);
-        if (fingerprint.isEmpty()) step(context, "probe-compile", compileProbe, dir);
-        else {
+        if (!fingerprint.isEmpty()) {
             var result = Run.command(withFingerprint, dir, Map.of(), context.report().log("probe-compile"), 600);
             context.report().stage("probe-compile", result, Map.of("fingerprint", result.exit() == 0));
             // A fingerprint layer that does not compile for this exact version leaves pack-check's own probe as it was.
@@ -739,18 +757,24 @@ final class PackLoaders {
      * VERSION at or below the game's. Each layer has the same methods, written in that version's API.
      */
     static Path gameLayer(Path harness, String minecraft) throws IOException {
+        return gameLayers(harness, minecraft).get(0);
+    }
+
+    /** Every game layer at or below the game's version, newest first: the order the probe tries them in. */
+    static List<Path> gameLayers(Path harness, String minecraft) throws IOException {
         Path root = harness.resolve("tools/packcheck/game");
-        String best = null;
+        List<String> versions = new ArrayList<>();
         try (var list = Files.list(root)) {
             for (Path dir : list.toList()) {
                 String version = dir.getFileName().toString();
-                if (Versions.compare(version, minecraft) <= 0 && (best == null || Versions.compare(version, best) > 0)) best = version;
+                if (Versions.compare(version, minecraft) <= 0) versions.add(version);
             }
         }
-        if (best == null) throw new IOException(
+        if (versions.isEmpty()) throw new IOException(
             "pack-check's probe has no game layer for Minecraft " + minecraft + ": tools/packcheck/game has none at or below it."
         );
-        return root.resolve(best).resolve("MmtPackGame.java");
+        versions.sort((a, b) -> Versions.compare(b, a));
+        return versions.stream().map(v -> root.resolve(v).resolve("MmtPackGame.java")).toList();
     }
 
     static String javac(Context context) {

@@ -1,25 +1,18 @@
 package mmt.packprobe;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import java.util.Map;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.dimension.LevelStem;
 
 /**
- * The game calls pack-check's probe makes that changed between Minecraft versions, for Minecraft 1.16 to 1.17: Java 8
- * source (1.16 servers run on Java 8), registries as static fields of Registry, a world from y 0 to 255, and the
- * dimensions in the world's generation settings. Reading a dimension back needs the server's data pack resources in
- * 1.16, so here each one is only written the way level.dat stores it; the second start still opens the world for real.
- * pack-check compiles the probe with the variant in tools/packcheck/game/ whose folder names the newest version at or
- * below the pack's, so one probe source serves every version; each variant keeps the same methods.
+ * The game calls pack-check's probe makes that changed between Minecraft versions, for Minecraft 1.16 and 1.16.1: as
+ * 1.16.2's, except that the dimensions are not yet data the world saves through the registries (1.16.2 added
+ * RegistryWriteOps and the server's registryAccess), so there is no dimension to write and check here.
  */
 final class MmtPackGame {
 
@@ -50,9 +43,13 @@ final class MmtPackGame {
         return level.getSharedSpawnPos();
     }
 
-    /** The highest block a level can hold. */
+    /** The highest block a level can hold, as the level says: 255 up to 1.17, 319 on 1.18 and 1.18.1. */
     static int top(ServerLevel level) {
-        return 255;
+        return level.getMaxBuildHeight() - 1;
+    }
+
+    static ServerLevel overworld(MinecraftServer server) {
+        return server.overworld();
     }
 
     static long chunkKey(int x, int z) {
@@ -81,27 +78,8 @@ final class MmtPackGame {
         player.moveTo(x, y, z, yaw, pitch);
     }
 
-    /** Each dimension written the way level.dat stores it; a dimension that cannot be written is named. */
+    /** No dimension is saved as registry data before 1.16.2: nothing to write. */
     static JsonArray dimensions(MinecraftServer server) {
-        JsonArray out = new JsonArray();
-        net.minecraft.resources.RegistryWriteOps<net.minecraft.nbt.Tag> ops = net.minecraft.resources.RegistryWriteOps.create(
-            net.minecraft.nbt.NbtOps.INSTANCE,
-            server.registryAccess()
-        );
-        for (Map.Entry<ResourceKey<LevelStem>, LevelStem> entry : server.getWorldData().worldGenSettings().dimensions().entrySet()) {
-            JsonObject row = new JsonObject();
-            row.addProperty("dimension", entry.getKey().location().toString());
-            try {
-                com.mojang.serialization.DataResult<net.minecraft.nbt.Tag> written = LevelStem.CODEC.encodeStart(ops, entry.getValue());
-                if (written.error().isPresent()) {
-                    String message = written.error().get().message();
-                    row.addProperty("write", message.length() > 600 ? message.substring(0, 600) + "..." : message);
-                } else row.addProperty("savedBytes", written.result().get().toString().length());
-            } catch (Throwable failure) {
-                row.addProperty("error", MmtPackProbe.stack(failure));
-            }
-            out.add(row);
-        }
-        return out;
+        return new JsonArray();
     }
 }

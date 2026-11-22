@@ -487,7 +487,8 @@ final class PackChecks {
     }
 
     // ------------------------------------------------------------------ the log: which mod?
-    static final Pattern FRAME = Pattern.compile("^\\s*at (?:[\\w.$-]+//)?(?:[A-Z]+(?: [A-Z]+)*/([a-z0-9_.\\-]+)@[^/]+/)?([\\w$.]+)\\.[\\w$<>]+\\(");
+    // A frame's class loader name can have spaces: NeoForge's early services are "at FML Early Services//me.decce...".
+    static final Pattern FRAME = Pattern.compile("^\\s*at (?:[\\w.$ -]+//)?(?:[A-Z]+(?: [A-Z]+)*/([a-z0-9_.\\-]+)@[^/]+/)?([\\w$.]+)\\.[\\w$<>]+\\(");
     static final Pattern MIXIN_CONFIG = Pattern.compile("([A-Za-z0-9_.\\-]+\\.mixins?\\.json|[A-Za-z0-9_.\\-]+\\.mixin\\.json|mixins\\.[A-Za-z0-9_.\\-]+\\.json)");
     static final Pattern HANDLER = Pattern.compile("\\$[a-z]{2,}[0-9a-f]{3}\\$([a-z0-9_]+)\\$");
     static final Pattern TRANSFORMERS = Pattern.compile("(?m)^(\\s*at .*?)\\s*\\{[^{}]*\\}\\s*$");

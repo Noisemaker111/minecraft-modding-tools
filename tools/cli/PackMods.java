@@ -43,6 +43,8 @@ final class PackMods {
         final Map<String, List<String>> blockFiles = new TreeMap<>();
         /** English block name to the block ids that carry it. */
         final Map<String, Set<String>> blockNames = new TreeMap<>();
+        /** Jar to the Java release its newest class needs (class file version 52 is Java 8). */
+        final Map<String, Integer> java = new TreeMap<>();
 
         /** The top-level jar's main mod ids. */
         List<String> idsOf(String jar) {
@@ -95,6 +97,14 @@ final class PackMods {
             String name = entry.getName();
             if (name.endsWith(".class") && !name.startsWith("META-INF/") && name.indexOf('/') > 0) {
                 scan.packages.putIfAbsent(name.substring(0, name.lastIndexOf('/')).replace('/', '.'), jar);
+                try (var in = zip.getInputStream(entry)) {
+                    byte[] head = in.readNBytes(8);
+                    if (head.length == 8 && (head[0] & 0xff) == 0xca && (head[1] & 0xff) == 0xfe) {
+                        scan.java.merge(jar, ((head[6] & 0xff) << 8 | (head[7] & 0xff)) - 44, Math::max);
+                    }
+                } catch (IOException unreadable) {
+                    // a class the JVM cannot read either: the start says so
+                }
                 continue;
             }
             if (LOOK.matcher(name).matches()) scan.blockFiles.computeIfAbsent(name, k -> new ArrayList<>()).add(jar);

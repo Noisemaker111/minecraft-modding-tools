@@ -127,7 +127,7 @@ public final class MmtPackProbe {
             if (mode.equals("open")) { finish(true); return; }
             // The world opened. Load the test area through the normal chunk system before touching it, so no
             // block update in the middle of a tick has to wait for chunk generation.
-            ServerLevel level = server.overworld();
+            ServerLevel level = MmtPackGame.overworld(server);
             // A level with no players and no saved forced chunk stops ticking block entities 300 ticks after it empties, and
             // with them BlockEntity.onLoad for every chunk that loads later. The test area's tickets (forceChunk) are not saved
             // forced chunks, so a big pack whose probe began past those 300 ticks loaded its grid into a level that never called
@@ -152,7 +152,7 @@ public final class MmtPackProbe {
 
         void step() {
             if (finished) return;
-            ServerLevel level = server.overworld();
+            ServerLevel level = MmtPackGame.overworld(server);
             try {
                 if (toForce != null && !toForce.isEmpty()) {
                     long budget = System.nanoTime() + 40_000_000L;
@@ -463,7 +463,7 @@ public final class MmtPackProbe {
     }
 
     static void verify(MinecraftServer server, JsonObject result) throws IOException {
-        ServerLevel level = server.overworld();
+        ServerLevel level = MmtPackGame.overworld(server);
         // new JsonParser().parse: the Gson of 1.16 has no static parseString.
         @SuppressWarnings("deprecation")
         JsonObject before = new JsonParser().parse(new String(Files.readAllBytes(Paths.get(System.getProperty("mmt.probe.placed"))), StandardCharsets.UTF_8)).getAsJsonObject();
