@@ -1,0 +1,71 @@
+{
+ "loader": "fabric",
+ "from": "1.20.4",
+ "to": "1.20.5",
+ "scope": "all",
+ "mods": 28,
+ "loaded": 11,
+ "linkedAndLoaded": 11,
+ "linked": 28,
+ "failedButLinked": [
+  "drippy-loading-screen--drippyloadingscreen_fabric_3.0.8_MC_1.20.4.jar",
+  "netherportalfix--netherportalfix-fabric-1.20.4-15.0.1.jar"
+ ],
+ "clashOnly": [],
+ "failedDataOnly": [
+  "dungeons-and-taverns--dungeons-and-taverns-3.1.1.jar"
+ ],
+ "verdicts": {
+  "animatica--animatica-0.6.1+1.20.4.jar": "client-only: client-only (folder, its own metadata)",
+  "better-mount-hud--bettermounthud-1.2.2.jar": "client-only: client-only (folder, its own metadata)",
+  "better-third-person--BetterThirdPerson-Fabric-1.20-1.9.0.jar": "client-only: client-only (folder, its own metadata)",
+  "cherished-worlds--cherishedworlds-fabric-8.0.1+1.20.4.jar": "client-only: client-only (folder, its own metadata)",
+  "controlling--Controlling-fabric-1.20.4-15.0.5.jar": "client-only: client-only (folder, its own metadata)",
+  "cubes-without-borders--cwb-5.0.0+1.20.0.fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "euphoria-patches--EuphoriaPatcher-1.11.1-r5.10-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.20.4-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "modelfix--modelfix-1.14-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "particle-rain--particle-rain-2.1.5.jar": "client-only: client-only (folder, its own metadata)",
+  "rrls--rrls-4.0.3+mc1.20.4-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "searchables--Searchables-fabric-1.20.4-1.0.6.jar": "client-only: client-only (folder, its own metadata)",
+  "sodium-shadowy-path-blocks--sodium-shadowy-path-blocks-3.4.2.jar": "client-only: client-only (folder, its own metadata)",
+  "zoomify--zoomify-2.15.2+1.20.4.jar": "client-only: client-only (folder, its own metadata)",
+  "drippy-loading-screen--drippyloadingscreen_fabric_3.0.8_MC_1.20.4.jar": "failed: the loader names it: - Mod 'Drippy Loading Screen' (drippyloadingscreen) 3.0.8 requires version 3.2.0 or later of mod 'FancyMenu' (fancymenu), but only the wrong version is present: 3.1.7!",
+  "netherportalfix--netherportalfix-fabric-1.20.4-15.0.1.jar": "failed: needs the library MBAkmtvl--balm-fabric-1.20.4-9.0.9.jar, which fails: the loader names it: java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'balm-fabric' at 'net.blay09.mods.balm.fabric.FabricBalm'!",
+  "dungeons-and-taverns--dungeons-and-taverns-3.1.1.jar": "failed: its data fails on this release: Failed to parse nova_structures:worldgen/structure_set/nether_skeleton_towers.json from pack mr_dungeons_andtaverns",
+  "athena-ctm--athena-fabric-1.20.4-3.3.2.jar": "loaded",
+  "attributefix--AttributeFix-Fabric-1.20.4-24.0.2.jar": "loaded",
+  "better-advancements--BetterAdvancements-Fabric-1.20.4-0.4.2.8.jar": "loaded",
+  "clumps--Clumps-fabric-1.20.4-15.0.0.2.jar": "loaded",
+  "e4mc--e4mc-fabric-6.2.3.jar": "loaded",
+  "fabric-language-kotlin--fabric-language-kotlin-1.14.2+kotlin.2.4.21.jar": "loaded",
+  "konkrete--konkrete_fabric_1.9.2_MC_1.20.4.jar": "loaded",
+  "memoryleakfix--memoryleakfix-fabric-1.17+-1.1.5.jar": "loaded",
+  "sound-physics-remastered--sound-physics-remastered-fabric-1.20.4-1.4.5.jar": "loaded",
+  "terralith--Terralith_1.20.x_v2.5.4.jar": "loaded",
+  "yosbr--yosbr-0.1.2.jar": "loaded"
+ },
+ "libraries": {
+  "1eAoo2KR--yet_another_config_lib_v3-3.6.6+1.20.6-fabric.jar": "its release for 1.20.5",
+  "9s6osm5g--cloth-config-14.0.139-fabric.jar": "its release for 1.20.5",
+  "Wq5SjeWM--fancymenu_fabric_3.1.7_MC_1.20.6.jar": "its release for 1.20.5",
+  "CVT4pFB2--melody_fabric_1.0.6_MC_1.20.5.jar": "its release for 1.20.5",
+  "MBAkmtvl--balm-fabric-1.20.4-9.0.9.jar": "its 1.20.4 release, ported"
+ },
+ "notStarted": {
+  "reeses-sodium-options--reeses_sodium_options-1.7.2+mc1.20.4-build.102.jar": [
+   "sodium"
+  ],
+  "indium--indium-1.0.31+mc1.20.4.jar": [
+   "sodium"
+  ]
+ },
+ "client": {
+  "mods": 25,
+  "loaded": 0,
+  "verdicts": {},
+  "notRun": "the loader reported a failed start: [03:34:19] [main/WARN]: Mod resolution failed",
+  "receipt": "/home/runner/.mmt/packs/.runs/portable/2026-11-22T03-33-46.417060560Z-697f377d/result.json"
+ },
+ "loadedOnServerFailedInClient": []
+}
