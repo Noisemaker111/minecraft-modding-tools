@@ -409,7 +409,6 @@ public final class JarPort {
             // What making the porters adds to the new release (the step's stand-ins, libraries carried from the old one) is
             // taken out again after the step, so the next step reads the release as it was read.
             Set<String> read = new HashSet<>(now.classes.keySet());
-            long t0 = System.nanoTime();
             // Made one after another: making a porter adds the step's stand-ins and carried library classes to the releases.
             List<JarPort> porters = new ArrayList<>();
             for (int w = 0; w < workers; w++) {
@@ -434,7 +433,6 @@ public final class JarPort {
                 running.add(Thread.ofPlatform().start(() -> {
                     for (int j; (j = next.getAndIncrement()) < order.size(); ) {
                         Path jar = order.get(j);
-                        long j0 = System.nanoTime();
                         if (errors.containsKey(jar)) {
                             continue;
                         }
@@ -450,15 +448,15 @@ public final class JarPort {
                             errors.put(jar, String.valueOf(failed));
                             bytes.remove(jar);
                         }
-                        System.err.printf("TJAR %d %.2f %s%n", step, (System.nanoTime() - j0) / 1e9, name);
                     }
                 }));
             }
             for (Thread t : running) {
                 t.join();
             }
-            System.err.printf("TSTEP %d %.2f%n", step, (System.nanoTime() - t0) / 1e9);
             now.classes.keySet().retainAll(read);
+            Exposure.forget(stops.get(i));
+            GameCode.READ.remove(stops.get(i));
             was = now;
         }
         reader.shutdown();
@@ -578,7 +576,7 @@ public final class JarPort {
 
     ModNames fabricIn() throws IOException {
         try {
-            return in != null ? in : (in = new ModNames(new Exposure.Intermediary(a.version)));
+            return in != null ? in : (in = new ModNames(Exposure.Intermediary.of(a.version)));
         } catch (Exception unreadable) {
             throw new IOException("Fabric's intermediary names for " + a.version + " could not be read: " + unreadable.getMessage(), unreadable);
         }
@@ -706,6 +704,7 @@ public final class JarPort {
 
     static final Pattern SRG = Pattern.compile("\\b[mf]_\\d+_\\b");
     static final Pattern INTERMEDIARY = Pattern.compile("net/minecraft/class_\\d+");
+    static final Pattern SRG_ANYWHERE = Pattern.compile("[mf]_\\d+_"); // SRG without its word bounds, which raw bytes beside a name can break
 
     /**
      * A class a jar for several loaders carries for another one (a Forge class beside the Fabric ones), which the loader
@@ -719,6 +718,11 @@ public final class JarPort {
         // Read from what the JVM links (types, calls, fields, declared names), not from strings: a mixin for every
         // loader lists each loader's names in its annotations and runs on all of them.
         Pattern other = loader.equals("fabric") ? SRG : INTERMEDIARY;
+        // Every name the class links is text in its constant pool: a class whose bytes hold no such name anywhere has none,
+        // and reading every class of every jar at every step of a long port was a tenth of the port.
+        if (!(loader.equals("fabric") ? SRG_ANYWHERE : INTERMEDIARY).matcher(new String(bytes, StandardCharsets.ISO_8859_1)).find()) {
+            return false;
+        }
         boolean[] found = new boolean[1];
         java.util.function.Consumer<String> seen = text -> found[0] |= text != null && other.matcher(text).find();
         new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
@@ -4684,6 +4688,22 @@ public final class JarPort {
         }
 
         static GameCode of(String version) throws Exception {
+            Object[] read = READ.get(version);
+            if (read == null) {
+                READ.putIfAbsent(version, read(version));
+                read = READ.get(version);
+            }
+            @SuppressWarnings("unchecked") Map<String, byte[]> all = (Map<String, byte[]>) read[0];
+            return new GameCode(all::get, (VersionMap.Proguard) read[1], all);
+        }
+
+        /**
+         * A release's classes by name and its mappings, read once per process and only read after: each worker's porter
+         * of each step asks for both releases' code, and reading the mappings again was a tenth of a long port.
+         */
+        static final Map<String, Object[]> READ = new java.util.concurrent.ConcurrentHashMap<>();
+
+        static Object[] read(String version) throws Exception {
             String json = GameDiff.versionJson(version);
             Path jar = GameDiff.verified(GameDiff.download(json, "client"), "client-" + version + ".jar");
             String[] mappings = GameDiff.download(json, "client_mappings");
@@ -4693,7 +4713,7 @@ public final class JarPort {
             for (byte[] c : GameDiff.classes(jar, null)) {
                 all.put(new ClassReader(c).getClassName(), c);
             }
-            return new GameCode(all::get, pg, all);
+            return new Object[] { all, pg };
         }
 
         /** A box's primitive and the call that unboxes it. */

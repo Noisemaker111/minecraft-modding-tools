@@ -106,6 +106,15 @@ public final class GameDiff {
         }
         for (int i = 0; i < chains.size(); i++) {
             map(chains.get(i), outs.get(i), loader, loaderVersions);
+            Set<String> later = new HashSet<>();
+            for (String c : chains.subList(i + 1, chains.size())) {
+                later.addAll(List.of(c.split(",")));
+            }
+            for (String v : chains.get(i).split(",")) {
+                if (!later.contains(v)) {
+                    Exposure.forget(v);
+                }
+            }
         }
     }
 

@@ -150,6 +150,12 @@ public final class Exposure {
 
     static final Map<String, Platform> PLATFORMS = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** Lets go of what was read once for a release a long port has gone past. */
+    static void forget(String version) {
+        PLATFORMS.keySet().removeIf(k -> k.endsWith(" " + version));
+        Intermediary.FABRIC.remove(version);
+    }
+
     static final String NEOFORGED = "https://maven.neoforged.net/releases/";
 
     /**
@@ -267,7 +273,7 @@ public final class Exposure {
         Map<String, List<String>> injected = new HashMap<>();
         if (api != null) {
             byte[] bytes = Files.readAllBytes(api);
-            Intermediary names = compare(version, "26.1") < 0 ? new Intermediary(version) : null;
+            Intermediary names = compare(version, "26.1") < 0 ? Intermediary.of(version) : null;
             // Fabric API's modules open game members to every mod with "transitive-" widener lines (BlockEntityRenderers.
             // register, MenuScreens.register), as NeoForge does with its access transformer.
             for (String text : wideners(bytes)) {
@@ -557,6 +563,18 @@ public final class Exposure {
                 }
             }
         }
+
+        /** Fabric's intermediary names of a release, read once per process: every step of a long port before 26.1 asks again. */
+        static Intermediary of(String version) throws Exception {
+            Intermediary cached = FABRIC.get(version);
+            if (cached == null) {
+                FABRIC.putIfAbsent(version, new Intermediary(version));
+                cached = FABRIC.get(version);
+            }
+            return cached;
+        }
+
+        static final Map<String, Intermediary> FABRIC = new java.util.concurrent.ConcurrentHashMap<>();
 
         /**
          * NeoForge's SRG names of one release in Mojang's. NeoForge's pom names the NeoForm build it was made from; NeoForm's
