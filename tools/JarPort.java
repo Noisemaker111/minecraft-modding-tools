@@ -380,10 +380,36 @@ public final class JarPort {
         Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
+        // Biggest first, so no big jar starts when the others are done.
+        List<Path> order = new ArrayList<>(jars);
+        order.sort(Comparator.comparingLong((Path j) -> j.toFile().length()).reversed().thenComparing(Path::toString));
+        // Each release is read once: the new release of one step is the old of the next, and the next step's new release
+        // is read while this step ports.
+        String platform = loader;
+        java.util.concurrent.ExecutorService reader = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
+        java.util.concurrent.Future<GameDiff.Snap> coming = reader.submit(() -> Exposure.snap(stops.get(1), platform));
+        GameDiff.Snap was = Exposure.snap(stops.get(0), loader);
         for (int i = 0; i + 1 < stops.size(); i++) {
             int step = i;
             boolean last = i + 2 == stops.size();
-            GameDiff.Snap was = Exposure.snap(stops.get(i), loader), now = Exposure.snap(stops.get(i + 1), loader);
+            GameDiff.Snap now;
+            try {
+                now = coming.get();
+            } catch (java.util.concurrent.ExecutionException failed) {
+                throw failed.getCause() instanceof Exception e ? e : failed;
+            }
+            if (!last) {
+                String after = stops.get(i + 2);
+                coming = reader.submit(() -> Exposure.snap(after, platform));
+            }
+            // What making the porters adds to the new release (the step's stand-ins, libraries carried from the old one) is
+            // taken out again after the step, so the next step reads the release as it was read.
+            Set<String> read = new HashSet<>(now.classes.keySet());
+            long t0 = System.nanoTime();
             // Made one after another: making a porter adds the step's stand-ins and carried library classes to the releases.
             List<JarPort> porters = new ArrayList<>();
             for (int w = 0; w < workers; w++) {
@@ -392,6 +418,7 @@ public final class JarPort {
                     port.loader = loader;
                 }
                 port.runtimeNames = runtime && last;
+                port.between = !last;
                 port.originalsDir = originalsDir;
                 if ("fabric".equals(loader)) {
                     port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
@@ -405,8 +432,9 @@ public final class JarPort {
             List<Thread> running = new ArrayList<>();
             for (JarPort port : porters) {
                 running.add(Thread.ofPlatform().start(() -> {
-                    for (int j; (j = next.getAndIncrement()) < jars.size(); ) {
-                        Path jar = jars.get(j);
+                    for (int j; (j = next.getAndIncrement()) < order.size(); ) {
+                        Path jar = order.get(j);
+                        long j0 = System.nanoTime();
                         if (errors.containsKey(jar)) {
                             continue;
                         }
@@ -422,13 +450,18 @@ public final class JarPort {
                             errors.put(jar, String.valueOf(failed));
                             bytes.remove(jar);
                         }
+                        System.err.printf("TJAR %d %.2f %s%n", step, (System.nanoTime() - j0) / 1e9, name);
                     }
                 }));
             }
             for (Thread t : running) {
                 t.join();
             }
+            System.err.printf("TSTEP %d %.2f%n", step, (System.nanoTime() - t0) / 1e9);
+            now.classes.keySet().retainAll(read);
+            was = now;
         }
+        reader.shutdown();
         List<Object> rows = new ArrayList<>();
         int linked = 0;
         Map<String, Set<String>> byMods = new HashMap<>();
@@ -535,6 +568,10 @@ public final class JarPort {
     static final String UNOBFUSCATED = "26.1";
 
     boolean runtimeNames; // hand a Fabric jar back in the names Fabric runs, not Mojang's
+    // A step before the last of a port: its jar is only read back by the next step, so it is written without compressing
+    // (compressing every step's jars was a quarter of a long port), and only the last step's jar is the port. Nested jars
+    // stay compressed: a later step may keep one as it is (a module the newer platform provides), bytes and all.
+    boolean between;
     Path originalsDir; // where each jar is as it came, by its file name, when the jars given were read into Mojang's names first
     ModNames in;
     ModNames.Back out;
@@ -892,6 +929,9 @@ public final class JarPort {
         }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (ZipOutputStream out = new ZipOutputStream(buffer)) {
+            if (between && outermost) {
+                out.setLevel(Deflater.NO_COMPRESSION);
+            }
             for (var e : entries.entrySet()) {
                 String n = e.getKey();
                 byte[] data = e.getValue();
