@@ -444,13 +444,42 @@ public final class JarPort {
         if (fabric && compareVersions(b.version, UNOBFUSCATED) < 0 && !results.isEmpty()) {
             // Fabric runs the jar in intermediary: a method whose name the hand-back cannot give is never called.
             @SuppressWarnings("unchecked") List<Object> unlinked = (List<Object>) results.get(results.size() - 1).get("unlinked");
-            for (String gap : handBack() instanceof ModNames.Back back ? back.gaps(out, originals) : List.<String>of()) {
+            ModNames.Back back = handBack();
+            for (String gap : back != null ? back.gaps(out, originals) : List.<String>of()) {
                 unlinked.add("method name lost in the Fabric hand-back: " + gap);
+            }
+            // Two of a class's methods the hand-back gives one intermediary name is a class the JVM refuses to load
+            // (GeckoLib's GeoProjectilesRenderer on 1.19); only the names Fabric runs show it.
+            byte[] handed = back == null ? null : back.jar(out, originals);
+            for (byte[] c : handed == null ? List.<byte[]>of() : ModNames.Back.classesIn(handed)) {
+                for (String twice : declaredTwice(c)) {
+                    unlinked.add("does not verify in Fabric's names: method declared twice: " + twice);
+                }
+            }
+            if (runtimeNames && handed != null) {
+                return handed;
             }
         }
         if (fabric && runtimeNames && compareVersions(b.version, UNOBFUSCATED) < 0) {
             out = fabricOut().jar(out, originals);
         }
+        return out;
+    }
+
+    /** Methods (class.name+desc) a class declares twice, which the JVM refuses to load it for (ClassFormatError). */
+    static List<String> declaredTwice(byte[] bytes) {
+        List<String> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        ClassReader r = new ClassReader(bytes);
+        r.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                if (!seen.add(name + desc)) {
+                    out.add(Exposure.dotted(r.getClassName()) + "." + name + desc);
+                }
+                return null;
+            }
+        }, ClassReader.SKIP_CODE);
         return out;
     }
 
@@ -1343,9 +1372,11 @@ public final class JarPort {
      * Every ported class run through the JVM's verifier against the new release (Exposure.verify), and each failure the port
      * made reported: a method that verified against the old release and fails against the new one throws VerifyError in
      * game though every reference in it links. A failure that names the class a route moved a removed class to marks that
-     * route unfit for this jar (fitting).
+     * route unfit for this jar (fitting), whatever else the jar lacks.
      */
     void verify(Mod mod, Map<String, byte[]> ported, Map<String, byte[]> read) {
+        // A failure in a jar that already has a reference that does not link is mostly that reference, left as written.
+        boolean report = mod.unlinked.isEmpty();
         Map<String, GameDiff.Cls> now = headers(mod, ported, true), was = headers(mod, read, false);
         Map<String, Set<String>> routedTo = new HashMap<>(); // a class of the new release -> removed classes routed to it
         for (var e : classMap.entrySet()) {
@@ -1378,7 +1409,9 @@ public final class JarPort {
                 if (Sites.WHERE) {
                     System.err.println("verifier: " + x);
                 }
-                mod.unlinked.add("does not verify: " + verifyReason(x));
+                if (report) {
+                    mod.unlinked.add("does not verify: " + verifyReason(x));
+                }
             }
         }
     }
