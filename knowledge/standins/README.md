@@ -15,6 +15,10 @@ of its own (`mmt.standin.mID`). The next update ports them like the rest of the 
   - `Owner init(A...)` the old constructor `new Owner(A...)` (not a `super(...)` call)
   - `boolean isInstance(Object)` what `x instanceof Owner` meant
   - A stand-in for a class the new release dropped, with nothing the route or a rule moves it to, stands in for the class.
+    Where the route moves the class to one a mod's code cannot use as the old one (the JVM's verifier refuses the ported
+    class: TranslatableComponent -> TranslatableContents in 1.19, which is no component), the port leaves the route out
+    for that mod and the stand-in stands in for the class there; mods the route suits keep it. Such a stand-in is the old
+    class itself (not a holder of static methods): constructors, instance methods, and a supertype a mod can extend.
   A method that answers no old member stops the port with its name.
 - **Closed members:** a stand-in may call what the new game keeps private or protected; the port opens it through the
   mod's access transformer, or reports it when the mod has none.

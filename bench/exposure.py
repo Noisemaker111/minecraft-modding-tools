@@ -50,6 +50,12 @@ client: the title screen, a world, the inventory and every creative tab), since 
 failed start drops the mod its log names and starts again. It reports each mod's server and client verdicts side by
 side, and any mod that loaded on the server and failed in the client.
 
+jars also runs the JVM's verifier (the JDK's copy of HotSpot's) over every ported class against the new release, as the
+game would when it loads the class: a value of a type the instruction using it does not accept, or a method declared
+twice, is a VerifyError or ClassFormatError in game though every reference links, and the mod does not link. A class
+route (a removed class moved to the class the game put in its place) the verifier refuses for a mod is left out for that
+mod, and the old class is then a stand-in's (knowledge/standins) or reported gone.
+
 jars also checks each mod's data files against the new release: a built-in game id (an enchantment effect type, a loot
 function, a data component) that the old release registers and the new one does not, read from each release's own
 data generator report. A server refuses such a file, which the link check cannot see; modsThatLinkAndData counts the
