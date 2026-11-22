@@ -572,7 +572,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # scoreboard after every edit, and porting every mod again is most of a run.
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
-    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY)
+    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
     E.ROOT, E.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     fixes = root / "knowledge" / "fixes.json"
@@ -586,11 +586,18 @@ with tempfile.TemporaryDirectory() as tmp:
     ported = []
     answer = {"m0.jar": []}
 
+    commands = []
+
     def fake_side_by_side(command, given, report):
         ported.append([j.name for j in given])
+        commands.append(command)
         return [{"mod": j.name, "out": str(report.parent / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]), "silent": []} for j in given]
 
-    E.side_by_side, E.route_map, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda *a: route), (lambda: "classes"), (lambda: "classes")
+    # A port from 1.0 to 1.2 stops at 1.1, as JarPort plans it when 1.1 -> 1.2 has stand-ins: each step has a map of its own.
+    step_routes = {("1.0", "1.1"): route, ("1.1", "1.2"): root / "route-1.1-1.2.json"}
+    step_routes[("1.1", "1.2")].write_text("{}", encoding="utf-8")
+    E.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
+    E.side_by_side, E.route_map, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda frm, to, *a: step_routes[(frm, to)]), (lambda: "classes"), (lambda: "classes")
     E.tools_classes_key, E.platform_key, E.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
 
     def port():
@@ -603,12 +610,34 @@ with tempfile.TemporaryDirectory() as tmp:
     jars[1].write_bytes(b"jar 1, edited")
     port()
     check(ported[-1] == ["m1.jar"], f"a mod whose jar changed is the only one ported again: {ported[-1]}")
+    standin = root / "knowledge" / "standins" / "1.0-1.1.neoforge" / "a" / "B.java"
+
+    def write_standin():
+        standin.parent.mkdir(parents=True, exist_ok=True)
+        standin.write_text("package mmt.standin.a; public final class B {}", encoding="utf-8")
+
     for change in (lambda: fixes.write_text('[{"id": "x"}]', encoding="utf-8"), lambda: route.write_text('{"rewrites": []}', encoding="utf-8"),
+                   write_standin, lambda: standin.write_text("package mmt.standin.a; public final class B { }", encoding="utf-8"),
                    lambda: setattr(E, "tools_classes_key", lambda: "tools-2"), lambda: setattr(E, "platform_key", lambda loader, r: b"other loader"),
                    lambda: setattr(E, "java_version", lambda: "java 26")):
+        runs = len(ported)
         change()
         port()
-        check(ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], f"a change to what every port reads ports every mod again: {ported[-1]}")
+        check(len(ported) == runs + 1 and ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], f"a change to what every port reads ports every mod again: {ported[runs:]}")
+    def long_port():
+        return E.jar_port("neoforge", "1.0", "1.2", jars, root / "out", root / "report.json", cache=True)
+
+    long_port()
+    command = commands[-1]
+    check(command[command.index("--via") + 1] == "1.1" and [command[i + 1] for i, c in enumerate(command) if c == "--map"] == [str(route), str(step_routes[("1.1", "1.2")])],
+          f"a port across several updates gives JarPort its stops and each step's map: {command}")
+    later = root / "knowledge" / "standins" / "1.1-1.2" / "a" / "C.java"
+    for change in (lambda: (later.parent.mkdir(parents=True, exist_ok=True), later.write_text("package mmt.standin.a; public final class C {}", encoding="utf-8")),
+                   lambda: step_routes[("1.1", "1.2")].write_text('{"rewrites": []}', encoding="utf-8")):
+        runs = len(ported)
+        change()
+        long_port()
+        check(len(ported) == runs + 1, f"a change to a later step's stand-ins or map ports the long jump's mods again: {ported[runs:]}")
     E.VERIFY = True
     port()
     check(ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], "--verify ports every mod although each has a kept port")
@@ -619,7 +648,7 @@ with tempfile.TemporaryDirectory() as tmp:
     except SystemExit as failed:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
-    (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY) = saved
+    (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}

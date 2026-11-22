@@ -63,29 +63,43 @@ final class PortJar {
         String cp = classes + File.pathSeparator + home.resolve("tools/perf/lib/asm-9.9.jar") + File.pathSeparator + home.resolve("tools/perf/lib/asm-commons-9.9.jar");
         Path cache = Path.of(System.getProperty("user.home"), ".mmt", "jar-port");
         List<String> chain = Route.plan(home, from, to).versions;
+        Path fixes = home.resolve("knowledge/fixes.json");
+        // Where the port stops on the way: each update with stand-ins is crossed on its own (JarPort.hops).
+        var planned = Run.command(List.of(jdk.java().toString(), "-cp", cp, "JarPort", "--hops", "--chain", String.join(",", chain), "--fixes", fixes.toString(), "--loader", loader),
+            report.root, Map.of(), report.log("jar-port-hops"), 60);
+        List<String> stops = Files.readAllLines(planned.log()).stream().map(String::strip).filter(l -> l.matches("[\\w.,-]+")).reduce((x, y) -> y)
+            .map(l -> List.of(l.split(","))).orElse(List.of());
+        if (planned.exit() != 0 || stops.size() < 2 || !stops.get(0).equals(from) || !stops.get(stops.size() - 1).equals(to)) {
+            throw new IOException("The steps of the port from " + from + " to " + to + " could not be planned. " + Run.tail(planned.log()));
+        }
         // The map reads the loader's own classes too (Exposure, ModNames) and carries learned expressions (FixExpr).
         String differ = Fingerprints.files(List.of(home.resolve("tools/GameDiff.java"), home.resolve("tools/VersionMap.java"), home.resolve("tools/Exposure.java"),
             home.resolve("tools/ModNames.java"), home.resolve("tools/FixExpr.java")));
-        Path map = cache.resolve("maps").resolve(loader + "-" + String.join("_", chain) + "-" + differ + ".json");
-        if (!Files.isRegularFile(map)) {
-            Files.createDirectories(map.getParent());
-            List<String> differCommand = new ArrayList<>(List.of(jdk.java().toString(), "-Xmx6g", "-cp", cp, "GameDiff", "--chain", String.join(",", chain), "--out", map.toString()));
-            // Fabric's map is learned with Fabric API's own code as NeoForge's is with NeoForge's, as the scoreboard builds it.
-            differCommand.addAll(List.of("--loader", loader));
-            var diff = Run.command(differCommand, report.root, Map.of(), report.log("route-map"), 900);
-            report.stage("route-map", diff, Map.of("chain", chain));
-            if (diff.exit() != 0) {
-                throw new IOException("The game's change map from " + from + " to " + to + " could not be made. " + Run.tail(diff.log()));
+        List<String> command = new ArrayList<>(List.of(jdk.java().toString(), "-Xmx6g", "-cp", cp, "JarPort", "--from", from, "--to", to, "--loader", loader, "--runtime-names"));
+        if (stops.size() > 2) {
+            command.addAll(List.of("--via", String.join(",", stops.subList(1, stops.size() - 1))));
+        }
+        for (int i = 0; i + 1 < stops.size(); i++) {
+            List<String> step = chain.subList(chain.indexOf(stops.get(i)), chain.indexOf(stops.get(i + 1)) + 1);
+            Path map = cache.resolve("maps").resolve(loader + "-" + String.join("_", step) + "-" + differ + ".json");
+            if (!Files.isRegularFile(map)) {
+                Files.createDirectories(map.getParent());
+                List<String> differCommand = new ArrayList<>(List.of(jdk.java().toString(), "-Xmx6g", "-cp", cp, "GameDiff", "--chain", String.join(",", step), "--out", map.toString()));
+                // Fabric's map is learned with Fabric API's own code as NeoForge's is with NeoForge's, as the scoreboard builds it.
+                differCommand.addAll(List.of("--loader", loader));
+                var diff = Run.command(differCommand, report.root, Map.of(), report.log("route-map"), 900);
+                report.stage("route-map", diff, Map.of("chain", step));
+                if (diff.exit() != 0) {
+                    throw new IOException("The game's change map from " + step.get(0) + " to " + step.get(step.size() - 1) + " could not be made. " + Run.tail(diff.log()));
+                }
             }
+            command.addAll(List.of("--map", map.toString()));
         }
         Path receipt = report.directory.resolve("jar-port.json");
         Files.createDirectories(receipt.getParent());
-        var ported = Run.command(
-            List.of(jdk.java().toString(), "-Xmx6g", "-cp", cp, "JarPort", "--from", from, "--to", to, "--loader", loader, "--runtime-names",
-                "--map", map.toString(), "--fixes", home.resolve("knowledge/fixes.json").toString(), "--out", out.toString(), "--report", receipt.toString(), jar.toString()),
-            report.root, Map.of(), report.log("jar-port"), 900
-        );
-        report.stage("jar-port", ported, Map.of());
+        command.addAll(List.of("--fixes", fixes.toString(), "--out", out.toString(), "--report", receipt.toString(), jar.toString()));
+        var ported = Run.command(command, report.root, Map.of(), report.log("jar-port"), 900);
+        report.stage("jar-port", ported, Map.of("steps", stops));
         if (ported.exit() != 0 || !Files.isRegularFile(receipt)) {
             throw new IOException("The jar could not be ported. " + Run.tail(ported.log()));
         }

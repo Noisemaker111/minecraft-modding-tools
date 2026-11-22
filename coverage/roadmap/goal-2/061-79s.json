@@ -1,0 +1,18 @@
+{
+ "id": "79s",
+ "title": "Stand-ins for every big update",
+ "part": "Port by type of break",
+ "status": "done",
+ "start": "2026-11-22",
+ "target": "2026-11-23",
+ "text": "Step 78d's method on every big update: for each FROM -> TO the scoreboard marks big, stand-ins (the old API written on the new release, from both releases' code and the loaders' migration notes) for the old classes that alone hold back the most mods, in knowledge/standins/FROM-TO/ (FROM-TO.LOADER/ when they use a loader's classes). One PR for the whole step; each agent owns different FROM-TO folders and pushes to the same branch. Stand-ins chain: a later update ports an earlier update's stand-ins like the mod's own code, so long jumps gain from every update's set.",
+ "finish": "big updates 1,995 -> 2,300 of 5,149 with none lower, and the freed mods of each update start on a real server and client as often as other ported mods",
+ "wrongIf": "a freed mod fails in game because of a stand-in's code, or an update's count drops",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates",
+  "port.jar-links.newest"
+ ],
+ "done": "2026-11-22",
+ "result": "2026-11-22: 6 agents wrote about 200 stand-ins over 27 big updates (both loaders where the scoreboard has them). Cloud run 45000771890 against main at 4e6622fce7: every update 6,171 -> 6,605 of 9,423 (+434), big updates 2,004 -> 2,438 of 5,149 (+434), no update lower; newest game 22 -> 22 (long jumps stay held by updates whose blocked mods also hold mixin and override breaks, e.g. NeoForge 1.21.1 -> 1.21.2 at 52). call types fell most: 'call, game: linked' finishes 194 -> 95, 'call, game: split' 72 -> 24. Real games on GitHub's runners per update: no freed mod failed on a stand-in's code once two were removed (DataResult.get on 1.20.5 freed a mod that named DFU's removed PartialResult, which led to #182; stand-ins compiled for Java 21 crashed releases before 1.20.5, fixed). Left: mixins and overrides, super(...) arguments in mods' own subclasses, class routes that are not drop-ins (VerifyError), and the game check on 1.15, 1.16 and 1.18."
+}
