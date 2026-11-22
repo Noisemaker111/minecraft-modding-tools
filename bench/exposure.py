@@ -490,7 +490,7 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     classpath = jar_tools()
     route = route_map(frm, to, loader, compile_tools())
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows, todo, keys = {}, [], {}
+    rows, todo, keys, checked = {}, [], {}, 0
     if cache:
         folder = keyed_at("ports", port_key(loader, frm, to, route, runtime))
         for jar in jars:
@@ -508,6 +508,8 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
             rows[m["mod"]] = m
             if cache:
                 kept = {k: v for k, v in m.items() if k != "out"}  # where this run wrote it, not part of the answer
+                if VERIFY and keys[m["mod"]].is_file():
+                    checked += 1
                 if VERIFY and keys[m["mod"]].is_file() and json.loads(keys[m["mod"]].read_text(encoding="utf-8")) != kept:
                     raise SystemExit(f"the cached port of {m['mod']} ({loader} {frm} -> {to}, {keys[m['mod']]}) differs from porting it again: "
                                      "the cache key misses an input of the port, or the port is not the same run to run")
@@ -521,7 +523,7 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
             counts[member] = counts.get(member, 0) + 1
     merged = {"from": frm, "to": to, "loader": loader, "linked": sum(1 for m in rows if "error" not in m and not m["unlinked"]), "mods": rows,
               "unlinkedByMods": [{"member": k, "mods": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))],
-              "ported": len(todo)}
+              "ported": len(todo), "verified": checked}
     report.write_text(json.dumps(merged, indent=1), encoding="utf-8")
     return merged
 
@@ -930,6 +932,8 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
         work.mkdir(parents=True, exist_ok=True)
         last.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     if not quiet:
+        if VERIFY:
+            print(f"--verify: {report.get('verified', 0)} kept ports were the same as porting them again")
         if moved is not None:
             print(f"against {'the run before' if not kind else 'the last whole run'} ({against}): "
                   + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
