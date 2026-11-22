@@ -219,12 +219,14 @@ def fetch_main_table(commit, timeout_minutes):
     print(f"main's table for {commit[:10]}: {how}", flush=True)
     out = ROOT / ".runs" / "cloud" / f"exposure-main-{commit[:10]}"
     if not (out / "all.json").is_file():
+        deadline = time.monotonic() + timeout_minutes * 60
         view = wait(run_id, timeout_minutes, True)
-        if view.get("conclusion") != "success":
-            # A sweep found still waiting can end cancelled: look again, and make one for the commit if none is left.
+        if view.get("conclusion") == "cancelled":
+            # A newer push can cancel the sweep found: look again, and make one for the commit if none is left,
+            # within what is left of the one timeout.
             run_id, how = main_table(commit)
-            print(f"main's sweep ended {view.get('conclusion')}; now {how}", flush=True)
-            view = wait(run_id, timeout_minutes, True)
+            print(f"main's sweep was cancelled; now {how}", flush=True)
+            view = wait(run_id, max(deadline - time.monotonic(), 0) / 60, True)
         if view.get("conclusion") != "success":
             raise SystemExit(f"main's sweep {run_id} ended {view.get('conclusion')}")
         out.mkdir(parents=True, exist_ok=True)
