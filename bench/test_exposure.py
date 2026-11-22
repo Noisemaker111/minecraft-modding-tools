@@ -586,12 +586,20 @@ with tempfile.TemporaryDirectory() as tmp:
     jars[1].write_bytes(b"jar 1, edited")
     port()
     check(ported[-1] == ["m1.jar"], f"a mod whose jar changed is the only one ported again: {ported[-1]}")
+    standin = root / "knowledge" / "standins" / "1.0-1.1.neoforge" / "a" / "B.java"
+
+    def write_standin():
+        standin.parent.mkdir(parents=True, exist_ok=True)
+        standin.write_text("package mmt.standin.a; public final class B {}", encoding="utf-8")
+
     for change in (lambda: fixes.write_text('[{"id": "x"}]', encoding="utf-8"), lambda: route.write_text('{"rewrites": []}', encoding="utf-8"),
+                   write_standin, lambda: standin.write_text("package mmt.standin.a; public final class B { }", encoding="utf-8"),
                    lambda: setattr(E, "tools_classes_key", lambda: "tools-2"), lambda: setattr(E, "platform_key", lambda loader, r: b"other loader"),
                    lambda: setattr(E, "java_version", lambda: "java 26")):
+        runs = len(ported)
         change()
         port()
-        check(ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], f"a change to what every port reads ports every mod again: {ported[-1]}")
+        check(len(ported) == runs + 1 and ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], f"a change to what every port reads ports every mod again: {ported[runs:]}")
     E.VERIFY = True
     port()
     check(ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], "--verify ports every mod although each has a kept port")

@@ -485,12 +485,23 @@ def shipped_obfuscated(loader, version):
 
 
 def port_key(loader, frm, to, route, runtime=False):
-    """Everything one port reads beside the mod's own jar: the porter's classes, the route map, the port rules, the loaders'
-    release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
+    """Everything one port reads beside the mod's own jar: the porter's classes, the route map, the port rules, the update's
+    stand-ins, the loaders' release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
     # The hand-back of an obfuscated release reads the jars as they came too: the release's pinned files.
     pinned = (PINS / f"{loader}-{frm}.json").read_bytes() if shipped_obfuscated(loader, frm) and (PINS / f"{loader}-{frm}.json").is_file() else b""
-    return content_key(tools_classes_key(), route.read_bytes(), (ROOT / "knowledge" / "fixes.json").read_bytes(), platform_key(loader, route),
-                       java_version(), loader, frm, to, runtime, pinned)
+    return content_key(tools_classes_key(), route.read_bytes(), (ROOT / "knowledge" / "fixes.json").read_bytes(), standins_key(loader, frm, to),
+                       platform_key(loader, route), java_version(), loader, frm, to, runtime, pinned)
+
+
+def standins_key(loader, frm, to):
+    """The stand-ins JarPort reads for one update and loader (knowledge/standins/FROM-TO/ and FROM-TO.LOADER/), each file's
+    path and content."""
+    parts = []
+    for folder in (ROOT / "knowledge" / "standins" / f"{frm}-{to}", ROOT / "knowledge" / "standins" / f"{frm}-{to}.{loader}"):
+        if folder.is_dir():
+            for f in sorted(folder.rglob("*.java")):
+                parts += [f.relative_to(folder.parent).as_posix().encode(), f.read_bytes()]
+    return content_key(*parts)
 
 
 def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False):
