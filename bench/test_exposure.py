@@ -185,6 +185,23 @@ with tempfile.TemporaryDirectory() as tmp:
     check([j.name for j in chosen] == ["ipn--ktmod.jar"] and list(ready) == ["libipn.jar"] and list(to_port) == ["lang-all.jar"],
           f"a mod is started with the libraries it needs, each library's own found through it: {chosen} {ready} {to_port}")
     check(left == {"lone--lone.jar": ["nowhere"]}, f"a mod whose need nothing answers is named with what it needs: {left}")
+    # A Fabric mod's Modrinth version lists Fabric API, which the pack already runs as its platform: a second copy as a
+    # library stops Fabric ("Mod id fabric-api is in 2 jars"), so only its other library is added.
+    api = Path(tmp) / "fabric-api.jar"
+    api.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "fabric-api"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
+    cloth = Path(tmp) / "cloth.jar"
+    cloth.write_bytes(module("cloth-config"))
+    (folder / "hud--hud.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "hud", "depends": {"fabric-api": "*", "cloth-config": "*"}})}))
+    pins = [{"slug": "hud", "file": "hud.jar", "project": "P-hud", "version": "v-hud"}]
+    listed = {"v-hud": ["P-api", "P-cloth"]}
+    files = {("P-api", "2.0"): (api, "v-api"), ("P-cloth", "2.0"): (cloth, "v-cloth")}
+    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["hud--hud.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        E.required_projects, E.library = real
+    check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
+          f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
 
 # A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
 # server lacks, from another mod, does not.
@@ -200,6 +217,91 @@ with tempfile.TemporaryDirectory() as tmp:
         "\tat org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinProcessor.java:392) hud.mixins.json:client.A from mod hud"]), encoding="utf-8")
     blamed = E.named_in_errors(Path(tmp) / "result.json", mods, ["hud.jar", "stats.jar"])
 check(list(blamed) == ["stats.jar"] and "stats.mixins.json:B" in blamed["stats.jar"], f"the mixin that stopped the start names its mod: {blamed}")
+
+# A log names a mod nested in a library (Forgified Fabric API's data attachment module); the library that ships it is
+# the jar to drop, not a start that "named no mod".
+with tempfile.TemporaryDirectory() as tmp:
+    mods = Path(tmp) / "mods"
+    mods.mkdir()
+    toml_of = lambda i: f'modLoader="javafml"\n[[mods]]\nmodId="{i}"\n'.encode()  # noqa: E731
+    (mods / "top.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": toml_of("top")}))
+    (mods / "ffapi.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": toml_of("fabric_api"),
+                                          "META-INF/jars/attach.jar": jar({"META-INF/neoforge.mods.toml": toml_of("fabric_data_attachment_api_v1")})}))
+    (Path(tmp) / "result.json").write_text("{}", encoding="utf-8")
+    (Path(tmp) / "3-server-place.log").write_text(
+        "Caused by: org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [fabric-data-attachment-api-v1.mixins.json:BaseMappedRegistryAccessor "
+        "from mod fabric_data_attachment_api_v1] from phase [DEFAULT] FAILED during APPLY", encoding="utf-8")
+    check(E.mod_ids(mods / "ffapi.jar") == {"fabric_api", "fabric_data_attachment_api_v1"}, "a jar's mod ids include those of the jars it nests")
+    blamed = E.named_in_errors(Path(tmp) / "result.json", mods, ["top.jar", "ffapi.jar"])
+check(list(blamed) == ["ffapi.jar"], f"a failing nested mod blames the jar that ships it: {blamed}")
+
+# A game proof runs the updates asked for, LOADER:FROM taking the next release; --mods picks pinned mods by slug, and one
+# that does not link is left out, as the whole run leaves it out.
+check(E.load_plan("neoforge:1.21.1:1.21.2, fabric:1.21.1") == ["neoforge:1.21.1:1.21.2", "fabric:1.21.1:1.21.2"], "an update is LOADER:FROM:TO, or LOADER:FROM for the next release")
+for bad in ("forge:1.21.1", "neoforge", "fabric:0.1"):
+    try:
+        E.load_plan(bad)
+        check(False, f"{bad} is refused")
+    except SystemExit:
+        pass
+pinned = [{"slug": "chunky", "file": "Chunky.jar"}, {"slug": "clumps", "file": "Clumps.jar"}, {"slug": "jei", "file": "jei.jar"}]
+sys.stdout = io.StringIO()
+try:
+    picked, skipped = E.only_mods(["chunky--Chunky.jar", "jei--jei.jar"], pinned, ["chunky", "clumps"])
+    said = sys.stdout.getvalue()
+finally:
+    sys.stdout = sys.__stdout__
+check(picked == ["chunky--Chunky.jar"] and list(skipped) == ["clumps--Clumps.jar"] and "Clumps.jar: does not link" in said,
+      f"--mods starts the asked mods that link and names the rest: {picked} {skipped} {said!r}")
+try:
+    E.only_mods([], pinned, ["nonesuch"])
+    check(False, "a slug that is not pinned stops the run")
+except SystemExit:
+    pass
+
+# --mods where no asked mod links is a finished proof: a receipt with no game verdicts and why each mod was not started,
+# not a port of zero jars that fails with none.
+with tempfile.TemporaryDirectory() as tmp:
+    real = E.ROOT, E.PINS, E.HOME
+    E.ROOT, E.PINS, E.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
+    E.PINS.mkdir()
+    (E.PINS / "neoforge-9.1.json").write_text(json.dumps({"mods": pinned}), encoding="utf-8")
+    report = Path(tmp) / ".runs" / "exposure" / "jars-neoforge-9.1-9.2" / "report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({"mods": [{"mod": "chunky--Chunky.jar", "unlinked": []}, {"mod": "clumps--Clumps.jar", "unlinked": ["x"]}]}), encoding="utf-8")
+    sys.stdout = io.StringIO()
+    try:
+        empty = E.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
+    finally:
+        sys.stdout = sys.__stdout__
+        E.ROOT, E.PINS, E.HOME = real
+    kept = json.loads((Path(tmp) / "out" / "load.json").read_text(encoding="utf-8"))
+check(kept == empty and kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"] == {} and kept["scope"] == ["clumps"]
+      and kept["notStarted"] == {"clumps--Clumps.jar": ["it does not link after the port"]},
+      f"a proof with nothing to start keeps a receipt saying why: {kept}")
+
+# Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
+main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,
+            "verdicts": {"a--a.jar": "loaded", "b--b.jar": "failed: its mixin x", "c--c.jar": "client-only: y"},
+            "client": {"verdicts": {"a--a.jar": "loaded", "c--c.jar": "failed: z"}}}
+branch_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "scope": ["a", "b"], "mods": 2,
+              "verdicts": {"a--a.jar": "loaded", "b--b.jar": "loaded"}, "client": {"verdicts": {"a--a.jar": "failed: crash", "b--b.jar": "loaded"}}}
+lines = E.compare_loads(main_run, branch_run)
+check("server: 1/2 the same; loaded 1 -> 2" in lines and "  b--b.jar: failed -> loaded" in lines and "  a--a.jar: loaded -> failed (failed: crash)" in lines
+      and "  b--b.jar: not started -> loaded" in lines and not any("c--c.jar" in x for x in lines),
+      f"compare names each verdict that moved; a mod a focused run was not asked for is not one: {lines}")
+check(E.compare_loads(main_run, main_run)[-1] == "no verdict moved", "a proof against itself moves nothing")
+# A full run that no longer starts a mod main loaded (it now stops at the link check) has moved, whatever its count.
+full = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "scope": "all", "mods": 2,
+        "verdicts": {"a--a.jar": "loaded", "b--b.jar": "failed: its mixin x"}, "client": {"verdicts": {"a--a.jar": "loaded"}},
+        "notStarted": {"c--c.jar": ["it does not link after the port"]}}
+lines = E.compare_loads(main_run, full)
+check("  c--c.jar: client-only -> not started (it does not link after the port)" in lines and lines[-1] != "no verdict moved",
+      f"a full run names each mod main started that it did not: {lines}")
+focused = {**full, "scope": ["a", "c"], "verdicts": {"a--a.jar": "loaded"}}
+lines = E.compare_loads(main_run, focused)
+check(any(x.startswith("  c--c.jar: client-only -> not started") for x in lines) and not any(x.startswith("  b--b.jar") for x in lines),
+      f"a focused run names the asked mods it did not start, and no others: {lines}")
 
 # The to-do list finishes mods. The reference the most mods share (g.Shared.one, 2 mods) finishes none of them.
 rows = [

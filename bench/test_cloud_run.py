@@ -75,4 +75,15 @@ def fake_gh(*a):
 C.same_table = lambda commit, globs=None, git=None: [commit]
 check(C.main_table(D, gh=fake_gh)[0] == 4 and asked == [("run", "list")], f"a saved table is found without dispatching a sweep of main: {asked}")
 check(C.main_table("e" * 40, gh=fake_gh, dispatch=False) == (None, "none"), "a commit with no sweep has no table yet")
+
+# A game proof is compared with the receipt main changed last for the same update, whatever commit or older name it has.
+tree = ["bench/exposure/load-neoforge-1.21.1-1.21.2.json", "bench/exposure/load-linked-neoforge-1.21.1-1.21.2.json",
+        "bench/exposure/load-neoforge-1.21.1-1.21.21.json", "bench/exposure/load-neoforge-1.21.1-1.21.2-e15ee907f4.json",
+        "bench/exposure/jars-neoforge-1.21.1-1.21.2.json", "bench/exposure/load-fabric-1.21.1-1.21.2.json"]
+when = {tree[0]: 100, tree[1]: 300, tree[3]: 200}
+tree_git = lambda *a: "\n".join(tree) if a[0] == "ls-tree" else str(when.get(a[-1], 0))  # noqa: E731
+check(C.main_receipt("neoforge-1.21.1-1.21.2", git=tree_git) == tree[1], "the receipt main changed last is the one compared")
+when[tree[3]] = 400
+check(C.main_receipt("neoforge-1.21.1-1.21.2", git=tree_git) == tree[3], "a newer receipt named for its commit replaces it")
+check(C.main_receipt("neoforge-1.21.2-1.21.3", git=tree_git) is None, "an update main keeps no receipt for has none")
 print(f"{checks} cloud-run checks passed")

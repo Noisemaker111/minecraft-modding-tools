@@ -27,9 +27,11 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   2 minutes; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
   read in Mojang's names through intermediary first (tools/ModNames.java).
-- `python bench/exposure.py load ...` is the proof: the mods `jars` says link, with the libraries they require, are ported and started on a
-  real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side client`), each mod's two verdicts side by
-  side. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads
+- `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2` is the proof (`python bench/exposure.py load` on GitHub's
+  runners, one job per update; `-f mods=SLUG,...` for a few mods): the mods `jars` says link, with the libraries they
+  require, are ported and started on a real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side
+  client`), each mod's two verdicts side by side, in `.runs/cloud/load-RUNID/`, with what moved against the receipt main
+  keeps for the update in `compare.md`. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads
   on the server and links but fails in the client, because its injection point (a call 1.21.2's loading overlay no
   longer makes) is inside a method that still exists. The client covers the title screen, a world, the inventory and
   every creative tab, not a mod's own screens.
@@ -113,9 +115,11 @@ the first row above.
    main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()). The
    learner is not yet the same run to run (a reading for Boat or AbstractMinecart, slotClicked), so a few lines differ
    on main against itself.
-5. `python bench/exposure.py load --loader neoforge --from A --to B --save` starts the ported mods that link on a real
-   server, with the library mods they require (each one's release for B from Modrinth, or its A release ported with
-   them); no mod that links may fail. `--save` keeps the receipt in `bench/exposure/`, named for the update and commit. `python bench/port_board.py --changed` runs the pinned source ports your rule crosses. Commit.
+5. Push, then `tools/cloud-run load -f updates=LOADER:A:B` starts the ported mods that link on a real server and in a
+   real client, with the library mods they require (each one's release for B from Modrinth, or its A release ported with
+   them); no mod that links may fail, and `compare.md` must show no mod that loaded on main failing now. To keep the
+   receipt, copy its `load-LOADER-A-B-COMMIT.json` into `bench/exposure/`. `python bench/port_board.py --changed` builds
+   the pinned source ports your rule crosses. Commit.
 
 Stop and tell Jon when: three parts in a row each freed no mod (the list has reached parts that need the game class
 read in both versions; say which); a rule needs to name a mod; or the count of mods with nothing left drops.
@@ -125,9 +129,9 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
 - Sources are the game's and the loaders' own files (jars, mappings, starter projects). Never other people's porting
   work: not guides or primers, not how another mod was ported. Mod jars are only counted.
 - No AI call inside the tool. What you work out is saved as a rule with a test.
-- Prove in game at the smallest scope before the PR ends: the sweep without `--no-game` loads the ported mod and
-  checks what it registers; `./mmt game-stop` afterwards. The whole corpus runs in the cloud once, on the PR's final
-  commit: `tools/cloud-run ports`.
+- Prove in game before the PR ends, on GitHub's runners and never by starting Minecraft here: many agents share one PC.
+  `tools/cloud-run load` for the updates you changed (step 5); the whole corpus once, on the PR's final commit:
+  `tools/cloud-run ports`. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
 - End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`, a new
   step is a new file): its result says what the method freed and what it left, which is the table above from step 79
   on (ROADMAP.md shows every step). This file changes only when the method does; the table above takes no new rows.

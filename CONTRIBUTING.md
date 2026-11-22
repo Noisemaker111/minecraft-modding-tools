@@ -111,8 +111,10 @@ only helps the mod it was made on is a partial result: say so, and say what woul
 - Use the PR template. It keeps the latest state only (step, approach, number now); a description that grows a new
   "update" section each day is a log nobody can steer by. Its **Carries over** line says what the next mod gets for
   free from your work.
-- Prove it the way a user would see it, at the smallest real scope. `AGENTS.md` has the commands. A change that can't
-  be run in the game says so plainly instead of claiming it works.
+- Prove it the way a user would see it, at the smallest real scope. `AGENTS.md` has the commands. A port is proven in
+  a real server and client on GitHub's runners (`tools/cloud-run load`), never by starting Minecraft on the maintainer's
+  PC, which many agents share; locally you edit, compile and run the offline checks. A change that can't be run in the
+  game says so plainly instead of claiming it works.
 - Keep tests few and meaningful: each proves something users depend on and fails on a wrong answer.
 - Merge only when every required check is green.
 - A setup or tooling trap you solved goes in `KNOWN_ISSUES.md`.

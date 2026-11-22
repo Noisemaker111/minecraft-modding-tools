@@ -14,7 +14,7 @@ JDK 17+ and Python 3.12+; no install step. On Windows use `mmt.cmd` and `python`
 ```sh
 ./mmt help                            # every command
 python3 bench/run_tests.py            # every offline check, as CI runs them (--list, --only NAME)
-tools/cloud-run packs|ports|convert   # full sweeps on GitHub's runners
+tools/cloud-run packs|ports|convert|exposure|load   # sweeps and port game proofs on GitHub's runners
 ```
 
 Use mmt for builds and game launches, never raw Gradle or `--no-daemon`: launches outside it outlive their command.
@@ -22,8 +22,8 @@ Use mmt for builds and game launches, never raw Gradle or `--no-daemon`: launche
 ## Rules
 
 - **One roadmap step = one branch = one PR** (`CONTRIBUTING.md`, "How the work runs"), using `.github/pull_request_template.md`. Commit after each passing change and push to the same PR. Merge (`gh pr merge --squash`) only when every check is green. A PR's claims (tests pass, numbers) must be ones CI, a linked cloud run or a local in-game run's receipt shows.
-- **Prove every change in game locally before merge, at the smallest real scope:** `pack-check --focus MODID`, one mod plus its dependencies, a headless server when the metric is server-side, `python3 bench/port_board.py --changed`. Shut it down afterwards (`game-stop`). Time A/B runs locally and interleaved, never in the cloud (its runners have software graphics). "Not tested in game" is never a PR result.
-- **Only full sweeps go to the cloud** (all packs, the whole port corpus, every convert): push, then `tools/cloud-run packs|ports|convert [-f KEY=VALUE]`; results land in `.runs/cloud/`.
+- **Prove every change in game before merge, at the smallest real scope.** Ports: push, then `tools/cloud-run load -f updates=LOADER:FROM:TO [-f mods=SLUG]` (real server and client on GitHub's runners); never start Minecraft locally for a port. Other work: `pack-check --focus MODID`, one mod plus its dependencies, a headless server when the metric is server-side; `game-stop` afterwards. Time A/B runs locally and interleaved, never in the cloud (its runners have software graphics). "Not tested in game" is never a PR result.
+- **Sweeps go to the cloud** (all packs, the whole port corpus, every convert, the scoreboard): push, then `tools/cloud-run packs|ports|convert|exposure [-f KEY=VALUE]`; results land in `.runs/cloud/`.
 - **A test proves something users depend on,** fails on a wrong answer (vary inputs; change cached inputs mid-run) and runs against the packaged jar. Delete tests that can't fail. A new check is added to `bench/run_tests.py`, nowhere else.
 - **Never search the whole disk.** Gradle's jars are under `~/.gradle/caches` (`modules-2/files-2.1/GROUP/NAME`, Loom's game jars in `fabric-loom/`); ours are in `~/.mmt`.
 - Scratch, logs and clones go in ignored `.runs/`. Third-party files (game jars, mappings, mods) are downloaded at run time, never committed.
