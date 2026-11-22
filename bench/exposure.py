@@ -1642,32 +1642,37 @@ def client_starts(loader, to, server_pack, names, platform=()):
             for name in present:
                 verdicts.setdefault(name, "loaded")
             break
-        blamed = {}
+        # The libraries can be what fails too (Fabric API, the platform, cannot be left out).
+        libraries = [n for n in platform if (pack / "mods" / n).is_file() and not own_ids(pack / "mods" / n, loader) & {"fabric-api"}]
+        found = {}
         for finding in res.get("findings", []):
             if finding.get("severity") != "problem" or finding.get("kind") != "client-start":
                 continue
             for s in finding.get("suspects", []):
-                top = s.get("jar", "").split("!")[0] or next((n for n in present if s.get("mod") in mod_ids(pack / "mods" / n)), "")
-                if top in present:
-                    blamed.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
-        if not blamed:
-            blamed = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present, "*client*.log").items()}
-        if not blamed:
-            blamed = needs_other_java(res, present)
+                top = s.get("jar", "").split("!")[0]
+                if top not in present + libraries:
+                    top = next((n for n in present + libraries if s.get("mod") in mod_ids(pack / "mods" / n)), "")
+                if top:
+                    found.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
+        if not found:
+            found = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present + libraries, "*client*.log").items()}
+        if not found:
+            found = needs_other_java(res, present + libraries)
         failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
-        if not blamed and not res.get("client", {}).get("toolError"):
-            # The libraries are searched too (Fabric API, the platform, is not): one of them can be what fails.
-            libraries = [n for n in platform if (pack / "mods" / n).is_file() and not own_ids(pack / "mods" / n, loader) & {"fabric-api"}]
+        if not found and not res.get("client", {}).get("toolError"):
             found = first_failing(pack, present + libraries, loader, start, failure)
-            for library in [n for n in found if n in libraries]:
-                gives = provides(pack / "mods" / library, loader, to)
-                (pack / "mods" / library).rename(pack / "dropped" / library)
-                print(f"  {library}: the library fails in the client")
-                for name in present:
-                    asked = needs(pack / "mods" / name, loader) or set()
-                    if asked & gives:
-                        found.setdefault(name, f"needs the library {library}, which fails in the client: " + found[library][:300])
-            blamed = {n: why for n, why in found.items() if n in present}
+        for library in [n for n in found if n in libraries]:
+            gives = provides(pack / "mods" / library, loader, to)
+            (pack / "mods" / library).rename(pack / "dropped" / library)
+            platform = [n for n in platform if n != library]
+            print(f"  {library}: the library fails in the client")
+            for name in present:
+                asked = needs(pack / "mods" / name, loader) or set()
+                if asked & gives:
+                    found.setdefault(name, f"needs the library {library}, which fails in the client: " + found[library][:300])
+        blamed = {n: why for n, why in found.items() if n in present}
+        if not blamed and any(n in libraries for n in found):
+            continue  # only a library failed: the next start runs without it
         if not blamed:
             # The client itself could not be driven (no mod set makes it fail or pass, or mmt's own step does not fit this
             # release): the server's verdicts stand, and the client is reported as not run, with why.
