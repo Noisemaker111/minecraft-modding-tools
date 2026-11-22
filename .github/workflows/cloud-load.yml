@@ -73,7 +73,8 @@ jobs:
           mkdir -p summary
           python bench/exposure.py load --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} \
             --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" | tee load.txt
-          { echo '```'; grep -A 1000 '^mod  ' load.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # A run with nothing to start has no verdict table, only why.
+          { echo '```'; grep -A 1000 -e '^mod  ' -e '^no mod to start' load.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Game logs
         # pack-check keeps each start's server or client log and result.json in its own cache, outside the workspace;
         # the runner is fresh, so every run there is this job's.
