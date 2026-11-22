@@ -54,21 +54,21 @@ public final class Exposure {
             row.put("game", game[0]);
             row.put("gameDetail", game[1]);
             row.put("portable", portable.contains(key));
-            row.put("part", loaderPart(a, key) ? "loader" : "game");
+            row.put("part", part(a, key));
             said.put(member, row);
         }
         Files.writeString(Path.of(out), Json.write(said), StandardCharsets.UTF_8);
         System.out.printf("%s -> %s: what the game's own code did, for %d references%n", from, to, said.size());
     }
 
-    /** Whether a key (a class, or owner.member) names the loader's API rather than the game's. */
-    static boolean loaderPart(GameDiff.Snap a, String key) {
+    /** What a key (a class, or owner.member) names: the game's, the loader's API, or one of the libraries the release ships (DataFixerUpper, Brigadier...). */
+    static String part(GameDiff.Snap a, String key) {
         String k = key.contains("(") ? key.substring(0, key.indexOf('(')) : key;
         GameDiff.Cls c = a.classes.get(k.replace('.', '/'));
         if (c == null && k.lastIndexOf('.') > 0) {
             c = a.classes.get(k.substring(0, k.lastIndexOf('.')).replace('.', '/'));
         }
-        return c != null && c.loader;
+        return c == null ? "game" : c.library ? "library" : c.loader ? "loader" : "game";
     }
 
     static final Pattern REFERENCE = Pattern.compile("^[^:]+: ([\\w.$]+?)(?:\\.([\\w$<>]+)(\\(.*)?)?$");

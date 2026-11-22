@@ -89,7 +89,7 @@ final class JarPortLoaderTest {
         GameDiff.Cls stack = snaps[1].classes.get("net/minecraft/Stack");
         expect(stack != null && stack.ifaces.contains("net/fabricmc/fabric/api/item/FabricStack") && !stack.loader,
             "the game class carries the injected interface and stays the game's: " + (stack == null ? null : stack.ifaces));
-        expect(Exposure.loaderPart(snaps[0], "net.neoforged.fml.ModLoadingContext.registerConfig(I)V") && !Exposure.loaderPart(snaps[0], "net.minecraft.Stack"),
+        expect(Exposure.part(snaps[0], "net.neoforged.fml.ModLoadingContext.registerConfig(I)V").equals("loader") && Exposure.part(snaps[0], "net.minecraft.Stack").equals("game"),
             "the scoreboard labels a loader member as the loader's and a game class as the game's");
     }
 

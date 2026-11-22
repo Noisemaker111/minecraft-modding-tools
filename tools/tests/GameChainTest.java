@@ -25,7 +25,7 @@ final class GameChainTest {
         Files.write(libJar, JarPortTest.jar(Map.of(LIB + "Vec.class", library.get(LIB + "Vec"))));
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of());
-        GameDiff.addLibraries(b.libraries, List.of(libJar));
+        GameDiff.addLibraries(b.libraries, List.of(new GameDiff.Library("org/joml/joml", libJar)));
         GameDiff.Hop hop = new GameDiff.Hop(a, b);
         hop.run();
         GameDiff.Learner learner = new GameDiff.Learner(hop);
@@ -54,7 +54,7 @@ final class GameChainTest {
 
         Path map = scratch.resolve("route-chain.json");
         Files.writeString(map, "{\"learned\": [" + String.join(",\n", lines) + "], \"classRewrites\": [" + String.join(",\n", classes) + "]}");
-        GameDiff.addLibraries(b.classes, List.of(libJar));
+        GameDiff.addLibraries(b.classes, List.of(new GameDiff.Library("org/joml/joml", libJar)));
         String trace = run(a, b, map, newGame, library);
         JarPortTest.expect(trace.equals("begin7v1.0drawn|4.0"), "the mod's getBuilder/begin/vertex/end and Vec run on 2.0 and the library: " + trace);
         if (JarPortTest.failures > 0) {

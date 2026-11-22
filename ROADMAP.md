@@ -6,14 +6,14 @@
 
 **The goal:** Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, a modpack user never diagnoses a conflict by hand, and nobody hunts for lag by hand: point mmt at a mod and within about a minute it says what is causing the lag and the known way to make it faster, and makes the change itself wherever it can prove the mod still behaves the same. Five goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, move a project between loaders and platforms, and make any mod faster. Every result is proven in the real game or on a real server.
 
-**60 of 92 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
+**61 of 93 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
 
 ## Where each goal stands
 
 | Goal | Steps done | Now |
 |---|---|---|
 | **[1. Test a mod in seconds](#goal-1--test-a-mod-in-seconds)** | `██████░░░░`&nbsp;7&nbsp;of&nbsp;11 | ⚪ 27 · The bot joins a modded server<br>⚪ 26 · The bot on older Paper versions, on demand |
-| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `████████░░`&nbsp;48&nbsp;of&nbsp;62 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
+| **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `████████░░`&nbsp;49&nbsp;of&nbsp;63 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
 | **[3. Make modpacks work together](#goal-3--make-modpacks-work-together)** | `██░░░░░░░░`&nbsp;1&nbsp;of&nbsp;4 | 🔵 29 · Reproduce Sismeel's Forge 1.20.1 pack problems<br>🔵 30 · Detect and repair the failure, checked in the game<br>🔵 31 · Any installed pack or export as input |
 | **[4. Change loader or platform](#goal-4--change-loader-or-platform)** | `███░░░░░░░`&nbsp;4&nbsp;of&nbsp;12 | ⚪ 48 · What the most-downloaded mods need from the bridge, most-used first<br>⚪ 19 · Forge → NeoForge, proven on DragonMine Z |
 | **[5. Make any mod faster](#goal-5--make-any-mod-faster)** | `░░░░░░░░░░`&nbsp;0&nbsp;of&nbsp;3 | ⚪ 80 · Say what is causing the lag in under a minute |
@@ -124,7 +124,7 @@ One command moves a mod's source from any version to any other, forward or back,
 
 - **Today:** Fabric and NeoForge mods as .jar or source, any version from 1.14.4 to 26.3, in about ten seconds a jar. What comes back working is the gap: of the 150 most-downloaded mods of the most-used release (Fabric 1.20.1, NeoForge 1.21.1), ported as jars to the newest game and linked against it, 11 of 294 link. One update at a time, 36% link across the 35 big updates and 93% across the 29 small ones (62% together). What does not link is named, never guessed. 16 of the 126 corpus ports build with no hand edits.
 - **The number that says most:** Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge is **22 mods**
-- **Also:** Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge is **1,984 mods**
+- **Also:** Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge is **1,999 mods**
 - **Also:** Corpus ports that build with no hand edits is **16 updates**, target 60 updates by Dec 22, step 44
 - **Also:** Real mods with a port that works in the game is **9 mods**, target 6 mods by Dec 18, step 12
 
@@ -269,6 +269,7 @@ One command moves a mod's source from any version to any other, forward or back,
 | # | Step | Status | When |
 |---|---|---|---|
 | 79L | Mods written in Kotlin start with the language loader they name | 🟢 done | Nov 22 |
+| 79M | The link check reads the libraries each release ships | 🟢 done | Nov 22 |
 
 <details><summary>What each step is, and how far it got</summary>
 
@@ -396,6 +397,8 @@ One command moves a mod's source from any version to any other, forward or back,
 
 **79L · Mods written in Kotlin start with the language loader they name** (done). PR #166 named veinminer a false link on NeoForge 1.21.1 -> 26.3: started with Kotlin for Forge, it fails with 'needs language provider klf'. veinminer's modLoader is klf, which is KotlinLangForge's loader, not Kotlin for Forge's (kotlinforforge). The game proof (exposure.py load) counted any jar carrying a language loader as every language loader, so it started veinminer beside Kotlin for Forge and never fetched KotlinLangForge. NeoForge's own loader code reads language loaders the same way in FML 4 (1.21.1) and FML 12 (26.3): the same IModLanguageLoader service, the same FMLModType LIBRARY plugin layer. The load step now knows each loader by the name its class returns. *So far:* The false link was a wrong library, not a lost loader. On real NeoForge 26.3 (cloud-load run 44971629617, this branch with #166), the ported Kotlin for Forge 5.13.0 loads on the server and in the client, its own mod running on its kotlinforforge loader, and veinminer (1.21.1, ported) loads in both with KotlinLangForge's 26.3 release beside it; main's load step pairs veinminer with Kotlin for Forge and fetches no KotlinLangForge. On 1.21.2 (run 44969075956) veinminer and veinminer-client load on server and client with KotlinLangForge. No Kotlin for Forge mod links on 1.21.1 -> 26.3 yet (Cobblemon 898 references, Inventory Profiles Next 51, libIPN 33). The language SPI did change once, at Minecraft 1.21 (FML 3 -> 4: IModLanguageProvider -> IModLanguageLoader), a redesign no port rewrites; the load step now counts a loader only through the service its target release reads. Left: the whole 26.3 game proof stops at startup on a ported 1.21.1 Sinytra Connector (continuity's library), which needs cpw.mods.jarhandling that FML 12 removed, on main as here.
 
+**79M · The link check reads the libraries each release ships** (done). On 1.20.4 -> 1.20.5 DataFixerUpper removed DataResult.PartialResult. Resourceful Config names it, was counted as linking, and crashed on both loaders in a real game; about a dozen other top mods per loader name it too. The link check read the libraries each release lists, but it copied every library class the old release had and the new one lacked into the new release, meant for a library the new release no longer lists at all (the loader brings ASM). That also hid every class a library both releases list had removed. A library class now carries over only when the new release lists no jar of that library, and a reference into a library is its own type of break on the scoreboard. *So far:* The removed-class hole is closed, and it moves the scoreboard by one. Across every update (cloud-exposure run 44992479483 against main's table): 6,167 -> 6,166 mod ports link, big updates 2,000 -> 1,999, newest game 22 -> 22; the one false link removed is Geckolib on Fabric 1.17.1 -> 1.18 (and the 1.17.1 -> 1.18.1 jump). On 1.20.4 -> 1.20.5 the counts stay 20 NeoForge and 28 Fabric (local before/after and cloud agree): the 50 mod ports naming DataResult.PartialResult were already held back by other breaks, Resourceful Config included (on main it was held only by calls into DFU, which were already checked). Library breaks are now their own types: 'class gone (library)' in 16 mod ports, 'call (library)' in 13 more, 243 mod ports in all carry one; 6 are held by library breaks alone (Resourceful Config 1.20.4 -> 1.20.5 and -> 1.20.6, Carry On and CristelLib 1.19.3 -> 1.19.4, Geckolib 1.17.1 -> 1.18). Game proof on 1.20.4 -> 1.20.5 (cloud-load 44992473347 Fabric, 44993955522 NeoForge): no mod that links fails on a removed library member; the failures are libraries ported along failing on loader API changes, and Euphoria Patcher on NeoForge, which needs Commons Compress that the 1.20.5 client ships and the dedicated server does not (it fails on main too).
+
 </details>
 
 <details><summary>Every number for this goal (26)</summary>
@@ -420,8 +423,8 @@ One command moves a mod's source from any version to any other, forward or back,
 | Most-downloaded NeoForge mods with nothing left to port by hand, 1.21.1 to 1.21.2 | — | 58 mods (Nov 18) | 100 mods by Dec 22, step 46 | Baseline |
 | Most-downloaded mods whose ported jar links, NeoForge 1.21.1 to 1.21.2 | 32 mods (Nov 18) | 45 mods (Nov 19) | 50 mods by Dec 8, step 47 | 72% of the way |
 | Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge | 11 mods (Nov 20) | 22 mods (Nov 22) | — | Fact |
-| Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge | 1,861 mods (Nov 20) | 1,984 mods (Nov 22) | — | Fact |
-| Most-downloaded mods whose ported jar links, every update, Fabric and NeoForge | 5,018 mods (Nov 19) | 6,151 mods (Nov 22) | — | Fact |
+| Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge | 1,861 mods (Nov 20) | 1,999 mods (Nov 22) | — | Fact |
+| Most-downloaded mods whose ported jar links, every update, Fabric and NeoForge | 5,018 mods (Nov 19) | 6,166 mods (Nov 22) | — | Fact |
 | Scoreboard-cleared standalone mods whose ported jar loads on a real server, NeoForge 1.21.1 to 1.21.2 | 28 mods (Nov 18) | 34 mods (Nov 19) | 33 mods by Dec 8, step 47 | Met |
 | Standalone mods the jar scoreboard says link whose ported jar loads on a real server, NeoForge 1.21.1 to 1.21.2 | — | 23 mods (Nov 19) | — | Fact |
 | Ported mods that load in a real game client, NeoForge 1.21.1 to 1.21.2 | — | 23 mods (Nov 19) | — | Fact |
@@ -613,7 +616,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 
 | Measure | First | Now | Target | Status |
 |---|---|---|---|---|
-| Roadmap steps done | 5 steps (Oct 24) | 60 steps (Nov 22) | 92 steps by Mar 26, 2027 | 63% of the way |
+| Roadmap steps done | 5 steps (Oct 24) | 61 steps (Nov 22) | 93 steps by Mar 26, 2027 | 64% of the way |
 | PR checks, start to finish | 2.0 min (Oct 27) | 3.9 min (Nov 5) | 5.0 min (hold) by Nov 5 | Met |
 | Multi-version Stonecutter run, start to finish (nightly until Nov 7, on demand since) | 45.9 min (Oct 28) | 41.7 min (Nov 6) | — | Fact |
 
