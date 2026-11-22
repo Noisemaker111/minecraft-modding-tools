@@ -1360,15 +1360,16 @@ def named_in_errors(receipt, mods, present):
 
 
 def only_mods(linked, pins, wanted):
-    """The linked jars of the wanted mods (Modrinth slugs). A slug that is not pinned for the release stops the run; one
-    that is pinned and does not link is named and left out, as the whole run leaves it out."""
+    """The linked jars of the wanted mods (Modrinth slugs), and {jar: [why]} for the wanted ones left out. A slug that is
+    not pinned for the release stops the run; one that is pinned and does not link is left out, as the whole run leaves it."""
     pinned = {m["slug"]: f"{m['slug']}--{m['file']}" for m in pins}
     unknown = sorted(set(wanted) - set(pinned))
     if unknown:
         raise SystemExit(f"not among this release's pinned mods: {', '.join(unknown)} (bench/exposure/mods/)")
-    for slug in sorted(s for s in wanted if pinned[s] not in linked):
-        print(f"  {slug}: does not link after the port, so it is not started")
-    return [name for name in linked if name in {pinned[s] for s in wanted}]
+    skipped = {pinned[s]: ["it does not link after the port"] for s in sorted(wanted) if pinned[s] not in linked}
+    for name in skipped:
+        print(f"  {name}: does not link after the port, so it is not started")
+    return [name for name in linked if name in {pinned[s] for s in wanted}], skipped
 
 
 def load_plan(spec):
@@ -1399,8 +1400,9 @@ def load(loader, frm, to, save, mods=None, out=None):
     if not report.is_file():
         jars(loader, frm, to)
     linked = [m["mod"] for m in json.loads(report.read_text(encoding="utf-8"))["mods"] if "error" not in m and not m["unlinked"]]
+    skipped = {}
     if mods:
-        linked = only_mods(linked, json.loads((PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"], mods)
+        linked, skipped = only_mods(linked, json.loads((PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"], mods)
     folder = HOME / "jars" / f"{loader}-{frm}"
     # A Fabric mod that needs Fabric API needs nothing beyond the platform the pack starts with. A linked mod that is the
     # platform itself (Fabric API among the top mods) is not started twice: the loader refuses two jars with one mod id,
@@ -1410,6 +1412,18 @@ def load(loader, frm, to, save, mods=None, out=None):
     chosen, ready, to_port, left = choose(loader, frm, to, linked, folder, pins, set(platform_ids(loader, to)))
     for name, missing in sorted(left.items()):
         print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
+    left = {**skipped, **left}
+    # What the run was asked to prove: every mod that links, or these slugs; compare_loads reads a mod main started and
+    # this run did not as a regression only inside it.
+    scope = sorted(mods) if mods else "all"
+    if not chosen:
+        # Nothing to start (no asked mod links, or none has what it needs): a finished proof with no game verdicts.
+        print("no mod to start: " + ("; ".join(f"{n}: {', '.join(w)}" for n, w in sorted(left.items())) or "none links"))
+        summary = {"loader": loader, "from": frm, "to": to, "scope": scope, "mods": 0, "loaded": 0, "linkedAndLoaded": 0, "linked": 0,
+                   "failedButLinked": [], "clashOnly": [], "failedDataOnly": [], "verdicts": {}, "libraries": {}, "notStarted": left,
+                   "client": {"mods": 0, "loaded": 0, "verdicts": {}}, "loadedOnServerFailedInClient": []}
+        keep_load(summary, out, save)
+        return summary
     pack = ROOT / ".runs" / "exposure" / f"load-{loader}-{frm}-{to}"
     if pack.exists():
         shutil.rmtree(pack)
@@ -1499,7 +1513,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     client = client_starts(loader, to, pack, [n for n, v in verdicts.items() if v == "loaded" or v.startswith("client-only")], platform)
     loaded = [n for n, v in verdicts.items() if v == "loaded"]
     summary = {
-        "loader": loader, "from": frm, "to": to, "mods": len(chosen), "loaded": len(loaded),
+        "loader": loader, "from": frm, "to": to, "scope": scope, "mods": len(chosen), "loaded": len(loaded),
         "linkedAndLoaded": sum(1 for n in loaded if links.get(n)), "linked": sum(links.values()),
         "failedButLinked": sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and has_code(folder / n)),
         "clashOnly": sorted(n for n, v in verdicts.items() if v.startswith("clash") and links.get(n)),
@@ -1521,11 +1535,16 @@ def load(loader, frm, to, save, mods=None, out=None):
           f"{summary['linkedAndLoaded']} of them load; failed although they link: {summary['failedButLinked'] or 'none'}"
           + (f"; failed on their data, with no game code: {summary['failedDataOnly']}" if summary["failedDataOnly"] else "")
           + (f"; load alone but fail next to the others: {summary['clashOnly']}" if summary["clashOnly"] else ""))
-    for path in [p for p in (out, receipt("load", loader, frm, to) if save else None) if p]:
+    keep_load(summary, out, save)
+    return summary
+
+
+def keep_load(summary, out, save):
+    """Writes a load summary to --out and, with --save, to its receipt in bench/exposure/."""
+    for path in [p for p in (out, receipt("load", summary["loader"], summary["from"], summary["to"]) if save else None) if p]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
         print(f"saved {path}")
-    return summary
 
 
 def kind(verdict):
@@ -1535,7 +1554,8 @@ def kind(verdict):
 
 def compare_loads(before, after):
     """What one game proof of an update changes against another, as lines: each mod's server and client verdict whose kind
-    moved, and the counts. Only mods both started are compared, so a run of a few mods reads against a run of them all."""
+    moved, and the counts, over the mods both started. A mod the first run started and the second did not counts as moved
+    when the second was asked to prove it: every mod (scope "all", or a receipt from before scopes) or its slug."""
     both = sorted(set(before["verdicts"]) & set(after["verdicts"]))
     lines = [f"{after['loader']} {after['from']} -> {after['to']}: {len(both)} mods in both runs"]
     moved = 0
@@ -1551,9 +1571,14 @@ def compare_loads(before, after):
             if kind(old.get(n)) != kind(new.get(n)):
                 moved += 1
                 lines.append(f"  {n}: {kind(old.get(n))} -> {kind(new.get(n))}" + (f" ({new[n][:200]})" if new.get(n) and ":" in new[n] else ""))
-    gone = sorted(set(before["verdicts"]) - set(after["verdicts"]))
-    if gone and after["mods"] >= before["mods"]:
-        lines.append(f"started before and not now: {', '.join(gone)}")
+    scope = after.get("scope", "all")
+    gone = sorted(n for n in set(before["verdicts"]) - set(after["verdicts"]) if scope == "all" or n.split("--", 1)[0] in scope)
+    if gone:
+        lines.append("started before and not now:")
+    for n in gone:
+        moved += 1
+        why = after.get("notStarted", {}).get(n)
+        lines.append(f"  {n}: {kind(before['verdicts'][n])} -> not started" + (f" ({', '.join(why)[:200]})" if why else ""))
     if not moved:
         lines.append("no verdict moved")
     return lines

@@ -247,27 +247,61 @@ for bad in ("forge:1.21.1", "neoforge", "fabric:0.1"):
 pinned = [{"slug": "chunky", "file": "Chunky.jar"}, {"slug": "clumps", "file": "Clumps.jar"}, {"slug": "jei", "file": "jei.jar"}]
 sys.stdout = io.StringIO()
 try:
-    picked = E.only_mods(["chunky--Chunky.jar", "jei--jei.jar"], pinned, ["chunky", "clumps"])
+    picked, skipped = E.only_mods(["chunky--Chunky.jar", "jei--jei.jar"], pinned, ["chunky", "clumps"])
     said = sys.stdout.getvalue()
 finally:
     sys.stdout = sys.__stdout__
-check(picked == ["chunky--Chunky.jar"] and "clumps: does not link" in said, f"--mods starts the asked mods that link and names the rest: {picked} {said!r}")
+check(picked == ["chunky--Chunky.jar"] and list(skipped) == ["clumps--Clumps.jar"] and "Clumps.jar: does not link" in said,
+      f"--mods starts the asked mods that link and names the rest: {picked} {skipped} {said!r}")
 try:
     E.only_mods([], pinned, ["nonesuch"])
     check(False, "a slug that is not pinned stops the run")
 except SystemExit:
     pass
 
+# --mods where no asked mod links is a finished proof: a receipt with no game verdicts and why each mod was not started,
+# not a port of zero jars that fails with none.
+with tempfile.TemporaryDirectory() as tmp:
+    real = E.ROOT, E.PINS, E.HOME
+    E.ROOT, E.PINS, E.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
+    E.PINS.mkdir()
+    (E.PINS / "neoforge-9.1.json").write_text(json.dumps({"mods": pinned}), encoding="utf-8")
+    report = Path(tmp) / ".runs" / "exposure" / "jars-neoforge-9.1-9.2" / "report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({"mods": [{"mod": "chunky--Chunky.jar", "unlinked": []}, {"mod": "clumps--Clumps.jar", "unlinked": ["x"]}]}), encoding="utf-8")
+    sys.stdout = io.StringIO()
+    try:
+        empty = E.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
+    finally:
+        sys.stdout = sys.__stdout__
+        E.ROOT, E.PINS, E.HOME = real
+    kept = json.loads((Path(tmp) / "out" / "load.json").read_text(encoding="utf-8"))
+check(kept == empty and kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"] == {} and kept["scope"] == ["clumps"]
+      and kept["notStarted"] == {"clumps--Clumps.jar": ["it does not link after the port"]},
+      f"a proof with nothing to start keeps a receipt saying why: {kept}")
+
 # Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
 main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,
-            "verdicts": {"a.jar": "loaded", "b.jar": "failed: its mixin x", "c.jar": "client-only: y"},
-            "client": {"verdicts": {"a.jar": "loaded", "c.jar": "failed: z"}}}
-branch_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 2,
-              "verdicts": {"a.jar": "loaded", "b.jar": "loaded"}, "client": {"verdicts": {"a.jar": "failed: crash", "b.jar": "loaded"}}}
+            "verdicts": {"a--a.jar": "loaded", "b--b.jar": "failed: its mixin x", "c--c.jar": "client-only: y"},
+            "client": {"verdicts": {"a--a.jar": "loaded", "c--c.jar": "failed: z"}}}
+branch_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "scope": ["a", "b"], "mods": 2,
+              "verdicts": {"a--a.jar": "loaded", "b--b.jar": "loaded"}, "client": {"verdicts": {"a--a.jar": "failed: crash", "b--b.jar": "loaded"}}}
 lines = E.compare_loads(main_run, branch_run)
-check("server: 1/2 the same; loaded 1 -> 2" in lines and "  b.jar: failed -> loaded" in lines and "  a.jar: loaded -> failed (failed: crash)" in lines
-      and "  b.jar: not started -> loaded" in lines and not any("c.jar" in x for x in lines), f"compare names each verdict that moved, on the mods both ran: {lines}")
+check("server: 1/2 the same; loaded 1 -> 2" in lines and "  b--b.jar: failed -> loaded" in lines and "  a--a.jar: loaded -> failed (failed: crash)" in lines
+      and "  b--b.jar: not started -> loaded" in lines and not any("c--c.jar" in x for x in lines),
+      f"compare names each verdict that moved; a mod a focused run was not asked for is not one: {lines}")
 check(E.compare_loads(main_run, main_run)[-1] == "no verdict moved", "a proof against itself moves nothing")
+# A full run that no longer starts a mod main loaded (it now stops at the link check) has moved, whatever its count.
+full = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "scope": "all", "mods": 2,
+        "verdicts": {"a--a.jar": "loaded", "b--b.jar": "failed: its mixin x"}, "client": {"verdicts": {"a--a.jar": "loaded"}},
+        "notStarted": {"c--c.jar": ["it does not link after the port"]}}
+lines = E.compare_loads(main_run, full)
+check("  c--c.jar: client-only -> not started (it does not link after the port)" in lines and lines[-1] != "no verdict moved",
+      f"a full run names each mod main started that it did not: {lines}")
+focused = {**full, "scope": ["a", "c"], "verdicts": {"a--a.jar": "loaded"}}
+lines = E.compare_loads(main_run, focused)
+check(any(x.startswith("  c--c.jar: client-only -> not started") for x in lines) and not any(x.startswith("  b--b.jar") for x in lines),
+      f"a focused run names the asked mods it did not start, and no others: {lines}")
 
 # The to-do list finishes mods. The reference the most mods share (g.Shared.one, 2 mods) finishes none of them.
 rows = [

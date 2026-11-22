@@ -74,16 +74,27 @@ jobs:
           python bench/exposure.py load --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} \
             --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" | tee load.txt
           { echo '```'; grep -A 1000 '^mod  ' load.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Game logs
+        # pack-check keeps each start's server or client log and result.json in its own cache, outside the workspace;
+        # the runner is fresh, so every run there is this job's.
+        if: always()
+        run: |
+          mkdir -p logs
+          for run in "$HOME"/.mmt/packs/.runs/portable/*/; do
+            [ -d "$run" ] || continue
+            mkdir -p "logs/$(basename "$run")"
+            find "$run" -maxdepth 1 \( -name '*.log' -o -name 'result.json' \) -exec cp {} "logs/$(basename "$run")/" \;
+          done
+          echo "$(find logs -type f | wc -l) game log files"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: load-${{ strategy.job-index }}
           path: |
             summary/
+            logs/
             load.txt
             .runs/exposure/load-*/report.json
-            .runs/exposure/load-*/**/*.log
-            .runs/exposure/load-*/**/result.json
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
