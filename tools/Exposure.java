@@ -778,8 +778,9 @@ public final class Exposure {
         return out;
     }
 
+    // The JDK's own cache is a plain HashMap, and JarPort verifies on several threads at once.
     static final java.lang.classfile.ClassHierarchyResolver JDK_CLASSES =
-        java.lang.classfile.ClassHierarchyResolver.ofResourceParsing(ClassLoader.getPlatformClassLoader()).cached();
+        java.lang.classfile.ClassHierarchyResolver.ofResourceParsing(ClassLoader.getPlatformClassLoader()).cached(() -> Collections.synchronizedMap(new HashMap<>()));
 
     static final Pattern VERIFIED_METHOD = Pattern.compile(" in ([\\w/$]+)::([^(\\s]+)\\(");
 
