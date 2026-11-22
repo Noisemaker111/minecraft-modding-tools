@@ -104,9 +104,10 @@ public final class GameDiff {
         if (chains.isEmpty() || chains.size() != outs.size()) {
             usage();
         }
-        // Each map is its own chain, one core's work holding about a gigabyte, so the maps are built side by side, each
-        // worker taking a run of consecutive chains: a chain starts at the release the one before it ended at, read once.
-        int workers = Math.max(1, Math.min(chains.size(), Runtime.getRuntime().availableProcessors()));
+        // Each map is its own chain, one core's work, so the maps are built side by side, each worker taking a run of
+        // consecutive chains: a chain starts at the release the one before it ended at, read once. As many workers as
+        // the heap holds: 20 workers on a 24-processor PC ran out of 10 GB.
+        int workers = workers(chains.size(), MAP_WORKER, 0);
         List<Thread> running = new ArrayList<>();
         List<Throwable> failed = Collections.synchronizedList(new ArrayList<>());
         String l = loader, lv = loaderVersions;
@@ -137,6 +138,22 @@ public final class GameDiff {
         if (!failed.isEmpty()) {
             throw failed.get(0) instanceof Exception e ? e : new RuntimeException(failed.get(0));
         }
+    }
+
+    /**
+     * The heap one map worker needs (Fabric 1.20.1 -> 26.3's 20 step maps): 2 workers ran out of 2 GB and finished in 3,
+     * 4 in 4 GB with 33 full collections and as fast as with 10 GB in 5, 8 ran out of 6 GB and finished in 8.
+     */
+    static final long MAP_WORKER = 1280L << 20;
+
+    /**
+     * Workers for jobs side by side: one per processor, as many as the heap left after base holds at perWorker each, and
+     * at least one.
+     */
+    static int workers(int jobs, long perWorker, long base) {
+        long room = Runtime.getRuntime().maxMemory() - base;
+        long byMemory = Math.max(1, room / perWorker);
+        return (int) Math.max(1, Math.min(jobs, Math.min(Runtime.getRuntime().availableProcessors(), byMemory)));
     }
 
     static void map(String chain, String out, String loader, String loaderVersions) throws Exception {

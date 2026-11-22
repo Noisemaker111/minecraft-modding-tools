@@ -327,6 +327,19 @@ public final class JarPort {
     final Map<String, Default> defaults = new HashMap<>();
     final Map<String, Chain> chains = new HashMap<>(); // owner.name+desc, or owner.name for a field
 
+    /**
+     * What a port holds whatever its workers, measured on Fabric 1.20.1 -> 26.3's 147 mods (554 MB of jars): one small mod
+     * peaked at 1.4 GB after collections (the step's releases, the next one read ahead, their code), and the 147 mods at
+     * 3.3 to 3.7 GB with 4 workers (each jar is kept between steps, uncompressed).
+     */
+    static final long RELEASES_HEAP = 1536L << 20;
+    static final long JAR_HEAP = 4;
+    /**
+     * Room per worker for the mod it is porting: live heap grew only about 50 MB a worker (3.7 GB with 4, 4.4 GB with 16),
+     * but 4 workers left 1.3 GB spent 77 s in collections and 8 workers left 3.3 GB spent 29 s, as long as 4 with 6 GB to spare.
+     */
+    static final long PORT_WORKER = 400L << 20;
+
     public static void main(String[] args) throws Exception {
         String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null;
         boolean runtime = false, hopsOnly = false;
@@ -375,7 +388,12 @@ public final class JarPort {
         // Step by step, every jar through one step before the next: each step holds two releases of the game, and a port
         // across a dozen updates would not fit holding all of them. Within a step the jars are ported on every processor,
         // each worker with a porter of its own on the step's two releases: a jar's port does not depend on the jars beside it.
-        int workers = Math.max(1, Math.min(jars.size(), Integer.getInteger("jarport.workers", Runtime.getRuntime().availableProcessors())));
+        long jarBytes = 0;
+        for (Path jar : jars) {
+            jarBytes += Files.size(jar);
+        }
+        Integer asked = Integer.getInteger("jarport.workers");
+        int workers = asked != null ? Math.max(1, Math.min(jars.size(), asked)) : GameDiff.workers(jars.size(), PORT_WORKER, RELEASES_HEAP + JAR_HEAP * jarBytes);
         Map<Path, byte[]> bytes = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
