@@ -609,7 +609,8 @@ public final class Exposure {
 
         /**
          * SRG id -> Mojang name from NeoForm's tsrg2 ("tsrg2 obf srg id"; a class line "obf name", a method line
-         * "\tobf (desc) m_N_ N", a field line "\tobf f_N_ N"; deeper lines are parameters) and Mojang's mappings.
+         * "\tobf (desc) m_N_ N", a field line "\tobf f_N_ N", from 1.20.2 "\tobf (desc) obf N" and "\tobf obf N"; deeper
+         * lines are parameters) and Mojang's mappings.
          */
         static Map<String, String> srg(String tsrg, VersionMap.Proguard pg) {
             Map<String, String> members = new HashMap<>();
@@ -628,6 +629,12 @@ public final class Exposure {
                 }
                 boolean method = p.length >= 3 && p[1].startsWith("(");
                 String id = method ? p[2] : p[1];
+                // From 1.20.2 NeoForm's srg column is the obfuscated name again, and the SRG id is only its number (a field
+                // "\tP P 99767" is f_99767_), which mods' access transformers still name.
+                int number = method ? 3 : 2;
+                if (!id.matches("[mf]_\\d+_") && p.length > number && p[number].matches("\\d+")) {
+                    id = (method ? "m_" : "f_") + p[number] + "_";
+                }
                 String named = method ? pg.methods.get(owner + "." + p[0] + p[1]) : pg.fields.get(owner + "." + p[0]);
                 if (named != null && id.matches("[mf]_\\d+_")) {
                     members.putIfAbsent(id, named);

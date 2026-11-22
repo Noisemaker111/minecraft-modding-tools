@@ -618,6 +618,76 @@ public final class JarPort {
     // stay compressed: a later step may keep one as it is (a module the newer platform provides), bytes and all.
     boolean between;
     Path originalsDir; // where each jar is as it came, by its file name, when the jars given were read into Mojang's names first
+    int[] packFormats; // the release ported to: its resource and data pack formats when its reader takes min_format/max_format, else {}
+
+    /**
+     * The pack formats of the release ported to, as its own version.json gives them ("pack_version"), when that release reads
+     * pack.mcmeta's min_format and max_format (1.21.9 on, where the formats have a minor part); empty before.
+     */
+    int[] packFormats() {
+        if (packFormats == null) {
+            try {
+                Path client = GameDiff.verified(GameDiff.download(GameDiff.versionJson(to), "client"), "client-" + to + ".jar");
+                Map<String, Object> v = Json.object(Json.parse(VersionMap.zipEntry(client, "version.json")));
+                Map<String, Object> pv = v.get("pack_version") instanceof Map<?, ?> m ? Json.object(m) : Map.of();
+                packFormats = pv.containsKey("resource_minor") && pv.get("resource_major") instanceof Number r && pv.get("data_major") instanceof Number d
+                    ? new int[] { r.intValue(), d.intValue() } : new int[0];
+            } catch (Exception unreadable) {
+                packFormats = new int[0];
+            }
+        }
+        return packFormats;
+    }
+
+    /** The last pack formats without a minor part, resources then data (the game's PackFormat.lastPreMinorVersion). */
+    static final int[] LAST_FORMATS_WITHOUT_MINOR = { 64, 81 };
+
+    /**
+     * A mod's pack.mcmeta declares the formats of the release it was built for, and the reader from 1.21.9 on
+     * (PackFormat.IntermediaryFormat.validate) refuses some shapes the releases before took. Against each kind's last
+     * format without a minor part, a min_format above it must have no supported_formats, and one at or below it must
+     * have supported_formats from min_format to max_format and a pack_format inside the range. A mod's jar is one pack
+     * read as both kinds, so a range starting between the two (1.21.9's 69 to 88) is refused by one kind whichever way
+     * it is written. Ported, the range is the release's own two formats when it starts above both; otherwise it starts
+     * at or below both, with the fields both kinds then ask for. Anything else in the section is kept, and an unreadable
+     * file is left as it is.
+     */
+    byte[] packMetadata(Mod mod, byte[] data) {
+        int[] formats = packFormats();
+        if (formats.length < 2) {
+            return data;
+        }
+        int low = Math.min(formats[0], formats[1]);
+        int high = Math.max(formats[0], formats[1]);
+        boolean legacy = low <= Math.max(LAST_FORMATS_WITHOUT_MINOR[0], LAST_FORMATS_WITHOUT_MINOR[1]);
+        int min = legacy ? Math.min(low, Math.min(LAST_FORMATS_WITHOUT_MINOR[0], LAST_FORMATS_WITHOUT_MINOR[1])) : low;
+        Map<String, Object> meta;
+        try {
+            meta = Json.object(Json.parse(new String(data, StandardCharsets.UTF_8).replaceFirst("^\uFEFF", "")));
+        } catch (RuntimeException unreadable) {
+            return data;
+        }
+        if (!(meta.get("pack") instanceof Map<?, ?> section)) {
+            return data;
+        }
+        Map<String, Object> pack = Json.object(section);
+        List<Object> was = new ArrayList<>(List.of(String.valueOf(pack.get("pack_format")), String.valueOf(pack.get("min_format")), String.valueOf(pack.get("max_format")),
+            String.valueOf(pack.get("supported_formats"))));
+        pack.remove("pack_format");
+        pack.remove("supported_formats");
+        if (legacy) {
+            pack.put("pack_format", low);
+            pack.put("supported_formats", List.of(min, high));
+        }
+        pack.put("min_format", min);
+        pack.put("max_format", high);
+        List<Object> now = List.of(String.valueOf(pack.get("pack_format")), String.valueOf(min), String.valueOf(high), String.valueOf(pack.get("supported_formats")));
+        if (was.equals(now)) {
+            return data;
+        }
+        mod.change("pack formats declared for " + to);
+        return Json.write(meta).getBytes(StandardCharsets.UTF_8);
+    }
     ModNames in;
     ModNames.Back out;
 
@@ -715,7 +785,55 @@ public final class JarPort {
                 aliases.put(alias, owner);
             }
         });
+        // A module the new platform no longer has by its id was renamed or merged (26.1's fabric-key-binding-api-v1 became
+        // fabric-key-mapping-api-v1): it is the module that now holds most of its classes, in the new release's names. One
+        // whose classes no module holds was removed, and is asked of no one: what the mod used of it is reported where used.
+        if (was != null) {
+            Map<String, Set<String>> before = modules(Files.readAllBytes(was)), after = modules(Files.readAllBytes(now));
+            Map<String, String> holder = new HashMap<>();
+            after.forEach((id, classes) -> classes.forEach(c -> holder.putIfAbsent(c, id)));
+            before.forEach((id, classes) -> {
+                if (has.containsKey(id) || aliases.containsKey(id)) {
+                    return;
+                }
+                Map<String, Integer> votes = new TreeMap<>();
+                classes.forEach(c -> {
+                    String to = holder.get(cls(c));
+                    if (to != null) {
+                        votes.merge(to, 1, Integer::sum);
+                    }
+                });
+                aliases.put(id, votes.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(""));
+            });
+        }
         platformAliases = aliases;
+    }
+
+    /** The classes each module of a platform jar declares (its own and its nested jars'), by mod id; mixins left out. */
+    static Map<String, Set<String>> modules(byte[] jar) throws IOException {
+        Map<String, Set<String>> out = new TreeMap<>();
+        String id = null;
+        Set<String> classes = new TreeSet<>();
+        try (ZipInputStream z = new ZipInputStream(new ByteArrayInputStream(jar))) {
+            for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                String n = e.getName();
+                if (n.equals("fabric.mod.json")) {
+                    try {
+                        id = Json.object(Json.parse(new String(z.readAllBytes(), StandardCharsets.UTF_8))).get("id") instanceof String s ? s : null;
+                    } catch (RuntimeException unreadable) {
+                        id = null;
+                    }
+                } else if (n.endsWith(".class") && !n.contains("/mixin/") && !n.startsWith("META-INF/")) {
+                    classes.add(n.substring(0, n.length() - 6));
+                } else if (n.startsWith("META-INF/jars/") && n.endsWith(".jar")) {
+                    modules(z.readAllBytes()).forEach((k, v) -> out.computeIfAbsent(k, x -> new TreeSet<>()).addAll(v));
+                }
+            }
+        }
+        if (id != null) {
+            out.computeIfAbsent(id, x -> new TreeSet<>()).addAll(classes);
+        }
+        return out;
     }
 
     /** Every id a jar and the jars nested in it answer to (its own and what it provides), each with the module that answers. */
@@ -1038,6 +1156,8 @@ public final class JarPort {
                     data = metadata(new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
                 } else if (n.equals("fabric.mod.json")) {
                     data = fabricMetadata(data, widener, platformNested);
+                } else if (n.equals("pack.mcmeta")) {
+                    data = packMetadata(mod, data);
                 } else if (n.equals(widener)) {
                     String text = accessWidener(mod, new String(data, StandardCharsets.UTF_8));
                     if (!mod.grants.isEmpty()) {
@@ -9622,8 +9742,42 @@ public final class JarPort {
 
     static final Pattern BLOCK = Pattern.compile("(?ms)^\\s*\\[\\[dependencies\\.[^\\]]+\\]\\].*?(?=^\\s*\\[|\\z)");
 
-    /** The loader metadata asks for the new release: the game's and the loader's version ranges of each dependency block. */
+    String languageRange; // the loaderVersion the new release's javafml answers, "[N,)"; "" when unknown
+
+    /**
+     * NeoForge's javafml and lowcodefml answer to the version of the FancyModLoader that release is built on (1 for
+     * 20.2-20.3, 2 for 20.4, 11 for 26.1), which its own pom names; a Forge jar asks for Forge's ([47,)), which no
+     * NeoForge release answers to. "" when the pom names none.
+     */
+    static String languageRange(String pom) {
+        for (String[] d : Exposure.dependencies(pom)) {
+            if (d[0].equals("net.neoforged.fancymodloader") && d[1].equals("loader")) {
+                return "[" + d[2].replaceAll("\\..*", "") + ",)";
+            }
+        }
+        return "";
+    }
+
+    String languageRange() {
+        if (languageRange == null) {
+            try {
+                languageRange = loader.equals("neoforge") && loaderTo != null ? languageRange(Exposure.neoforgePom(loaderTo)) : "";
+            } catch (Exception unreadable) {
+                languageRange = "";
+            }
+        }
+        return languageRange;
+    }
+
+    /**
+     * The loader metadata asks for the new release: the game's and the loader's version ranges of each dependency block,
+     * and the version of the loader's own language provider.
+     */
     String metadata(String toml) {
+        String language = languageRange();
+        if (!language.isEmpty() && Pattern.compile("(?m)^\\s*modLoader\\s*=\\s*\"(javafml|lowcodefml)\"").matcher(toml).find()) {
+            toml = toml.replaceFirst("(?m)^(\\s*loaderVersion\\s*=\\s*)\"[^\"]*\"", "$1" + Matcher.quoteReplacement("\"" + language + "\""));
+        }
         Matcher m = BLOCK.matcher(toml);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
@@ -9683,7 +9837,7 @@ public final class JarPort {
                 }
             }
             for (var alias : platformAliases.entrySet()) {
-                if (asks.remove(alias.getKey()) != null) {
+                if (asks.remove(alias.getKey()) != null && !alias.getValue().isEmpty()) {
                     asks.put(alias.getValue(), "*");
                 }
             }
