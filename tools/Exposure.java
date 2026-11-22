@@ -107,7 +107,7 @@ public final class Exposure {
      * references to the game, so a loader API change is porting work, not a surprise at load time.
      */
     static GameDiff.Snap snap(String version, String loader) throws Exception {
-        Platform p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of());
+        Platform p = platform(loader, version);
         String vj = GameDiff.versionJson(version);
         Path client = GameDiff.verified(GameDiff.download(vj, "client"), "client-" + version + ".jar");
         String[] m = GameDiff.download(vj, "client_mappings");
@@ -132,6 +132,23 @@ public final class Exposure {
      * its classes in Mojang names, its access transformer, and interfaces it adds to game classes (Mojang names).
      */
     record Platform(String version, List<byte[]> classes, String access, Map<String, List<String>> injected) {}
+
+    /**
+     * A release's platform, read once per process: a long port reads each release at two of its steps (as the new release
+     * of one and the old of the next), and reading Fabric API into Mojang names was half of reading a release.
+     */
+    static Platform platform(String loader, String version) throws Exception {
+        String key = loader + " " + version;
+        Platform p = PLATFORMS.get(key);
+        if (p == null) {
+            p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of());
+            Platform first = PLATFORMS.putIfAbsent(key, p);
+            p = first == null ? p : first;
+        }
+        return p;
+    }
+
+    static final Map<String, Platform> PLATFORMS = new java.util.concurrent.ConcurrentHashMap<>();
 
     static final String NEOFORGED = "https://maven.neoforged.net/releases/";
 

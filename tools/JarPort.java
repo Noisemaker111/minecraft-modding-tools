@@ -373,41 +373,60 @@ public final class JarPort {
             Files.createDirectories(target);
         }
         // Step by step, every jar through one step before the next: each step holds two releases of the game, and a port
-        // across a dozen updates would not fit holding all of them.
-        Map<Path, byte[]> bytes = new LinkedHashMap<>();
-        Map<Path, Map<String, Set<String>>> originals = new HashMap<>();
-        Map<Path, List<Map<String, Object>>> nested = new HashMap<>();
-        Map<Path, String> errors = new HashMap<>();
+        // across a dozen updates would not fit holding all of them. Within a step the jars are ported on every processor,
+        // each worker with a porter of its own on the step's two releases: a jar's port does not depend on the jars beside it.
+        int workers = Math.max(1, Math.min(jars.size(), Integer.getInteger("jarport.workers", Runtime.getRuntime().availableProcessors())));
+        Map<Path, byte[]> bytes = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
         for (int i = 0; i + 1 < stops.size(); i++) {
+            int step = i;
             boolean last = i + 2 == stops.size();
-            JarPort port = new JarPort(Exposure.snap(stops.get(i), loader), Exposure.snap(stops.get(i + 1), loader), Path.of(maps.get(i)));
-            if (loader != null) {
-                port.loader = loader;
-            }
-            port.runtimeNames = runtime && last;
-            port.originalsDir = originalsDir;
-            if ("fabric".equals(loader)) {
-                port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
-            }
-            if (book != null) {
-                port.fixes(Path.of(book));
-            }
-            for (Path jar : jars) {
-                if (errors.containsKey(jar)) {
-                    continue;
+            GameDiff.Snap was = Exposure.snap(stops.get(i), loader), now = Exposure.snap(stops.get(i + 1), loader);
+            // Made one after another: making a porter adds the step's stand-ins and carried library classes to the releases.
+            List<JarPort> porters = new ArrayList<>();
+            for (int w = 0; w < workers; w++) {
+                JarPort port = new JarPort(was, now, Path.of(maps.get(i)));
+                if (loader != null) {
+                    port.loader = loader;
                 }
-                String name = jar.getFileName().toString();
-                try {
-                    byte[] in = i == 0 ? Files.readAllBytes(jar) : bytes.get(jar);
-                    if (i == 0) {
-                        originals.put(jar, port.originals(in, name));
+                port.runtimeNames = runtime && last;
+                port.originalsDir = originalsDir;
+                if ("fabric".equals(loader)) {
+                    port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
+                }
+                if (book != null) {
+                    port.fixes(Path.of(book));
+                }
+                porters.add(port);
+            }
+            java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+            List<Thread> running = new ArrayList<>();
+            for (JarPort port : porters) {
+                running.add(Thread.ofPlatform().start(() -> {
+                    for (int j; (j = next.getAndIncrement()) < jars.size(); ) {
+                        Path jar = jars.get(j);
+                        if (errors.containsKey(jar)) {
+                            continue;
+                        }
+                        String name = jar.getFileName().toString();
+                        try {
+                            byte[] in = step == 0 ? Files.readAllBytes(jar) : bytes.get(jar);
+                            if (step == 0) {
+                                originals.put(jar, port.originals(in, name));
+                            }
+                            List<Map<String, Object>> results = nested.computeIfAbsent(jar, k -> new ArrayList<>());
+                            bytes.put(jar, port.port(in, name, results, originals.get(jar), last));
+                        } catch (IOException | RuntimeException failed) {
+                            errors.put(jar, String.valueOf(failed));
+                            bytes.remove(jar);
+                        }
                     }
-                    List<Map<String, Object>> results = nested.computeIfAbsent(jar, k -> new ArrayList<>());
-                    bytes.put(jar, port.port(in, name, results, originals.get(jar), last));
-                } catch (IOException | RuntimeException failed) {
-                    errors.put(jar, String.valueOf(failed));
-                    bytes.remove(jar);
-                }
+                }));
+            }
+            for (Thread t : running) {
+                t.join();
             }
         }
         List<Object> rows = new ArrayList<>();
@@ -783,11 +802,11 @@ public final class JarPort {
             }
         }
         requires(mod, entries);
-        planning = mod;
+        PLANNING.set(mod);
         try {
             plan(mod);
         } finally {
-            planning = null;
+            PLANNING.remove();
         }
         buses(mod);
         for (var e : mod.split.entrySet()) {
@@ -3915,10 +3934,11 @@ public final class JarPort {
      * the new method, its result and staticness are, and its injection points are still in the new method.
      */
     static final boolean WHY = Boolean.getBoolean("jarport.why");
-    static Mod planning; // the mod plan is reading, whose refusals why records
+    static final ThreadLocal<Mod> PLANNING = new ThreadLocal<>(); // the mod plan is reading on this thread, whose refusals why records
 
     /** Why a mixin handler did not follow its target's new signature, for -Djarport.why (the type's design work). */
     static void why(String key, String reason) {
+        Mod planning = PLANNING.get();
         if (planning != null && !reason.equals("O1")) { // O1: nothing to follow
             planning.refused.add(reason.split(" ", 2)[0] + " | " + key);
         }

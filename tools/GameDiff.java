@@ -67,8 +67,10 @@ public final class GameDiff {
     static final String WHY = System.getProperty("gamediff.why", ""); // -Dgamediff.why=<internal class name>: print its class candidates
 
     public static void main(String[] args) throws Exception {
-        String chain = null;
-        String out = null;
+        // Several --chain/--out pairs build several maps in one process (a port's steps, bench/exposure.py routes): each
+        // is its own chain, as if built alone, and the process starts and warms up once.
+        List<String> chains = new ArrayList<>();
+        List<String> outs = new ArrayList<>();
         String loader = null;
         String loaderVersions = null;
         List<String> compare = new ArrayList<>();
@@ -76,8 +78,8 @@ public final class GameDiff {
         String report = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--chain" -> chain = args[++i];
-                case "--out" -> out = args[++i];
+                case "--chain" -> chains.add(args[++i]);
+                case "--out" -> outs.add(args[++i]);
                 case "--loader" -> loader = args[++i];
                 case "--loader-versions" -> loaderVersions = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
@@ -99,9 +101,15 @@ public final class GameDiff {
             Compare.run(compare.get(0), compare.get(1), !all, report == null ? null : Path.of(report));
             return;
         }
-        if (chain == null || out == null) {
+        if (chains.isEmpty() || chains.size() != outs.size()) {
             usage();
         }
+        for (int i = 0; i < chains.size(); i++) {
+            map(chains.get(i), outs.get(i), loader, loaderVersions);
+        }
+    }
+
+    static void map(String chain, String out, String loader, String loaderVersions) throws Exception {
         long t0 = System.nanoTime();
         List<String> versions = List.of(chain.split(","));
         Driver driver = new Driver(versions, loader, loaderVersions == null ? null : List.of(loaderVersions.split(",")));
@@ -132,7 +140,7 @@ public final class GameDiff {
 
     static void usage() {
         System.err.println(
-            "usage: java GameDiff --chain <v1,v2,...> --out map.json [--loader neoforge|fabric] [--loader-versions a,b,...] [--cache dir]\n" +
+            "usage: java GameDiff --chain <v1,v2,...> --out map.json [--chain ... --out ...] [--loader neoforge|fabric] [--loader-versions a,b,...] [--cache dir]\n" +
             "       java GameDiff --compare <A> <B> [--all] [--report disagreements.txt]"
         );
         System.exit(2);
@@ -8305,7 +8313,7 @@ public final class GameDiff {
                 // The loader as a mod runs on it, the classes the link check reads (Exposure.snap): NeoForge's universal jar
                 // with FML and its other net.neoforged libraries, or Fabric Loader with Fabric API's modules, in Mojang
                 // names. Its own code uses its own API, so a change to it is learned like the game's.
-                Exposure.Platform p = "fabric".equals(loader) ? Exposure.fabric(version) : Exposure.neoforge(version);
+                Exposure.Platform p = Exposure.platform(loader, version);
                 List<byte[]> classes = p.classes();
                 if (!classes.isEmpty()) {
                     prevPlatform = classes;
