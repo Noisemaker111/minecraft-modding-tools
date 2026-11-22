@@ -1013,6 +1013,71 @@ public final class GameDiff {
     // ------------------------------------------------------------------ linking two releases
 
     /** Links release b to release a (the one before it). */
+    /**
+     * Renames a loader published for its own API with a release, read from its own files. Fabric API renamed its classes
+     * and members to Mojang's names for 26.1 and listed every one: an IntelliJ migration map of the classes and its porting
+     * page, which gives each class's renamed members. A renamed package and class (keybinding.v1.KeyBindingHelper ->
+     * keymapping.v1.KeyMappingHelper) shares no name and little code with the old one, so linking alone misses most.
+     * The files are pinned to one commit of the docs, so the map is the same run to run.
+     */
+    record Published(Map<String, String> classes, Map<String, Map<String, String>> members) {
+
+        static final Published NONE = new Published(Map.of(), Map.of());
+
+        /** loader, the release the renames came with, the class map (IntelliJ migration map) and the page listing members. */
+        static final String[][] SOURCES = {
+            { "fabric", "26.1",
+                "https://raw.githubusercontent.com/FabricMC/fabric-docs/e75b101b101d64ebbd025a73b8693ef79b0ca69f/public/assets/develop/porting/fabric-api-26-1-migration-map.xml",
+                "https://raw.githubusercontent.com/FabricMC/fabric-docs/e75b101b101d64ebbd025a73b8693ef79b0ca69f/versions/26.1.2/develop/porting/fabric-api.md" },
+        };
+
+        static final Pattern ENTRY = Pattern.compile("<entry\\s+oldName=\"([^\"]+)\"\\s+newName=\"([^\"]+)\"\\s+type=\"class\"");
+        static final Pattern OWNER = Pattern.compile("^- `([^`]+)`(?:\\s*\u2192\\s*`([^`]+)`)?\\s*$");
+        static final Pattern MEMBER = Pattern.compile("^\\s+- `([^`]+)`\\s*\u2192\\s*`([^`]+)`\\s*$");
+
+        /** What the loader published as renamed between two releases (from, to]: none for another loader or no list. */
+        static Published read(String loader, String from, String to) throws Exception {
+            Map<String, String> classes = new LinkedHashMap<>();
+            Map<String, Map<String, String>> members = new LinkedHashMap<>();
+            for (String[] src : SOURCES) {
+                if (!src[0].equals(loader) || Exposure.compare(from, src[1]) >= 0 || Exposure.compare(to, src[1]) < 0) {
+                    continue;
+                }
+                String tag = src[0] + "-" + src[1] + "-" + src[2].split("/")[5].substring(0, 12);
+                parse(VersionMap.fetchText(src[2], tag + "-renamed-classes.xml"), VersionMap.fetchText(src[3], tag + "-renamed-members.md"), classes, members);
+            }
+            return classes.isEmpty() && members.isEmpty() ? NONE : new Published(classes, members);
+        }
+
+        static void parse(String classMap, String page, Map<String, String> classes, Map<String, Map<String, String>> members) {
+            Matcher e = ENTRY.matcher(classMap);
+            while (e.find()) {
+                classes.put(internal(e.group(1)), internal(e.group(2)));
+            }
+            String owner = null;
+            for (String line : page.split("\\R")) {
+                Matcher o = OWNER.matcher(line), m = MEMBER.matcher(line);
+                if (o.matches() && o.group(1).contains("/")) {
+                    owner = o.group(1);
+                    if (o.group(2) != null) {
+                        String to = o.group(2).contains("/") ? o.group(2) : owner.substring(0, owner.lastIndexOf('/') + 1) + o.group(2);
+                        classes.putIfAbsent(owner, to);
+                    }
+                } else if (m.matches() && owner != null) {
+                    members.computeIfAbsent(owner, k -> new LinkedHashMap<>()).put(m.group(1), m.group(2));
+                } else if (!line.isBlank() && !line.startsWith(" ")) {
+                    owner = null;
+                }
+            }
+        }
+
+        /** a.b.C$D -> a/b/C$D */
+        static String internal(String dotted) {
+            int dollar = dotted.indexOf('$');
+            return dollar < 0 ? dotted.replace('.', '/') : dotted.substring(0, dollar).replace('.', '/') + dotted.substring(dollar);
+        }
+    }
+
     static final class Hop {
 
         static final double RENAME = 0.75;
@@ -1031,6 +1096,7 @@ public final class GameDiff {
         final Map<Cls, Cls> outerVote = new LinkedHashMap<>();
         Map<String, String> descCache = new HashMap<>();
         Map<String, String> idRenames;
+        Published published = Published.NONE; // what the loader published as renamed in this hop
 
         Hop(Snap a, Snap b) {
             this.a = a;
@@ -1078,6 +1144,14 @@ public final class GameDiff {
                     tokens(m, true);
                 }
             }
+            // published first: a rename can hand its old name to another class (Fabric 26.1's FabricServerRecipeManager
+            // became FabricRecipeManager, whose old class became FabricRecipeAccess), and the name would claim both ends
+            published.classes().forEach((x, y) -> {
+                Cls ca = a.classes.get(x), cb = b.classes.get(y);
+                if (ca != null && cb != null) {
+                    link(ca, cb, "published");
+                }
+            });
             for (Cls ca : a.classes.values()) {
                 Cls cb = b.classes.get(ca.name);
                 if (cb != null) {
@@ -1091,6 +1165,7 @@ public final class GameDiff {
                 nested();
                 fuzzyClasses();
                 descCache = new HashMap<>();
+                publishedMembers();
                 members();
                 fingerprintB();
                 renames(false);
@@ -1109,6 +1184,35 @@ public final class GameDiff {
                     break;
                 }
             }
+        }
+
+        /**
+         * The members the loader listed as renamed, by name only (its list gives no descriptors): each old method is linked
+         * to the renamed one whose descriptor reads as its own in the old names, or to the only one of that name.
+         */
+        void publishedMembers() {
+            published.members().forEach((owner, renamed) -> {
+                Cls ca = a.classes.get(owner);
+                Cls cb = ca == null ? null : cAB.get(ca);
+                if (cb == null) {
+                    return;
+                }
+                renamed.forEach((from, to) -> {
+                    Fld fa = ca.fields.get(from), fb = cb.fields.get(to);
+                    if (fa != null && fb != null) {
+                        link(fa, fb, "published");
+                    }
+                    List<Meth> olds = ca.methods.values().stream().filter(m -> m.name.equals(from)).toList();
+                    List<Meth> news = cb.methods.values().stream().filter(m -> m.name.equals(to)).toList();
+                    for (Meth ma : olds) {
+                        Meth pick = news.stream().filter(mb -> descBA(mb.desc).equals(ma.desc)).findFirst()
+                            .orElse(olds.size() == 1 && news.size() == 1 ? news.get(0) : null);
+                        if (pick != null) {
+                            link(ma, pick, "published");
+                        }
+                    }
+                });
+            });
         }
 
         // -------------------------------------------------------------- translating b into a's names
@@ -8347,7 +8451,7 @@ public final class GameDiff {
             return next(s, jar, lv);
         }
 
-        VersionMap.Table next(Snap s, Path jar, String lv) {
+        VersionMap.Table next(Snap s, Path jar, String lv) throws Exception {
             if (prev == null) {
                 for (Cls c : s.classes.values()) {
                     fresh(c);
@@ -8362,6 +8466,7 @@ public final class GameDiff {
             } else {
                 long t0 = System.nanoTime();
                 Hop h = new Hop(prev, s);
+                h.published = Published.read(loader, prev.version, s.version);
                 h.run();
                 for (Cls c : s.classes.values()) {
                     Cls ca = h.cBA.get(c);

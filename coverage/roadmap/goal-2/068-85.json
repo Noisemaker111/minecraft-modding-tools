@@ -1,0 +1,13 @@
+{
+ "id": "85",
+ "title": "Ported mods start: their metadata is ported like their code",
+ "part": "Port by type of break",
+ "status": "done",
+ "text": "Mods the jar porter gets to link were still refused at start, because the port left the jar's metadata as it came: Fabric API's 26.1 renames (its classes and members, and modules such as fabric-key-binding-api-v1), NeoForge access transformers written in SRG ids (which NeoForm keeps only as numbers from 1.20.2), pack.mcmeta shapes the 1.21.9-on pack reader refuses, and a Forge jar's javafml version, which no NeoForge release answers to. Each is ported from the game's or the loaders' own files (Fabric's published 26.1 rename list, NeoForm's mappings, the release's version.json, NeoForge's pom), and the game proof chooses which mods to start from the ported jar, not the jar as it came.",
+ "start": "2026-11-21",
+ "target": "2026-11-22",
+ "finish": "The mods this frees on the scoreboard (Fabric 1.21.11 -> 26.1, NeoForge 1.20.2 -> 1.20.4) and the linking mods whose metadata 26.1 refused start on a real server and client of the new release, or fail for a reason outside their metadata",
+ "wrongIf": "a freed mod fails in a real game on the same metadata the port rewrote",
+ "done": "2026-11-22",
+ "result": "In game: Fabric 26.1 9 of 10 freed or metadata-fixed mods load on server and client; NeoForge 26.1 9 of 10 pack-format mods; NeoForge 1.20.4 Collective loads; NeoForge 1.20.3's 3 freed jars are Forge builds naming Forge packages and fail (step 19)"
+}
