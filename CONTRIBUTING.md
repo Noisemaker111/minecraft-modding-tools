@@ -114,7 +114,7 @@ only helps the mod it was made on is a partial result: say so, and say what woul
 - Prove it the way a user would see it, at the smallest real scope. `AGENTS.md` has the commands. A change that can't
   be run in the game says so plainly instead of claiming it works.
 - Keep tests few and meaningful: each proves something users depend on and fails on a wrong answer.
-- Merge only when every required check is green.
+- Never watch CI (`gh run watch`, sleeps, polls): push, hand the PR back, and the coordinator's PR watch merges it when every required check is green.
 - A setup or tooling trap you solved goes in `KNOWN_ISSUES.md`.
 
 ## Releases

@@ -21,10 +21,10 @@ It dispatches with a request id the workflow puts in its run name, finds that ru
 downloads every artifact to .runs/cloud/WORKFLOW-RUNID/ (--out). A summary artifact's summary.md is printed.
 Exit 0 when the run succeeded, 1 when it failed, 124 on the timeout. Needs the GitHub CLI (gh), logged in.
 
-exposure on a branch runs only the branch. Main's table for the branch's base is made once, by the sweep every push to
-main starts (cloud-exposure.yml); main_table finds that run, or one for a commit that changed nothing the table reads
-(the workflow's paths-ignore), waits for it if it is still going, and dispatches one for the base only when none ran.
-When both are in, python bench/exposure.py compare prints what the branch changes. main-table does the finding alone.
+exposure runs on main (every push starts it, cloud-exposure.yml) or for some updates (-f only=); a branch's whole sweep
+runs on this machine (bench/exposure.py all), where only what the branch changed is computed. main-table finds main's
+table for a commit: its run, or one for a commit that changed nothing the table reads (the workflow's paths-ignore),
+waiting for it if it is still going, and dispatching one for the commit only when none ran.
 """
 import argparse
 import json
@@ -260,9 +260,12 @@ def main(argv=None):
         run_id = args.run
         workflow = json.loads(gh("run", "view", str(run_id), "--json", "workflowName"))["workflowName"]
     else:
-        if args.workflow == "exposure" and not any(f.startswith("only=") for f in args.field):
-            # main's sweep for the base is started (or found) before the branch's, so the two run side by side.
-            main_table(branch_base(ref_on_origin(args.ref or git("rev-parse", "--abbrev-ref", "HEAD"), args.allow_unpushed)))
+        if args.workflow == "exposure" and not any(f.startswith("only=") for f in args.field) and (args.ref or git("rev-parse", "--abbrev-ref", "HEAD")) != "main":
+            # The whole sweep of a branch took 20-115 min and 4.4 CPU-hours here; run where its answers are kept, only what
+            # the branch changed runs. Main's sweep runs on every push to main.
+            raise SystemExit("a branch's whole jar scoreboard runs on this machine: python bench/exposure.py all --out .runs/exposure/branch.json, "
+                             "python bench/exposure.py all --at origin/main --out .runs/exposure/base.json, then python bench/exposure.py compare "
+                             ".runs/exposure/base.json .runs/exposure/branch.json")
         workflow = WORKFLOWS.get(args.workflow, args.workflow)
         ref = args.ref or git("rev-parse", "--abbrev-ref", "HEAD")
         commit = ref_on_origin(ref, args.allow_unpushed)

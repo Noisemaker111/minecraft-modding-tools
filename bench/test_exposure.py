@@ -358,4 +358,62 @@ with tempfile.TemporaryDirectory() as tmp:
         failed = True
     check(failed, "one pile failing fails the run")
 
+# A mod's port is kept under everything the port reads, and only mods with no kept port go to JarPort: agents rerun the
+# scoreboard after every edit, and porting every mod again is most of a run.
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY)
+    E.ROOT, E.HOME = root, root / "home"
+    (root / "knowledge").mkdir()
+    fixes = root / "knowledge" / "fixes.json"
+    fixes.write_text("[]", encoding="utf-8")
+    route = root / "route.json"
+    route.write_text("{}", encoding="utf-8")
+    jars = []
+    for i in range(3):
+        jars.append(root / f"m{i}.jar")
+        jars[-1].write_bytes(f"jar {i}".encode())
+    ported = []
+    answer = {"m0.jar": []}
+
+    def fake_side_by_side(command, given, report):
+        ported.append([j.name for j in given])
+        return [{"mod": j.name, "out": str(report.parent / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]), "silent": []} for j in given]
+
+    E.side_by_side, E.route_map, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda *a: route), (lambda: "classes"), (lambda: "classes")
+    E.tools_classes_key, E.platform_key, E.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
+
+    def port():
+        return E.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+
+    first = port()
+    again = port()
+    check(ported == [["m0.jar", "m1.jar", "m2.jar"]] and again["mods"] == [{k: v for k, v in m.items() if k != "out"} for m in first["mods"]]
+          and again["linked"] == first["linked"] == 1, f"a second run with the same inputs ports nothing and answers the same: {ported}")
+    jars[1].write_bytes(b"jar 1, edited")
+    port()
+    check(ported[-1] == ["m1.jar"], f"a mod whose jar changed is the only one ported again: {ported[-1]}")
+    for change in (lambda: fixes.write_text('[{"id": "x"}]', encoding="utf-8"), lambda: route.write_text('{"rewrites": []}', encoding="utf-8"),
+                   lambda: setattr(E, "tools_classes_key", lambda: "tools-2"), lambda: setattr(E, "platform_key", lambda loader, r: b"other loader"),
+                   lambda: setattr(E, "java_version", lambda: "java 26")):
+        change()
+        port()
+        check(ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], f"a change to what every port reads ports every mod again: {ported[-1]}")
+    E.VERIFY = True
+    port()
+    check(ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], "--verify ports every mod although each has a kept port")
+    answer["m2.jar"] = []
+    try:
+        port()
+        caught = False
+    except SystemExit as failed:
+        caught = "m2.jar" in str(failed)
+    check(caught, "--verify fails on a mod whose kept port differs from porting it again")
+    (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY) = saved
+
+before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
+after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}
+check(E.verdicts_moved(before, after) == {"newly link": ["a"], "no longer link": ["b"], "other references left": ["c"], "link, port changed": ["d"], "same": 1},
+      f"each mod both runs read is named once by how its verdict moved: {E.verdicts_moved(before, after)}")
+
 print(f"exposure: {checks} checks passed")

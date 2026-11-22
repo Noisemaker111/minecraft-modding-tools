@@ -1,13 +1,14 @@
 """What real mods reference of the game, ported as jars and linked against the next release: the porter's scoreboard and its to-do list.
 
-    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--save] [--out FILE]
-    python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--out FILE]
+    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE] [--save] [--out FILE]
+    python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--out FILE] [--verify]
+    python bench/exposure.py all --at origin/main --out BASE.json    (any command, on another commit's porter)
     python bench/exposure.py join DIR [--out FILE]
     python bench/exposure.py compare BEFORE.json AFTER.json
     python bench/exposure.py record-main TABLE.json --commit SHA --run URL
     python bench/exposure.py fetch --loader neoforge|fabric --version 1.21.1 [--repin]
     python bench/exposure.py pin [--loader neoforge|fabric] [--version 1.21.1] [--repin]
-    python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--save]
+    python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--changed] [--save]
     python bench/exposure.py steps [--from 1.14.4] [--to 26.3]
 
 The mods are the 150 most downloaded of one loader and release on Modrinth, each in its newest file for that release,
@@ -30,6 +31,13 @@ bench/exposure/all.json is main's table, written only on main: every push to mai
 (.github/workflows/cloud-exposure.yml), and record-main saves its table there, with the commit it ran, and adds its
 totals to the port.jar-links measures. A pull request never writes either, so two never conflict on them; compare
 prints what a branch's table changes against main's (tools/cloud-run exposure finds main's for the branch's base).
+
+Every stage is kept in ~/.mmt/exposure/ under the content of everything it reads (the porter's classes, the route map,
+the rules, the loaders' release lists, the JVM, each mod's jar), shared by every worktree and run on the machine, so a
+run computes only what an edit can change: an edit to JarPort ports every mod again (each one runs the code it touched),
+but reuses the downloads, the names, the map, the data check and most of Exposure's answers; an edit to anything else
+reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before; load
+--changed starts only those. --verify computes everything again and fails where a kept answer differs (main's sweep).
 
 --save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
 requests proving the same update keep two receipts instead of conflicting on one.
@@ -335,6 +343,16 @@ def platform_bytes():
     return out
 
 
+def platform_key(loader, route):
+    """Which loader releases a port and Exposure read: NeoForge's (and its FML libraries') are the ones the route map names
+    for each release, chosen from the same release list; Fabric's API and loader builds are chosen from their release
+    lists, which the map does not name, so those lists themselves."""
+    platform_bytes()
+    if loader == "fabric":
+        return b"".join((MAPPINGS / n).read_bytes() for n in ("fabric-api-maven-metadata.xml", "fabric-loader-maven-metadata.xml"))
+    return json.dumps(json.loads(route.read_text(encoding="utf-8")).get("loader"), sort_keys=True).encode()
+
+
 def content_key(*parts):
     """A cache key from every input's content: equal keys mean equal inputs, so a cached answer is the answer."""
     h = hashlib.sha256()
@@ -460,7 +478,7 @@ def shipped_obfuscated(loader, version):
 def port_key(loader, frm, to, route, runtime=False):
     """Everything one port reads beside the mod's own jar: the porter's classes, the route map, the port rules, the loaders'
     release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
-    return content_key(tools_classes_key(), route.read_bytes(), (ROOT / "knowledge" / "fixes.json").read_bytes(), platform_bytes(),
+    return content_key(tools_classes_key(), route.read_bytes(), (ROOT / "knowledge" / "fixes.json").read_bytes(), platform_key(loader, route),
                        java_version(), loader, frm, to, runtime)
 
 
@@ -526,7 +544,7 @@ def game_says(loader, frm, to, report):
     starts to load is loaded from code that changed, so its key changes with it."""
     classes = compile_tools()
     asked = [r["member"] for r in json.loads(report.read_text(encoding="utf-8"))["unlinkedByMods"]]
-    folder = keyed_at("game", content_key(platform_bytes(), java_version())) / f"{loader}-{frm}-{to}"
+    folder = keyed_at("game", content_key(platform_key(loader, route_map(frm, to, loader, classes)), java_version())) / f"{loader}-{frm}-{to}"
     folder.mkdir(parents=True, exist_ok=True)
     loaded = folder / "loaded.txt"
     known = folder / (classes_key(classes, loaded.read_text(encoding="utf-8").split()) + ".json") if loaded.is_file() else None
@@ -1722,7 +1740,40 @@ def steps(frm, to):
     return summary
 
 
+def tree_at(ref):
+    """What a commit's sweep reads (the porter's sources, the rules, the pinned mods, the change index), unpacked once in
+    .runs/exposure/at/SHA/ with this file beside it, so the commit's ports run here with the same cache and the same
+    loader releases as this branch's: the base a branch is compared with."""
+    sha = subprocess.run(["git", "rev-parse", "--verify", ref + "^{commit}"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    if not sha:
+        raise SystemExit(f"no commit {ref}")
+    tree = ROOT / ".runs" / "exposure" / "at" / sha
+    if not (tree / "tools" / "JarPort.java").is_file():
+        import io
+        import tarfile
+        packed = subprocess.run(["git", "archive", sha, "tools", "knowledge", "bench/exposure/mods", "coverage/changes/index.json"],
+                                cwd=ROOT, capture_output=True, check=True).stdout
+        part = part_of(tree)
+        with tarfile.open(fileobj=io.BytesIO(packed)) as t:
+            t.extractall(part, filter="data")
+        try:
+            os.rename(part, tree)
+        except OSError:
+            shutil.rmtree(part, ignore_errors=True)
+    (tree / "bench").mkdir(exist_ok=True)
+    shutil.copyfile(Path(__file__), tree / "bench" / "exposure.py")
+    return sha, tree
+
+
 def main():
+    if "--at" in sys.argv:
+        # Runs this command on another commit's porter: e.g. all --at origin/main for the base a branch is compared with.
+        i = sys.argv.index("--at")
+        sha, tree = tree_at(sys.argv[i + 1])
+        rest = sys.argv[1:i] + sys.argv[i + 2:]
+        rest = [str(Path(x).resolve()) if j > 0 and rest[j - 1] == "--out" else x for j, x in enumerate(rest)]
+        print(f"running on {sha[:10]}'s porter, rules and pinned mods ({tree})", flush=True)
+        sys.exit(subprocess.run([sys.executable, str(tree / "bench" / "exposure.py"), *rest], cwd=tree).returncode)
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
     f = sub.add_parser("fetch")

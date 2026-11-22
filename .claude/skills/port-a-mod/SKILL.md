@@ -19,12 +19,14 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   `port.jar-links.newest`), which is what people ask for; the **35 big updates**, each into a new family of releases
   (**1,861 of 5,149**, `port.jar-links.big-updates`); the 21 jumps from each family's most-used release to the next
   family's; and the 29 small updates, across which 93% link untouched. All updates together was the old headline (62%,
-  `port.jar-links.every-update`) and flattered the porter. Run `tools/cloud-run exposure` on your PR's last commit
-  and put what it prints against main in the PR. It runs only your branch: main's table for your base was made when
-  that commit reached main, and is found (or made once, for every PR on that base) without you running main. Never
-  commit `bench/exposure/all.json` or add the `port.jar-links` points: main's sweep writes both after the merge.
-- One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (about
-  2 minutes; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
+  `port.jar-links.every-update`) and flattered the porter. Once, on your PR's last commit, sweep here, not in the cloud:
+  `python bench/exposure.py all --out .runs/exposure/branch.json`, `python bench/exposure.py all --at origin/main --out
+  .runs/exposure/base.json`, then `python bench/exposure.py compare .runs/exposure/base.json .runs/exposure/branch.json`
+  (every update and mod that moved; none may be lower) into the PR. Every stage is kept by the content it reads, so
+  only what your edit can change runs, and a base another agent swept takes seconds. Main's cloud sweep on every push
+  stays the record: never commit `bench/exposure/all.json` or add the `port.jar-links` points.
+- One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (a
+  minute or two the first time, seconds when nothing it reads changed; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
   read in Mojang's names through intermediary first (tools/ModNames.java).
 - `python bench/exposure.py load ...` is the proof: the mods `jars` says link, with the libraries they require, are ported and started on a
@@ -107,15 +109,16 @@ the first row above.
    `redesigned` or `unused` reference unless you can say what replaces it. A wrong answer is worse than none.
 3. For a rule: write it in `knowledge/fixes.json` with `members` naming that game part, then
    `python bench/rule_test.py --only ID --write`. Copy the nearest rule that has `members`; never name a mod.
-4. Run step 1 again. The type's count of mods (or the part) must have fallen and the mods that link must not drop. If
-   neither moved, the change does not do what you think: fix it or take it out. For a learner change, also run
+4. Run step 1 again, or with `--type "TYPE"` to port only the mods that type held back (seconds). It prints which mods
+   newly link, stopped linking or changed their port against the run before your edit: the type's mods must have moved
+   and none may stop linking. If nothing moved, the change does not do what you think: fix it or take it out. For a learner change, also run
    `python bench/learn_diff.py --loader neoforge|fabric` and read every reading that is new, gone or changed against
    main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()). The
    learner is not yet the same run to run (a reading for Boat or AbstractMinecart, slotClicked), so a few lines differ
    on main against itself.
-5. `python bench/exposure.py load --loader neoforge --from A --to B --save` starts the ported mods that link on a real
-   server, with the library mods they require (each one's release for B from Modrinth, or its A release ported with
-   them); no mod that links may fail. `--save` keeps the receipt in `bench/exposure/`, named for the update and commit. `python bench/port_board.py --changed` runs the pinned source ports your rule crosses. Commit.
+5. `python bench/exposure.py load --loader neoforge --from A --to B --changed --save` starts the mods your edit made
+   link or ported differently on a real server and client, with the library mods they require (each one's release for
+   B from Modrinth, or its A release ported with them); none may fail. `--save` keeps the receipt in `bench/exposure/`, named for the update and commit. `python bench/port_board.py --changed` runs the pinned source ports your rule crosses. Commit.
 
 Stop and tell Jon when: three parts in a row each freed no mod (the list has reached parts that need the game class
 read in both versions; say which); a rule needs to name a mod; or the count of mods with nothing left drops.
@@ -127,7 +130,7 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
 - No AI call inside the tool. What you work out is saved as a rule with a test.
 - Prove in game at the smallest scope before the PR ends: the sweep without `--no-game` loads the ported mod and
   checks what it registers; `./mmt game-stop` afterwards. The whole corpus runs in the cloud once, on the PR's final
-  commit: `tools/cloud-run ports`.
+  commit: `tools/cloud-run ports`. Then push and hand back; never watch CI.
 - End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`, a new
   step is a new file): its result says what the method freed and what it left, which is the table above from step 79
   on (ROADMAP.md shows every step). This file changes only when the method does; the table above takes no new rows.
