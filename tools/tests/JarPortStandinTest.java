@@ -6,7 +6,7 @@ import org.objectweb.asm.*;
 /**
  * Stand-ins (knowledge/standins/FROM-TO/), run on this JVM against real classes of the new release. The update dropped
  * Gauge.read() (the new Gauge has doubled()), the class OldBook (an item with id 7 now) and Vault.peek() (the new Vault
- * keeps the value behind a private secret()). Each stand-in is a Java source the port compiles against the new release;
+ * keeps the value behind a private secret()), and Gauge.zone(Zone) takes the class Zone the update also dropped. Each stand-in is a Java source the port compiles against the new release;
  * the ported jar carries the ones it uses under a package of its own, calls them in place of the old members, answers
  * instanceof OldBook through one, and opens the closed member a stand-in reaches through the mod's access transformer.
  * A stand-in that answers no old member is refused, and a jar that needs none carries none.
@@ -22,7 +22,8 @@ final class JarPortStandinTest {
     static void check(Path scratch) throws Exception {
         GameDiff.Snap a = new GameDiff.Snap("1.0"), b = new GameDiff.Snap("2.0");
         b.loaderVersion = "2.0.1";
-        JarPortTest.snap(a, "s9/Gauge", 0, null, "<init>()V", "read()I");
+        JarPortTest.snap(a, "s9/Gauge", 0, null, "<init>()V", "read()I", "zone(Ls9/Zone;)I");
+        JarPortTest.snap(a, "s9/Zone", 0, null, "<init>()V");
         JarPortTest.snap(b, "s9/Gauge", 0, null, "<init>()V", "doubled()I");
         JarPortTest.snap(a, "s9/OldBook", 0, "s9/Item", "<init>()V");
         for (GameDiff.Snap s : List.of(a, b)) {
@@ -41,6 +42,18 @@ final class JarPortStandinTest {
             public final class Gauge {
                 public static int read(s9.Gauge self) {
                     return self.doubled() / 2;
+                }
+                public static int zone(s9.Gauge self, mmt.standin.s9.Zone zone) {
+                    return zone.size() + read(self);
+                }
+            }
+            """);
+        // A gone class's stand-in, named after Gauge: Gauge.zone above matches it whatever order the two are read in.
+        write(dir.resolve("Zone.java"), """
+            package mmt.standin.s9;
+            public final class Zone {
+                public int size() {
+                    return 3;
                 }
             }
             """);
@@ -82,7 +95,7 @@ final class JarPortStandinTest {
         List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(unlinked.isEmpty(), "every reference a stand-in answers links: " + unlinked);
         List<String> carried = ported.keySet().stream().filter(n -> n.startsWith("mmt/standin/")).sorted().toList();
-        JarPortTest.expect(carried.size() == 3 && carried.stream().allMatch(n -> n.matches("mmt/standin/m[0-9a-f]+/s9/(Gauge|OldBook|Vault)\\.class")),
+        JarPortTest.expect(carried.size() == 4 && carried.stream().allMatch(n -> n.matches("mmt/standin/m[0-9a-f]+/s9/(Gauge|OldBook|Vault|Zone)\\.class")),
             "the jar carries each stand-in it uses under a package of its own: " + carried);
         String at = new String(ported.getOrDefault("META-INF/accesstransformer.cfg", new byte[0]), StandardCharsets.UTF_8);
         JarPortTest.expect(at.contains("public s9.Vault secret()I"), "the closed member a stand-in reaches is opened through the mod's access transformer: " + at);
@@ -109,11 +122,12 @@ final class JarPortStandinTest {
             Object read = mod.getMethod("read", gauge).invoke(null, gauge.getConstructor().newInstance());
             Object book7 = mod.getMethod("isBook", Object.class).invoke(null, item.getConstructor(int.class).newInstance(7));
             Object book3 = mod.getMethod("isBook", Object.class).invoke(null, item.getConstructor(int.class).newInstance(3));
-            trace = read + ";" + book7 + ";" + book3;
+            Object zone = mod.getMethod("zone", gauge).invoke(null, gauge.getConstructor().newInstance());
+            trace = read + ";" + book7 + ";" + book3 + ";" + zone;
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(trace.equals("42;true;false"), "the ported mod runs the stand-ins against the new release: " + trace);
+        JarPortTest.expect(trace.equals("42;true;false;45"), "the ported mod runs the stand-ins against the new release: " + trace);
 
         List<Map<String, Object>> plainRuns = new ArrayList<>();
         Map<String, byte[]> plain = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n9/Plain.class", plain())), "plain.jar", plainRuns));
@@ -193,7 +207,7 @@ final class JarPortStandinTest {
         return w.toByteArray();
     }
 
-    /** The mod, written for the old release: Gauge.read(), instanceof OldBook and Vault.peek(). */
+    /** The mod, written for the old release: Gauge.read(), instanceof OldBook, Vault.peek() and Gauge.zone(new Zone()). */
     static byte[] mod() {
         ClassWriter w = start("n9/Mod");
         MethodVisitor read = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "read", "(Ls9/Gauge;)I", null, null);
@@ -214,6 +228,15 @@ final class JarPortStandinTest {
         peek.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "s9/Vault", "peek", "()I", false);
         peek.visitInsn(Opcodes.IRETURN);
         peek.visitMaxs(0, 0);
+        MethodVisitor zone = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "zone", "(Ls9/Gauge;)I", null, null);
+        zone.visitCode();
+        zone.visitVarInsn(Opcodes.ALOAD, 0);
+        zone.visitTypeInsn(Opcodes.NEW, "s9/Zone");
+        zone.visitInsn(Opcodes.DUP);
+        zone.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Zone", "<init>", "()V", false);
+        zone.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "s9/Gauge", "zone", "(Ls9/Zone;)I", false);
+        zone.visitInsn(Opcodes.IRETURN);
+        zone.visitMaxs(0, 0);
         return end(w);
     }
 

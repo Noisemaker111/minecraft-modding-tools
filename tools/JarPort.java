@@ -7604,6 +7604,15 @@ public final class JarPort {
             GameDiff.Cls c = standinCls(e.getValue());
             b.classes.put(c.name, c);
         }
+        for (String name : compiled.keySet()) {
+            String old = name.substring(STANDIN.length());
+            if (a.classes.containsKey(old) && !b.classes.containsKey(classMap.getOrDefault(old, old))) {
+                // The class is gone with nothing the route moves it to: the stand-in is the class. Settled before any
+                // member is matched, so a stand-in method taking another gone class matches in any order.
+                classMap.put(old, name);
+                inverse.put(name, old);
+            }
+        }
         for (var e : compiled.entrySet()) {
             String name = e.getKey();
             if (name.contains("$") && compiled.containsKey(name.substring(0, name.lastIndexOf('$'))) && !a.classes.containsKey(name.substring(STANDIN.length()))) {
@@ -7614,12 +7623,7 @@ public final class JarPort {
             if (was == null) {
                 continue;
             }
-            boolean gone = !b.classes.containsKey(classMap.getOrDefault(old, old));
-            if (gone) {
-                // The class is gone with nothing the route moves it to: the stand-in is the class.
-                classMap.put(old, name);
-                inverse.put(name, old);
-            }
+            boolean gone = name.equals(classMap.get(old));
             ClassModel cm = ClassFile.of().parse(e.getValue());
             for (MethodModel mm : cm.methods()) {
                 int flags = mm.flags().flagsMask();
