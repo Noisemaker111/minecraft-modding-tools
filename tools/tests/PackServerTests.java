@@ -462,6 +462,22 @@ public final class PackServerTests extends PackCheckFixtures {
             kotlin.providers.containsKey("kotlinforforge") && kotlin.plugins.contains("kotlinforforge-3.12.0-all.jar"),
             "a loader library's mods in its jarjar list are read: " + kotlin.providers.keySet()
         );
+
+        // BlueMap 3.x for 1.16.2 is built for Java 11, newer than the Java 8 the game ships for: each jar's newest class says
+        // which Java it needs, so the pack runs on that one.
+        Path java8 = Files.write(scratch.resolve("Old.class"), new byte[] { (byte) 0xca, (byte) 0xfe, (byte) 0xba, (byte) 0xbe, 0, 0, 0, 52 });
+        Path java11 = Files.write(scratch.resolve("New.class"), new byte[] { (byte) 0xca, (byte) 0xfe, (byte) 0xba, (byte) 0xbe, 0, 0, 0, 55 });
+        Path java17 = Files.write(scratch.resolve("Newest.class"), new byte[] { (byte) 0xca, (byte) 0xfe, (byte) 0xba, (byte) 0xbe, 0, 0, 0, 61 });
+        Path bluemap = jar(scratch.resolve("BlueMap-3.0.jar"), Map.of("fabric.mod.json", "{\"id\":\"bluemap\"}", "a/Old.class", java8, "b/New.class", java11));
+        Path plain = jar(scratch.resolve("plain.jar"), Map.of("fabric.mod.json", "{\"id\":\"plain\"}", "a/Old.class", java8, "META-INF/versions/17/a/Old.class", java17));
+        PackMods.Scan javas = PackMods.scan(
+            List.of(new PackCheck.Mod("BlueMap-3.0.jar", bluemap, "unknown", "test"), new PackCheck.Mod("plain.jar", plain, "unknown", "test")),
+            List.of("fabric.mod.json")
+        );
+        expect(
+            javas.java.equals(Map.of("BlueMap-3.0.jar", 11, "plain.jar", 8)),
+            "each jar needs the Java of its newest class, a multi-release jar's later copies aside: " + javas.java
+        );
     }
 
     // ------------------------------------------------------------------ loaders
@@ -520,17 +536,21 @@ public final class PackServerTests extends PackCheckFixtures {
             "a Fabric or Quilt range with build metadata accepts the same version with any build metadata"
         );
         Map<String, String> layers = new LinkedHashMap<>();
-        for (String v : List.of("1.16.5", "1.17.1", "1.18.2", "1.19.2", "1.19.3", "1.20.1", "1.21.1", "1.21.4", "1.21.5", "1.21.10", "1.21.11", "26.1.2", "26.3")) layers.put(
+        for (String v : List.of("1.14.4", "1.15.2", "1.16.1", "1.16.5", "1.17.1", "1.18.1", "1.18.2", "1.19.2", "1.19.3", "1.20.1", "1.21.1", "1.21.4", "1.21.5", "1.21.10", "1.21.11", "26.1.2", "26.3")) layers.put(
             v,
             PackLoaders.gameLayer(harness, v).getParent().getFileName().toString()
         );
         expect(
             layers.equals(
                 Map.ofEntries(
-                    Map.entry("1.16.5", "1.16"),
-                    Map.entry("1.17.1", "1.16"),
-                    Map.entry("1.18.2", "1.18"),
-                    Map.entry("1.19.2", "1.18"),
+                    Map.entry("1.14.4", "1.14"),
+                    Map.entry("1.15.2", "1.14"),
+                    Map.entry("1.16.1", "1.16"),
+                    Map.entry("1.16.5", "1.16.2"),
+                    Map.entry("1.17.1", "1.16.2"),
+                    Map.entry("1.18.1", "1.16.2"),
+                    Map.entry("1.18.2", "1.18.2"),
+                    Map.entry("1.19.2", "1.18.2"),
                     Map.entry("1.19.3", "1.19.3"),
                     Map.entry("1.20.1", "1.19.3"),
                     Map.entry("1.21.1", "1.19.3"),
@@ -544,9 +564,11 @@ public final class PackServerTests extends PackCheckFixtures {
             ),
             "the probe compiles with the newest game layer at or below the pack's version: " + layers
         );
+        List<String> order = PackLoaders.gameLayers(harness, "1.18.1").stream().map(p -> p.getParent().getFileName().toString()).toList();
+        expect(order.equals(List.of("1.16.2", "1.16", "1.14")), "a layer that does not compile against the game gives way to the next older one: " + order);
         boolean refused = false;
         try {
-            PackLoaders.gameLayer(harness, "1.15.2");
+            PackLoaders.gameLayer(harness, "1.13.2");
         } catch (IOException none) {
             refused = none.getMessage().contains("no game layer");
         }

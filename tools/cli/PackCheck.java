@@ -144,6 +144,20 @@ final class PackCheck {
             pack = pack.withMods(kept);
             scan = PackMods.scan(pack.mods(), loader.metadata(pack.minecraft()));
         }
+        // A mod built for a newer Java than the game ships for (BlueMap for Java 11 on 1.16.2, which runs on 8) starts
+        // only on that Java, as for its players: the pack runs on the newest Java one of its mods needs.
+        int runs = Math.max(java.version(), scan.java.values().stream().mapToInt(Integer::intValue).max().orElse(0));
+        if (runs > java.version()) {
+            Map<String, Object> newer = new TreeMap<>();
+            for (var entry : scan.java.entrySet()) if (entry.getValue() > java.version()) newer.put(entry.getKey(), entry.getValue());
+            List<String> named = newer.entrySet().stream().map(e -> e.getKey() + " (Java " + e.getValue() + ")").toList();
+            result.put("java", Json.map("game", java.version(), "runs", runs, "newer", newer));
+            findings.add(Json.map("kind", "java", "severity", "note", "summary",
+                newer.size() + " mod(s) need a newer Java than the Java " + java.version() + " Minecraft " + pack.minecraft() + " ships for: "
+                    + PackChecks.examples(named) + ". The pack runs on Java " + runs + ", which its players need too."));
+            java = Runtimes.ensureExact(harness, runs);
+            context = new PackLoaders.Context(harness, cache, report, java);
+        }
         // The loader's server, installed once: the Java build it runs on, and the game classes a server has.
         Path install = loader.install(context, pack.minecraft(), pack.loaderVersion());
         Runtimes.Jdk suited = PackLoaders.javaFor(context, install);
