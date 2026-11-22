@@ -1,6 +1,6 @@
 {
- "commit": "df01863a15264592189ce54a4d25d26330e97ebd",
- "run": "https://github.com/Noisemaker111/minecraft-modding-tools/actions/runs/44960606918",
+ "commit": "45d54a0aa99d07e7243cbf0f693088e1d4fbf871",
+ "run": "https://github.com/Noisemaker111/minecraft-modding-tools/actions/runs/44968495856",
  "date": "2026-11-22",
  "total": {
   "mods": 9423,
@@ -994,7 +994,7 @@
    "modsRead": 147,
    "modsThatLink": 6,
    "modsThatLinkAndData": 4,
-   "brokenUses": 15526,
+   "brokenUses": 15525,
    "loaderUses": 1602,
    "modsHeldOnlyByLoader": 1,
    "updatesCrossed": 22
@@ -1090,7 +1090,7 @@
    "modsRead": 147,
    "modsThatLink": 15,
    "modsThatLinkAndData": 13,
-   "brokenUses": 17495,
+   "brokenUses": 17500,
    "loaderUses": 2144,
    "modsHeldOnlyByLoader": 0,
    "updatesCrossed": 15
