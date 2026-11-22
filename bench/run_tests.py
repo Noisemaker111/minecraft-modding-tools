@@ -76,6 +76,14 @@ def console_accessor():
     yield java("-cp", str(out), "ConsoleAccessorTest", ".")
 
 
+def agent_world_open():
+    out = ROOT / ".runs" / "agent-world-open-tests"
+    asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
+    yield ["javac", "-nowarn", "-encoding", "UTF-8", "-cp", asm, "-sourcepath", SEP.join(["tools/agent", "tools/cli", "tools"]), "-d", str(out),
+           "tools/agent/PortableAgent.java", "tools/tests/AgentWorldOpenTest.java"]
+    yield java("-cp", str(out) + SEP + asm, "AgentWorldOpenTest")
+
+
 def legacy_agent():
     """Windows: the legacy launch agent in JAVA_TOOL_OPTIONS keeps system properties strings, and Gradle still runs."""
     prepared = subprocess.run(java("-jar", JAR, "legacy-agent", "--root", FIXTURE, "--json"), cwd=ROOT,
@@ -96,6 +104,7 @@ CHECKS = {
     "port-preflight": (False, None, port_preflight),
     "jar-port": (False, None, jar_port),
     "console-accessor": (False, None, console_accessor),
+    "agent-world-open": (False, None, agent_world_open),
     "zip": (True, None, [java("tools/tests/PackageAcceptanceTest.java", ZIP, ZIP + ".sha256", tempfile.gettempdir())]),
     "fast": (True, None, [java("-jar", JAR, "fast", "--root", FIXTURE, "--json")]),
     "port-plan": (True, None, [java("tools/tests/PortPlanCacheTest.java", FIXTURE, JAR)]),
