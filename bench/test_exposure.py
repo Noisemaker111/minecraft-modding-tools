@@ -205,9 +205,10 @@ with tempfile.TemporaryDirectory() as tmp:
     old_service = "META-INF/services/net.neoforged.neoforgespi.language.IModLanguageProvider"
     old_only = Path(tmp) / "old-only.jar"
     old_only.write_bytes(jar({old_service: "b.Klf", "b/Klf.class": loader_class("b/Klf", "klf")}))
-    check(E.provides(old_only, "neoforge", "1.20.6") == {"loader:klf"} and E.provides(old_only, "neoforge", "1.21") == set()
-          and E.provides(klf, "neoforge", "1.20.6") == {"klf"} and E.provides(klf, "neoforge", "26.3") == {"klf", "loader:klf"},
-          "a language loader counts on the releases whose loader reads its service: IModLanguageProvider up to 1.20.6, IModLanguageLoader from 1.21")
+    check(E.provides(old_only, "neoforge", "1.20.4") == {"loader:klf"} and E.provides(old_only, "neoforge", "1.20.5") == set()
+          and E.provides(old_only, "neoforge", "1.21") == set() and E.provides(klf, "neoforge", "1.20.4") == {"klf"}
+          and E.provides(klf, "neoforge", "1.20.6") == {"klf", "loader:klf"} and E.provides(klf, "neoforge", "26.3") == {"klf", "loader:klf"},
+          "a language loader counts on the releases whose loader reads its service: IModLanguageProvider up to 1.20.4 (FML 2), IModLanguageLoader from 1.20.5 (FML 3)")
     check(E.needs(both, "neoforge") == set() and E.needs(both, "fabric") == {"fabric-api"}, "a jar for both loaders is read as the pack's loader")
     check(E.needs(Path(tmp) / "other.jar", "neoforge") is None, "a jar with no metadata for the loader is nothing the loader starts")
     # The libraries come from what each mod's Modrinth version lists as required, and from what those list in turn; the

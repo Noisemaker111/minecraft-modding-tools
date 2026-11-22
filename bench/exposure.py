@@ -1056,7 +1056,8 @@ def language_services(release):
     """The service files a NeoForge release reads language loaders from; both when the release is not known."""
     if release is None:
         return tuple(LANGUAGE_SERVICES.values())
-    return (LANGUAGE_SERVICES["new" if vkey(release) >= vkey("1.21") else "old"],)
+    # FML 3.0 (NeoForge 20.5 and 20.6) reads IModLanguageLoader, as every later FML does; FML 2.0 (20.2 to 20.4) the provider.
+    return (LANGUAGE_SERVICES["new" if vkey(release) >= vkey("1.20.5") else "old"],)
 
 
 def metadata(z, loader):
