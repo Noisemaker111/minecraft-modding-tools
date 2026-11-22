@@ -567,19 +567,28 @@ public final class JarPort {
         return packFormats;
     }
 
+    /** The last pack formats without a minor part, resources then data (the game's PackFormat.lastPreMinorVersion). */
+    static final int[] LAST_FORMATS_WITHOUT_MINOR = { 64, 81 };
+
     /**
-     * A mod's pack.mcmeta declares the formats of the release it was built for, and 1.21.9's reader refuses some shapes the
-     * releases before took: a pack_format above the last format without minor versions (64 for resources, 81 for data)
-     * with no min_format/max_format, or a min_format/max_format range reaching below them with no supported_formats. A
-     * mod's jar is one pack read as both kinds, so a declaration fine for one kind is refused for the other. Ported, it
-     * declares the release's own two formats as its range, which that reader takes for both kinds; anything else in the
-     * section is kept, and an unreadable file is left as it is.
+     * A mod's pack.mcmeta declares the formats of the release it was built for, and the reader from 1.21.9 on
+     * (PackFormat.IntermediaryFormat.validate) refuses some shapes the releases before took. Against each kind's last
+     * format without a minor part, a min_format above it must have no supported_formats, and one at or below it must
+     * have supported_formats from min_format to max_format and a pack_format inside the range. A mod's jar is one pack
+     * read as both kinds, so a range starting between the two (1.21.9's 69 to 88) is refused by one kind whichever way
+     * it is written. Ported, the range is the release's own two formats when it starts above both; otherwise it starts
+     * at or below both, with the fields both kinds then ask for. Anything else in the section is kept, and an unreadable
+     * file is left as it is.
      */
     byte[] packMetadata(Mod mod, byte[] data) {
         int[] formats = packFormats();
         if (formats.length < 2) {
             return data;
         }
+        int low = Math.min(formats[0], formats[1]);
+        int high = Math.max(formats[0], formats[1]);
+        boolean legacy = low <= Math.max(LAST_FORMATS_WITHOUT_MINOR[0], LAST_FORMATS_WITHOUT_MINOR[1]);
+        int min = legacy ? Math.min(low, Math.min(LAST_FORMATS_WITHOUT_MINOR[0], LAST_FORMATS_WITHOUT_MINOR[1])) : low;
         Map<String, Object> meta;
         try {
             meta = Json.object(Json.parse(new String(data, StandardCharsets.UTF_8).replaceFirst("^\uFEFF", "")));
@@ -594,9 +603,13 @@ public final class JarPort {
             String.valueOf(pack.get("supported_formats"))));
         pack.remove("pack_format");
         pack.remove("supported_formats");
-        pack.put("min_format", Math.min(formats[0], formats[1]));
-        pack.put("max_format", Math.max(formats[0], formats[1]));
-        List<Object> now = List.of("null", String.valueOf(pack.get("min_format")), String.valueOf(pack.get("max_format")), "null");
+        if (legacy) {
+            pack.put("pack_format", low);
+            pack.put("supported_formats", List.of(min, high));
+        }
+        pack.put("min_format", min);
+        pack.put("max_format", high);
+        List<Object> now = List.of(String.valueOf(pack.get("pack_format")), String.valueOf(min), String.valueOf(high), String.valueOf(pack.get("supported_formats")));
         if (was.equals(now)) {
             return data;
         }
