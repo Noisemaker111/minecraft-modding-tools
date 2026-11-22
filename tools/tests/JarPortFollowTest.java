@@ -14,7 +14,12 @@ import org.objectweb.asm.*;
  *   methods registered by reference): drawLayer's code is the old layers' code, so an @Inject at its air() call follows.
  * - f8.Screen.init(Mc, int, int) becomes init(int, int); the old one stored the Mc in this.mc, which only the new
  *   constructor sets now (1.21.11's Screen.init). A handler that took the Mc reads this.mc. f8.Pane's new init sets its mc
- *   itself, so at the new method's start the field may not hold it yet, and the handler stays reported.
+ *   itself, so at the new method's start the field may not hold it yet, and the handler stays reported. f8.Lid's new
+ *   class has a second constructor that never sets mc, so a Lid made that way has none: stays reported too.
+ * - What is not followed: a cancellable @Inject at render's air() call (its cancel would end only renderAir, and render
+ *   would run on); f8.Box.show(), whose air() call went away while its private helper foot() always had one (the hook
+ *   would land on other code); f8.Wrap.wrap(String, String), gone, whose short body reads like the new wrap2 only if
+ *   the ';' inside descriptors were taken for instruction boundaries (wrap2 calls another method).
  */
 final class JarPortFollowTest {
 
@@ -39,7 +44,24 @@ final class JarPortFollowTest {
         JarPortTest.snap(a, "f8/Bar", 0, null, "go()V", "draw()V", "air()I", "more()V");
         GameDiff.Cls bar = JarPortTest.snap(b, "f8/Bar", 0, null, "go1()V", "go2()V", "draw()V", "air()I", "more()V");
         bar.methods.put("part()V", new GameDiff.Meth(bar, "part", "()V", Opcodes.ACC_PRIVATE));
-        for (String pane : List.of("f8/Screen", "f8/Pane")) {
+        String wd = "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        for (GameDiff.Snap s : List.of(a, b)) {
+            GameDiff.Cls text = JarPortTest.snap(s, "f8/Text", 0, null);
+            for (String t : List.of("sanitize", "log")) {
+                text.methods.put(t + wd, new GameDiff.Meth(text, t, wd, Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
+            }
+        }
+        JarPortTest.snap(a, "f8/Box", 0, null, "show()V", "air()I");
+        JarPortTest.snap(b, "f8/Box", 0, null, "show()V", "air()I");
+        for (GameDiff.Snap s : List.of(a, b)) {
+            GameDiff.Cls box = s.classes.get("f8/Box");
+            box.methods.put("foot()V", new GameDiff.Meth(box, "foot", "()V", Opcodes.ACC_PRIVATE));
+        }
+        GameDiff.Cls oldWrap = JarPortTest.snap(a, "f8/Wrap", 0, null);
+        oldWrap.methods.put("wrap" + wd, new GameDiff.Meth(oldWrap, "wrap", wd, Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
+        GameDiff.Cls newWrap = JarPortTest.snap(b, "f8/Wrap", 0, null);
+        newWrap.methods.put("wrap2" + wd, new GameDiff.Meth(newWrap, "wrap2", wd, Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
+        for (String pane : List.of("f8/Screen", "f8/Pane", "f8/Lid")) {
             JarPortTest.snap(a, pane, 0, null, "init(" + MC + "II)V");
             JarPortTest.snap(b, pane, 0, null, "init(II)V");
             for (GameDiff.Snap s : List.of(a, b)) {
@@ -50,8 +72,10 @@ final class JarPortFollowTest {
         Path map = scratch.resolve("route-follow.json");
         Files.writeString(map, "{}");
         JarPort port = new JarPort(a, b, map);
-        port.oldCode = new JarPort.GameCode(Map.of("f8/Hud", hud(true), "f8/Bar", bar(true), "f8/Screen", pane("f8/Screen", true, false), "f8/Pane", pane("f8/Pane", true, false))::get, null);
-        port.newCode = new JarPort.GameCode(Map.of("f8/Hud", hud(false), "f8/Bar", bar(false), "f8/Screen", pane("f8/Screen", false, false), "f8/Pane", pane("f8/Pane", false, true))::get, null);
+        port.oldCode = new JarPort.GameCode(Map.of("f8/Hud", hud(true), "f8/Bar", bar(true), "f8/Screen", pane("f8/Screen", true, false, false), "f8/Pane", pane("f8/Pane", true, false, false),
+            "f8/Lid", pane("f8/Lid", true, false, false), "f8/Box", box(true), "f8/Wrap", wrap(true))::get, null);
+        port.newCode = new JarPort.GameCode(Map.of("f8/Hud", hud(false), "f8/Bar", bar(false), "f8/Screen", pane("f8/Screen", false, false, false), "f8/Pane", pane("f8/Pane", false, true, false),
+            "f8/Lid", pane("f8/Lid", false, false, true), "f8/Box", box(false), "f8/Wrap", wrap(false))::get, null);
 
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of(
@@ -60,7 +84,11 @@ final class JarPortFollowTest {
             "m8/BarMixin.class", mixin("m8/BarMixin", "f8/Bar", "onGo", "(" + CI + ")V", "go()V", "HEAD", null, "onAir", "draw()V", "Lf8/Bar;air()I"),
             "m8/ScreenMixin.class", initMixin("m8/ScreenMixin", "f8/Screen"),
             "m8/PaneMixin.class", initMixin("m8/PaneMixin", "f8/Pane"),
-            "m8.mixins.json", "{\"package\": \"m8\", \"mixins\": [\"HudMixin\", \"LayerMixin\", \"BarMixin\", \"ScreenMixin\", \"PaneMixin\"], \"injectors\": {\"defaultRequire\": 1}}"
+            "m8/LidMixin.class", initMixin("m8/LidMixin", "f8/Lid"),
+            "m8/CancelMixin.class", cancelMixin(),
+            "m8/BoxMixin.class", mixin("m8/BoxMixin", "f8/Box", "onShow", "(" + CI + ")V", "show()V", "HEAD", null, "onAir", "show()V", "Lf8/Box;air()I"),
+            "m8/WrapMixin.class", mixin("m8/WrapMixin", "f8/Wrap", "onWrap", "(" + CI + ")V", "wrap" + wd, "HEAD", null, "onWrapAt", "wrap" + wd, "Lf8/Text;log" + wd),
+            "m8.mixins.json", "{\"package\": \"m8\", \"mixins\": [\"HudMixin\", \"LayerMixin\", \"BarMixin\", \"ScreenMixin\", \"PaneMixin\", \"LidMixin\", \"CancelMixin\", \"BoxMixin\", \"WrapMixin\"], \"injectors\": {\"defaultRequire\": 1}}"
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8))), "follow.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
 
@@ -74,7 +102,7 @@ final class JarPortFollowTest {
 
         JarPortTest.expect(hudStrings.getOrDefault("onAir(" + CI + ")V", "").startsWith("renderAir()V INVOKE Lf8/Hud;air()I"),
             "an @Inject at a call the method moved into a helper of its own follows into the helper: " + hudStrings);
-        JarPortTest.expect(unlinked.stream().noneMatch(u -> u.contains("in f8.Hud.render")),
+        JarPortTest.expect(unlinked.stream().noneMatch(u -> u.contains("in f8.Hud.render") && !u.contains("CancelMixin")),
             "the injection point that moved into the helper is no break: " + unlinked);
         JarPortTest.expect(JarPortFixesTest.strings(ported.get("m8/LayerMixin.class")).getOrDefault("onLayer(" + CI + ")V", "").startsWith("drawLayer()V INVOKE Lf8/Hud;air()I")
                 && unlinked.stream().noneMatch(u -> u.contains("in f8.Hud.layers")),
@@ -87,6 +115,73 @@ final class JarPortFollowTest {
             "a handler that took the argument the game now keeps on the object reads it there: " + init + " " + JarPortTest.members(ported.get("m8/ScreenMixin.class")).keySet());
         JarPortTest.expect(unlinked.stream().noneMatch(u -> u.contains("f8.Screen.init")) && unlinked.stream().anyMatch(u -> u.contains("f8.Pane.init")),
             "the field is read only where the new release sets it before any method runs: " + unlinked);
+        JarPortTest.expect(unlinked.stream().anyMatch(u -> u.contains("f8.Lid.init")),
+            "nor where one of its constructors never sets it: " + unlinked);
+
+        JarPortTest.expect(JarPortFixesTest.strings(ported.get("m8/CancelMixin.class")).getOrDefault("onCancel(" + CI + ")V", "").startsWith("render()V INVOKE Lf8/Hud;air()I")
+                && unlinked.stream().anyMatch(u -> u.startsWith("mixin injection point gone: f8.Hud.air()I in f8.Hud.render()V (in m8.CancelMixin)")),
+            "a cancellable @Inject is not moved into a helper, where its cancel would not stop the method: " + JarPortFixesTest.strings(ported.get("m8/CancelMixin.class")) + " " + unlinked);
+        JarPortTest.expect(unlinked.stream().anyMatch(u -> u.startsWith("mixin injection point gone: f8.Box.air()I in f8.Box.show()V")),
+            "a helper that always had the point is not where it moved: " + unlinked);
+        JarPortTest.expect(unlinked.contains("mixin target gone: f8.Wrap.wrap" + wd),
+            "a short body is not matched through the ';' of its descriptors: " + unlinked);
+    }
+
+    /** m8.CancelMixin: a cancellable @Inject into f8.Hud.render() at its air() call. */
+    static byte[] cancelMixin() {
+        ClassWriter w = JarPortRetypeTest.writer("m8/CancelMixin", "java/lang/Object");
+        AnnotationVisitor t = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor value = t.visitArray("value");
+        value.visit(null, Type.getObjectType("f8/Hud"));
+        value.visitEnd();
+        t.visitEnd();
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, "onCancel", "(" + CI + ")V", null, null);
+        AnnotationVisitor av = m.visitAnnotation(JarPortFixesTest.INJECT, false);
+        AnnotationVisitor methods = av.visitArray("method");
+        methods.visit(null, "render()V");
+        methods.visitEnd();
+        AnnotationVisitor ats = av.visitArray("at");
+        AnnotationVisitor point = ats.visitAnnotation(null, "Lorg/spongepowered/asm/mixin/injection/At;");
+        point.visit("value", "INVOKE");
+        point.visit("target", "Lf8/Hud;air()I");
+        point.visitEnd();
+        ats.visitEnd();
+        av.visit("cancellable", true);
+        av.visitEnd();
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ALOAD, 1);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "org/spongepowered/asm/mixin/injection/callback/CallbackInfo", "cancel", "()V", false);
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** f8.Box's code: show() calls air() itself (old) or only the private foot() (new); foot() calls air() in both. */
+    static byte[] box(boolean old) {
+        ClassWriter w = JarPortRetypeTest.writer("f8/Box", "java/lang/Object");
+        method(w, "air", "()I", Opcodes.ACC_PUBLIC, null);
+        method(w, "show", "()V", Opcodes.ACC_PUBLIC, m -> call(m, "f8/Box", old ? "air" : "foot", old ? "()I" : "()V"));
+        method(w, "foot", "()V", Opcodes.ACC_PRIVATE, m -> call(m, "f8/Box", "air", "()I"));
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** f8.Wrap's code: the old static wrap(a, b) returns Text.sanitize(a, b); the new wrap2(a, b) returns Text.log(a, b). */
+    static byte[] wrap(boolean old) {
+        String wd = "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;";
+        ClassWriter w = JarPortRetypeTest.writer("f8/Wrap", "java/lang/Object");
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, old ? "wrap" : "wrap2", wd, null, null);
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        m.visitVarInsn(Opcodes.ALOAD, 1);
+        m.visitMethodInsn(Opcodes.INVOKESTATIC, "f8/Text", old ? "sanitize" : "log", wd, false);
+        m.visitInsn(Opcodes.ARETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
     }
 
     /** A mixin into target with two @Injects: name1 into method1 at at1 (no target), and name2 into method2 at a call of call2. */
@@ -167,9 +262,11 @@ final class JarPortFollowTest {
         return w.toByteArray();
     }
 
-    /** A pane's code: the old init(Mc, int, int) stores its Mc in this.mc; the new constructor takes the Mc, and the new init(int, int) stores it too where again. */
-    static byte[] pane(String name, boolean old, boolean again) {
-        ClassWriter w = JarPortRetypeTest.writer(name, "java/lang/Object");
+    /** A pane's code: the old init(Mc, int, int) stores its Mc in this.mc; the new constructor takes the Mc, the new init(int, int) stores it too where again, and bare adds a constructor that never sets it. */
+    static byte[] pane(String name, boolean old, boolean again, boolean bare) {
+        // No default constructor: the panes' constructors are the cases.
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null);
         w.visitField(Opcodes.ACC_PROTECTED, "mc", MC, null, null).visitEnd();
         method(w, "<init>", old ? "()V" : "(" + MC + ")V", Opcodes.ACC_PUBLIC, m -> {
             m.visitVarInsn(Opcodes.ALOAD, 0);
@@ -180,6 +277,12 @@ final class JarPortFollowTest {
                 m.visitFieldInsn(Opcodes.PUTFIELD, name, "mc", MC);
             }
         });
+        if (bare) {
+            method(w, "<init>", "()V", Opcodes.ACC_PUBLIC, m -> {
+                m.visitVarInsn(Opcodes.ALOAD, 0);
+                m.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            });
+        }
         method(w, "init", old ? "(" + MC + "II)V" : "(II)V", Opcodes.ACC_PUBLIC, m -> {
             if (old || again) {
                 m.visitVarInsn(Opcodes.ALOAD, 0);
