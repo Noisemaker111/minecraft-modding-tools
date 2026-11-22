@@ -91,6 +91,8 @@ jobs:
           key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}
           restore-keys: exposure-kept-${{ matrix.update }}-
       - name: Port and link this update's mods
+        # bash by name runs with pipefail: without it the tee below hid a failed port, and the job passed with no summary.
+        shell: bash
         run: |
           IFS=: read -r LOADER FROM TO <<< "$UPDATE"
           mkdir -p summary
