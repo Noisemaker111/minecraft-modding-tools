@@ -4,9 +4,9 @@
 > `python bench/bench_page.py --roadmap`. Edit those two files, not this one. Live charts and
 > porting map: **<https://noisemaker111.github.io/minecraft-modding-tools/>**
 
-**The goal:** Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, and a modpack user never diagnoses a conflict by hand. Four goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, and move a project between loaders and platforms. Every result is proven in the real game or on a real server.
+**The goal:** Nobody should have to think about Minecraft versions or loaders: drop a mod in, as its source folder or as its .jar, from the command line or the desktop app, pick the version and the loader you want, and get it back the same way in minutes, for any mod anyone makes. On the way there: a mod or plugin author never launches Minecraft, a modpack user never diagnoses a conflict by hand, and nobody hunts for lag by hand: point mmt at a mod and within about a minute it says what is causing the lag and the known way to make it faster, and makes the change itself wherever it can prove the mod still behaves the same. Five goals: test a mod in seconds, port it to any Minecraft version automatically, make modpacks work together, move a project between loaders and platforms, and make any mod faster. Every result is proven in the real game or on a real server.
 
-**59 of 87 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
+**59 of 90 steps done.** A step is 🟢 done only when it ran and was checked; the others are 🔵 doing, ⚪ next or ⚫ later, each with a target date. Targets were set on Nov 6, and one that moves keeps its old date.
 
 ## Where each goal stands
 
@@ -16,6 +16,7 @@
 | **[2. Port a mod to any Minecraft version](#goal-2--port-a-mod-to-any-minecraft-version)** | `████████░░`&nbsp;47&nbsp;of&nbsp;61 | 🔵 47 · A fix names a game part and is applied in the class<br>🔵 64 · The jump to the newest game keeps what each update taught, NeoForge side<br>🔵 60 · The porter learns replacements that span calls, and moves into the game's libraries<br>🔵 65 · Kept methods with other parameters are called as their old selves behaved<br>🔵 67 · Calls the game rewrote differently in different places get the reading that fits any caller |
 | **[3. Make modpacks work together](#goal-3--make-modpacks-work-together)** | `██░░░░░░░░`&nbsp;1&nbsp;of&nbsp;4 | 🔵 29 · Reproduce Sismeel's Forge 1.20.1 pack problems<br>🔵 30 · Detect and repair the failure, checked in the game<br>🔵 31 · Any installed pack or export as input |
 | **[4. Change loader or platform](#goal-4--change-loader-or-platform)** | `████░░░░░░`&nbsp;4&nbsp;of&nbsp;11 | ⚪ 48 · What the most-downloaded mods need from the bridge, most-used first<br>⚪ 19 · Forge → NeoForge, proven on DragonMine Z |
+| **[5. Make any mod faster](#goal-5--make-any-mod-faster)** | `░░░░░░░░░░`&nbsp;0&nbsp;of&nbsp;3 | ⚪ 80 · Say what is causing the lag in under a minute |
 
 ## Goal 1 — Test a mod in seconds
 
@@ -551,6 +552,53 @@ The same project moved between Fabric, NeoForge, Forge, Quilt and Paper. A separ
 
 </details>
 
+## Goal 5 — Make any mod faster
+
+Point mmt at a mod or a pack and, almost at once, get three things in this order: what is causing the lag (which mod, which feature, which method, and what it costs each tick or frame), how to make it faster (the fix that already worked on the same kind of slowness in another mod, with the gain it measured), and the fix made for you where mmt can prove the mod does exactly what it did before, only faster. The third is the one that matters most. It works like porting: an agent works out a kind of fix once and saves it as a tested rule, the tool applies it with no AI call, and the real game decides whether it stays. Commands: `perf`, `perf-optimize`.
+
+- **Today:** The first works and the second has started; the third is not built. `mmt perf` attaches to a running game and after a 35-second capture ranks every mod and feature by CPU, server milliseconds per tick, render milliseconds per frame and memory. Its report names a known fix when the mod's slowness matches one of 14 saved patterns, which come from accepted speedups on 4 mods (Cyclic 15.7×, Simple Storage Network 5–6×, Diorama 1.6–2.2×, Pipez 1.2–1.3×). `mmt perf-optimize` proves a change is faster and behaves the same, but a person or their agent still writes the change: mmt edits no code for speed yet.
+- **The number that says most:** Mods made faster with no hand edit, proven in the game is **0 mods**, target 3 mods by Jan 16, 2027, step 82
+- **Also:** Known fixes mmt can name for a kind of slowness is **14 rules**
+- **Also:** Mods with a speedup accepted by perf-optimize, written by hand is **4 mods**
+
+### What is slow
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 80 | Say what is causing the lag in under a minute | ⚪ next | Nov 24 → Dec 5 |
+
+### How to fix it
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 81 | Say how to fix it, from fixes that already worked | ⚫ later | Dec 1 → Dec 19 |
+
+### Fix it automatically
+
+| # | Step | Status | When |
+|---|---|---|---|
+| 82 | Make the fix automatically and prove it | ⚫ later | Dec 8 → Jan 16, 2027 |
+
+<details><summary>What each step is, and how far it got</summary>
+
+**80 · Say what is causing the lag in under a minute** (next). `mmt perf` already ranks mods and features, but the answer is a long report someone has to read, and it starts from a game the person launched and played. The step is the answer as a short list at the top, in the command line and the desktop app: this mod, this feature, this method, this many milliseconds a tick or a frame, worst first, within a minute of pointing mmt at a mod, a pack or a running game. It names the game or loader call the slow method sits on, so the same cause is recognised in the next mod.
+
+**81 · Say how to fix it, from fixes that already worked** (later). Every cause named in step 80 comes with the known way to make it faster: what to change, the mod it worked on and the gain measured there. Today 14 patterns exist, each written from one accepted speedup, and nobody has checked how often they match a mod they were not written on. The step measures that on mods held out from the pattern library, and grows the library by the kind of slowness (the game call misused, the cache dropped, the work repeated every tick), ranked by how many of the most-downloaded mods show it, never by one mod's profile.
+
+**82 · Make the fix automatically and prove it** (later). The part Jon wants most. A pattern today is advice for a person. Here a pattern also carries the edit, written once by an agent as a tested rule the way a port rule is, and applied by mmt with no AI call. One command finds the slow spot, makes the edit, and runs the proof perf-optimize already does: baseline and changed mod in alternating fresh games, every behaviour gate passing, the speedup interval above 1. The change is kept only when that passes and can be undone; when it does not pass, mmt says so and leaves the mod as it was. Behaviour gates are written by hand per mod today, so this step also needs them made for any mod (the behaviour fingerprint is the starting point).
+
+</details>
+
+<details><summary>Every number for this goal (3)</summary>
+
+| Measure | First | Now | Target | Status |
+|---|---|---|---|---|
+| Mods made faster with no hand edit, proven in the game | — | 0 mods (Nov 21) | 3 mods by Jan 16, 2027, step 82 | Baseline |
+| Known fixes mmt can name for a kind of slowness | — | 14 rules (Nov 21) | — | Fact |
+| Mods with a speedup accepted by perf-optimize, written by hand | — | 4 mods (Nov 21) | — | Fact |
+
+</details>
+
 ## Other numbers
 
 The same table for a PR or a report: `python bench/measures.py table [ID ...] [--area AREA] [--step STEP]`.
@@ -559,7 +607,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 
 | Measure | First | Now | Target | Status |
 |---|---|---|---|---|
-| Roadmap steps done | 5 steps (Oct 24) | 59 steps (Nov 22) | 87 steps by Mar 26, 2027 | 66% of the way |
+| Roadmap steps done | 5 steps (Oct 24) | 59 steps (Nov 22) | 90 steps by Mar 26, 2027 | 64% of the way |
 | PR checks, start to finish | 2.0 min (Oct 27) | 3.9 min (Nov 5) | 5.0 min (hold) by Nov 5 | Met |
 | Multi-version Stonecutter run, start to finish (nightly until Nov 7, on demand since) | 45.9 min (Oct 28) | 41.7 min (Nov 6) | — | Fact |
 
@@ -567,7 +615,7 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 
 ## Decisions
 
-<details><summary>21 decisions, oldest first</summary>
+<details><summary>22 decisions, oldest first</summary>
 
 | Date | Question | Choice |
 |---|---|---|
@@ -592,5 +640,6 @@ The same table for a PR or a report: `python bench/measures.py table [ID ...] [-
 | 2026-11-18 | What does someone hand over: the mod's source, or its .jar? | Either (Jon, 2026-11-18): the mod's source folder, which comes back as source, or its .jar, which comes back as a .jar, through the command line and the desktop app. Until now port and convert took a source folder only, so only a mod's author could use them. Step 50 adds the .jar and comes first, because how it is done decides whether the source-based steps 44 and 47 stay as written |
 | 2026-11-20 | Does Forge → NeoForge get its own step, and which mod proves it? | Yes (Jon, 2026-11-20): Forge → NeoForge is the next loader pair after Fabric and NeoForge, proven on DragonMine Z, whose NeoForge port is redone by hand each release. DragonMine Z joins the convert and port corpora as a test input; the rules stay general (step 19) |
 | 2026-11-20 | Why is the porting timeline months, and what is steered by now? | Speed was never the gap: a .jar is ported in about ten seconds. The count was (Jon asked on 2026-11-20 why it would take months). The 62% headline was one update at a time, and half the updates change almost nothing; ported in one go to the newest game, 11 of 294 of the most-used releases' top mods link. And the to-do list was the reference the most mods share, which frees almost no mod: the 100 most shared freed 2. Steered by now: the jump to the newest game and the big updates (port.jar-links.newest, port.jar-links.big-updates), and the mods nearest to done as the order of work. Any mod, any version with nothing by hand is not a date on this roadmap: 53% of the broken references of a big update have no answer in the game's own code, and nobody ports arbitrary mods across one automatically. What is promised is a ported .jar in seconds with either every reference linked or the exact list of what is left |
+| 2026-11-21 | What is the performance work for? | Three things, in Jon's words on 2026-11-21: "apply our thing to a mod and be able to almost instantly be able to tell 1. What's causing lag 2. How to optimize (insert known ways to make whatever faster) and 3. Auto optimize if possible (I really want this)". Until then performance was not a goal on this roadmap: the docs described a profiler and a way to prove a hand-written change, and PERFORMANCE.md said mmt never writes or proposes code. It is now goal 5, and the third part reverses that line: mmt makes the change itself, from saved rules with no AI call, and keeps it only when the real game shows the same behaviour and a real speedup. |
 
 </details>
