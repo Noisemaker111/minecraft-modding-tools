@@ -92,6 +92,25 @@ def jar(files):
     return buffer.getvalue()
 
 
+def loader_class(name, returns):
+    """A class file with a field, a long constant (two pool slots) and name(): returning the constant `returns`, or, when
+    it is None, a value it reads from a field."""
+    import struct
+
+    def utf(s):
+        b = s.encode()
+        return b"\x01" + struct.pack(">H", len(b)) + b
+    pool = [utf(name), b"\x07\x00\x01", utf("java/lang/Object"), b"\x07\x00\x03", utf("name"), utf("()Ljava/lang/String;"),
+            utf("Code"), utf(returns or "unused"), b"\x08\x00\x08", b"\x05" + struct.pack(">q", 7), utf("f"), utf("Ljava/lang/String;")]
+    count = len(pool) + 2  # the long's second slot, and slot 0
+    code = b"\x12\x09\xb0" if returns else b"\x2a\xb4\x00\x01\xb0"
+    body = struct.pack(">HHI", 1, 1, len(code)) + code + struct.pack(">HH", 0, 0)
+    method = struct.pack(">HHHH", 1, 5, 6, 1) + struct.pack(">HI", 7, len(body)) + body
+    field = struct.pack(">HHHH", 2, 11, 12, 0)
+    return (b"\xca\xfe\xba\xbe" + struct.pack(">HHH", 0, 61, count) + b"".join(pool)
+            + struct.pack(">HHHH", 0x21, 2, 4, 0) + struct.pack(">H", 1) + field + struct.pack(">H", 1) + method + struct.pack(">H", 0))
+
+
 def module(mod_id):
     return jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": mod_id, "version": "1"})})
 
@@ -165,6 +184,31 @@ with tempfile.TemporaryDirectory() as tmp:
     check(E.unmet(E.needs(kt_mod, "neoforge"), E.provides(lang, "neoforge")) == {"libipn"}
           and E.unmet(E.needs(kt_mod, "neoforge"), E.provides(lang, "neoforge") | E.provides(lib, "neoforge")) == set(),
           "the language loader is answered by the jar that carries one, the library by its mod id")
+    # Two Kotlin language loaders, each registered under its own name: a mod written for one does not start on the other
+    # (veinminer asks for KotlinLangForge's klf; Kotlin for Forge registers kotlinforforge).
+    service = "META-INF/services/net.neoforged.neoforgespi.language.IModLanguageLoader"
+    kff = Path(tmp) / "kff-all.jar"
+    kff.write_bytes(jar({"META-INF/jarjar/lang.jar": jar({service: "# loader\na.Kff\n", "a/Kff.class": loader_class("a/Kff", "kotlinforforge")})}))
+    klf = Path(tmp) / "klf.jar"
+    klf.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("klf"), service: "b.Klf", "b/Klf.class": loader_class("b/Klf", "klf")}))
+    unnamed = Path(tmp) / "unnamed.jar"
+    unnamed.write_bytes(jar({service: "c.L", "c/L.class": loader_class("c/L", None)}))
+    vein = Path(tmp) / "vein.jar"
+    vein.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("veinminer", "klf", ["neoforge"])}))
+    check(E.provides(kff, "neoforge") == {"loader:kotlinforforge"} and E.provides(klf, "neoforge") == {"klf", "loader:klf"}
+          and E.provides(unnamed, "neoforge") == {"loader:*"},
+          "a language loader is known by the name its name() returns, read from its class; one that computes it is any name")
+    check(E.unmet(E.needs(vein, "neoforge"), E.provides(kff, "neoforge")) == {"loader:klf"}
+          and E.unmet(E.needs(vein, "neoforge"), E.provides(klf, "neoforge")) == set()
+          and E.unmet(E.needs(kt_mod, "neoforge"), E.provides(kff, "neoforge") | {"libipn"}) == {"loader:kotlinlang"},
+          "a mod waits for the language loader it names; another language's loader does not start it")
+    old_service = "META-INF/services/net.neoforged.neoforgespi.language.IModLanguageProvider"
+    old_only = Path(tmp) / "old-only.jar"
+    old_only.write_bytes(jar({old_service: "b.Klf", "b/Klf.class": loader_class("b/Klf", "klf")}))
+    check(E.provides(old_only, "neoforge", "1.20.4") == {"loader:klf"} and E.provides(old_only, "neoforge", "1.20.5") == set()
+          and E.provides(old_only, "neoforge", "1.21") == set() and E.provides(klf, "neoforge", "1.20.4") == {"klf"}
+          and E.provides(klf, "neoforge", "1.20.6") == {"klf", "loader:klf"} and E.provides(klf, "neoforge", "26.3") == {"klf", "loader:klf"},
+          "a language loader counts on the releases whose loader reads its service: IModLanguageProvider up to 1.20.4 (FML 2), IModLanguageLoader from 1.20.5 (FML 3)")
     check(E.needs(both, "neoforge") == set() and E.needs(both, "fabric") == {"fabric-api"}, "a jar for both loaders is read as the pack's loader")
     check(E.needs(Path(tmp) / "other.jar", "neoforge") is None, "a jar with no metadata for the loader is nothing the loader starts")
     # The libraries come from what each mod's Modrinth version lists as required, and from what those list in turn; the
