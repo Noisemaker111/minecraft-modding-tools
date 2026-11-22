@@ -384,12 +384,19 @@ JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Exposure.java
 
 def tools_classes_key():
     """The porter's sources and the ASM it is built with, hashed: what its classes, and so every port, are made of."""
-    return content_key(tools_key(*JAR_SOURCES, "cli/Json.java"), *(a.read_bytes() for a in ASM))
+    if "key" not in CLASSES:
+        CLASSES["key"] = content_key(tools_key(*JAR_SOURCES, "cli/Json.java"), *(a.read_bytes() for a in ASM))
+    return CLASSES["key"]
+
+
+CLASSES = {}  # this run's porter: read once, so an edit made while a sweep runs does not mix two porters in it
 
 
 def jar_tools():
     """The porter's classes, compiled once per content of its sources in ~/.mmt/exposure/classes/KEY/, so every worktree
     and every run with the same sources shares one compile (a compile is about 20 s; agents spent hours on them)."""
+    if "path" in CLASSES:
+        return CLASSES["path"]
     out = keyed_at("classes", tools_classes_key()) / "classes"
     if not (out / "JarPort.class").is_file():
         sources = [ROOT / "tools" / n for n in JAR_SOURCES] + [ROOT / "tools" / "cli" / "Json.java"]
@@ -401,7 +408,8 @@ def jar_tools():
             os.rename(part, out)
         except OSError:
             shutil.rmtree(part, ignore_errors=True)  # a run beside this one compiled the same sources first
-    return os.pathsep.join([str(out)] + [str(a) for a in ASM])
+    CLASSES["path"] = os.pathsep.join([str(out)] + [str(a) for a in ASM])
+    return CLASSES["path"]
 
 
 # Each process that reads jars loads two releases of the game first and starts cold, so more piles stop paying:
