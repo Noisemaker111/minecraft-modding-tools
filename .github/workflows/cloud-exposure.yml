@@ -87,23 +87,29 @@ jobs:
             ~/.mmt/exposure/registries
             ~/.mmt/exposure/ports
             ~/.mmt/exposure/game
-          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}
+            ~/.mmt/exposure/maps
+          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: exposure-kept-${{ matrix.update }}-
       - name: Port and link this update's mods
+        # Under the job's 40 so the save below still runs when the port runs out of time.
+        timeout-minutes: 36
         # bash by name runs with pipefail: without it the tee below hid a failed port, and the job passed with no summary.
         shell: bash
         run: |
           IFS=: read -r LOADER FROM TO <<< "$UPDATE"
           mkdir -p summary
           python bench/exposure.py jars --verify --loader "$LOADER" --from "$FROM" --to "$TO" --out "summary/$LOADER-$FROM-$TO.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Saved when the port fails or runs out of time too: the route maps and finished ports are right either way, and a
+      # long port that never finished never kept them, so every run after it started cold and ran out of time again.
       - uses: actions/cache/save@v4
-        if: success()
+        if: always()
         with:
           path: |
             ~/.mmt/exposure/registries
             ~/.mmt/exposure/ports
             ~/.mmt/exposure/game
-          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}
+            ~/.mmt/exposure/maps
+          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
