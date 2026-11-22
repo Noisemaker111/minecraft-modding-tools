@@ -7765,7 +7765,7 @@ public final class JarPort {
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IOException(e);
         }
-        sha.update((release.version + "|" + release.loaderVersion + "|" + release.classes.size()).getBytes(StandardCharsets.UTF_8));
+        sha.update((release.version + "|" + release.loaderVersion + "|" + release.classes.size() + "|java " + standinJava(release.version)).getBytes(StandardCharsets.UTF_8));
         for (Path f : sources) {
             sha.update(dir.relativize(f).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
             sha.update(Files.readAllBytes(f));
@@ -7782,7 +7782,7 @@ public final class JarPort {
             if (javac == null) {
                 throw new IOException("stand-ins need a JDK's compiler (javax.tools), and this Java has none");
             }
-            List<String> command = new ArrayList<>(List.of("--release", "21", "-proc:none", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", out.toString()));
+            List<String> command = new ArrayList<>(List.of("--release", String.valueOf(standinJava(release.version)), "-proc:none", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", out.toString()));
             sources.forEach(f -> command.add(f.toString()));
             StringWriter errors = new StringWriter();
             int exit = javac.run(null, new PrintStream(OutputStream.nullOutputStream()), new PrintStream(new OutputStream() {
@@ -7811,6 +7811,20 @@ public final class JarPort {
                 walk.sorted(Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
             }
         }
+    }
+
+    /**
+     * The Java a stand-in is compiled for: the one the new release runs on (Java 8 before 1.17, 16 for 1.17, 17 from 1.18,
+     * 21 from 1.20.5, as Mojang's version files name), at most 21, which every later release runs too.
+     */
+    static int standinJava(String release) {
+        if (compareVersions(release, "1.20.5") >= 0) {
+            return 21;
+        }
+        if (compareVersions(release, "1.18") >= 0) {
+            return 17;
+        }
+        return compareVersions(release, "1.17") >= 0 ? 16 : 8;
     }
 
     static Map<String, byte[]> readClasses(Path root) throws IOException {

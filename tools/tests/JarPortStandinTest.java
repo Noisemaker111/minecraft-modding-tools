@@ -149,6 +149,24 @@ final class JarPortStandinTest {
             refused = wrong.getMessage();
         }
         JarPortTest.expect(refused.contains("answers no member of s9.Gauge"), "a stand-in that answers no old member is refused, not ignored: " + refused);
+
+        // A stand-in runs on the new release's Java: 1.20.3 runs on Java 17, which cannot load Java 21's class files.
+        Path old = scratch.resolve("standin-java/standins/1.20.2-1.20.3/s9");
+        write(old.resolve("Gauge.java"), """
+            package mmt.standin.s9;
+            public final class Gauge {
+                public static int read() {
+                    return 1;
+                }
+            }
+            """);
+        Map<String, Integer> majors = new TreeMap<>();
+        for (String release : List.of("1.16.5", "1.17.1", "1.20.3", "1.21.1", "26.1")) {
+            byte[] gauge = JarPort.compileStandins(List.of(old.getParent()), new GameDiff.Snap(release)).get("mmt/standin/s9/Gauge");
+            majors.put(release, ((gauge[6] & 0xff) << 8) | (gauge[7] & 0xff));
+        }
+        JarPortTest.expect(majors.equals(Map.of("1.16.5", 52, "1.17.1", 60, "1.20.3", 61, "1.21.1", 65, "26.1", 65)),
+            "each release's stand-ins are compiled for the Java it runs on: " + majors);
     }
 
     static void write(Path file, String text) throws Exception {
