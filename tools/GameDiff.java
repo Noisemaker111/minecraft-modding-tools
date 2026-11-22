@@ -8306,6 +8306,9 @@ public final class GameDiff {
         int nextField = 1;
         String metadata;
 
+        static Snap last;
+        static String lastLoader = "";
+
         Driver(List<String> versions, String loader, List<String> pinned) {
             this.versions = versions;
             this.loader = loader;
@@ -8336,7 +8339,12 @@ public final class GameDiff {
                     loaderNotes.add(version + ": no " + loader + " release; loader classes start at a later release");
                     loaderUsed.put(version, null);
                 }
-                return next(GameDiff.load(version, classes, p.version()), null, p.version());
+                // The release that ended the last chain of this process starts this one (a long port's steps): read once.
+                Snap s = last != null && last.version.equals(version) && Objects.equals(last.loaderVersion, p.version()) && lastLoader.equals(loader)
+                    ? last : GameDiff.load(version, classes, p.version());
+                last = s;
+                lastLoader = loader;
+                return next(s, null, p.version());
             }
             if (loader != null) {
                 int i = versions.indexOf(version);
