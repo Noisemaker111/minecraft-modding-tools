@@ -8505,8 +8505,15 @@ public final class JarPort {
         Map<String, Object> meta = list == null ? new LinkedHashMap<>() : Json.object(Json.parse(new String(list, StandardCharsets.UTF_8)));
         List<Object> jars = new ArrayList<>(meta.get("jars") instanceof List<?> l ? l : List.of());
         Map<String, Object> jar = new LinkedHashMap<>();
-        jar.put("identifier", new LinkedHashMap<>(Map.of("group", "mmt.standin", "artifact", "types-" + typesTag())));
-        jar.put("version", new LinkedHashMap<>(Map.of("range", "[1,)", "artifactVersion", "1")));
+        // Keys put one by one: Map.of's order changes from one JVM to the next, and the same port must write the same jar.
+        Map<String, Object> identifier = new LinkedHashMap<>();
+        identifier.put("group", "mmt.standin");
+        identifier.put("artifact", "types-" + typesTag());
+        Map<String, Object> version = new LinkedHashMap<>();
+        version.put("range", "[1,)");
+        version.put("artifactVersion", "1");
+        jar.put("identifier", identifier);
+        jar.put("version", version);
         jar.put("path", path);
         jar.put("isObfuscated", false);
         jars.add(jar);
