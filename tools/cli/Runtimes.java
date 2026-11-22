@@ -28,6 +28,8 @@ final class Runtimes {
             String value = System.getenv(key);
             if (value != null && !value.isBlank()) paths.add(Path.of(value));
         }
+        // actions/setup-java names each JDK it installs JAVA_HOME_<feature>_<arch> (JAVA_HOME_8_X64).
+        for (var entry : System.getenv().entrySet()) if (entry.getKey().matches("JAVA_HOME_\\d+_[A-Z0-9]+") && !entry.getValue().isBlank()) paths.add(Path.of(entry.getValue()));
         Path user = Path.of(System.getProperty("user.home"));
         for (Path parent : List.of(
             JdkDownloads.cache(),

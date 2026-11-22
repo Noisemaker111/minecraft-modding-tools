@@ -42,7 +42,11 @@ final class JdkDownloads {
             try {
                 Run.progress("download Java " + feature, null);
                 download(asset.url, archive);
-                verifyHash(archive, asset.sha256);
+                try {
+                    verifyHash(archive, asset.sha256);
+                } catch (IOException mismatch) {
+                    throw new IOException("Java " + feature + " from " + asset.url + ": " + mismatch.getMessage(), mismatch);
+                }
                 extract(archive, staging, asset.zip);
                 Path home = findHome(staging);
                 if (!valid(home, feature)) throw new IOException("Downloaded JDK failed java/javac validation");
@@ -298,8 +302,9 @@ final class JdkDownloads {
                 int n;
                 while ((n = input.read(buffer)) != -1) digest.update(buffer, 0, n);
             }
-            if (!HexFormat.of().formatHex(digest.digest()).equalsIgnoreCase(expected)) throw new IOException(
-                "JDK archive SHA-256 mismatch"
+            String got = HexFormat.of().formatHex(digest.digest());
+            if (!got.equalsIgnoreCase(expected)) throw new IOException(
+                "JDK archive SHA-256 mismatch: " + archive.getFileName() + " (" + Files.size(archive) + " bytes) is " + got + ", the vendor says " + expected
             );
         } catch (NoSuchAlgorithmException impossible) {
             throw new IOException(impossible);

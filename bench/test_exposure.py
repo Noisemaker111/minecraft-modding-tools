@@ -246,6 +246,20 @@ with tempfile.TemporaryDirectory() as tmp:
         E.required_projects, E.library = real
     check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
           f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
+    # A mod that nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod
+    # and starts; a top mod that is the platform itself is left out with that reason, never silently.
+    (folder / "presence--presence.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "presence"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
+    (folder / "api--fabric-api.jar").write_bytes(api.read_bytes())
+    pins = [{"slug": "presence", "file": "presence.jar", "project": "P-presence", "version": "v-presence"},
+            {"slug": "api", "file": "fabric-api.jar", "project": "P-api", "version": "v-api"}]
+    E.required_projects, E.library = (lambda v: []), (lambda project, loader, version: None)
+    try:
+        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["presence--presence.jar", "api--fabric-api.jar", "gone--gone.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        E.required_projects, E.library = real
+    check([j.name for j in chosen] == ["presence--presence.jar"] and sorted(left) == ["api--fabric-api.jar", "gone--gone.jar"]
+          and "platform itself" in left["api--fabric-api.jar"][0] and "not in" in left["gone--gone.jar"][0],
+          f"a mod nesting a platform module starts; the platform itself and a missing jar are each named with why: {chosen} {left}")
     # A library's release for the new version outside the range the mod asks for is not taken: its old release is ported.
     check(E.in_range("21.1.9", "[21.1,21.2)") and not E.in_range("21.2.3", "[21.1,21.2)") and E.in_range("1.3", "1.2") and not E.in_range("1.21.2", "[1.21.1]"),
           "versions are read against Maven ranges as NeoForge reads them")
@@ -611,5 +625,62 @@ before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}
 check(E.verdicts_moved(before, after) == {"newly link": ["a"], "no longer link": ["b"], "other references left": ["c"], "link, port changed": ["d"], "same": 1},
       f"each mod both runs read is named once by how its verdict moved: {E.verdicts_moved(before, after)}")
+
+# A client sent back to the disconnected screen names no mod: the mod whose arrival makes it fail is found by halving,
+# each set started with the jars it needs; a client that fails with no mod at all blames none.
+with tempfile.TemporaryDirectory() as tmp:
+    pack = Path(tmp)
+    (pack / "mods").mkdir()
+    names = ["a.jar", "krypton.jar", "b.jar", "lib.jar", "z.jar"]
+    for n, meta in zip(names, [{"id": "a"}, {"id": "krypton", "depends": {"lib": "*"}}, {"id": "b", "depends": {"lib": "*"}}, {"id": "lib"}, {"id": "z"}]):
+        (pack / "mods" / n).write_bytes(jar({"fabric.mod.json": json.dumps(meta)}))
+    seen = []
+
+    def start(bad=("krypton.jar",)):
+        here = {p.name for p in (pack / "mods").glob("*.jar")}
+        seen.append(sorted(here))
+        if "krypton.jar" in here and "lib.jar" not in here:
+            raise AssertionError("a mod was started without the jar it needs")
+        return {"result": {"client": {"opened": not here & set(bad)}}}, None
+
+    blamed = E.first_failing(pack, names, "fabric", start, "DisconnectedScreen")
+    check(list(blamed) == ["krypton.jar"] and len(seen) <= 4 and sorted(p.name for p in (pack / "mods").glob("*.jar")) == sorted(names),
+          f"halving names the mod a silent client fails on, in few starts, and puts every jar back: {blamed} {len(seen)}")
+    check(E.first_failing(pack, names, "fabric", lambda: ({"result": {"client": {"opened": False}}}, None), "x") == {},
+          "a client that fails with no mod at all blames none")
+
+# The client proof gives every mod asked for a verdict, however many libraries fail on the way: two libraries failing on
+# successive starts, with one mod asked for, used to spend the whole budget of starts (mods + 1) and leave it out unsaid.
+# And pack-check's Java warning (a jar's newest class, which the game may never load) is no evidence of a failure: a
+# library it lists stays when the start fails on another mod.
+with tempfile.TemporaryDirectory() as tmp:
+    server = Path(tmp) / "load"
+    (server / "mods").mkdir(parents=True)
+    (server / "dropped").mkdir()
+    for n, meta in {"mod.jar": {"id": "mod", "depends": {"lib": "*"}}, "bad.jar": {"id": "bad"}, "lib.jar": {"id": "lib"},
+                    "lib1.jar": {"id": "lib1"}, "lib2.jar": {"id": "lib2"}, "api.jar": {"id": "fabric"}}.items():
+        (server / "mods" / n).write_bytes(jar({"fabric.mod.json": json.dumps(meta)}))
+
+    def failing(jars, java=()):
+        def run(pack):
+            here = {p.name for p in (pack / "mods").glob("*.jar")}
+            findings = [{"kind": "java", "severity": "warning", "suspects": [{"jar": j, "why": ["it is built for Java 17"]} for j in java]}]
+            for j in jars:
+                if j in here:
+                    suspects = [] if j == "bad.jar" else [{"jar": j, "why": ["it crashes"]}]
+                    return {"result": {"client": {"opened": False, "failure": "x"}, "findings": findings + [
+                        {"kind": "client-start", "severity": "problem", "suspects": suspects}]}}
+            return {"result": {"client": {"opened": True}, "findings": findings}}
+        return run
+
+    client = E.client_starts("fabric", "2.0", server, ["mod.jar"], ["lib.jar", "lib1.jar", "lib2.jar", "api.jar"], {"api.jar"},
+                             run=failing(["lib1.jar", "lib2.jar"]))
+    check(client["verdicts"] == {"mod.jar": "loaded"},
+          f"a mod asked for keeps its verdict when libraries fail start after start: {client['verdicts']}")
+    client = E.client_starts("fabric", "2.0", server, ["mod.jar", "bad.jar"], ["lib.jar", "api.jar"], {"api.jar"},
+                             run=failing(["bad.jar"], java=["lib.jar"]))
+    check(client["verdicts"].get("mod.jar") == "loaded" and client["verdicts"].get("bad.jar", "").startswith("failed")
+          and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
+          f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
 
 print(f"exposure: {checks} checks passed")

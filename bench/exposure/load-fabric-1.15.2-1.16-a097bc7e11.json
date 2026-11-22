@@ -1,0 +1,165 @@
+{
+ "loader": "fabric",
+ "from": "1.15.2",
+ "to": "1.16",
+ "scope": "all",
+ "mods": 55,
+ "loaded": 28,
+ "linkedAndLoaded": 28,
+ "linked": 54,
+ "failedButLinked": [
+  "flame-sweeping--FlameSweeping-1.2.jar",
+  "infinity-with-mending--infwithmend-1.0.2.jar",
+  "keybind-fix-plus--keybindfixplus-2.0.0.jar",
+  "memoryleakfix--memoryleakfix-fabric-pre1.17-1.1.5.jar",
+  "shifty-hotbar--shifty-hotbar-mc1.15.2-1.1.jar",
+  "skin-overrides--skin_overrides-2.3.2+1.15.2.jar",
+  "stackdeobf--StackDeobfuscatorFabric-1.4.3+08e71cc.jar",
+  "totally-lit--totally_lit-0.2.0+1.15.jar"
+ ],
+ "clashOnly": [],
+ "failedDataOnly": [
+  "mod-loading-screen--mod-loading-screen-1.0.5.jar"
+ ],
+ "verdicts": {
+  "breakfree--breakfree-1.4.0.jar": "client-only: client-only (folder, its own metadata)",
+  "cameraoverhaul--CameraOverhaul-v2.1.2-fabric+mc[1.15-1.15.2].jar": "client-only: client-only (folder, its own metadata)",
+  "cleancut--cleancut-fabric-1.15.2-8.1.0+1.15.2.jar": "client-only: client-only (folder, its own metadata)",
+  "ctrl-q--ctrlq-fabric-mc1.15-1.8.jar": "client-only: client-only (folder, its own metadata)",
+  "custom-window-title--CustomWindowTitle-1.15+v1.1.1.jar": "client-only: client-only (folder, its own metadata)",
+  "dcch--DCCH-2.0+1.16.jar": "client-only: client-only (folder, its own metadata)",
+  "enchlevel-langpatch--enchlevel-langpatch-3.12.0.jar": "client-only: client-only (folder, its own metadata)",
+  "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.15.2-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "i-know-what-im-doing--IKnowWhatImDoing-4.1.1-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "i18nupdatemod--I18nUpdateMod-3.8.0-all.jar": "client-only: client-only (folder, its own metadata)",
+  "iris-shader-folder--iris_shader_folder-1.2.5-fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "item-model-fix--item-model-fix-1.0.3+1.16.jar": "client-only: client-only (folder, its own metadata)",
+  "mcmod-splashes-plusplus--mcmodsplashpp-1.5.0.jar": "client-only: client-only (folder, its own metadata)",
+  "no-double-sneak--nodoublesneak-mc1.14.4-1.1.jar": "client-only: client-only (folder, its own metadata)",
+  "norecipebook--norecipebook-2.4+1.15.2.jar": "client-only: client-only (folder, its own metadata)",
+  "pistorder--pistorder-v1.6.15-mc1.15.2.jar": "client-only: client-only (folder, its own metadata)",
+  "sorted-enchantments--sorted_enchantments-1.0.1+1.14+fabric.jar": "client-only: client-only (folder, its own metadata)",
+  "zume--zume-1.2.2.jar": "client-only: client-only (folder, its own metadata)",
+  "keybind-fix-plus--keybindfixplus-2.0.0.jar": "failed: the loader names it: [09:32:22] [main/INFO]: Reason: [HARD_DEP keybindfixplus 2.0.0 {depends java @ [>=21]}, HARD_DEP stackdeobfuscator 1.4.3+08e71cc {depends java @ [>=17]}, HARD_DEP stackdeobfuscator-common 1.4.3+08e71cc {depends java @ [>=17]}]; the loader names it: - Mod 'Keybind Fix Plus' (keybindfixplus) 2.0.0 requires version 21 or later of 'OpenJDK 64-Bit Server VM' (java), but only the wr",
+  "stackdeobf--StackDeobfuscatorFabric-1.4.3+08e71cc.jar": "failed: the loader names it: [09:32:22] [main/INFO]: Reason: [HARD_DEP keybindfixplus 2.0.0 {depends java @ [>=21]}, HARD_DEP stackdeobfuscator 1.4.3+08e71cc {depends java @ [>=17]}, HARD_DEP stackdeobfuscator-common 1.4.3+08e71cc {depends java @ [>=17]}]; the loader names it: - Mod 'StackDeobfuscator' (stackdeobfuscator) 1.4.3+08e71cc requires version 17 or later of 'OpenJDK 64-Bit Server VM' (java), but",
+  "more-mobs--more_mobs-v1.5.11-mc1.14-26.3.9-mod.jar": "loaded",
+  "mod-loading-screen--mod-loading-screen-1.0.5.jar": "failed: its code (io.github.gaming32.modloadingscreen.ModLoadingScreen) is in the stack: at io.github.gaming32.modloadingscreen.ModLoadingScreen.<clinit>(ModLoadingScreen.java:91) ~[mod-loading-screen--mod-loading-screen-1.0.5.jar!/:?]; its code (io.github.gaming32.modloadingscreen.ModLoadingScreen) is in the stack: at io.github.gaming32.modloadingscreen.ModLoadingScreen.init(ModLoadingScreen.java:71) ~[m",
+  "infinity-with-mending--infwithmend-1.0.2.jar": "failed: its mixin config infwithmend.mixins.json is in the failure",
+  "shifty-hotbar--shifty-hotbar-mc1.15.2-1.1.jar": "failed: its mixin config shifty-hotbar.compat.mixins.json is in the failure",
+  "skin-overrides--skin_overrides-2.3.2+1.15.2.jar": "failed: its mixin config 1.15.2.mixins.json is in the failure",
+  "memoryleakfix--memoryleakfix-fabric-pre1.17-1.1.5.jar": "failed: the loader names it: [09:33:15] [main/ERROR]: Mixin apply for mod memoryleakfix failed memoryleakfix-16.mixins.json:biomeTemperatureLeak.Biome_threadLocalMixin from mod memoryleakfix -> net.minecraft.class_1959: org.spongepowered.asm.mixin.injection.throwables.InvalidInjectionException Critical inje...; the loader names it: Caused by: org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [",
+  "fake-fabric-loader--loader-0.20.1-4.jar": "loaded",
+  "flame-sweeping--FlameSweeping-1.2.jar": "failed: it is built for Java 17; Minecraft 1.16 runs on Java 8",
+  "totally-lit--totally_lit-0.2.0+1.15.jar": "failed: the loader names it: java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'totally_lit' at 'io.github.realguyman.totally_lit.Initializer'!; its code (io.github.realguyman.totally_lit.block.UnlitTorchBlock) is in the stack: at io.github.realguyman.totally_lit.block.UnlitTorchBlock.<init>(UnlitTorchBlock.java:14) ~[totally-lit--totally_lit-0.2.0+1.15.jar:?",
+  "advancements-debug--advdebug-2.3.0.jar": "loaded",
+  "bl4cks-sit--sit-1.15.2-4.jar": "loaded",
+  "crashexploitfixer--crashexploitfixer-fabric-2.0.0+1.15.2.jar": "loaded",
+  "cursorcentered-fix--cursorcenteredfix-1.4.1-fabric+1.14.4-1.21.11.jar": "loaded",
+  "day-counter--simple-day-display-5.jar": "loaded",
+  "enchanted-golden-apple-addition--enchanted-golden-apple-addition-2.0.jar": "loaded",
+  "eugenes-wealthy-plains-village--eugenes-wealthy-plains-village-1.0.1.jar": "loaded",
+  "fabric-language-kotlin--fabric-language-kotlin-1.14.2+kotlin.2.4.21.jar": "loaded",
+  "flower-tweaks--flower-tweaks-1.jar": "loaded",
+  "hero-proof--hero-proof-5.2.1.jar": "loaded",
+  "keep-some-inventory--KeepSomeInventory-v1.3.3.jar": "loaded",
+  "lazydfu--lazydfu-0.1.2.jar": "loaded",
+  "litematica-server-paster--litematica-server-paster-v1.3.14-mc1.15.2.jar": "loaded",
+  "log-cleaner--logcleaner-1.0.0.jar": "loaded",
+  "loyal-items--Loyal Items 1.0.3.jar": "loaded",
+  "no-f3--no-f3-4.jar": "loaded",
+  "norollback--norollback-2.2.0+26.3.jar": "loaded",
+  "nyctophobia-dread--nyctophobia-dread-2.jar": "loaded",
+  "onekeyminer--OneKeyMiner-1.15.2-1.10.2.jar": "loaded",
+  "skippy-pearls--skippy-pearls-1.3.jar": "loaded",
+  "swingthrough--swingthrough-1.0.5+1.20.jar": "loaded",
+  "translucencyfix--semitranslucency-1.1-fabric.jar": "loaded",
+  "universal_mod_localizer--zz-Universal_Mod_Localizer_2.0.3.jar": "loaded",
+  "unlimited-trading--unlimited-trading-3.3.jar": "loaded",
+  "vault-patcher--vaultpatcher-all-1.5.4.jar": "loaded",
+  "yosbr--yosbr-0.1.2.jar": "loaded"
+ },
+ "libraries": {
+  "9s6osm5g--config-2-4.6.0.jar": "its release for 1.16",
+  "NfULUoHI--mineconf-1.15.2-1.2.0.jar": "its 1.15.2 release, ported"
+ },
+ "notStarted": {
+  "viaversion--ViaVersion-5.12.3-SNAPSHOT.jar": [
+   "viafabric"
+  ],
+  "viabackwards--ViaBackwards-5.12.3-SNAPSHOT.jar": [
+   "viafabric"
+  ],
+  "viarewind--ViaRewind-4.2.0.jar": [
+   "viabackwards",
+   "viafabric"
+  ],
+  "reflex-antilag--reflex-fabric-1.1.6+1.15.2.jar": [
+   "cloth-config",
+   "fabric-api"
+  ],
+  "low-fire-reborn--low-fire-reborn-1.0.0.jar": [
+   "autoconfig1u"
+  ],
+  "underwater-swim-fix-mc-220390--underwater-swim-fix-1.0.1.jar": [
+   "fabric-api"
+  ],
+  "leashable-players--leashable-players-1.0.jar": [
+   "fabric-api"
+  ]
+ },
+ "client": {
+  "mods": 46,
+  "loaded": 43,
+  "verdicts": {
+   "pistorder--pistorder-v1.6.15-mc1.15.2.jar": "failed: the loader names it: [09:39:28] [main/ERROR]: Mixin apply for mod pistorder failed pistorder.mixins.json:AbstractBlockStateMixin from mod pistorder -> net.minecraft.class_2680: org.spongepowered.asm.mixin.injection.throwables.InvalidInjectionException Critical injection failure: @Inject annotation o...; the loader names it: Caused by: org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [ | the loader reported a failed start: Caused by: java.lang.RuntimeException: Mixin transformation of net.minecraft.class_2680 failed",
+   "item-model-fix--item-model-fix-1.0.3+1.16.jar": "loaded",
+   "more-mobs--more_mobs-v1.5.11-mc1.14-26.3.9-mod.jar": "loaded",
+   "iris-shader-folder--iris_shader_folder-1.2.5-fabric.jar": "failed: the loader names it: java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'iris_shader_folder' at 'com.spaceagle17.iris_shader_folder.IrisShaderFolder'!; its code (com.spaceagle17.iris_shader_folder.IrisShaderFolder) is in the stack: at com.spaceagle17.iris_shader_folder.IrisShaderFolder.<clinit>(IrisShaderFolder.java:15) | the loader reported a failed start: java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'iris_shader_folder' at 'com.spaceagle17.iris_shader_folder.IrisShaderFolder'!; Caused by: java.lang.NoClassDefFoundError: org/slf4j/LoggerFactory\nCaused by: java.lang",
+   "swingthrough--swingthrough-1.0.5+1.20.jar": "failed: its mixin config swingthrough.mixins.json is in the failure | the loader reported a failed start: java.lang.RuntimeException: Mixin transformation of net.minecraft.class_757 failed; Caused by: org.spongepowered.asm.mixin.transformer.throwables.MixinTransformerError: An unexpected critical error was encountered\nCaused by: org.spongepowered.asm.mixin.injection.t",
+   "advancements-debug--advdebug-2.3.0.jar": "loaded",
+   "bl4cks-sit--sit-1.15.2-4.jar": "loaded",
+   "breakfree--breakfree-1.4.0.jar": "loaded",
+   "cameraoverhaul--CameraOverhaul-v2.1.2-fabric+mc[1.15-1.15.2].jar": "loaded",
+   "cleancut--cleancut-fabric-1.15.2-8.1.0+1.15.2.jar": "loaded",
+   "crashexploitfixer--crashexploitfixer-fabric-2.0.0+1.15.2.jar": "loaded",
+   "ctrl-q--ctrlq-fabric-mc1.15-1.8.jar": "loaded",
+   "cursorcentered-fix--cursorcenteredfix-1.4.1-fabric+1.14.4-1.21.11.jar": "loaded",
+   "custom-window-title--CustomWindowTitle-1.15+v1.1.1.jar": "loaded",
+   "day-counter--simple-day-display-5.jar": "loaded",
+   "dcch--DCCH-2.0+1.16.jar": "loaded",
+   "enchanted-golden-apple-addition--enchanted-golden-apple-addition-2.0.jar": "loaded",
+   "enchlevel-langpatch--enchlevel-langpatch-3.12.0.jar": "loaded",
+   "eugenes-wealthy-plains-village--eugenes-wealthy-plains-village-1.0.1.jar": "loaded",
+   "fabric-language-kotlin--fabric-language-kotlin-1.14.2+kotlin.2.4.21.jar": "loaded",
+   "fake-fabric-loader--loader-0.20.1-4.jar": "loaded",
+   "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.15.2-fabric.jar": "loaded",
+   "flower-tweaks--flower-tweaks-1.jar": "loaded",
+   "hero-proof--hero-proof-5.2.1.jar": "loaded",
+   "i-know-what-im-doing--IKnowWhatImDoing-4.1.1-fabric.jar": "loaded",
+   "i18nupdatemod--I18nUpdateMod-3.8.0-all.jar": "loaded",
+   "keep-some-inventory--KeepSomeInventory-v1.3.3.jar": "loaded",
+   "lazydfu--lazydfu-0.1.2.jar": "loaded",
+   "litematica-server-paster--litematica-server-paster-v1.3.14-mc1.15.2.jar": "loaded",
+   "log-cleaner--logcleaner-1.0.0.jar": "loaded",
+   "loyal-items--Loyal Items 1.0.3.jar": "loaded",
+   "mcmod-splashes-plusplus--mcmodsplashpp-1.5.0.jar": "loaded",
+   "no-double-sneak--nodoublesneak-mc1.14.4-1.1.jar": "loaded",
+   "no-f3--no-f3-4.jar": "loaded",
+   "norecipebook--norecipebook-2.4+1.15.2.jar": "loaded",
+   "norollback--norollback-2.2.0+26.3.jar": "loaded",
+   "nyctophobia-dread--nyctophobia-dread-2.jar": "loaded",
+   "onekeyminer--OneKeyMiner-1.15.2-1.10.2.jar": "loaded",
+   "skippy-pearls--skippy-pearls-1.3.jar": "loaded",
+   "sorted-enchantments--sorted_enchantments-1.0.1+1.14+fabric.jar": "loaded",
+   "translucencyfix--semitranslucency-1.1-fabric.jar": "loaded",
+   "universal_mod_localizer--zz-Universal_Mod_Localizer_2.0.3.jar": "loaded",
+   "unlimited-trading--unlimited-trading-3.3.jar": "loaded",
+   "vault-patcher--vaultpatcher-all-1.5.4.jar": "loaded",
+   "yosbr--yosbr-0.1.2.jar": "loaded",
+   "zume--zume-1.2.2.jar": "loaded"
+  }
+ },
+ "loadedOnServerFailedInClient": [
+  "swingthrough--swingthrough-1.0.5+1.20.jar"
+ ]
+}
