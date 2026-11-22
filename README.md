@@ -3,7 +3,7 @@
 <h1 align="center">Minecraft Modding Tools</h1>
 
 <p align="center">
-  <b>Port mods between Minecraft versions, switch loaders, fix broken modpacks, test mods in the real game, and find what makes Minecraft slow.</b>
+  <b>Port mods between Minecraft versions, switch loaders, fix broken modpacks, test mods in the real game, and find what makes a mod lag and how to fix it.</b>
 </p>
 
 <p align="center">
@@ -37,7 +37,9 @@ Everything runs locally on your machine with no AI or cloud calls, using officia
 | **Fix modpacks** | All versions | All versions | All versions | All versions | — |
 | **Test in real game** | Client & server | Client & server | Loads only | — | 1.8+ bot server |
 | **Build & logic tests** | Yes | Yes | Yes | Via Fabric | Yes |
-| **Profile performance** | Yes | Yes | Planned | — | — |
+| **Find what causes lag** | Yes | Yes | Planned | — | — |
+| **Name a known fix for it** | 14 patterns | 14 patterns | — | — | — |
+| **Fix lag automatically** | Planned | Planned | — | — | — |
 
 ## What you can do today
 
@@ -47,7 +49,17 @@ Open the desktop app and drop a mod's `.jar`, a mod's source folder, or a modpac
 - **Switch a mod's loader (Fabric ↔ NeoForge)** — Open a Fabric or NeoForge source folder to convert it to the other loader on the same Minecraft version, with one-click undo.
 - **Fix a broken modpack** — Drop a CurseForge `.zip`, Modrinth `.mrpack`, or launcher instance folder (CurseForge, Prism, MultiMC, vanilla). Runs the pack on its real Forge, NeoForge, Fabric, or Quilt server, flags which mod caused the crash or conflict, and applies proven fixes (with undo).
 - **Test a mod or Paper plugin in the real game** — Open a mod or Paper plugin source folder to run unit tests, mixin/data checks, and real-game checks (hidden and muted) without opening Minecraft yourself.
-- **Find what makes Minecraft slow** — Start Minecraft normally, attach to it from the **Measure** tab, and see FPS, frame-time spikes, per-mod CPU/memory cost, and hot classes.
+- **Find what makes a mod lag** — Start Minecraft normally, attach to it from the **Measure** tab, and see which mod and which feature is slow: FPS, frame-time spikes, per-mod CPU/memory cost, and hot classes. When the slowness matches one that was fixed in another mod, the report names that fix and the gain it measured.
+
+### Where the lag work is going
+
+Point mmt at a mod and, almost at once, get three things:
+
+1. **What is causing the lag** — which mod, which feature, which method, and what it costs each tick or frame. *Works today, as a 35-second capture and a report.*
+2. **How to make it faster** — the fix that already worked on the same kind of slowness elsewhere. *Started: 14 known fixes, from speedups proven on 4 mods.*
+3. **The fix made for you** — mmt changes the mod itself and keeps the change only when the real game shows the same behaviour and a real speedup. *Not built yet; today `mmt perf-optimize` proves a change you wrote.*
+
+Roadmap goal 5 in [`ROADMAP.md`](ROADMAP.md) has the steps and finish lines.
 
 ## Using the command line
 
@@ -59,7 +71,7 @@ mmt port --root my-mod --from 1.21.5 --to 1.21.6 --fix # port a source folder (u
 mmt convert --root my-mod --to neoforge                # switch Fabric <-> NeoForge (source)
 mmt pack-check --pack my-pack.mrpack --fix             # check and repair a modpack
 mmt ui-check --root my-mod                             # test a mod in a hidden, muted client
-mmt perf                                               # profile a running Minecraft game
+mmt perf                                               # which mod and feature is slow in a running game
 ```
 
 Run `mmt help` for every command and `mmt help <command>` for options.

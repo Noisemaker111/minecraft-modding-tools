@@ -19,7 +19,10 @@ on the way, not a result. This file says which platform has reached what, and ho
 | Port a compiled `.jar` (`port --jar`) | 1.14.4 and newer | 1.20.5 and newer | No | No | No |
 | Switch loader (`convert`) | To NeoForge | To Fabric (26.1+ and 1.21.1) | No | No | No |
 | Modpacks on their own server (`pack-check`) | Yes | Yes | Yes | Yes | Not applicable |
-| Performance (`perf`, `perf-optimize`) | Yes | Yes | Not yet proven | No | No |
+| Say what causes lag (`perf`) | Yes | Yes | Not yet proven | No | No |
+| Name a known fix for it (`perf`, 14 patterns) | Yes | Yes | No | No | No |
+| Prove a change you wrote is faster and the same (`perf-optimize`) | Yes | Yes | Not yet proven | No | No |
+| Make the fix automatically | No: roadmap goal 5 | No | No | No | No |
 
 Multi-version builds (Stonecutter, such as Diorama) work through their version nodes: build, tests, game checks and
 port each run on one node. Proxy plugins (Velocity, BungeeCord) and standalone datapacks have no commands.
