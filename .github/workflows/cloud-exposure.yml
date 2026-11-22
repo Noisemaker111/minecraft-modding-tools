@@ -38,10 +38,9 @@ on:
         default: ''
 permissions:
   contents: read
-# One sweep of main at a time, the newest waiting: each records over the one before it, in order.
-concurrency:
-  group: ${{ github.event_name == 'push' && 'cloud-exposure-main' || format('cloud-exposure-{0}', github.run_id) }}
-  cancel-in-progress: false
+# Every push to main gets its own sweep, none cancelled: a pull request on any commit of main finds its table. (One group
+# for main's pushes let GitHub cancel each waiting push when a newer one came, and pull requests on those commits had none.)
+# They may finish out of order; record-main keeps the newest commit's table.
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -128,7 +127,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 50
+          fetch-depth: 0
           ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
       - uses: actions/setup-python@v5
         with:
@@ -147,6 +146,7 @@ jobs:
           # Another merge may land while this runs: take it and record again on top.
           for attempt in 1 2 3 4 5; do
             python bench/exposure.py record-main "$TABLE" --commit "$GITHUB_SHA" --run "$RUN"
+            if git diff --quiet -- bench/exposure/all.json coverage/measures.json; then exit 0; fi
             git add bench/exposure/all.json coverage/measures.json
             git commit -m "Main's jar scoreboard at ${GITHUB_SHA::10}"
             if git push; then exit 0; fi

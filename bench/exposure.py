@@ -984,6 +984,11 @@ def record_main(table_path, commit, run, measures_path=None, main_table=MAIN_TAB
     table = json.loads(Path(table_path).read_text(encoding="utf-8"))
     table = {"commit": commit, "run": run, **{k: v for k, v in table.items() if k not in ("commit", "run")}}
     previous = json.loads(main_table.read_text(encoding="utf-8")) if main_table.is_file() else None
+    if previous and previous.get("commit") and previous["commit"] != commit and subprocess.run(
+            ["git", "merge-base", "--is-ancestor", previous["commit"], commit], cwd=ROOT, capture_output=True).returncode != 0:
+        # Sweeps of main can finish out of order: a newer commit's table is already there.
+        print(f"main's table already holds {previous['commit'][:10]}, which {commit[:10]} does not follow; not recorded")
+        return None
     data = json.loads(measures_path.read_text(encoding="utf-8"))
     by_id = {m["id"]: m for m in data["measures"]}
     subject = subprocess.run(["git", "log", "-1", "--format=%s", commit], cwd=ROOT, capture_output=True, text=True).stdout.strip()
