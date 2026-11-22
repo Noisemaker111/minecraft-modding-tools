@@ -245,6 +245,42 @@ with tempfile.TemporaryDirectory() as tmp:
         E.required_projects, E.library = real
     check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
           f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
+    # A library's release for the new version outside the range the mod asks for is not taken: its old release is ported.
+    check(E.in_range("21.1.9", "[21.1,21.2)") and not E.in_range("21.2.3", "[21.1,21.2)") and E.in_range("1.3", "1.2") and not E.in_range("1.21.2", "[1.21.1]"),
+          "versions are read against Maven ranges as NeoForge reads them")
+    check(not E.in_range("0.6.0-beta.5", "[0.6.0,)") and E.in_range("0.6.0", "[0.6.0,)") and E.in_range("0.6.1-beta.1", "[0.6.0,)")
+          and E.in_range("1.0.0", "[1.0,)") and not E.in_range("1.0-rc1", "1.0"),
+          "a prerelease is below the release it leads to, as NeoForge orders versions")
+    strict = Path(tmp) / "strict.jar"
+    strict.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("strict") + '[[dependencies.strict]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,2.0)"\n'}))
+    (folder / "strict--strict.jar").write_bytes(strict.read_bytes())
+    lib_new = Path(tmp) / "libipn-2.jar"
+    lib_new.write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="libipn"\nversion="2.0.1"\n'}))
+    lib_old = Path(tmp) / "libipn-1.jar"
+    lib_old.write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="libipn"\nversion="1.4"\n'}))
+    pins.append({"slug": "strict", "file": "strict.jar", "project": "P-strict", "version": "v-strict"})
+    listed["v-strict"] = ["P-libipn"]
+    files = {("P-libipn", "2.0"): (lib_new, "v-libipn"), ("P-libipn", "1.0"): (lib_old, "v-libipn-old")}
+    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["strict--strict.jar"], folder, pins, set())
+    finally:
+        E.required_projects, E.library = real
+    check([j.name for j in chosen] == ["strict--strict.jar"] and not ready and list(to_port) == ["libipn-1.jar"],
+          f"a library outside the mod's range for the new version is ported from the old one: {ready} {to_port}")
+    # Two mods needing the same library: the release for the new version has to fit both ranges, not the last one read.
+    loose = Path(tmp) / "loose.jar"
+    loose.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("loose") + '[[dependencies.loose]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,)"\n'}))
+    (folder / "loose--loose.jar").write_bytes(loose.read_bytes())
+    pins.append({"slug": "loose", "file": "loose.jar", "project": "P-loose", "version": "v-loose"})
+    listed["v-loose"] = ["P-libipn"]
+    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["strict--strict.jar", "loose--loose.jar"], folder, pins, set())
+    finally:
+        E.required_projects, E.library = real
+    check(not ready and list(to_port) == ["libipn-1.jar"],
+          f"a library two mods need fits every range they ask for: {ready} {to_port}")
 
 # A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
 # server lacks, from another mod, does not.
@@ -469,6 +505,17 @@ with tempfile.TemporaryDirectory() as tmp:
           and head[:10] in every[1]["source"], f"each sweep of main adds a point saying what moved: {every}")
     check(every[2]["note"] == "the same", f"a sweep that moved nothing says so: {every[2]}")
     check([p["value"] for p in points["port.jar-links.newest"]] == [1, 1, 1] and points["port.jar-links.big-updates"][1]["value"] == 6, "each measure reads its own total")
+    # Sweeps of main may finish out of order: an older commit's table never replaces a newer one's.
+    parent = os.popen(f'git -C "{Path(__file__).resolve().parent.parent}" rev-parse HEAD~1').read().strip()
+    repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
+    sys.stdout = io.StringIO()
+    try:
+        late = E.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", measures, main_table, "2026-02-03")
+    finally:
+        sys.stdout = sys.__stdout__
+        E.ROOT = repo
+    check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
+          and len(json.loads(measures.read_text(encoding="utf-8"))["measures"][0]["points"]) == 3, "a sweep of an older commit that finishes later is not recorded")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:
