@@ -5,10 +5,10 @@ import org.objectweb.asm.*;
 
 /**
  * A stand-in for an old class mods extend, as 1.19.4's abstract GuiComponent (moved onto GuiGraphics in 1.20, and
- * subclassed by Trinkets and Better Advancements to reach its helpers by their plain names): written as that class, it
- * is the ported subclass's superclass, so the subclass passes the verifier where it is given as a Panel and reaches the
- * helpers it inherits. Here Panel's members went to Canvas, as GuiComponent's went to GuiGraphics. A mod extending a gone
- * class whose stand-in is only a holder of static methods (Plate) does not link.
+ * subclassed by mods to reach its helpers by their plain names): written as that class, it is the ported subclass's
+ * superclass, so the subclass reaches the static and instance helpers it inherits, though the route moves Panel's values
+ * to Canvas (as GuiComponent's went to GuiGraphics) and the game's own subclass of Panel extends Object now. A mod
+ * extending a gone class whose stand-in is only a holder of static methods (Plate) does not link.
  */
 final class JarPortExtendTest {
 
@@ -16,7 +16,7 @@ final class JarPortExtendTest {
         Path scratch = Files.createDirectories(Path.of(args[0]));
         GameDiff.Snap a = new GameDiff.Snap("1.0"), b = new GameDiff.Snap("2.0");
         b.loaderVersion = "2.0.1";
-        JarPortTest.snap(a, "s9/Panel", Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, null, "<init>()V", "fill()I");
+        JarPortTest.snap(a, "s9/Panel", Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, null, "<init>()V", "fill()I", "offset()I");
         a.classes.get("s9/Panel").methods.get("fill()I").flags |= Opcodes.ACC_STATIC;
         JarPortTest.snap(b, "s9/Canvas", Opcodes.ACC_PUBLIC, null, "<init>(I)V", "fill()I");
         JarPortTest.snap(a, "s9/Plate", Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, null, "<init>()V");
@@ -32,6 +32,9 @@ final class JarPortExtendTest {
                 public Panel() {}
                 public static int fill() {
                     return 7;
+                }
+                public int offset() {
+                    return 5;
                 }
             }
             """);
@@ -69,8 +72,8 @@ final class JarPortExtendTest {
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(trace.matches("mmt\\.standin\\.u[0-9a-f]+\\.s9\\.Panel 7"),
-            "the subclass extends the stand-in, passes the verifier as a Panel and reaches the helper it inherits: " + trace);
+        JarPortTest.expect(trace.matches("mmt\\.standin\\.m[0-9a-f]+\\.s9\\.Panel 12"),
+            "the subclass extends the stand-in and reaches the static and instance helpers it inherits: " + trace);
 
         List<Map<String, Object>> plateRuns = new ArrayList<>();
         port.port(JarPortTest.jar(Map.of("n9/MyPlate.class", JarPortStandinTest.end(subclass("n9/MyPlate", "s9/Plate")))), "plate.jar", plateRuns);
@@ -93,29 +96,25 @@ final class JarPortExtendTest {
     }
 
     /**
-     * class MyPanel extends Panel, written for 1.0: int draw() { return fill(); } (javac names the subclass as the
-     * helper's owner), static int take(Panel p) { return ((MyPanel) p).draw(); }, static int run() { return take(new MyPanel()); }
+     * class MyPanel extends Panel, written for 1.0: int draw() { return fill() + offset(); } (javac names the subclass as
+     * the owner of both inherited helpers), static int run() { return new MyPanel().draw(); }
      */
     static byte[] myPanel() {
         ClassWriter w = subclass("n9/MyPanel", "s9/Panel");
         MethodVisitor draw = w.visitMethod(Opcodes.ACC_PUBLIC, "draw", "()I", null, null);
         draw.visitCode();
         draw.visitMethodInsn(Opcodes.INVOKESTATIC, "n9/MyPanel", "fill", "()I", false);
+        draw.visitVarInsn(Opcodes.ALOAD, 0);
+        draw.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "n9/MyPanel", "offset", "()I", false);
+        draw.visitInsn(Opcodes.IADD);
         draw.visitInsn(Opcodes.IRETURN);
         draw.visitMaxs(0, 0);
-        MethodVisitor take = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "take", "(Ls9/Panel;)I", null, null);
-        take.visitCode();
-        take.visitVarInsn(Opcodes.ALOAD, 0);
-        take.visitTypeInsn(Opcodes.CHECKCAST, "n9/MyPanel");
-        take.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "n9/MyPanel", "draw", "()I", false);
-        take.visitInsn(Opcodes.IRETURN);
-        take.visitMaxs(0, 0);
         MethodVisitor run = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "run", "()I", null, null);
         run.visitCode();
         run.visitTypeInsn(Opcodes.NEW, "n9/MyPanel");
         run.visitInsn(Opcodes.DUP);
         run.visitMethodInsn(Opcodes.INVOKESPECIAL, "n9/MyPanel", "<init>", "()V", false);
-        run.visitMethodInsn(Opcodes.INVOKESTATIC, "n9/MyPanel", "take", "(Ls9/Panel;)I", false);
+        run.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "n9/MyPanel", "draw", "()I", false);
         run.visitInsn(Opcodes.IRETURN);
         run.visitMaxs(0, 0);
         return JarPortStandinTest.end(w);
