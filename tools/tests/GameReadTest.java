@@ -5,9 +5,11 @@ import org.objectweb.asm.*;
 /**
  * Readings the game's own uses show only once uses that say nothing about them stand aside, on a two-release game built
  * here like 1.21.5's tags. 1.0: Tag.getText(key) gives the text or "", getNum(key) the number or 0, getTag(key) and
- * getSub(key) a tag or an empty one, getList(key, type) a list (type only checked against the list's); Ver.pack() an int.
+ * getSub(key) a tag or an empty one, getList(key, type) the tag's list, or an empty one where it is absent or a nonempty
+ * list of another element type; Ver.pack() an int.
  * 2.0: those give Optionals, and getTextOr(key, d), getNumOr(key, d), getTagOrEmpty(key), getSubOrEmpty(key) and
- * getListOrEmpty(key) give what the old ones did; Ver.pack() gives a Fmt record, whose one factory from an int,
+ * getListOrEmpty(key) give what the old ones did, but getListOrEmpty gives the list whatever its element type; Ver.pack()
+ * gives a Fmt record, whose one factory from an int,
  * Fmt.of(n), is new Fmt(n, 0).
  * - getText: three uses read getTextOr(key, ""); one now reads a whole Pos where the old code read the text (another
  *   value, unrelated in type), which says nothing about the call.
@@ -16,13 +18,15 @@ import org.objectweb.asm.*;
  * - getTag: three read getTagOrEmpty(key); one insists, getTag(key).orElseThrow(), where the game knows the tag is there.
  * - getSub: eight read getSubOrEmpty(key), and two nest getSub(a).getSub(b): getSub is not a setter gone into a factory
  *   (it has a successor), so its own reading stays.
- * - getList: types 6, 8 and 10 all read getListOrEmpty(key), and the old body only compared the type: it is dropped.
+ * - getList: types 6, 8 and 10 all read getListOrEmpty(key), but the old body compared the type to choose what it gave:
+ *   dropping it would hand a mod a list of the wrong type, so the call is left unported.
  * - Ver.pack(): no use; pack().major(), the component Fmt.of fills.
  * Uses that stand aside carry a reading only so far: getPair(key, fallback), whose old body passes the fallback on, reads
  * getPairOr(key, "") at three uses with one aside, and leaves the fallback out, so nothing is learned; getOne(key) reads
  * getOneOr(key) at two with one aside, too few to agree.
  * Each alone falls short of four in five, or is dropped: 1.21.5's getString, getFloat, getCompound and getList, and
- * 1.21.9's packVersion. A mod calling each runs on the new game as before.
+ * 1.21.9's packVersion. A mod calling each runs on the new game as before, and its getList(key, 10) on a list of 10s, a
+ * list of 8s and no list either gives what it gave on the old game or is reported unlinked.
  *
  *   java -cp asm.jar:CLASSES GameReadTest SCRATCH   (in the jar-port check of bench/run_tests.py)
  */
@@ -47,7 +51,7 @@ final class GameReadTest {
         JarPortTest.expect("$0.getNumOr($1, 0.0F)".equals(learned.get("Tag.getNum")), "the same call with a default of its own place stands aside: " + learned.get("Tag.getNum"));
         JarPortTest.expect("$0.getTagOrEmpty($1)".equals(learned.get("Tag.getTag")), "a use insisting on the value stands aside: " + learned.get("Tag.getTag"));
         JarPortTest.expect("$0.getSubOrEmpty($1)".equals(learned.get("Tag.getSub")), "a call with a successor nested in itself keeps its own reading: " + learned.get("Tag.getSub"));
-        JarPortTest.expect("$0.getListOrEmpty($1)".equals(learned.get("Tag.getList")), "a literal the game varied and the old body only tested is dropped: " + learned.get("Tag.getList"));
+        JarPortTest.expect(!learned.containsKey("Tag.getList"), "an operand the old body tested to choose what it gave is not dropped: " + learned.get("Tag.getList"));
         JarPortTest.expect("$0.pack().major()".equals(learned.get("Ver.pack")), "a plain result wrapped in a record is read back through the part its factory fills: " + learned.get("Ver.pack"));
         JarPortTest.expect(!learned.containsKey("Tag.getPair"), "uses standing aside do not carry a reading that leaves out an operand: " + learned.get("Tag.getPair"));
         JarPortTest.expect(!learned.containsKey("Tag.getOne"), "uses standing aside do not carry a reading two uses show: " + learned.get("Tag.getOne"));
@@ -74,14 +78,69 @@ final class GameReadTest {
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause()) + " " + Json.array(results.get(0).get("unlinked"));
         }
-        JarPortTest.expect(trace.equals("[]0.0 tag tag lst 7"), "the mod's reads run on the new game as before: " + trace);
+        JarPortTest.expect(trace.equals("[]0.0 tag tag 7"), "the mod's reads run on the new game as before: " + trace);
+
+        // getList(key, 10) on the old game and, ported, on the new one: a list of 10s, a list of 8s, no list.
+        List<Map<String, Object>> listed = new ArrayList<>();
+        Map<String, byte[]> classesB = new HashMap<>(newGame);
+        classesB.put("m5/Lists", JarPortTest.entries(new JarPort(a, b, map).port(JarPortTest.jar(Map.of("m5/Lists.class", lists())), "lists.jar", listed)).get("m5/Lists.class"));
+        Map<String, byte[]> classesA = new HashMap<>(oldGame);
+        classesA.put("m5/Lists", lists());
+        boolean reported = Json.array(listed.get(0).get("unlinked")).stream().anyMatch(u -> String.valueOf(u).contains("Tag.getList"));
+        for (int[] list : new int[][] { { 10, 2 }, { 8, 2 }, null }) {
+            String was = sizeRead(classesA, list), now = sizeRead(classesB, list);
+            String state = list == null ? "no list" : "a list of " + list[1] + " tags of type " + list[0];
+            JarPortTest.expect(was.equals(now) || now.startsWith("failed") && reported, "getList(\"l\", 10) on " + state + " gives " + was + " on the old game, " + now + " ported");
+        }
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
-        System.out.println("game-read: 9 checks passed");
+        System.out.println("game-read: 12 checks passed");
     }
 
-    /** m5/Run.go(): "[" + getText("x") + "]" + getNum("y") + " " + getTag("z") + " " + getSub("s") + " " + getList("l", 10) + " " + new Ver().pack(), on an empty Tag. */
+    /** m5.Lists.size(tag) on a Tag of game classes whose list is list (type, size), or none: the size, or how it failed. */
+    static String sizeRead(Map<String, byte[]> classes, int[] list) throws Exception {
+        ClassLoader loader = new ClassLoader(null) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                byte[] bytes = classes.get(name.replace('.', '/'));
+                if (bytes == null) {
+                    return Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                }
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        };
+        Class<?> tag = loader.loadClass(U.replace('/', '.') + "Tag"), lst = loader.loadClass(U.replace('/', '.') + "Lst");
+        Object t = tag.getConstructor().newInstance();
+        if (list != null) {
+            tag.getField("list").set(t, lst.getConstructor(int.class, int.class).newInstance(list[0], list[1]));
+        }
+        try {
+            return String.valueOf(loader.loadClass("m5.Lists").getMethod("size", tag).invoke(null, t));
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            return "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+    }
+
+    /** m5/Lists.size(t): t.getList("l", 10).size, a mod asking for a list of compound tags. */
+    static byte[] lists() {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "m5/Lists", null, "java/lang/Object", null);
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "size", "(" + TAG + ")I", null, null);
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ALOAD, 0);
+        m.visitLdcInsn("l");
+        m.visitIntInsn(Opcodes.BIPUSH, 10);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Tag", "getList", "(" + STR + "I)" + LST, false);
+        m.visitFieldInsn(Opcodes.GETFIELD, U + "Lst", "size", "I");
+        m.visitInsn(Opcodes.IRETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** m5/Run.go(): "[" + getText("x") + "]" + getNum("y") + " " + getTag("z") + " " + getSub("s") + " " + new Ver().pack(), on an empty Tag. */
     static byte[] run() {
         ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "m5/Run", null, "java/lang/Object", null);
@@ -115,13 +174,6 @@ final class GameReadTest {
         }
         m.visitLdcInsn(" ");
         append(m, STR);
-        m.visitVarInsn(Opcodes.ALOAD, 0);
-        m.visitLdcInsn("l");
-        m.visitIntInsn(Opcodes.BIPUSH, 10);
-        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Tag", "getList", "(" + STR + "I)" + LST, false);
-        append(m, "Ljava/lang/Object;");
-        m.visitLdcInsn(" ");
-        append(m, STR);
         m.visitTypeInsn(Opcodes.NEW, U + "Ver");
         m.visitInsn(Opcodes.DUP);
         m.visitMethodInsn(Opcodes.INVOKESPECIAL, U + "Ver", "<init>", "()V", false);
@@ -143,7 +195,24 @@ final class GameReadTest {
     static Map<String, byte[]> game(boolean two) {
         Map<String, byte[]> out = new LinkedHashMap<>();
         out.put(U + "Lst", cls("Lst", "java/lang/Object", w -> {
+            // Lst(type, size): a list of size tags of element type type; Lst() an empty one.
             ctor(w, "java/lang/Object");
+            for (String part : new String[] { "type", "size" }) {
+                w.visitField(Opcodes.ACC_PUBLIC, part, "I", null, null).visitEnd();
+            }
+            MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(II)V", null, null);
+            c.visitCode();
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            c.visitVarInsn(Opcodes.ILOAD, 1);
+            c.visitFieldInsn(Opcodes.PUTFIELD, U + "Lst", "type", "I");
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            c.visitVarInsn(Opcodes.ILOAD, 2);
+            c.visitFieldInsn(Opcodes.PUTFIELD, U + "Lst", "size", "I");
+            c.visitInsn(Opcodes.RETURN);
+            c.visitMaxs(0, 0);
+            c.visitEnd();
             str(w, "lst");
         }));
         out.put(U + "Pos", cls("Pos", "java/lang/Object", w -> ctor(w, "java/lang/Object")));
@@ -188,6 +257,7 @@ final class GameReadTest {
         out.put(U + "Tag", cls("Tag", "java/lang/Object", w -> {
             ctor(w, "java/lang/Object");
             str(w, "tag");
+            w.visitField(Opcodes.ACC_PUBLIC, "list", LST, null, null).visitEnd(); // the list under the one key, null if absent
             if (!two) {
                 body(w, "getText", "(" + STR + ")" + STR, m -> m.visitLdcInsn(""), Opcodes.ARETURN);
                 body(w, "getPair", "(" + STR + STR + ")" + STR, m -> m.visitVarInsn(Opcodes.ALOAD, 2), Opcodes.ARETURN);
@@ -196,18 +266,33 @@ final class GameReadTest {
                 for (String sub : new String[] { "getTag", "getSub" }) {
                     body(w, sub, "(" + STR + ")" + TAG, m -> make(m, "Tag"), Opcodes.ARETURN);
                 }
-                // getList(key, type): the type is only checked against the list's (here 9), never kept or passed on.
+                // getList(key, type), as 1.21.4's: the list, or an empty one where there is none or it is nonempty and its
+                // element type is not type. The type is only compared, never kept or passed on, but it chooses what is given.
                 MethodVisitor g = w.visitMethod(Opcodes.ACC_PUBLIC, "getList", "(" + STR + "I)" + LST, null, null);
                 g.visitCode();
-                Label same = new Label();
+                Label has = new Label(), same = new Label();
+                g.visitVarInsn(Opcodes.ALOAD, 0);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Tag", "list", LST);
+                g.visitJumpInsn(Opcodes.IFNONNULL, has);
+                make(g, "Lst");
+                g.visitInsn(Opcodes.ARETURN);
+                g.visitLabel(has);
+                g.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                g.visitVarInsn(Opcodes.ALOAD, 0);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Tag", "list", LST);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Lst", "size", "I");
+                g.visitJumpInsn(Opcodes.IFEQ, same);
+                g.visitVarInsn(Opcodes.ALOAD, 0);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Tag", "list", LST);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Lst", "type", "I");
                 g.visitVarInsn(Opcodes.ILOAD, 2);
-                g.visitIntInsn(Opcodes.BIPUSH, 9);
                 g.visitJumpInsn(Opcodes.IF_ICMPEQ, same);
                 make(g, "Lst");
                 g.visitInsn(Opcodes.ARETURN);
                 g.visitLabel(same);
                 g.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
-                make(g, "Lst");
+                g.visitVarInsn(Opcodes.ALOAD, 0);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Tag", "list", LST);
                 g.visitInsn(Opcodes.ARETURN);
                 g.visitMaxs(0, 0);
                 g.visitEnd();
@@ -226,7 +311,22 @@ final class GameReadTest {
                 for (String sub : new String[] { "getTagOrEmpty", "getSubOrEmpty" }) {
                     body(w, sub, "(" + STR + ")" + TAG, m -> make(m, "Tag"), Opcodes.ARETURN);
                 }
-                body(w, "getListOrEmpty", "(" + STR + ")" + LST, m -> make(m, "Lst"), Opcodes.ARETURN);
+                // getListOrEmpty(key), as 1.21.5's: the list whatever its element type, or an empty one.
+                MethodVisitor g = w.visitMethod(Opcodes.ACC_PUBLIC, "getListOrEmpty", "(" + STR + ")" + LST, null, null);
+                g.visitCode();
+                Label has = new Label();
+                g.visitVarInsn(Opcodes.ALOAD, 0);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Tag", "list", LST);
+                g.visitJumpInsn(Opcodes.IFNONNULL, has);
+                make(g, "Lst");
+                g.visitInsn(Opcodes.ARETURN);
+                g.visitLabel(has);
+                g.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                g.visitVarInsn(Opcodes.ALOAD, 0);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Tag", "list", LST);
+                g.visitInsn(Opcodes.ARETURN);
+                g.visitMaxs(0, 0);
+                g.visitEnd();
             }
         }));
         if (two) {

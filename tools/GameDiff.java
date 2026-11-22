@@ -5100,6 +5100,8 @@ public final class GameDiff {
                 return false;
             }
             boolean seen = false;
+            Node gives = null;
+            int exits = 0;
             for (Node st : body.statements) {
                 boolean test = st.op == 'S' && String.valueOf(st.value).startsWith("if:");
                 for (Node kid : st.kids) {
@@ -5109,8 +5111,35 @@ public final class GameDiff {
                         return false;
                     }
                 }
+                if (test) {
+                    continue;
+                }
+                // A test chooses nothing only where every way out gives the same and nothing else is done: 1.21.4's
+                // getList(key, type) gives the list or, where its element type is not type, an empty one, so dropping
+                // type would hand a mod a list of the wrong type.
+                Node v = st.kids.length == 0 ? null : st.kids[0];
+                if (st.op != 'S' || !"return".equals(st.value) || exits++ > 0 && !sameTree(gives, v)) {
+                    return false;
+                }
+                gives = v;
             }
             return seen;
+        }
+
+        /** The same value built the same way. */
+        static boolean sameTree(Node a, Node b) {
+            if (a == null || b == null) {
+                return a == b;
+            }
+            if (a.op != b.op || !Objects.equals(a.ref, b.ref) || !Objects.equals(a.value, b.value) || !Objects.equals(a.type, b.type) || a.kids.length != b.kids.length) {
+                return false;
+            }
+            for (int i = 0; i < a.kids.length; i++) {
+                if (!sameTree(a.kids[i], b.kids[i])) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         static boolean reads(Node n, int slot) {
