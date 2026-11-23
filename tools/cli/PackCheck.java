@@ -1906,6 +1906,15 @@ final class PackCheck {
         }
     }
 
+    /**
+     * A name beside target for a file or folder only this run writes, moved onto target once whole. pack-checks run side
+     * by side (a port check's server and client starts, several worktrees on one machine) and share ~/.mmt/packs; two
+     * writing one fixed .tmp name or one folder broke each other's files.
+     */
+    static Path own(Path target) {
+        return target.resolveSibling(target.getFileName() + "." + ProcessHandle.current().pid() + "-" + java.util.UUID.randomUUID().toString().substring(0, 8) + ".part");
+    }
+
     static void deleteTree(Path path) throws IOException {
         if (!Files.exists(path)) return;
         try (var walk = Files.walk(path)) {

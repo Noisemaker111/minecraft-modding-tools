@@ -166,16 +166,37 @@ final class PackLoaders {
             return context.cache().resolve("loaders").resolve(id + "-" + minecraft + "-" + version);
         }
 
+        /** What an install writes into the folder it is given. */
+        interface Work {
+            void into(Path folder) throws Exception;
+        }
+
         /**
-         * Whether the install in dir finished (its marker is written). An install that stopped part way leaves files the
-         * installer trusts on the next run, such as a cut-off server jar it never checks again, so an unfinished folder
-         * is emptied for a fresh install.
+         * The install in dir, made by work in a folder of this run's own and moved to dir, with its marker, once whole.
+         * Two pack-checks at once (a port check's server and client starts, two worktrees) each emptied dir and ran the
+         * installer into it, and each deleted or rewrote files the other was checking: both failed (neoforge 1.20.3 and
+         * fabric 1.18, 2026-11-23). An install that stops part way leaves only its own folder, never a dir the next run
+         * trusts. The first to finish keeps dir; another finishing later drops its copy.
          */
-        static boolean finished(Path dir) throws IOException {
-            if (Files.isRegularFile(dir.resolve("mmt-installed"))) return true;
-            if (Files.exists(dir)) PackCheck.deleteTree(dir);
-            Files.createDirectories(dir);
-            return false;
+        static Path installOnce(Path dir, Work work) throws Exception {
+            Path done = dir.resolve("mmt-installed");
+            if (Files.isRegularFile(done)) return dir;
+            Path own = PackCheck.own(dir);
+            Files.createDirectories(own);
+            try {
+                work.into(own);
+                Files.writeString(own.resolve("mmt-installed"), dir.getFileName() + "\n");
+                // A folder with no marker is an install an older mmt stopped part way, in place.
+                if (Files.exists(dir) && !Files.isRegularFile(done)) PackCheck.deleteTree(dir);
+                try {
+                    Files.move(own, dir, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException taken) {
+                    if (!Files.isRegularFile(done)) throw taken;
+                }
+            } finally {
+                PackCheck.deleteTree(own);
+            }
+            return dir;
         }
 
         void runInstaller(Context context, Path installer, List<String> arguments, Path dir, String version)
@@ -240,15 +261,13 @@ final class PackLoaders {
         }
 
         public Path install(Context context, String minecraft, String version) throws Exception {
-            Path dir = installed(context, minecraft, version), done = dir.resolve("mmt-installed");
-            if (finished(dir)) return dir;
-            Path installer = dir.resolve("installer.jar");
-            PackCheck.download(fill(setting(minecraft, "installer"), minecraft, version, null), installer, null);
-            List<String> arguments = new ArrayList<>();
-            for (Object a : Json.array(spec.get("install"))) arguments.add(fill(String.valueOf(a), minecraft, version, dir));
-            runInstaller(context, installer, arguments, dir, version);
-            Files.writeString(done, minecraft + "-" + version + "\n");
-            return dir;
+            return installOnce(installed(context, minecraft, version), dir -> {
+                Path installer = dir.resolve("installer.jar");
+                PackCheck.download(fill(setting(minecraft, "installer"), minecraft, version, null), installer, null);
+                List<String> arguments = new ArrayList<>();
+                for (Object a : Json.array(spec.get("install"))) arguments.add(fill(String.valueOf(a), minecraft, version, dir));
+                runInstaller(context, installer, arguments, dir, version);
+            });
         }
 
         /** The installer's own argument file, with its library paths made absolute so the server runs in the instance. */
@@ -308,8 +327,10 @@ final class PackLoaders {
         }
 
         public Path install(Context context, String minecraft, String version) throws Exception {
-            Path dir = installed(context, minecraft, version), done = dir.resolve("mmt-installed");
-            if (finished(dir)) return dir;
+            return installOnce(installed(context, minecraft, version), dir -> install(context, minecraft, version, dir));
+        }
+
+        void install(Context context, String minecraft, String version, Path dir) throws Exception {
             String installerUrl = "";
             String installerSha1 = null;
             String newest = "";
@@ -332,8 +353,6 @@ final class PackLoaders {
             if (!Files.isRegularFile(dir.resolve(Json.text(spec, "launchJar", "")))) throw new IOException(
                 id + "'s installer wrote no " + Json.text(spec, "launchJar", "") + " in " + dir
             );
-            Files.writeString(done, minecraft + "-" + version + "\n");
-            return dir;
         }
 
         /** The launch jar, told where the vanilla server is through its properties file in the instance. */
@@ -354,7 +373,7 @@ final class PackLoaders {
                 try (var zip = new ZipFile(jar.toFile())) {
                     ZipEntry entry = zip.getEntry("mappings/mappings.tiny");
                     if (entry == null) throw new IOException(jar + " has no mappings/mappings.tiny");
-                    Path temporary = dir.resolve("intermediary.tiny.tmp");
+                    Path temporary = PackCheck.own(tiny);
                     try (var in = zip.getInputStream(entry)) {
                         Files.copy(in, temporary, StandardCopyOption.REPLACE_EXISTING);
                     }
@@ -549,7 +568,7 @@ final class PackLoaders {
             if (!Files.isRegularFile(mappings)) PackCheck.download(Json.text(names, "url", ""), mappings, Json.text(names, "sha1", ""));
             Path mojang = dir.resolve("server-mojang.jar");
             if (!Files.isRegularFile(mojang)) {
-                Path temporary = dir.resolve("server-mojang.jar.tmp");
+                Path temporary = PackCheck.own(mojang);
                 rename(context, "mojang-names", official, temporary, mappings, true, List.of());
                 Files.move(temporary, mojang, StandardCopyOption.REPLACE_EXISTING);
             }
@@ -564,23 +583,32 @@ final class PackLoaders {
                     Files.copy(bundle, official, StandardCopyOption.REPLACE_EXISTING);
                     return;
                 }
-                PackCheck.deleteTree(libraries);
+                // Unpacked into a folder of this run's own, and kept only when no run beside it put one there first.
+                Path unpacked = PackCheck.own(libraries);
                 var entries = zip.entries();
                 while (entries.hasMoreElements()) {
                     ZipEntry entry = entries.nextElement();
                     String name = entry.getName();
                     if (entry.isDirectory() || !name.endsWith(".jar")) continue;
                     if (name.startsWith("META-INF/libraries/")) {
-                        Path out = libraries.resolve(name.substring("META-INF/libraries/".length())).normalize();
-                        if (!out.startsWith(libraries)) throw new IOException("Unsafe path in " + bundle + ": " + name);
+                        Path out = unpacked.resolve(name.substring("META-INF/libraries/".length())).normalize();
+                        if (!out.startsWith(unpacked)) throw new IOException("Unsafe path in " + bundle + ": " + name);
                         Files.createDirectories(out.getParent());
                         try (var in = zip.getInputStream(entry)) {
                             Files.copy(in, out, StandardCopyOption.REPLACE_EXISTING);
                         }
                     }
                 }
+                Files.createDirectories(unpacked);
+                try {
+                    Files.move(unpacked, libraries, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException there) {
+                    if (!Files.isDirectory(libraries)) throw there;
+                } finally {
+                    PackCheck.deleteTree(unpacked);
+                }
                 String game = new String(zip.getInputStream(list).readAllBytes(), StandardCharsets.UTF_8).strip().split("\t")[2];
-                Path temporary = official.resolveSibling(official.getFileName() + ".tmp");
+                Path temporary = PackCheck.own(official);
                 try (var in = zip.getInputStream(zip.getEntry("META-INF/versions/" + game))) {
                     Files.copy(in, temporary, StandardCopyOption.REPLACE_EXISTING);
                 }
@@ -741,7 +769,7 @@ final class PackLoaders {
         Files.copy(context.harness().resolve("tools/packcheck/pack.mcmeta"), classes.resolve("pack.mcmeta"));
         Path named = dir.resolve("probe-mojang.jar");
         jar(classes, named);
-        Path temporary = dir.resolve("probe.jar.tmp");
+        Path temporary = PackCheck.own(jar);
         if (names.kind().equals("mojang") || game.mappings == null) Files.copy(named, temporary, StandardCopyOption.REPLACE_EXISTING);
         else {
             Path official = dir.resolve("probe-official.jar");
