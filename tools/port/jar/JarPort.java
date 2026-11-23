@@ -22,7 +22,10 @@ import org.objectweb.asm.commons.SimpleRemapper;
  * reported, never guessed. Class renames are applied everywhere. The mod's metadata is moved to the new release, nested
  * mods (jar-in-jar) are ported the same way, and signatures that no longer match are removed.
  *
- *   java JarPort --from 1.21.1 --to 1.21.2 --map route.json [--loader neoforge] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...
+ *   java JarPort --from 1.21.1 --to 1.21.2 --map route.json [--loader neoforge] [--fixes knowledge/fixes.json] [--data-from V] --out OUT.jar|DIR [--report R.json] IN.jar ...
+ *
+ * --data-from judges the jars' data ids against release V instead of --from: a jar built from source for --to, checked
+ * as a port from --to to itself, whose data was written for V (bench/source_ports.py).
  *
  * --fixes applies the port rules' "inClass" replacements (FixExpr) to members nothing in the game's own code replaces.
  *
@@ -348,7 +351,7 @@ public final class JarPort {
     static final long PORT_WORKER = 400L << 20;
 
     public static void main(String[] args) throws Exception {
-        String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null, plan = null;
+        String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null, plan = null, dataFrom = null;
         boolean runtime = false, hopsOnly = false;
         Path originalsDir = null;
         List<String> via = new ArrayList<>(), maps = new ArrayList<>();
@@ -369,6 +372,7 @@ public final class JarPort {
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
                 case "--originals" -> originalsDir = Path.of(args[++i]);
                 case "--plan" -> plan = args[++i];
+                case "--data-from" -> dataFrom = args[++i];
                 default -> jars.add(Path.of(args[i]));
             }
         }
@@ -401,11 +405,11 @@ public final class JarPort {
             targets.add(new Target(stops, maps, Path.of(out), report));
         }
         if (from == null || targets.isEmpty() || jars.isEmpty() || targets.stream().anyMatch(t -> t.maps().size() != t.stops().size() - 1)) {
-            System.err.println("usage: JarPort --from V [--via V,...] --to V --map route.json (one per step) [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...");
+            System.err.println("usage: JarPort --from V [--via V,...] --to V --map route.json (one per step) [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] [--data-from V] --out OUT.jar|DIR [--report R.json] IN.jar ...");
             System.err.println("       JarPort --from V --plan PLAN.json ... IN.jar ...   (PLAN: {\"ports\": [{\"to\", \"via\", \"maps\", \"out\", \"report\"}, ...]}, ports that share their steps before the last)");
             System.exit(2);
         }
-        portAll(targets, jars, loader, runtime, book, originalsDir);
+        portAll(targets, jars, loader, runtime, book, originalsDir, dataFrom);
     }
 
     /** One port of a plan: the releases it stops at (the first the release ported from), each step's route map, and where its jars and report go. */
@@ -425,7 +429,7 @@ public final class JarPort {
      * carries differ by target (bundleChoices: a bundle of one module per release) is ported to each target on its own,
      * as its very first step already depends on the release the port ends at.
      */
-    static void portAll(List<Target> targets, List<Path> jars, String loader, boolean runtime, String book, Path originalsDir) throws Exception {
+    static void portAll(List<Target> targets, List<Path> jars, String loader, boolean runtime, String book, Path originalsDir, String dataFrom) throws Exception {
         List<Path> apart = new ArrayList<>(), shared = new ArrayList<>();
         for (Path jar : jars) {
             (targets.size() > 1 && !sameChoices(jar, targets, loader) ? apart : shared).add(jar);
@@ -433,7 +437,7 @@ public final class JarPort {
         Map<Target, Trunk> own = new HashMap<>();
         if (!apart.isEmpty()) {
             for (Target t : targets) {
-                portTrunk(List.of(t), apart, loader, runtime, book, originalsDir, own::put);
+                portTrunk(List.of(t), apart, loader, runtime, book, originalsDir, dataFrom, own::put);
             }
         }
         java.util.function.BiConsumer<Target, Trunk> written = (t, state) -> {
@@ -449,7 +453,7 @@ public final class JarPort {
         if (shared.isEmpty()) {
             targets.forEach(t -> written.accept(t, new Trunk()));
         } else {
-            portTrunk(targets, shared, loader, runtime, book, originalsDir, written);
+            portTrunk(targets, shared, loader, runtime, book, originalsDir, dataFrom, written);
         }
     }
 
@@ -492,7 +496,7 @@ public final class JarPort {
     }
 
     /** Ports jars along the plan's trunk and hands each target's result to branched as its last step ends. */
-    static void portTrunk(List<Target> targets, List<Path> jars, String loader, boolean runtime, String book, Path originalsDir,
+    static void portTrunk(List<Target> targets, List<Path> jars, String loader, boolean runtime, String book, Path originalsDir, String dataFrom,
                           java.util.function.BiConsumer<Target, Trunk> branched) throws Exception {
         Target longest = targets.stream().max(Comparator.comparingInt((Target t) -> t.stops().size())).orElseThrow();
         List<String> trunk = longest.stops().subList(0, longest.stops().size() - 1);
@@ -535,13 +539,13 @@ public final class JarPort {
             for (Target t : branches.getOrDefault(p, List.of())) {
                 Trunk mine = state.copy();
                 GameDiff.Snap now = reader.next();
-                step(was, now, t.maps().get(p), trunk.get(0), trunk.get(p), t.to(), t.to(), true, p == 0, mine, order, workers, loader, runtime, book, originalsDir);
+                step(was, now, t.maps().get(p), trunk.get(0), dataFrom, trunk.get(p), t.to(), t.to(), true, p == 0, mine, order, workers, loader, runtime, book, originalsDir);
                 branched.accept(t, mine);
                 done(t.to(), reader);
             }
             if (p + 1 < trunk.size()) {
                 GameDiff.Snap now = reader.next();
-                step(was, now, trunkMaps.get(p), trunk.get(0), trunk.get(p), trunk.get(p + 1), longest.to(), false, p == 0, state, order, workers, loader, runtime, book, originalsDir);
+                step(was, now, trunkMaps.get(p), trunk.get(0), dataFrom, trunk.get(p), trunk.get(p + 1), longest.to(), false, p == 0, state, order, workers, loader, runtime, book, originalsDir);
                 done(trunk.get(p), reader);
                 was = now;
             }
@@ -660,7 +664,7 @@ public final class JarPort {
     }
 
     /** Every jar of state through one step from was to now; last: the step into the release a target asked for. */
-    static void step(GameDiff.Snap was, GameDiff.Snap now, String map, String origin, String from, String to, String portTo, boolean last, boolean first, Trunk state,
+    static void step(GameDiff.Snap was, GameDiff.Snap now, String map, String origin, String dataOrigin, String from, String to, String portTo, boolean last, boolean first, Trunk state,
                      List<Path> order, int workers, String loader, boolean runtime, String book, Path originalsDir) throws Exception {
         // What making the porters adds to the new release (the step's stand-ins, libraries carried from the old one) is
         // taken out again after the step, so the next step reads the release as it was read.
@@ -676,6 +680,7 @@ public final class JarPort {
             port.between = !last;
             port.loaderNames.originalsDir = originalsDir;
             port.origin = origin;
+            port.dataOrigin = dataOrigin;
             port.portTo = portTo;
             port.decided = state.decided;
             if ("fabric".equals(loader)) {
@@ -1119,7 +1124,8 @@ public final class JarPort {
             return false; // a porter made in code (tests) has no releases to read reports of unless it is given a step
         }
         if (dataStep == null) {
-            dataStep = DataIds.Step.of(origin == null ? a.version : origin, a.version, b.version, !between);
+            String written = dataOrigin != null ? dataOrigin : origin != null ? origin : a.version;
+            dataStep = DataIds.Step.of(written, a.version, b.version, !between);
         }
         if (dataStep.idle()) {
             return false;
@@ -1724,6 +1730,7 @@ public final class JarPort {
     GameCode newCode, oldCode; // read when an injection point is first checked; tests set them
 
     String origin; // the release the whole port started from: the data pass judges the mod's data ids against it, and with portTo it decides the nested jars carried
+    String dataOrigin; // the release the mod's data was written for when not origin (--data-from)
     DataIds.Step dataStep; // the data pass of this step: made on first use; tests set it
     boolean codeTried;
 

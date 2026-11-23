@@ -6,13 +6,17 @@
     python tools/cloud-run.py convert [-f mods=theoneprobe-fabric] [-f label=round-4]
     python tools/cloud-run.py exposure [-f only=fabric:1.21.1,neoforge:1.21.1]
     python tools/cloud-run.py load -f updates=neoforge:1.21.1:1.21.2,fabric:1.21.1 [-f mods=chunky,clumps]
+    python tools/cloud-run.py source [-f cases=jei,create] [-f cases=prove:neoforge:jei:1.21.4]
     python tools/cloud-run.py --run RUN_ID        wait for and download a run already started
     tools/cloud-run ... (POSIX) and tools\\cloud-run.cmd ... (Windows) are the same
 
 packs is .github/workflows/cloud-packs.yml (pack-check, one job per pack), ports is cloud-ports.yml (the port board,
 one job per case), convert is
 cloud-convert.yml (the convert sweep, one job per mod, in the game and back), exposure is cloud-exposure.yml (the jar
-scoreboard, one job per update and loader, joined into one table; main's is kept on the generated branch); any other
+scoreboard, one job per update and loader, joined into one table; main's is kept on the generated branch), source is
+cloud-ports.yml with corpus=source (the same mods ported from their source to every release, bench/source_ports.py;
+cases=prove:LOADER:SLUG:TO runs one source port's game proof instead; a whole run on main, --ref main, is kept on the
+generated branch); any other
 name is taken as a workflow file. The workflow runs the commit the branch (--ref, default the current one) has on
 GitHub, so push first: a branch whose local commit is not on origin is refused (--allow-unpushed runs origin's).
 
@@ -44,7 +48,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {"packs": "cloud-packs.yml", "ports": "cloud-ports.yml", "convert": "cloud-convert.yml", "exposure": "cloud-exposure.yml",
-             "load": "cloud-load.yml"}
+             "load": "cloud-load.yml", "source": "cloud-ports.yml"}
+# Names that are a workflow run with fixed inputs: the source scoreboard is cloud-ports.yml's third corpus.
+PRESET = {"source": ["corpus=source"]}
 
 
 def gh_path():
@@ -220,7 +226,7 @@ def main(argv=None):
         ref = args.ref or git("rev-parse", "--abbrev-ref", "HEAD")
         commit = ref_on_origin(ref, args.allow_unpushed)
         request = "req-" + uuid.uuid4().hex[:12]
-        fields = [x for f in args.field for x in ("-f", f)]
+        fields = [x for f in PRESET.get(args.workflow, []) + args.field for x in ("-f", f)]
         gh("workflow", "run", workflow, "--ref", ref, *fields, "-f", f"request={request}")
         run = find_run(workflow, request, time.strftime("%H:%M:%S"))
         run_id = run["databaseId"]
@@ -233,7 +239,7 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     gh("run", "download", str(run_id), "--dir", str(out), check=False)
     (out / "run.json").write_text(json.dumps(view, indent=1), encoding="utf-8")
-    summary = next(iter(sorted(out.glob("summary/summary.md"))), None)
+    summary = next(iter(sorted(out.glob("*summary/summary.md"))), None)
     if summary:
         print(summary.read_text(encoding="utf-8"))
     table = out / "summary" / "all.json"

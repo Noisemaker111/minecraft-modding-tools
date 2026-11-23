@@ -51,7 +51,8 @@ def route_maps(updates, loader, classes):
         parts = {t: cachekeys.part_of(t) for t in missing}
         args = [java(), f"-Xmx{settings.HEAP}g", "-cp", str(classes), "GameDiff"] + (["--loader", loader] if loader else [])
         for t, (frm, to) in missing.items():
-            args += ["--chain", ",".join(gamereleases.chain(frm, to)), "--out", str(parts[t])]
+            # A map from a release to itself links a jar built for that release (bench/source_ports.py), with nothing renamed.
+            args += ["--chain", ",".join(gamereleases.chain(frm, to) if frm != to else [frm, to]), "--out", str(parts[t])]
         subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
         for t, part in parts.items():
             cachekeys.publish(part, t)
@@ -163,7 +164,7 @@ def routes(loader, frm, to):
     return route_maps(list(zip(steps, steps[1:])), loader, compile_tools())
 
 
-def port_key(loader, frm, to, runtime=False):
+def port_key(loader, frm, to, runtime=False, data_from=None):
     """Everything one port reads beside the mod's own jar: the porter's classes, each step's route map and stand-ins, the
     port rules, the loaders' release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
     # The hand-back of an obfuscated release reads the jars as they came too: the release's pinned files.
@@ -171,10 +172,11 @@ def port_key(loader, frm, to, runtime=False):
     steps = stops(loader, frm, to)
     maps = routes(loader, frm, to)
     # The registry reports the data pass reads (DataIds), or that a release has none.
-    reports = [(settings.HOME / "registries" / f"{v}.json").read_bytes() if (settings.HOME / "registries" / f"{v}.json").is_file() else b"none" for v in steps]
+    reports = [(settings.HOME / "registries" / f"{v}.json").read_bytes() if (settings.HOME / "registries" / f"{v}.json").is_file() else b"none"
+               for v in steps + ([data_from] if data_from else [])]
     return cachekeys.content_key(tools_classes_key(), *(r.read_bytes() for r in maps), (settings.ROOT / "knowledge" / "fixes.json").read_bytes(),
                        *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), standins_key(loader, "jdk", None), *(cachekeys.platform_key(loader, r) for r in maps),
-                       *reports, javalevels.java_check_key(), java_version(), loader, frm, to, runtime, pinned)
+                       *reports, javalevels.java_check_key(), java_version(), loader, frm, to, runtime, pinned, *([data_from] if data_from else []))
 
 
 def registry_reports(versions):
@@ -198,26 +200,27 @@ def standins_key(loader, frm, to):
     return cachekeys.content_key(*parts)
 
 
-def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False):
+def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False, data_from=None):
     """Ports jars with tools/port/jar/JarPort.java into out_dir and returns its report: jar_ports with one target."""
-    return jar_ports(loader, frm, [(to, out_dir, report)], jars, runtime, cache)[to]
+    return jar_ports(loader, frm, [(to, out_dir, report)], jars, runtime, cache, data_from)[to]
 
 
-def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
+def jar_ports(loader, frm, targets, jars, runtime=False, cache=False, data_from=None):
     """Ports jars from frm to each (to, out_dir, report) of targets with tools/port/jar/JarPort.java, in one process that ports the
     steps the targets share once (JarPort.portAll), and returns each target's report. runtime: in the names the loader
     runs (a Fabric jar handed back in the target release's intermediary), for a game to start them. cache: only the
     reports are wanted, so a mod whose port to a target (port_key and its jar's content) was made before, by any run on
     this machine, is read from ~/.mmt/exposure/ports/; a mod with no kept port to some target is ported to all of them,
-    and where a kept port is there too the two must be the same, as --verify checks for every mod."""
+    and where a kept port is there too the two must be the same, as --verify checks for every mod. data_from: the release
+    the jars' data was written for, when not frm (a jar built from source for to, checked from to to itself)."""
     plan, keys, rows, todo, checked = [], {}, {}, set(), 0
     for to, out_dir, report in targets:
         steps = stops(loader, frm, to)
-        registry_reports(steps)
+        registry_reports(steps + ([data_from] if data_from else []))
         out_dir.mkdir(parents=True, exist_ok=True)
         plan.append({"to": to, "via": steps[1:-1], "maps": [str(m) for m in routes(loader, frm, to)], "out": str(out_dir), "report": str(report)})
         rows[to] = {}
-        folder = cachekeys.keyed_at("ports", port_key(loader, frm, to, runtime)) if cache else None
+        folder = cachekeys.keyed_at("ports", port_key(loader, frm, to, runtime, data_from)) if cache else None
         for jar in jars:
             if cache:
                 keys[to, jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
@@ -230,7 +233,7 @@ def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
         written = Path(targets[0][2]).with_name(f"plan-{os.getpid()}-{uuid.uuid4().hex[:12]}.json")
         written.write_text(json.dumps({"ports": plan}), encoding="utf-8")
         args = [java(), f"-Xmx{settings.HEAP}g", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(settings.ROOT / "knowledge" / "fixes.json"),
-                "--loader", loader] + (["--runtime-names"] if runtime else [])
+                "--loader", loader] + (["--runtime-names"] if runtime else []) + (["--data-from", data_from] if data_from else [])
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
             args += ["--originals", str(settings.HOME / "jars" / f"{loader}-{frm}")]
