@@ -49,6 +49,7 @@ check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1
 check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
 check("names no update: fabric:1.20.1:99.9" in plan("fabric:1.20.1:99.9"), f"--only naming no update stops: {plan('fabric:1.20.1:99.9')}")
 
+REPO, EXPOSURE_HOME = E.ROOT, E.HOME
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
@@ -102,6 +103,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(len(seen) == 8 and all(s.endswith('"}') for s in seen), "no reader sees half a file")
     check(len(set(seen)) == 1, "one writer's file is kept and the others are dropped")
     check(not list(third.glob("*.part")), "no part file is left behind")
+E.ROOT, E.HOME = REPO, EXPOSURE_HOME
 
 
 
@@ -975,5 +977,45 @@ skipped = E.not_loaded({"findings": [
     {"kind": "loader-mismatch", "severity": "warning", "summary": "a.jar is written for another loader (META-INF/neoforge.mods.toml)", "jars": ["a.jar"]},
     {"kind": "java", "severity": "warning", "suspects": [{"jar": "b.jar", "why": ["Java 21"]}]}]})
 check(list(skipped) == ["a.jar"] and "another loader" in skipped["a.jar"], f"a jar the loader skips is named, a Java warning is not: {skipped}")
+
+# The Fabric API lookup (Exposure --fabric-api, ~120 downloads on a cold machine) names the release and the download or
+# file that failed: cloud port jobs died with only "returned non-zero exit status 1", and nothing said what to fix.
+# Run on a planted ~/.mmt/mappings (Java's user.home): Fabric's release list names a build for two made-up releases;
+# 26.9's jar is whole, 26.8's is cut short, as a download cut off and kept would be.
+with tempfile.TemporaryDirectory() as tmp:
+    home = Path(tmp)
+    cache = home / ".mmt" / "mappings"
+    cache.mkdir(parents=True)
+    (cache / "fabric-api-maven-metadata.xml").write_text(
+        "<metadata><versioning><versions><version>0.1.0+26.9</version><version>0.2.0+26.8</version></versions></versioning></metadata>",
+        encoding="utf-8")
+
+    def api_jar(release):
+        module = jar({"fabric.mod.json": json.dumps({"id": "fabric-api-base"})})
+        return jar({"fabric.mod.json": json.dumps({"id": "fabric-api", "depends": {"minecraft": release}}), "META-INF/jars/base.jar": module})
+
+    (cache / "fabric-api-0.1.0+26.9.jar").write_bytes(api_jar("26.9"))
+    whole = api_jar("26.8")
+    (cache / "fabric-api-0.2.0+26.8.jar").write_bytes(whole[:len(whole) // 2])
+    tools = E.jar_tools()  # compiled before user.home moves, into this machine's shared classes
+    options = os.environ.get("JAVA_TOOL_OPTIONS")
+    os.environ["JAVA_TOOL_OPTIONS"] = f"-Duser.home={home}"
+    try:
+        E.FABRIC_APIS.clear()
+        found = E.fabric_apis(["26.9"])
+        try:
+            E.fabric_apis(["26.8"])
+            said = "no error"
+        except BaseException as error:  # noqa: BLE001 - what the job printed, whatever it raised
+            said = str(error)
+    finally:
+        if options is None:
+            os.environ.pop("JAVA_TOOL_OPTIONS")
+        else:
+            os.environ["JAVA_TOOL_OPTIONS"] = options
+        E.FABRIC_APIS.clear()
+    check(tools and found["26.9"] == cache / "fabric-api-0.1.0+26.9.jar", f"the lookup reads the planted release list and jar: {found}")
+    check("26.8" in said and "fabric-api-0.2.0+26.8.jar" in said and "not a whole jar" in said and "returned non-zero exit status" not in said,
+          f"a failed Fabric API lookup names the release and the file that failed: {said}")
 
 print(f"exposure: {checks} checks passed")

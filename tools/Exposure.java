@@ -38,7 +38,14 @@ public final class Exposure {
         if (fabricApis != null) {
             // The Fabric API jar of each release, one "VERSION<tab>PATH" line each (no path: none), for the bench's packs.
             for (String v : fabricApis.split(",")) {
-                Path api = fabricApi(v);
+                Path api;
+                try {
+                    api = fabricApi(v);
+                } catch (Exception failed) {
+                    System.err.println("no Fabric API answer for Minecraft " + v + ": " + failed);
+                    System.exit(1);
+                    return;
+                }
                 System.out.println(v + "\t" + (api == null ? "" : api.toAbsolutePath()));
             }
             return;
@@ -499,8 +506,15 @@ public final class Exposure {
     /** Whether a Fabric API build's own fabric.mod.json accepts the release ("minecraft" in depends; a list is any of). */
     static boolean runsOn(String build, String version) throws Exception {
         String fmj;
-        try (ZipFile zip = new ZipFile(mavenJar(build).toFile())) {
-            fmj = new String(zip.getInputStream(zip.getEntry("fabric.mod.json")).readAllBytes(), StandardCharsets.UTF_8);
+        Path jar = mavenJar(build);
+        try (ZipFile zip = new ZipFile(jar.toFile())) {
+            ZipEntry entry = zip.getEntry("fabric.mod.json");
+            if (entry == null) {
+                throw new java.io.IOException(jar + " has no fabric.mod.json");
+            }
+            fmj = new String(zip.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8);
+        } catch (java.util.zip.ZipException broken) {
+            throw new java.io.IOException(jar + " is not a whole jar (" + broken.getMessage() + ")", broken);
         }
         Object wanted = Json.object(Json.object(Json.parse(fmj)).get("depends")).get("minecraft");
         if (wanted == null) {

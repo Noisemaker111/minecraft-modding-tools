@@ -1555,9 +1555,13 @@ def fabric_apis(versions):
     """fabric_api of each release, read with one Java process."""
     missing = [v for v in dict.fromkeys(versions) if v not in FABRIC_APIS]
     if missing:
-        out = subprocess.run([java(), "-Xmx1g", "-cp", jar_tools(), "Exposure", "--fabric-api", ",".join(missing)],
-                             capture_output=True, text=True, check=True).stdout
-        for line in out.splitlines():
+        done = subprocess.run([java(), "-Xmx1g", "-cp", jar_tools(), "Exposure", "--fabric-api", ",".join(missing)],
+                              capture_output=True, text=True)
+        if done.returncode:
+            # Exposure's own error names the release and the download or file; without it a cloud job said only "exit 1".
+            said = "\n".join(done.stderr.strip().splitlines()[-20:]) or "it printed nothing"
+            raise SystemExit(f"the Fabric API lookup for {', '.join(missing)} failed (exit {done.returncode}):\n{said}")
+        for line in done.stdout.splitlines():
             v, _, path = line.partition("\t")
             FABRIC_APIS[v] = Path(path) if path else None
     return {v: FABRIC_APIS[v] for v in versions}
