@@ -548,9 +548,34 @@ public final class ModNames {
                         queue.add(k.sup);
                     }
                     queue.addAll(k.ifaces);
+                } else if (GameDiff.anonymous(c)) {
+                    queue.addAll(anonymousSupers(c));
                 }
             }
             return null;
+        }
+
+        /**
+         * What a game's anonymous class (SimpleReloadInstance$1) extends and implements, which the snapshot leaves out: read
+         * from the release's own class file, so a mixin into one finds the intermediary name of a method it inherits
+         * (PreparationBarrier.wait). Empty when the release's jar cannot be read.
+         */
+        List<String> anonymousSupers(String owner) {
+            try {
+                JarPort.GameCode code = JarPort.GameCode.of(game.version);
+                GameDiff.RawCls raw = code.raw(code.toJar.getOrDefault(owner, owner));
+                if (raw == null) {
+                    return List.of();
+                }
+                List<String> out = new ArrayList<>();
+                if (raw.sup != null) {
+                    out.add(code.names.cls(raw.sup));
+                }
+                raw.ifaces.forEach(i -> out.add(code.names.cls(i)));
+                return out;
+            } catch (Exception unreadable) {
+                return List.of();
+            }
         }
 
         /** One mod class as the hand-back needs it. */

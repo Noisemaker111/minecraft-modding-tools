@@ -70,6 +70,8 @@ public final class JarPort {
         final Map<String, Injector> injectors = new HashMap<>(); // mixin class.handler+desc -> its @Inject, @Redirect...
         final Map<String, String> retargets = new HashMap<>(); // class.handler+desc + " " + annotation string -> what is written instead
         final Map<String, Adapter> adapters = new HashMap<>(); // class.handler+desc -> the handler re-declared for its target's new parameters
+        final Set<String> staticized = new HashSet<>(); // class.handler+desc of handlers made static, as their targets now are
+        final Map<String, Integer> argIndexes = new HashMap<>(); // class.handler+desc of a @ModifyArg -> the index its argument has in the call's new signature
         final Map<String, List<Bridge>> bridges = new HashMap<>(); // class -> methods added with a game method's new signature
         final Set<String> grants = new TreeSet<>(); // lines the port adds to the mod's access transformer (new names)
         boolean canWiden; // the loader reads this jar's access transformer
@@ -1410,7 +1412,7 @@ public final class JarPort {
                             };
                         }
                         if (INJECTORS.contains(annotation)) {
-                            Injector inj = new Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1 }, new boolean[1]);
+                            Injector inj = new Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1, -1 }, new boolean[1]);
                             mod.injectors.put(rc.name + "." + name + desc, inj);
                             return injection(inj, null);
                         }
@@ -1457,7 +1459,7 @@ public final class JarPort {
      * A handler's injector (its annotation): the target method strings, each @At's {value, target, ordinal} (in @Slice
      * too), and its require (-1: the mixin config's defaultRequire).
      */
-    /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none; an @At's is in ats. */
+    /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none, then its index (a @ModifyArg's argument); an @At's is in ats. */
     record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable) {}
 
     /**
@@ -1493,6 +1495,8 @@ public final class JarPort {
                     inj.cancellable()[0] = true;
                 } else if (at == null && "ordinal".equals(n) && v instanceof Integer i && i >= 0) {
                     inj.ordinal()[0] = i;
+                } else if (at == null && "index".equals(n) && v instanceof Integer i && i >= 0) {
+                    inj.ordinal()[1] = i;
                 } else if (at != null && v instanceof String s && ("value".equals(n) || "target".equals(n))) {
                     at["value".equals(n) ? 0 : 1] = s;
                 } else if (at != null && "ordinal".equals(n) && v instanceof Integer i && i >= 0) {
@@ -3940,6 +3944,10 @@ public final class JarPort {
                     signature = null;
                 }
                 boolean moved = mod.split.getOrDefault(self[0], List.of()).stream().anyMatch(l -> l.name().equals(name) && l.desc().equals(desc));
+                boolean staticized = mod.staticized.contains(key) && mod.retargets.keySet().stream().anyMatch(r -> r.startsWith(key + " "));
+                if (staticized) {
+                    access |= Opcodes.ACC_STATIC;
+                }
                 MethodVisitor mv = super.visitMethod(moved ? access & ~Opcodes.ACC_PRIVATE : access, newName, newDesc, signature, exceptions);
                 if (moved && mv != null) {
                     mv = new MethodVisitor(Opcodes.ASM9, mv) {
@@ -3950,9 +3958,14 @@ public final class JarPort {
                     };
                 }
                 int locals = mod.maxLocals.getOrDefault(key, 0);
+                if (staticized && adapter == null && mv != null) {
+                    mv = new Staticize(mv);
+                    mod.change("mixin handler made static, as its target now is");
+                }
                 if (adapter != null && mv != null) {
                     int body = access & ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED) | Opcodes.ACC_PRIVATE;
-                    mv = new Split(mv, super.visitMethod(body, name + "$mmt", desc, originalSignature, exceptions), self[0], name, desc, access, adapter, mod.selfInterface);
+                    MethodVisitor code = super.visitMethod(body, name + "$mmt", desc, originalSignature, exceptions);
+                    mv = new Split(mv, staticized ? new Staticize(code) : code, self[0], name, desc, access, adapter, mod.selfInterface);
                     mod.change("mixin handler re-declared for its target's new parameters");
                 }
                 return mv == null ? null : new Sites(mod, mv, locals, targets, callers, key, where);
@@ -4072,6 +4085,10 @@ public final class JarPort {
         return new AnnotationVisitor(Opcodes.ASM9, av) {
             @Override
             public void visit(String name, Object value) {
+                if ("index".equals(name) && value instanceof Integer && handler != null && mod.argIndexes.containsKey(handler)) {
+                    super.visit(name, mod.argIndexes.get(handler)); // a @ModifyArg's argument, where the call's new signature has it
+                    return;
+                }
                 super.visit(name, value instanceof String s && name != null && MEMBER_KEYS.contains(name) ? member(mod, targets, name, s, handler) : value);
             }
 
@@ -4445,11 +4462,185 @@ public final class JarPort {
         }
     }
 
+    /**
+     * Whether a handler follows a target the update made static by being made static itself, as Mixin asks of a handler
+     * into a static method: the old target was an instance method, the handler is one, and its body never reads its own
+     * object (slot 0) and no method of the mixin calls it. Records it in staticized when so.
+     */
+    boolean staticizes(Mod mod, String key, GameDiff.RawMeth handler, GameDiff.Meth before, GameDiff.Meth after) {
+        if (before.isStatic() || !after.isStatic() || (handler.flags & Opcodes.ACC_STATIC) != 0) {
+            return false;
+        }
+        String owner = key.substring(0, key.indexOf('.'));
+        byte[] bytes = mod.bytes.get(owner);
+        if (bytes == null) {
+            return false;
+        }
+        boolean[] blocked = { false };
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                boolean self = name.equals(handler.name) && desc.equals(handler.desc);
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitVarInsn(int op, int var) {
+                        blocked[0] |= self && var == 0;
+                    }
+
+                    @Override
+                    public void visitIincInsn(int var, int inc) {
+                        blocked[0] |= self && var == 0;
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int op, String o, String n, String d, boolean itf) {
+                        blocked[0] |= o.equals(owner) && n.equals(handler.name) && d.equals(handler.desc);
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (blocked[0]) {
+            why(key, "T1 its target is static now and it reads its own object");
+            return false;
+        }
+        mod.staticized.add(key);
+        return true;
+    }
+
+    static final String WRAP_CONDITION = "WrapWithCondition;", REDIRECT = "/Redirect;", MODIFY_RECEIVER = "/ModifyReceiver;",
+        MODIFY_VALUE = "/ModifyExpressionValue;", MODIFY_ARG = "/ModifyArg;";
+
+    /**
+     * An injector other than @Inject whose @At names a call that only took other arguments, in a method that kept its
+     * signature (a call the update changed, as 1.21.4's ClientInput.tick(boolean, float) became tick()). Its @At moves to
+     * the call's new signature where the handler stays valid there, by what the handler takes of the call:
+     * a @ModifyExpressionValue takes only its result, so the result type must be the same; a @ModifyArg takes one
+     * argument, found in the new call where its type stands once on each side, the index rewritten; a @Redirect,
+     * @WrapWithCondition or @ModifyReceiver takes the receiver and every argument, so it is re-declared with the new
+     * arguments and its body gets the old ones from them (convert: a type found once on each side, or a subtype), a
+     * default only where the body never reads one. A @WrapOperation passes the arguments on to the call as an array and
+     * stays reported. The call must be as static as before, and still made where the old method made it (pointsKept).
+     */
+    void followCall(Mod mod, String key, List<String> targets, GameDiff.RawMeth handler, Injector inj, List<Found> into, List<Found> points) {
+        String kind = inj.kind();
+        String label = "A-" + kind.substring(kind.lastIndexOf('/') + 1, kind.length() - 1);
+        int which = -1;
+        for (int i = 0; i < points.size(); i++) {
+            Found at = points.get(i);
+            if (at != null && at.kind() == 's') {
+                if (which >= 0 || at.desc() == null) {
+                    why(key, label + "1 several changed calls, or no one new signature");
+                    return;
+                }
+                which = i;
+            }
+        }
+        String[] point = inj.ats().get(which);
+        Found at = points.get(which);
+        Matcher m = MEMBER.matcher(point[1]);
+        if (!point[0].startsWith("INVOKE") || !m.matches() || m.group(1) == null || m.group(3) == null) {
+            why(key, label + "2 not a call written with its owner and descriptor");
+            return;
+        }
+        Decl oldDecl = declaringOld(mod, m.group(1), 'm', m.group(2), m.group(3));
+        GameDiff.Cls oldCls = oldDecl == null ? null : a.classes.get(oldDecl.owner());
+        GameDiff.Meth before = oldCls == null ? null : oldCls.methods.get(m.group(2) + m.group(3));
+        GameDiff.Meth after = b.method(at.owner(), at.name(), at.desc());
+        if (before == null || after == null || before.isStatic() != after.isStatic()) {
+            why(key, label + "3 the call is not read on both sides, or changed staticness");
+            return;
+        }
+        if (!pointsKept(targets, inj, into, points)) {
+            why(key, label + "4 the new call is not where the old one was");
+            return;
+        }
+        Type[] was = Type.getArgumentTypes(desc(m.group(3))), now = Type.getArgumentTypes(at.desc());
+        Type wasResult = Type.getReturnType(desc(m.group(3))), nowResult = Type.getReturnType(at.desc());
+        Type[] hp = Type.getArgumentTypes(desc(handler.desc));
+        if (kind.endsWith(MODIFY_VALUE)) {
+            if (!wasResult.equals(nowResult)) {
+                why(key, label + "5 its result changed type");
+                return;
+            }
+        } else if (kind.endsWith(MODIFY_ARG)) {
+            int index = inj.ordinal().length > 1 ? inj.ordinal()[1] : -1;
+            if (hp.length != 1) {
+                why(key, label + "6 it takes every argument");
+                return;
+            }
+            int old = index;
+            if (old < 0) {
+                List<Integer> same = new ArrayList<>();
+                for (int k = 0; k < was.length; k++) {
+                    if (was[k].equals(hp[0])) {
+                        same.add(k);
+                    }
+                }
+                old = same.size() == 1 ? same.get(0) : -1;
+            }
+            int[] paired = pair(was, now);
+            int fresh = -1;
+            for (int j = 0; j < now.length; j++) {
+                if (old >= 0 && paired[j] == old) {
+                    fresh = j;
+                }
+            }
+            if (fresh < 0 || !now[fresh].equals(hp[0]) || index < 0 && Arrays.stream(now).filter(hp[0]::equals).count() != 1) {
+                why(key, label + "7 its argument is not in the new call once");
+                return;
+            }
+            if (index >= 0 && fresh != index) {
+                mod.argIndexes.put(key, fresh);
+            }
+        } else if (kind.endsWith(REDIRECT) || kind.endsWith(WRAP_CONDITION) || kind.endsWith(MODIFY_RECEIVER)) {
+            int r = before.isStatic() ? 0 : 1;
+            int captured = r + was.length;
+            Type wantResult = kind.endsWith(REDIRECT) ? wasResult : kind.endsWith(WRAP_CONDITION) ? Type.BOOLEAN_TYPE : null;
+            Type result = Type.getReturnType(desc(handler.desc));
+            if (hp.length < captured || !Arrays.equals(Arrays.copyOfRange(hp, r, captured), was) || kind.endsWith(REDIRECT) && !wasResult.equals(nowResult)
+                || wantResult != null && !result.equals(wantResult)) {
+                why(key, label + "8 it does not take the call's arguments as they were, or the result changed");
+                return;
+            }
+            boolean[] unread = unread(mod, key.substring(0, key.indexOf('.')), handler.name, handler.desc, (handler.flags & Opcodes.ACC_STATIC) != 0, captured);
+            boolean[] args = unread == null ? null : Arrays.copyOfRange(unread, r, captured);
+            int[] conv = convert(now, was, args);
+            if (conv == null) {
+                why(key, label + "9 it reads an argument the new call does not take");
+                return;
+            }
+            int rest = hp.length - captured;
+            Type[] desc = new Type[r + now.length + rest];
+            int[] from = new int[captured];
+            for (int k = 0; k < r; k++) {
+                desc[k] = hp[k];
+                from[k] = k;
+            }
+            for (int j = 0; j < now.length; j++) {
+                desc[r + j] = now[j];
+            }
+            for (int k = 0; k < was.length; k++) {
+                from[r + k] = conv[k] < 0 ? -1 : r + conv[k];
+            }
+            for (int k = 0; k < rest; k++) {
+                desc[r + now.length + k] = hp[captured + k];
+            }
+            mod.adapters.put(key, new Adapter(Type.getMethodDescriptor(result, desc), from, captured, new String[captured][]));
+        } else {
+            why(key, label + "0 this injector passes the call's arguments on");
+            return;
+        }
+        mod.retargets.put(key + " " + point[1], at.changed());
+    }
+
     void retargetOther(Mod mod, String key, List<String> targets, GameDiff.RawMeth handler, Injector inj) {
         List<Found> into = inj.methods().stream().map(s -> find(targets, "method", s)).toList();
         List<Found> points = inj.ats().stream().map(at -> at[1] == null ? null : find(targets, "target", at[1])).toList();
         into = cancels(mod, key, handler, inj) ? into : Objects.requireNonNullElse(deeper(targets, inj, into, points), into);
         if (into.stream().noneMatch(f -> f.kind() == 's')) {
+            if (points.stream().anyMatch(at -> at != null && at.kind() == 's')) {
+                followCall(mod, key, targets, handler, inj, into, points);
+            }
             { why(key, "O1"); return; }
         }
         Type[] hp = Type.getArgumentTypes(desc(handler.desc));
@@ -4461,8 +4652,8 @@ public final class JarPort {
             GameDiff.Meth before = oldMethod(targets, inj.methods().get(i));
             GameDiff.Meth after = f.desc() == null ? null : b.method(f.owner(), f.name(), f.desc());
             if (before == null || after == null || f.changed() == null || !Type.getReturnType(desc(before.desc)).equals(Type.getReturnType(after.desc))
-                || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0) {
-                { why(key, "O2"); return; }
+                || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 && !staticizes(mod, key, handler, before, after)) {
+                { why(key, before == null ? "O2-old" : after == null ? "O2-new" : f.changed() == null ? "O2-changed" : ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 ? "O2-static" : "O2-result"); return; }
             }
             Type[] bp = Type.getArgumentTypes(desc(before.desc)), ap = Type.getArgumentTypes(after.desc);
             if (inj.kind().endsWith("/ModifyVariable;") && !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray())) {
@@ -4612,7 +4803,7 @@ public final class JarPort {
      * the target's parameters, once in the old signature and once in the new one, and of no local the new method stores,
      * took that parameter (or says argsOnly).
      */
-    boolean sugarFollows(Mod mod, String key, GameDiff.RawMeth handler, int ci, Found into, Injector inj) {
+    boolean sugarFollows(Mod mod, String key, GameDiff.RawMeth handler, int ci, Found into, Injector inj, List<Found> ats) {
         String owner = key.substring(0, key.indexOf('.'));
         byte[] bytes = mod.bytes.get(owner);
         GameDiff.Meth before = oldMethod(mod.mixinTargets.getOrDefault(owner, List.of()), inj.methods().get(0));
@@ -4624,12 +4815,17 @@ public final class JarPort {
         String[] sugar = new String[params.length];
         boolean[] argsOnly = new boolean[params.length];
         boolean[] picked = new boolean[params.length];
+        int[] ordinals = new int[params.length];
+        Arrays.fill(ordinals, -1);
+        boolean[] indexed = new boolean[params.length];
+        String[] generic = new String[1];
         new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
                 if (!name.equals(handler.name) || !desc.equals(handler.desc)) {
                     return null;
                 }
+                generic[0] = signature;
                 return new MethodVisitor(Opcodes.ASM9) {
                     @Override
                     public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
@@ -4643,6 +4839,11 @@ public final class JarPort {
                                     argsOnly[parameter] = Boolean.TRUE.equals(value);
                                 } else if (parameter < sugar.length && (n.equals("ordinal") || n.equals("index"))) {
                                     picked[parameter] = true;
+                                    if (n.equals("index")) {
+                                        indexed[parameter] = true;
+                                    } else if (value instanceof Integer o) {
+                                        ordinals[parameter] = o;
+                                    }
                                 }
                             }
                         };
@@ -4660,14 +4861,201 @@ public final class JarPort {
             if (sugar[i].equals(SUGAR + "Share;") || sugar[i].equals(SUGAR + "Cancellable;")) {
                 continue;
             }
-            Type t = Type.getType(desc(params[i].getDescriptor()));
-            if (!sugar[i].equals(SUGAR + "Local;") || picked[i] || !argsOnly[i] && (Collections.frequency(was, t) != 1 || Collections.frequency(now, t) != 1)
-                || argsOnly[i] && Collections.frequency(now, t) != 1) {
+            // A LocalRef stands for a local of the type it holds, which a reference to it reads and writes.
+            String held = params[i].getSort() == Type.OBJECT ? localRef(params[i].getInternalName(), generic[0], i) : null;
+            Type t = Type.getType(desc(held != null ? held : params[i].getDescriptor()));
+            if (!sugar[i].equals(SUGAR + "Local;") || argsOnly[i] && (picked[i] || Collections.frequency(now, t) != 1)
+                || held == null && params[i].getSort() == Type.OBJECT && params[i].getInternalName().startsWith(SUGAR.substring(1) + "ref/")) {
                 return false;
+            }
+            if (argsOnly[i]) {
+                continue;
             }
             // Without argsOnly a @Local also sees the method's own locals, so one the new method stores of that kind
             // could make the capture ambiguous (reference locals are not told apart by type here).
-            if (!argsOnly[i] && (stores == null || stores.contains(t.getOpcode(Opcodes.ISTORE)))) {
+            boolean param = !picked[i] && Collections.frequency(was, t) == 1 && Collections.frequency(now, t) == 1
+                && stores != null && !stores.contains(t.getOpcode(Opcodes.ISTORE));
+            if (!param && !localFound(key, before, after, inj, ats, t, ordinals[i], indexed[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static final Map<String, String> PRIMITIVE_REFS = Map.of("LocalBooleanRef", "Z", "LocalByteRef", "B", "LocalCharRef", "C", "LocalShortRef", "S",
+        "LocalIntRef", "I", "LocalLongRef", "J", "LocalFloatRef", "F", "LocalDoubleRef", "D");
+
+    /**
+     * The descriptor of the local a MixinExtras LocalRef parameter (the i-th of a handler) stands for: its primitive kind
+     * (LocalIntRef), or the type argument of LocalRef in the handler's generic signature. Null for any other type, or a
+     * LocalRef whose type cannot be read.
+     */
+    static String localRef(String internal, String signature, int param) {
+        String prefix = SUGAR.substring(1) + "ref/";
+        if (!internal.startsWith(prefix)) {
+            return null;
+        }
+        String kind = internal.substring(prefix.length());
+        if (PRIMITIVE_REFS.containsKey(kind)) {
+            return PRIMITIVE_REFS.get(kind);
+        }
+        if (!kind.equals("LocalRef") || signature == null) {
+            return null;
+        }
+        String[] found = new String[1];
+        int[] at = { -1 };
+        new org.objectweb.asm.signature.SignatureReader(signature).accept(new org.objectweb.asm.signature.SignatureVisitor(Opcodes.ASM9) {
+            int depth; // 0: a parameter's own type, 1: its type argument
+
+            @Override
+            public org.objectweb.asm.signature.SignatureVisitor visitParameterType() {
+                at[0]++;
+                depth = 0;
+                return this;
+            }
+
+            @Override
+            public org.objectweb.asm.signature.SignatureVisitor visitReturnType() {
+                at[0] = Integer.MIN_VALUE;
+                return this;
+            }
+
+            @Override
+            public void visitClassType(String name) {
+                if (at[0] == param && depth == 1 && found[0] == null) {
+                    found[0] = "L" + name + ";";
+                }
+            }
+
+            @Override
+            public org.objectweb.asm.signature.SignatureVisitor visitTypeArgument(char wildcard) {
+                depth++;
+                return this;
+            }
+
+            @Override
+            public void visitEnd() {
+                depth = Math.max(0, depth - 1);
+            }
+        });
+        return found[0];
+    }
+
+    /**
+     * Whether a @Local of type t (without argsOnly) finds the same local in a target's new method as in its old one, at
+     * every place each @At finds: the locals there are the method's arguments, then the live locals the game's own frames
+     * give (GameCode.localsAt), as Mixin reads them. Without an ordinal the one local of that type, in both methods; with
+     * one, the arguments of that type are as many in both and so are the other locals, so the nth is the same one. A
+     * @Local by slot index, or of a type Mixin's analysis does not tell apart (an int-like type, a LocalRef), is not
+     * followed.
+     */
+    boolean localFound(String key, GameDiff.Meth before, GameDiff.Meth after, Injector inj, List<Found> ats, Type t, int ordinal, boolean indexed) {
+        GameCode oldCode = code(a), newCode = code(b);
+        // An int-like local reads as I where the method has no local variable table, so a boolean one is found only where
+        // the table says boolean, as Mixin's reading would.
+        if (indexed || oldCode == null || newCode == null) {
+            why(key, "S1 a @Local by index: " + t);
+            return false;
+        }
+        String d = t.getDescriptor();
+        long argsWas = Arrays.stream(Type.getArgumentTypes(desc(before.desc))).map(Type::getDescriptor).filter(d::equals).count();
+        long argsNow = Arrays.stream(Type.getArgumentTypes(after.desc)).map(Type::getDescriptor).filter(d::equals).count();
+        for (int i = 0; i < inj.ats().size(); i++) {
+            String[] point = inj.ats().get(i);
+            String[] was = null, now = null;
+            if (point[1] != null) {
+                Matcher m = MEMBER.matcher(point[1]);
+                Found at = ats.get(i);
+                if (!m.matches() || m.group(1) == null || at == null || at.owner() == null || at.name() == null) {
+                    why(key, "S2 an @At without its owner");
+                    return false;
+                }
+                was = new String[] { m.group(1), m.group(2), m.group(3) != null ? m.group(3) : m.group(4) };
+                now = new String[] { at.owner(), at.name(), at.desc() };
+            }
+            List<List<String>> old = oldCode.localsAt(before.owner.name, before.name, before.desc, point[0], was, point[2]);
+            List<List<String>> fresh = newCode.localsAt(after.owner.name, after.name, after.desc, point[0], now, point[2]);
+            if (old == null || fresh == null || old.isEmpty() || fresh.isEmpty()) {
+                why(key, "S3 locals not read at " + point[0] + " " + point[1] + (old == null ? " old" : fresh == null ? " new" : " none"));
+                return false;
+            }
+            Set<Long> counts = new HashSet<>();
+            for (List<String> l : old) {
+                counts.add(l.stream().map(this::desc).filter(d::equals).count());
+            }
+            Set<Long> countsNow = new HashSet<>();
+            for (List<String> l : fresh) {
+                countsNow.add(l.stream().filter(d::equals).count());
+            }
+            boolean same = counts.size() == 1 && counts.equals(countsNow);
+            long locals = same ? counts.iterator().next() : -1;
+            if (ordinal < 0 ? !same || argsWas + locals != 1 || argsNow != argsWas : !same || argsNow != argsWas || argsWas + locals <= ordinal) {
+                why(key, "S4 the @Local's " + d + " is not the same local: arguments " + argsWas + " -> " + argsNow + ", locals " + counts + " -> " + countsNow);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the locals a handler captures after its CallbackInfo (at ci; LocalCapture) are the ones Mixin hands it in
+     * the target's new method: at every place each @At finds in the old method they are the first locals there (so the
+     * reading is Mixin's), and at every place in the new method the first locals have the same types (GameCode.localsAt,
+     * from the game's own frames). The handler must take all of the target's old arguments, as Mixin asks of one that
+     * captures locals.
+     */
+    boolean localsFollow(Mod mod, String key, GameDiff.RawMeth handler, int ci, Found into, Injector inj, List<Found> ats) {
+        String owner = key.substring(0, key.indexOf('.'));
+        GameDiff.Meth before = oldMethod(mod.mixinTargets.getOrDefault(owner, List.of()), inj.methods().get(0));
+        GameDiff.Meth after = into.desc() == null ? null : b.method(into.owner(), into.name(), into.desc());
+        GameCode oldCode = code(a), newCode = code(b);
+        if (before == null || after == null || oldCode == null || newCode == null || ci != Type.getArgumentTypes(desc(before.desc)).length) {
+            why(key, "L1 not every argument of the target, or a target not read");
+            return false;
+        }
+        Type[] params = Type.getArgumentTypes(handler.desc);
+        List<String> wanted = Arrays.stream(params, ci + 1, params.length).map(Type::getDescriptor).toList();
+        for (int i = 0; i < inj.ats().size(); i++) {
+            String[] point = inj.ats().get(i);
+            String[] was = null, now = null;
+            if (point[1] != null) {
+                Matcher m = MEMBER.matcher(point[1]);
+                Found at = ats.get(i);
+                if (!m.matches() || m.group(1) == null || at == null || at.owner() == null || at.name() == null) {
+                    why(key, "L2 an @At without its owner");
+                    return false;
+                }
+                was = new String[] { m.group(1), m.group(2), m.group(3) != null ? m.group(3) : m.group(4) };
+                now = new String[] { at.owner(), at.name(), at.desc() };
+            }
+            List<List<String>> old = oldCode.localsAt(before.owner.name, before.name, before.desc, point[0], was, point[2]);
+            List<List<String>> fresh = newCode.localsAt(after.owner.name, after.name, after.desc, point[0], now, point[2]);
+            if (old == null || fresh == null || old.isEmpty() || fresh.isEmpty()) {
+                why(key, "L3 locals not read at " + point[0] + " " + point[1] + (old == null ? " old" : fresh == null ? " new" : " none"));
+                return false;
+            }
+            for (List<String> l : old) {
+                if (l.size() < wanted.size() || !intLike(l.subList(0, wanted.size()), wanted)) {
+                    why(key, "L4 the old method's locals are not the handler's " + l);
+                    return false;
+                }
+            }
+            List<String> mapped = old.get(0).subList(0, wanted.size()).stream().map(this::desc).toList();
+            for (List<String> l : fresh) {
+                if (l.size() < wanted.size() || !l.subList(0, wanted.size()).equals(mapped)) {
+                    why(key, "L5 the new method's locals differ " + l + " for " + mapped);
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Whether locals as Mixin's analysis reads them (an int-like local as I) are the handler's types. */
+    static boolean intLike(List<String> read, List<String> handler) {
+        for (int i = 0; i < read.size(); i++) {
+            String r = read.get(i), h = handler.get(i);
+            if (!r.equals(h) && !(r.equals("I") && Set.of("Z", "B", "C", "S").contains(h))) {
                 return false;
             }
         }
@@ -4687,10 +5075,11 @@ public final class JarPort {
             // MixinExtras' sugar after the CallbackInfo (@Local, @Share, @Cancellable) is resolved by Mixin, not taken from
             // the target's arguments: a handler with only that after its CallbackInfo follows as one without it does.
             int ci = callbackAt(params);
-            if (ci >= 0 && ci < captured && into.size() == 1 && sugarFollows(mod, key, handler, ci, into.get(0), inj)) {
-                if (ci > 0) {
-                    { why(key, "I12 sugar after arguments it captures"); return; }
-                }
+            if (ci >= 0 && ci < captured && into.size() == 1 && sugarFollows(mod, key, handler, ci, into.get(0), inj, ats)) {
+                captured = ci;
+            } else if (ci >= 0 && ci < captured && into.size() == 1 && localsFollow(mod, key, handler, ci, into.get(0), inj, ats)) {
+                // Locals captured after the CallbackInfo (LocalCapture) are the ones Mixin hands the handler in the new
+                // method too: they pass through as they are, and only the target's arguments change.
                 captured = ci;
             }
             if (captured < 0 || params[captured].getSort() != Type.OBJECT || !CALLBACKS.contains(params[captured].getInternalName())) {
@@ -4706,8 +5095,8 @@ public final class JarPort {
                     GameDiff.Meth before = oldMethod(targets, old);
                     GameDiff.Meth after = f.desc() == null ? null : b.method(f.owner(), f.name(), f.desc());
                     if (before == null || after == null || !Type.getReturnType(desc(before.desc)).equals(Type.getReturnType(after.desc))
-                        || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0) {
-                        { why(key, "I8"); return; }
+                        || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 && !staticizes(mod, key, handler, before, after)) {
+                        { why(key, before == null ? "I8-old" : after == null ? "I8-new" : ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 ? "I8-static" : "I8-result"); return; }
                     }
                 }
             }
@@ -4731,7 +5120,7 @@ public final class JarPort {
                     String[][] read = retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired);
                     // A handler merged into its target runs on the target object, so what that object answers (Screen.init's
                     // Minecraft, now this.minecraft) is read there, where the members read are open to the target's code.
-                    String[][] learned = (handler.flags & Opcodes.ACC_STATIC) == 0 && openTo(read, f.owner()) ? read : Retype.withoutThis(read);
+                    String[][] learned = (handler.flags & Opcodes.ACC_STATIC) == 0 && !mod.staticized.contains(key) && openTo(read, f.owner()) ? read : Retype.withoutThis(read);
                     from = new int[captured];
                     for (int i = 0; i < captured; i++) {
                         if (paired[i] >= 0) {
@@ -4741,7 +5130,7 @@ public final class JarPort {
                             via[i] = Arrays.copyOfRange(learned[i], 1, learned[i].length);
                         } else if (unread != null && unread[i]) {
                             from[i] = -1;
-                        } else if ((handler.flags & Opcodes.ACC_STATIC) == 0 && kept(before, i, f.owner()) != null) {
+                        } else if ((handler.flags & Opcodes.ACC_STATIC) == 0 && !mod.staticized.contains(key) && kept(before, i, f.owner()) != null) {
                             from[i] = THIS;
                             via[i] = new String[] { kept(before, i, f.owner()) };
                         } else {
@@ -4749,16 +5138,22 @@ public final class JarPort {
                         }
                     }
                 }
-                Type[] desc = Arrays.copyOf(now, now.length + 1);
-                desc[now.length] = Type.getType(desc(params[captured].getDescriptor()));
+                // The CallbackInfo and what follows it (sugar, captured locals) pass through as they are.
+                int rest = params.length - captured;
+                Type[] desc = Arrays.copyOf(now, now.length + rest);
+                for (int i = 0; i < rest; i++) {
+                    desc[now.length + i] = Type.getType(desc(params[captured + i].getDescriptor()));
+                }
                 if (Arrays.stream(via).anyMatch(Objects::nonNull) && (mod.bytes.get(key.substring(0, key.indexOf('.'))) != null)
                     && (new ClassReader(mod.bytes.get(key.substring(0, key.indexOf('.')))).readShort(6) & 0xFFFF) >= Opcodes.V1_6) {
                     // An argument that changed type: the handler's body moves whole to the new parameters, as an override's
                     // does, so the calls it makes on that argument get what the game passes now (Sites.given, onOrigin).
-                    int[] all = Arrays.copyOf(from, captured + 1);
-                    all[captured] = now.length;
+                    int[] all = Arrays.copyOf(from, captured + rest);
+                    for (int i = 0; i < rest; i++) {
+                        all[captured + i] = now.length + i;
+                    }
                     mod.bridges.computeIfAbsent(key.substring(0, key.indexOf('.')), k -> new ArrayList<>())
-                        .add(new Bridge(handler.name, Type.getMethodDescriptor(Type.VOID_TYPE, desc), handler.name, handler.desc, all, handler.flags, Arrays.copyOf(via, captured + 1)));
+                        .add(new Bridge(handler.name, Type.getMethodDescriptor(Type.VOID_TYPE, desc), handler.name, handler.desc, all, handler.flags, Arrays.copyOf(via, captured + rest)));
                 } else {
                     mod.adapters.put(key, new Adapter(Type.getMethodDescriptor(Type.VOID_TYPE, desc), from, captured, via));
                 }
@@ -5429,6 +5824,233 @@ public final class JarPort {
             return seen[0] ? out : null;
         }
 
+        /**
+         * The locals Mixin hands a handler that captures them (LocalCapture, or MixinExtras' @Local) at each place an @At
+         * finds in a method (this release's names): from the first slot after the arguments, each live local's type in slot
+         * order, a long or double once. Where the method has a local variable table (Mojang's jars keep one, with names
+         * $$0...) Mixin takes the locals whose range holds the place, with their declared types; without one, it reads
+         * them from the frames and the stores after the last one, as AnalyzerAdapter does, an int-like local as I. Places:
+         * value HEAD, RETURN or TAIL, or a call (INVOKE, INVOKE_ASSIGN after its result is stored) or field (FIELD) whose
+         * owner, name and descriptor are at (Mixin matches the owner its instruction names), the ordinal-th one or every
+         * one. Null when the method is not in the jar, a place is of another kind, or a local's type is unknown; an empty
+         * list when the @At finds no place.
+         */
+        List<List<String>> localsAt(String owner, String name, String desc, String value, String[] at, String ordinal) {
+            String jarOwner = toJar.getOrDefault(owner, owner);
+            byte[] file = bytes.apply(jarOwner);
+            if (file == null || !Set.of("HEAD", "RETURN", "TAIL", "INVOKE", "INVOKE_ASSIGN", "FIELD").contains(value)
+                || !Set.of("HEAD", "RETURN", "TAIL").contains(value) && at == null) {
+                return null;
+            }
+            List<List<String>> out = new ArrayList<>();
+            boolean[] seen = { false }, unknown = { false };
+            new ClassReader(file).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                    if (seen[0] || !(names.method(jarOwner, n, d) + names.desc(d)).equals(name + desc)) {
+                        return null;
+                    }
+                    seen[0] = true;
+                    int first = (Type.getArgumentsAndReturnSizes(d) >> 2) - ((access & Opcodes.ACC_STATIC) != 0 ? 1 : 0);
+                    org.objectweb.asm.commons.AnalyzerAdapter frames = new org.objectweb.asm.commons.AnalyzerAdapter(jarOwner, access, n, d, null);
+                    // Each place: the instruction it is at (its index), and the locals the frames give there.
+                    List<Object[]> places = new ArrayList<>(), returns = new ArrayList<>();
+                    Map<Label, Integer> labels = new HashMap<>();
+                    List<Object[]> table = new ArrayList<>(); // slot, descriptor, start, end
+                    return new MethodVisitor(Opcodes.ASM9, frames) {
+                        int index, count; // the instruction about to be read; the @At's matches so far
+                        boolean assign; // an INVOKE_ASSIGN place: taken after the store that follows the call, or after the call
+
+                        Object[] place() {
+                            List<String> types = new ArrayList<>();
+                            List<Object> locals = frames.locals;
+                            if (locals == null) {
+                                return new Object[] { index, null };
+                            }
+                            for (int i = first; i < locals.size(); i++) {
+                                Object v = locals.get(i);
+                                if (v == Opcodes.TOP || v instanceof Label || v == Opcodes.UNINITIALIZED_THIS) {
+                                    continue;
+                                }
+                                types.add(v == Opcodes.NULL ? null : v == Opcodes.INTEGER ? "I" : v == Opcodes.FLOAT ? "F" : v == Opcodes.LONG ? "J"
+                                    : v == Opcodes.DOUBLE ? "D" : names.desc(((String) v).startsWith("[") ? (String) v : "L" + v + ";"));
+                            }
+                            return new Object[] { index, types };
+                        }
+
+                        /** Before each instruction: an INVOKE_ASSIGN place waiting for its store is taken here, unless this is it. */
+                        void next(boolean store) {
+                            if (assign && !store) {
+                                assign = false;
+                                places.add(place());
+                            }
+                        }
+
+                        void done() {
+                            index++;
+                        }
+
+                        boolean picked() {
+                            return ordinal == null || count++ == Integer.parseInt(ordinal);
+                        }
+
+                        @Override
+                        public void visitCode() {
+                            super.visitCode();
+                            if (value.equals("HEAD")) {
+                                places.add(place());
+                            }
+                        }
+
+                        @Override
+                        public void visitInsn(int op) {
+                            next(false);
+                            if (op >= Opcodes.IRETURN && op <= Opcodes.RETURN && (value.equals("RETURN") || value.equals("TAIL"))) {
+                                returns.add(place());
+                            }
+                            super.visitInsn(op);
+                            done();
+                        }
+
+                        @Override
+                        public void visitVarInsn(int op, int v) {
+                            next(op >= Opcodes.ISTORE && op <= Opcodes.ASTORE);
+                            super.visitVarInsn(op, v);
+                            done();
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int op, String o, String m, String md, boolean itf) {
+                            next(false);
+                            boolean match = value.startsWith("INVOKE") && names.cls(o).equals(at[0]) && names.method(o, m, md).equals(at[1]) && names.desc(md).equals(at[2]) && picked();
+                            if (match && value.equals("INVOKE")) {
+                                places.add(place());
+                            }
+                            super.visitMethodInsn(op, o, m, md, itf);
+                            done();
+                            assign = match && value.equals("INVOKE_ASSIGN");
+                        }
+
+                        @Override
+                        public void visitFieldInsn(int op, String o, String f, String fd) {
+                            next(false);
+                            if (value.equals("FIELD") && names.cls(o).equals(at[0]) && names.field(o, f).equals(at[1]) && (at[2] == null || names.desc(fd).equals(at[2])) && picked()) {
+                                places.add(place());
+                            }
+                            super.visitFieldInsn(op, o, f, fd);
+                            done();
+                        }
+
+                        @Override
+                        public void visitTypeInsn(int op, String t) {
+                            next(false);
+                            super.visitTypeInsn(op, t);
+                            done();
+                        }
+
+                        @Override
+                        public void visitIntInsn(int op, int v) {
+                            next(false);
+                            super.visitIntInsn(op, v);
+                            done();
+                        }
+
+                        @Override
+                        public void visitJumpInsn(int op, Label l) {
+                            next(false);
+                            super.visitJumpInsn(op, l);
+                            done();
+                        }
+
+                        @Override
+                        public void visitLdcInsn(Object v) {
+                            next(false);
+                            super.visitLdcInsn(v);
+                            done();
+                        }
+
+                        @Override
+                        public void visitIincInsn(int v, int inc) {
+                            next(false);
+                            super.visitIincInsn(v, inc);
+                            done();
+                        }
+
+                        @Override
+                        public void visitInvokeDynamicInsn(String n2, String d2, Handle bsm, Object... args) {
+                            next(false);
+                            super.visitInvokeDynamicInsn(n2, d2, bsm, args);
+                            done();
+                        }
+
+                        @Override
+                        public void visitTableSwitchInsn(int min, int max, Label dflt, Label... ls) {
+                            next(false);
+                            super.visitTableSwitchInsn(min, max, dflt, ls);
+                            done();
+                        }
+
+                        @Override
+                        public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] ls) {
+                            next(false);
+                            super.visitLookupSwitchInsn(dflt, keys, ls);
+                            done();
+                        }
+
+                        @Override
+                        public void visitMultiANewArrayInsn(String d2, int dims) {
+                            next(false);
+                            super.visitMultiANewArrayInsn(d2, dims);
+                            done();
+                        }
+
+                        @Override
+                        public void visitLabel(Label l) {
+                            next(false);
+                            labels.put(l, index);
+                            super.visitLabel(l);
+                        }
+
+                        @Override
+                        public void visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack) {
+                            next(false);
+                            super.visitFrame(type, numLocal, local, numStack, stack);
+                        }
+
+                        @Override
+                        public void visitLocalVariable(String ln, String ld, String ls, Label start, Label end, int slot) {
+                            table.add(new Object[] { slot, ld, start, end });
+                        }
+
+                        @Override
+                        public void visitEnd() {
+                            next(false);
+                            if (value.equals("RETURN")) {
+                                places.addAll(returns);
+                            } else if (value.equals("TAIL") && !returns.isEmpty()) {
+                                places.add(returns.get(returns.size() - 1));
+                            }
+                            for (Object[] p : places) {
+                                int i = (Integer) p[0];
+                                @SuppressWarnings("unchecked") List<String> types = (List<String>) p[1];
+                                if (!table.isEmpty()) {
+                                    types = table.stream().filter(t -> (Integer) t[0] >= first && labels.getOrDefault((Label) t[2], Integer.MAX_VALUE) <= i
+                                            && i < labels.getOrDefault((Label) t[3], -1))
+                                        .sorted(Comparator.comparingInt(t -> (Integer) t[0])).map(t -> names.desc((String) t[1])).toList();
+                                }
+                                if (types == null || types.contains(null)) {
+                                    unknown[0] = true;
+                                } else {
+                                    out.add(types);
+                                }
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.EXPAND_FRAMES);
+            return !seen[0] || unknown[0] ? null : out;
+        }
+
         /** A descriptor with each class name passed through rename. */
         static String mapDesc(String d, Object unused, java.util.function.UnaryOperator<String> rename) {
             Matcher m = Pattern.compile("L([^;<]+)([;<])").matcher(d);
@@ -6058,6 +6680,48 @@ public final class JarPort {
     }
 
     /** A mixin handler in two: its annotations go to the handler with the new parameters, its body to name$mmt, which the handler calls. */
+    /**
+     * An instance method's code written as a static method's, for a handler that never reads its own object: each local
+     * moves down one slot, and full frames lose the object. Compressed frames are relative to the start, which the
+     * writer reads from the static access.
+     */
+    static final class Staticize extends MethodVisitor {
+        Staticize(MethodVisitor mv) {
+            super(Opcodes.ASM9, mv);
+        }
+
+        @Override
+        public void visitVarInsn(int opcode, int var) {
+            super.visitVarInsn(opcode, var - 1);
+        }
+
+        @Override
+        public void visitIincInsn(int var, int increment) {
+            super.visitIincInsn(var - 1, increment);
+        }
+
+        @Override
+        public void visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack) {
+            if ((type == Opcodes.F_FULL || type == Opcodes.F_NEW) && numLocal > 0) {
+                super.visitFrame(type, numLocal - 1, Arrays.copyOfRange(local, 1, numLocal), numStack, stack);
+                return;
+            }
+            super.visitFrame(type, numLocal, local, numStack, stack);
+        }
+
+        @Override
+        public void visitLocalVariable(String name, String desc, String signature, Label start, Label end, int index) {
+            if (index > 0) {
+                super.visitLocalVariable(name, desc, signature, start, end, index - 1);
+            }
+        }
+
+        @Override
+        public AnnotationVisitor visitLocalVariableAnnotation(int typeRef, TypePath typePath, Label[] start, Label[] end, int[] index, String descriptor, boolean visible) {
+            return null;
+        }
+    }
+
     final class Split extends MethodVisitor {
         final MethodVisitor handler;
         final String owner, name, desc;
@@ -6079,6 +6743,19 @@ public final class JarPort {
         @Override
         public AnnotationVisitor visitAnnotation(String d, boolean visible) {
             return handler.visitAnnotation(d, visible);
+        }
+
+        @Override
+        public void visitAnnotableParameterCount(int parameterCount, boolean visible) {
+        }
+
+        @Override
+        public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
+            // What the handler takes after the arguments it re-declares (the CallbackInfo, sugar such as @Local) keeps its
+            // annotations on the handler, where Mixin reads them; the body behind it is a plain method.
+            int rest = Type.getArgumentTypes(desc).length - adapter.captured();
+            int now = Type.getArgumentTypes(oldDesc(adapter.desc())).length;
+            return parameter >= adapter.captured() ? handler.visitParameterAnnotation(now - rest + parameter - adapter.captured(), d, visible) : null;
         }
 
         @Override
@@ -6111,9 +6788,13 @@ public final class JarPort {
                 }
                 stack += was[j].getSize();
             }
-            handler.visitVarInsn(Opcodes.ALOAD, slots[now.length - 1]);
+            // The CallbackInfo and what the handler takes after it (sugar, captured locals) pass through as they are.
+            for (int j = now.length - (was.length - adapter.captured()); j < now.length; j++) {
+                handler.visitVarInsn(now[j].getOpcode(Opcodes.ILOAD), slots[j]);
+                stack += now[j].getSize();
+            }
             handler.visitMethodInsn(isStatic ? Opcodes.INVOKESTATIC : Opcodes.INVOKESPECIAL, owner, name + "$mmt", desc, itf);
-            handler.visitInsn(Opcodes.RETURN);
+            handler.visitInsn(Type.getReturnType(desc).getOpcode(Opcodes.IRETURN));
             handler.visitMaxs(stack + 3, next);
             handler.visitEnd();
         }
@@ -6153,9 +6834,12 @@ public final class JarPort {
                     return null;
                 }
                 String newDesc = oldDesc(br.desc());
-                Track track = new Track(owner, access, br.name(), newDesc, out.visitMethod(access, br.name(), newDesc, null, exceptions));
-                Shift shift = new Shift(track, br, desc, stored, (access & Opcodes.ACC_STATIC) != 0);
                 String key = owner + "." + name + desc;
+                // A handler made static, as its target now is (staticizes): written as a static method under everything else.
+                boolean staticized = mod.staticized.contains(key) && mod.retargets.keySet().stream().anyMatch(r -> r.startsWith(key + " "));
+                MethodVisitor written = out.visitMethod(staticized ? access | Opcodes.ACC_STATIC : access, br.name(), newDesc, null, exceptions);
+                Track track = new Track(owner, access, br.name(), newDesc, staticized ? new Staticize(written) : written);
+                Shift shift = new Shift(track, br, desc, stored, (access & Opcodes.ACC_STATIC) != 0);
                 // A mixin handler's code runs in its targets, and its annotations name them (as in rewrite).
                 List<String> targets = mod.mixinTargets.getOrDefault(owner, List.of());
                 List<String> callers = new ArrayList<>(targets.isEmpty() ? List.of(owner) : targets.stream().map(JarPort.this::cls).toList());
@@ -6720,7 +7404,10 @@ public final class JarPort {
 
         @Override
         public AnnotationVisitor visitParameterAnnotation(int parameter, String descriptor, boolean visible) {
-            return null;
+            // A parameter that passes through as it is keeps its annotations (MixinExtras' @Local, @Share...) at its new place.
+            int f = parameter < br.from().length ? br.from()[parameter] : -1;
+            return f >= 0 && (br.via() == null || parameter >= br.via().length || br.via()[parameter] == null) && now[f].equals(was[parameter])
+                ? super.visitParameterAnnotation(f, descriptor, visible) : null;
         }
 
         @Override
