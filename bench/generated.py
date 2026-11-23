@@ -70,7 +70,8 @@ def build(folder):
 def record_and_build(folder, table=None, commit=None, run=None):
     if table:
         import exposure
-        exposure.record_main(table, commit, run, Path(folder) / "scoreboard")
+        import portboard.mainrecord
+        portboard.mainrecord.record_main(table, commit, run, Path(folder) / "scoreboard")
     build(folder)
 
 
