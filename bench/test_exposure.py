@@ -857,39 +857,94 @@ with tempfile.TemporaryDirectory() as tmp:
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
           f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
 
-# A mod compiled for a newer Java than the release runs on does not link there (ports back meet it): its classes and
-# its nested jars' are read, a multi-release jar's newer copies are not.
+# One Java check serves the link check and the game proof: a jar is failed when a class the JVM loads of it needs a newer
+# Java than the release runs on (version.json's javaVersion). For a jar the loader starts, that is its start classes (its
+# mixins, its entrypoints, NeoForge's @Mod classes) for the side; on Fabric 1.15 (Java 8) a Java 17 mixin crashed every
+# start naming no mod (PR #206). Its other classes do not count: More Mobs ships Java 17-25 classes for Forge and
+# NeoForge and loads on Java 8, and Boxlib's only too-new start class is its client entrypoint, so it loads on a server.
+# A nested mod is loaded as a mod and counts the same way; a library the loader starts nothing of counts every class.
+def class_file(major, body=b""):
+    return b"\xca\xfe\xba\xbe\x00\x00" + bytes([major >> 8, major & 0xff]) + b"\x00" * 8 + body
+
+
 with tempfile.TemporaryDirectory() as tmp:
-    def compiled(java):
-        return b"\xca\xfe\xba\xbe\x00\x00" + (java + 44).to_bytes(2, "big") + b"\x00" * 8
-
-    def jar_of(path, entries):
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as z:
-            for name, data in entries.items():
-                z.writestr(name, data)
-        if path:
-            path.write_bytes(buf.getvalue())
-        return buf.getvalue()
-
-    inner = jar_of(None, {"lib/L.class": compiled(21)})
-    nested, plain = Path(tmp) / "nested.jar", Path(tmp) / "plain.jar"
-    jar_of(nested, {"a/A.class": compiled(17), "META-INF/jars/lib.jar": inner})
-    jar_of(plain, {"a/A.class": compiled(17), "META-INF/versions/21/a/A.class": compiled(21), "module-info.class": compiled(21)})
-    check((E.class_java(nested.read_bytes()), E.class_java(plain.read_bytes())) == (21, 17),
-          "a nested jar's classes count, a multi-release jar's newer copies and module-info do not")
+    real_home = E.HOME
+    E.HOME = Path(tmp) / "home"
+    try:
+        for version, java in {"1.15": 8, "1.20.4": 17, "1.21": 21}.items():
+            (E.HOME / "versions").mkdir(parents=True, exist_ok=True)
+            (E.HOME / "versions" / f"{version}.json").write_text(json.dumps({"javaVersion": {"majorVersion": java}}), encoding="utf-8")
+        folder = Path(tmp) / "mods"
+        folder.mkdir()
+        mixins = json.dumps({"package": "m.mixin", "mixins": ["LivingMixin"], "server": ["sub.ServerMixin"]})
+        (folder / "mixin.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "m", "mixins": ["m.mixins.json"], "entrypoints": {"main": ["m.Init"]}}),
+                                                "m.mixins.json": mixins, "m/Init.class": class_file(52), "m/mixin/LivingMixin.class": class_file(61),
+                                                "m/mixin/sub/ServerMixin.class": class_file(52)}))
+        (folder / "server-mixin.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "s", "mixins": [{"config": "s.mixins.json", "environment": "*"}]}),
+                                                       "s.mixins.json": json.dumps({"package": "s", "server": ["A"], "client": ["B"]}),
+                                                       "s/A.class": class_file(61), "s/B.class": class_file(52)}))
+        (folder / "client-entry.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "c", "entrypoints": {"client": ["c.Client"], "main": [{"value": "c.Main::init"}], "modmenu": ["c.Client"]}}),
+                                                       "c/Client.class": class_file(61), "c/Main.class": class_file(52)}))
+        (folder / "multi-loader.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "x", "entrypoints": {"main": ["x.fabric.Init"]}}),
+                                                       "x/fabric/Init.class": class_file(52), "x/neoforge/Config.class": class_file(65)}))
+        (folder / "data.jar").write_bytes(jar({"fabric.mod.json": "{}"}))
+        # Fabric API's modules are jar-in-jar mods: their mixins load at start. A module whose own "java" dependency
+        # refuses the release's Java is not loaded (C2ME's native math module asks Java 22), nor is a jar with no metadata.
+        module = jar({"fabric.mod.json": json.dumps({"id": "api-module", "mixins": ["api.mixins.json"]}),
+                      "api.mixins.json": json.dumps({"package": "api", "mixins": ["WorldMixin"]}), "api/WorldMixin.class": class_file(61)})
+        gated = jar({"fabric.mod.json": json.dumps({"id": "natives", "depends": {"java": ">=22"}, "entrypoints": {"main": ["g.Natives"]}}),
+                     "g/Natives.class": class_file(66)})
+        (folder / "bundle.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "b", "entrypoints": {"main": ["b.Init"]}}), "b/Init.class": class_file(52),
+                                                 "META-INF/jars/module.jar": module}))
+        (folder / "gated.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "g", "entrypoints": {"main": ["g.Init"]}}), "g/Init.class": class_file(65),
+                                                "META-INF/jars/natives.jar": gated, "META-INF/jars/plain.jar": jar({"p/P.class": class_file(66)})}))
+        # A library starts nothing of its own: the mods that use it load its classes, so every one counts.
+        (folder / "library.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "lib"}), "l/Api.class": class_file(52), "l/Impl.class": class_file(61)}))
+        names = ["mixin.jar", "server-mixin.jar", "client-entry.jar", "multi-loader.jar", "data.jar", "bundle.jar", "library.jar"]
+        server = E.newer_java(folder, names, "fabric", "1.15", "server")
+        check(sorted(server) == ["bundle.jar", "library.jar", "mixin.jar", "server-mixin.jar"] and "module.jar!api.WorldMixin" in server["bundle.jar"]
+              and "l.Impl" in server["library.jar"],
+              f"on a 1.15 server a nested module's Java 17 mixin and a Java 17 library class count: {server}")
+        check(E.newer_java(folder, ["gated.jar"], "fabric", "1.21", "server") == {},
+              "a nested module asking a newer Java than the release's, and a nested jar no loader reads, are not loaded")
+        check(sorted(server) == ["bundle.jar", "library.jar", "mixin.jar", "server-mixin.jar"] and server["mixin.jar"].startswith("built for Java 17; Minecraft 1.15 runs on Java 8")
+              and "m.mixin.LivingMixin" in server["mixin.jar"],
+              f"on a 1.15 server, the jars whose mixins need Java 17 are named with both Javas and the class: {server}")
+        client = E.newer_java(folder, names[:5], "fabric", "1.15", "client")
+        check(sorted(client) == ["client-entry.jar", "mixin.jar"], f"in a 1.15 client, a too-new client entrypoint counts and a server mixin does not: {client}")
+        check(E.newer_java(folder, names, "fabric", "1.20.4", "client") == {}, "on 1.20.4 (Java 17) the same jars all start")
+        (folder / "neo.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="neo"\n',
+                                              "n/Neo.class": class_file(69, b"Lnet/neoforged/fml/common/Mod;"), "n/Other.class": class_file(52)}))
+        (folder / "neo21.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="neo21"\n',
+                                                "n/Neo.class": class_file(65, b"Lnet/neoforged/fml/common/Mod;"), "n/Later.class": class_file(69)}))
+        found = E.newer_java(folder, ["neo.jar", "neo21.jar"], "neoforge", "1.21", "server")
+        check(list(found) == ["neo.jar"] and "Java 25" in found["neo.jar"],
+              f"on NeoForge 1.21 (Java 21) a @Mod class built for Java 25 is named, and a Java 25 class nothing loads at start is not: {found}")
+    finally:
+        E.HOME = real_home
+# The link check reads the same classes, on both sides: a mod with one the release's JVM refuses does not link there
+# (ports back meet it). A nested mod counts; a multi-release jar's newer copies, module-info and another loader's
+# classes in a jar for several do not.
+with tempfile.TemporaryDirectory() as tmp:
+    nested, plain, multi = Path(tmp) / "nested.jar", Path(tmp) / "plain.jar", Path(tmp) / "multi.jar"
+    nested.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "n", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
+                            "META-INF/jars/lib.jar": jar({"fabric.mod.json": json.dumps({"id": "l", "entrypoints": {"client": ["lib.L"]}}), "lib/L.class": class_file(65)})}))
+    plain.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "p", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
+                           "META-INF/versions/21/a/A.class": class_file(65), "module-info.class": class_file(65)}))
+    multi.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "m", "entrypoints": {"main": ["m.fabric.Init"]}}), "m/fabric/Init.class": class_file(61),
+                           "m/neoforge/Init.class": class_file(65)}))
     asked, E.release_java = E.release_java, lambda v: {"old": 17, "new": 21}[v]
     try:
         def report():
-            return {"mods": [{"mod": "nested.jar", "unlinked": []}, {"mod": "plain.jar", "unlinked": []}], "linked": 2, "unlinkedByMods": []}
-        jars = {"nested.jar": nested, "plain.jar": plain}
-        back, forward = E.with_target_java(report(), jars, "old"), E.with_target_java(report(), jars, "new")
+            return {"mods": [{"mod": n, "unlinked": []} for n in ("nested.jar", "plain.jar", "multi.jar")], "linked": 3, "unlinkedByMods": []}
+        jars = {"nested.jar": nested, "plain.jar": plain, "multi.jar": multi}
+        back, forward = E.with_target_java(report(), jars, "fabric", "old"), E.with_target_java(report(), jars, "fabric", "new")
     finally:
         E.release_java = asked
-    check(back["linked"] == 1 and E.left(back["mods"][0]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
+    check(back["linked"] == 2 and E.left(back["mods"][0]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
           and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
-          f"a mod built for a newer Java than the release's does not link on it: {back}")
-    check(forward["linked"] == 2 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
+          f"a mod whose nested mod needs a newer Java than the release's does not link on it; one whose too-new classes never load does: {back}")
+    check(forward["linked"] == 3 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
 
 # A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
 # PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.
