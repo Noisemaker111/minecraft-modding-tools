@@ -2046,6 +2046,9 @@ public final class JarPort {
                         return true;
                     }
                 }
+                if (kind == 'm' && name.startsWith("<")) {
+                    return false; // a constructor is the class's own
+                }
                 if (own.sup != null) {
                     queue.add(cls(own.sup));
                 }
@@ -10785,7 +10788,23 @@ public final class JarPort {
                 case FixExpr.New w -> construct(w, out);
                 case FixExpr.Cast c -> cast(c, out);
                 case FixExpr.Ref r -> throw new Refused("a method reference is taken only as an argument");
+                case FixExpr.Sum a -> sum(a, out);
             };
+        }
+
+        Type sum(FixExpr.Sum a, Code out) {
+            Type l = lower(a.left(), out);
+            boolean wide = l.getSort() == Type.LONG;
+            if (!wide && (l.getSort() < Type.CHAR || l.getSort() > Type.INT)) {
+                throw new Refused("cannot add " + l);
+            }
+            Type r = lower(a.right(), out);
+            if (r.getSort() == Type.LONG != wide || !wide && (r.getSort() < Type.CHAR || r.getSort() > Type.INT)) {
+                throw new Refused("cannot add " + l + " and " + r);
+            }
+            int op = a.op() == '+' ? (wide ? Opcodes.LADD : Opcodes.IADD) : (wide ? Opcodes.LSUB : Opcodes.ISUB);
+            out.add(0, mv -> mv.visitInsn(op));
+            return wide ? Type.LONG_TYPE : Type.INT_TYPE;
         }
 
         Type arg(int index, Code out) {
@@ -11399,3 +11418,4 @@ public final class JarPort {
         return out.toByteArray();
     }
 }
+
