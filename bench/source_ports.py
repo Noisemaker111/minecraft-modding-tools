@@ -385,6 +385,14 @@ def jar_task(row):
     return (row["project"].rstrip(":") + ":assemble") if row.get("project") and row["project"] != ":" else "assemble"
 
 
+def gradle_built(code, res):
+    """Did Gradle build the jar? mmt compile also fails on its own checks of the built mod (a lang file the game skips,
+    Biomes O' Plenty's es_mx.json); the author's published jar has the same file, so that jar counts, its finding kept."""
+    r = res.get("result", res)
+    return code == 0 or (code == 1 and (r.get("modChecks") or {}).get("ok") is False
+                         and all(st.get("exit") in (None, 0) for st in res.get("stages", [])))
+
+
 def baseline_one(loader, row, out, timeout):
     """Does the pinned source build its jar on its own release, with mmt compile and the project's assemble task?"""
     rec = {"slug": row["slug"], "loader": loader, "builds": row["builds"]}
@@ -394,8 +402,10 @@ def baseline_one(loader, row, out, timeout):
         code, stdout, err = SW.sh(MMT + ["compile", "--root", work, "--task", jar_task(row), "--json"] + project_args(row), timeout=timeout)
         res = SW.last_json(stdout) or {}
         r = res.get("result", res)
-        jar = built_jar(work, row, started) if code == 0 else None
+        jar = built_jar(work, row, started) if gradle_built(code, res) else None
         rec["ok"] = jar is not None
+        if rec["ok"] and code:
+            rec["modChecks"] = " ".join(str(r.get("details", "")).split())[:400]
         if not rec["ok"]:
             text = " ".join(str(r.get("error") or r.get("details") or r.get("reason") or err[-600:] or "no answer").split())
             rec["class"] = "no jar written" if code == 0 else "no answer in time" if code is None else "compile-errors" if re.search(r"error: |compiler error", text) else SW.gradle_class(text)

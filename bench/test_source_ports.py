@@ -56,6 +56,13 @@ check(S.jar_task({"project": ":NeoForge"}) == ":NeoForge:assemble" and S.jar_tas
       f"a source builds its jar with assemble: {S.jar_task({'project': ':NeoForge'})}")
 
 
+# A jar Gradle built counts though mmt's own check of it found a data problem; a Gradle stop never does.
+bop = {"stages": [{"name": "metadata", "exit": 0}, {"name": "compile", "exit": 0}], "result": {"modChecks": {"ok": False}}}
+stopped = {"stages": [{"name": "metadata", "exit": 0}, {"name": "compile", "exit": 1}], "result": {"modChecks": {"ok": False}}}
+check(S.gradle_built(1, bop) and S.gradle_built(0, {}) and not S.gradle_built(1, stopped) and not S.gradle_built(2, bop),
+      "a built jar counts despite mmt's data checks; a failed Gradle run or an mmt error does not")
+
+
 def table(drop_target=False):
     with tempfile.TemporaryDirectory() as folder:
         folder = Path(folder)
