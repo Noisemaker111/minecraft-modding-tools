@@ -129,7 +129,7 @@ final class JarPortBundleTest {
     }
 
     static String minecraft(byte[] jar) throws Exception {
-        Object range = JarPort.fabricMinecraft(jar);
+        Object range = BundledMods.fabricMinecraft(jar);
         return range instanceof String s ? s : Json.write(range);
     }
 

@@ -42,7 +42,7 @@ public final class PortScaffoldTests {
             Json.map("minecraft_version", "1.21.1")
         );
         Target.Setup groovySetup = new Target.Setup(groovyBuild, groovyModel, "1.7.10", List.of());
-        Target.scaffoldFiles(groovySetup, groovyBuild, Json.map("minecraft_version", "1.21.1"), "2.6", "1.7.10");
+        TargetForge.scaffoldFiles(groovySetup, groovyBuild, Json.map("minecraft_version", "1.21.1"), "2.6", "1.7.10");
         String build = groovySetup.text(groovy.resolve("build.gradle"));
         check(
             build.contains("com.gtnewhorizons.retrofuturagradle") &&
@@ -110,7 +110,7 @@ public final class PortScaffoldTests {
             Json.map("minecraft_version", "1.21.1")
         );
         Target.Setup kotlinSetup = new Target.Setup(kotlinBuild, kotlinModel, "1.7.10", List.of());
-        Target.scaffoldFiles(kotlinSetup, kotlinBuild, Json.map("minecraft_version", "1.21.1"), "2.6", "1.7.10");
+        TargetForge.scaffoldFiles(kotlinSetup, kotlinBuild, Json.map("minecraft_version", "1.21.1"), "2.6", "1.7.10");
         check(
             kotlinSetup.excluded.contains(kotlin.resolve("build.gradle.kts")) &&
             kotlinSetup.excluded.contains(kotlin.resolve("settings.gradle.kts")) &&
@@ -141,7 +141,7 @@ public final class PortScaffoldTests {
             Json.map("minecraft_version", "1.21.1", "minecraftVersion", "1.21.1")
         );
         Target.Setup dualSetup = new Target.Setup(dualBuild, dualModel, "1.7.10", List.of());
-        Target.scaffoldFiles(
+        TargetForge.scaffoldFiles(
             dualSetup,
             dualBuild,
             Json.map("minecraft_version", "1.21.1", "minecraftVersion", "1.21.1"),
@@ -172,7 +172,7 @@ public final class PortScaffoldTests {
         );
         boolean missingThrown = false;
         try {
-            Target.scaffoldFiles(
+            TargetForge.scaffoldFiles(
                 new Target.Setup(missingBuild, missingModel, "1.7.10", List.of()),
                 missingBuild,
                 Json.map(),
@@ -205,7 +205,7 @@ public final class PortScaffoldTests {
         );
         boolean ambiguousThrown = false;
         try {
-            Target.scaffoldFiles(
+            TargetForge.scaffoldFiles(
                 new Target.Setup(ambiguousBuild, ambiguousModel, "1.7.10", List.of()),
                 ambiguousBuild,
                 Json.map("minecraft_version", "1.21.1"),
@@ -217,13 +217,13 @@ public final class PortScaffoldTests {
         }
         check(ambiguousThrown, "two owners for the game pin stop the scaffold instead of guessing");
         check(
-            Target.rfgBuildGradle("9.9").contains("version \"9.9\"") &&
-            Target.rfgSettingsGradle("weird").contains("rootProject.name = \"weird\"") &&
-            Target.rfgDaemonJvmProperties().equals("toolchainVersion=25\n"),
+            TargetForge.rfgBuildGradle("9.9").contains("version \"9.9\"") &&
+            TargetForge.rfgSettingsGradle("weird").contains("rootProject.name = \"weird\"") &&
+            TargetForge.rfgDaemonJvmProperties().equals("toolchainVersion=25\n"),
             "the scaffold templates render the resolved versions and names"
         );
         check(
-            Target.rfgSettingsGradle("a\"b").contains("rootProject.name = \"a\\\"b\""),
+            TargetForge.rfgSettingsGradle("a\"b").contains("rootProject.name = \"a\\\"b\""),
             "a quote in the project name is escaped instead of breaking the settings"
         );
     }

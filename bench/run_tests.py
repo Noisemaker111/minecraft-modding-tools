@@ -34,6 +34,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import port_tools
+
 ROOT = Path(__file__).resolve().parent.parent
 JAR = "build/distributions/mmt.jar"
 ZIP = "build/distributions/mmt-portable.zip"
@@ -121,14 +123,16 @@ def checkout_data():
     yield java("-cp", JAR + SEP + str(out), "CheckoutDataTest", ".")
 
 
+PREFLIGHT_TESTS = ["tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"]
+
+
 def port_preflight():
     out = ROOT / ".runs" / "preflight-tests"
-    yield ["javac", "--release", "21", "-encoding", "UTF-8", "-d", str(out), "tools/VersionMap.java",
-           "tools/cli/Route.java", "tools/cli/Json.java", "tools/cli/Versions.java",
-           "tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"]
-    yield java("-cp", str(out), "PortPreflightTest")
-    yield java("-cp", str(out), "ChainMapTest")
-    yield java("-cp", str(out), "LegacyMapTest")
+    asm = SEP.join(port_tools.ASM)
+    home = jdk(25)
+    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *PREFLIGHT_TESTS]
+    for test in PREFLIGHT_TESTS:
+        yield [str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem]
 
 
 # The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test, SourceAnswers*Test), found
@@ -182,11 +186,10 @@ def jdk(feature):
 
 def jar_port():
     out = ROOT / ".runs" / "jarport-tests"
-    asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
+    asm = SEP.join(port_tools.ASM)
     tests = jar_port_tests()
     home = jdk(25)
-    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Downgrade.java", "tools/Exposure.java",
-           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/cli/Versions.java", "tools/SourceAnswers.java", *tests]
+    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *tests]
     yield Together([str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem)] for test in tests)
 
 
@@ -239,6 +242,7 @@ CHECKS = {
     "runtime-natives": (True, ("posix",), [java("tools/tests/RuntimeNativesTest.java", ".", JAR)]),
     "hidden-window": (True, None, on_fixture("hidden-window", *java("tools/tests/BackgroundWindowsTest.java", "{root}", JAR))),
     "python": (False, None, [Together([sys.executable, p] for p in PYTHON)]),
+    "copies": (False, None, [[sys.executable, "bench/copies.py"]]),
     "port-preflight": (False, None, port_preflight),
     "console-accessor": (False, None, console_accessor),
     "agent-world-open": (False, None, agent_world_open),
@@ -248,17 +252,13 @@ CHECKS = {
 }
 
 
-def jar_port_sources():
-    return ["tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Downgrade.java", "tools/Exposure.java", "tools/GameDiff.java",
-            "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java"]
-
-
-ASM_JARS = ["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"]
+ASM_JARS = list(port_tools.ASM)
 # The files each check that compiles its own sources reads; a check not named here uses the packaged jar.
 READS = {
-    "port-preflight": ["tools/VersionMap.java", "tools/cli/Route.java", "tools/cli/Json.java", "tools/cli/Versions.java",
-                       "tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"],
-    "jar-port": lambda: jar_port_sources() + jar_port_tests() + ASM_JARS + [f for f in git_files() if f.startswith("knowledge/standins/jdk/")],
+    # What jscpd reads (.jscpd.json): the tools' and the bench's own code.
+    "copies": lambda: [f for f in git_files() if f.endswith((".java", ".py")) and f.startswith(("tools/", "bench/"))] + [".jscpd.json", "bench/copies.json"],
+    "port-preflight": lambda: port_tools.sources() + PREFLIGHT_TESTS + ASM_JARS,
+    "jar-port": lambda: port_tools.sources() + jar_port_tests() + ASM_JARS + [f for f in git_files() if f.startswith("knowledge/standins/jdk/")],
     "console-accessor": ["tools/agent/Console.java", "tools/tests/ConsoleAccessorTest.java"],
     # Compiled with tools/agent, tools/cli and tools on its source path: any of them may be compiled in.
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
@@ -292,7 +292,7 @@ def affected(changed, names):
     """The checks of names that changed files can affect, and what self-test runs: None for every suite, else a list."""
     reads = {n: set(r() if callable(r) else r) for n, r in READS.items()}
     picked = [n for n in names if n == "python" or n in reads and reads[n] & set(changed)]
-    porter = set(jar_port_sources()) | set(jar_port_tests())
+    porter = {f for f in port_tools.sources() if f.startswith(port_tools.PORT)} | set(jar_port_tests())
     jar = [f for f in changed if in_jar(f)]
     if any(f not in porter for f in jar):
         return picked + [n for n in names if n not in READS and n not in picked and n != "python"], None

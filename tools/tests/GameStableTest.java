@@ -19,11 +19,11 @@ final class GameStableTest {
         for (int run = 0; run < 30; run++) {
             GameDiff.Snap a = GameDiff.read("1.0", game(false), null, List.of());
             GameDiff.Snap b = GameDiff.read("2.0", game(true), null, List.of());
-            GameDiff.Hop hop = new GameDiff.Hop(a, b);
+            GameHop hop = new GameHop(a, b);
             hop.run();
             List<String> out = new ArrayList<>();
             hop.mAB.forEach((x, y) -> out.add(x.owner.name + "." + x.name + " -> " + y.owner.name + "." + y.name));
-            for (GameDiff.Learner.Learned l : new GameDiff.Learner(hop).learn()) {
+            for (GameLearner.Learned l : new GameLearner(hop).learn()) {
                 out.add(l.json("1.0 -> 2.0"));
             }
             Collections.sort(out);

@@ -14,7 +14,7 @@ public final class PortPreflightTest {
                 { "owner": "net.minecraft.client.gui.DrawContext", "from": "getMatrices", "to": "getMatrices", "newDesc": "()Lnet/minecraft/client/util/math/MatrixStack;" }
               ] }
             """);
-        VersionMap.Known reverse = VersionMap.Known.load(map);
+        MapKnown reverse = MapKnown.load(map);
         String good = """
             import net.minecraft.client.gui.DrawContext;
             import net.minecraft.client.gl.RenderPipelines;
@@ -31,24 +31,24 @@ public final class PortPreflightTest {
               }
             }
             """;
-        String changed = VersionMap.ApiFix.preflight(reverse, scratch.resolve("Demo.java"), good);
+        String changed = ApiFix.preflight(reverse, scratch.resolve("Demo.java"), good);
         require(changed.contains("RenderLayer::getGuiTextured"), "pipeline backport");
         require(changed.contains("net.minecraft.client.util.math.MatrixStack stack"), "local matrix type");
         require(changed.contains("stack.push()") && changed.contains("stack.translate(1, 2, 0)") && changed.contains("stack.scale(0.5f, 0.5f, 1)"), "local matrix operations");
-        require(VersionMap.ApiFix.preflight(reverse, scratch.resolve("Demo.java"), changed).equals(changed), "idempotent backport");
+        require(ApiFix.preflight(reverse, scratch.resolve("Demo.java"), changed).equals(changed), "idempotent backport");
         String lookalike = good.replace("import net.minecraft.client.gui.DrawContext;", "import demo.DrawContext;");
-        require(VersionMap.ApiFix.preflight(reverse, scratch.resolve("Demo.java"), lookalike).equals(lookalike), "unrelated DrawContext import");
+        require(ApiFix.preflight(reverse, scratch.resolve("Demo.java"), lookalike).equals(lookalike), "unrelated DrawContext import");
         String localContext = good.replace("class Demo {", "class Demo {\n  static class DrawContext {}");
-        require(VersionMap.ApiFix.preflight(reverse, scratch.resolve("Demo.java"), localContext).equals(localContext), "local DrawContext shadows import");
+        require(ApiFix.preflight(reverse, scratch.resolve("Demo.java"), localContext).equals(localContext), "local DrawContext shadows import");
         String localPipeline = good.replace("class Demo {", "class Demo {\n  static class RenderPipelines { static Object GUI_TEXTURED; }");
-        String localPipelineResult = VersionMap.ApiFix.preflight(reverse, scratch.resolve("Demo.java"), localPipeline);
+        String localPipelineResult = ApiFix.preflight(reverse, scratch.resolve("Demo.java"), localPipeline);
         require(localPipelineResult.contains("drawGuiTexture(RenderPipelines.GUI_TEXTURED"), "local RenderPipelines shadows import");
         String escape = good.replace("stack.popMatrix();", "escape(stack);\n    stack.popMatrix();");
-        String escaped = VersionMap.ApiFix.preflight(reverse, scratch.resolve("Demo.java"), escape);
+        String escaped = ApiFix.preflight(reverse, scratch.resolve("Demo.java"), escape);
         require(escaped.contains("Matrix3x2fStack stack") && escaped.contains("pushMatrix()"), "escaping matrix remains untouched");
-        VersionMap.Known noTarget = new VersionMap.Known();
+        MapKnown noTarget = new MapKnown();
         noTarget.names = "yarn"; noTarget.toVersion = "1.21.5";
-        require(VersionMap.ApiFix.preflight(noTarget, scratch.resolve("Demo.java"), good).equals(good), "absent target signatures");
+        require(ApiFix.preflight(noTarget, scratch.resolve("Demo.java"), good).equals(good), "absent target signatures");
 
         Path forwardMap = scratch.resolve("forward.json");
         Files.writeString(forwardMap, """
@@ -57,7 +57,7 @@ public final class PortPreflightTest {
                 { "owner": "net.minecraft.client.util.InputUtil", "from": "isKeyPressed", "to": "isKeyPressed", "newDesc": "(Lnet/minecraft/client/util/Window;I)Z" }
               ] }
             """);
-        VersionMap.Known forward = VersionMap.Known.load(forwardMap);
+        MapKnown forward = MapKnown.load(forwardMap);
         String key = """
             import net.minecraft.client.MinecraftClient;
             import net.minecraft.client.util.InputUtil;
@@ -68,15 +68,15 @@ public final class PortPreflightTest {
               }
             }
             """;
-        String keyed = VersionMap.ApiFix.preflight(forward, scratch.resolve("Keys.java"), key);
+        String keyed = ApiFix.preflight(forward, scratch.resolve("Keys.java"), key);
         require(keyed.contains("InputUtil.isKeyPressed(MinecraftClient.getInstance().getWindow(), 65)"), "native window source: " + keyed);
         String unknown = key.replace("MinecraftClient.getInstance().getWindow().getHandle()", "unknownHandle()");
-        require(VersionMap.ApiFix.preflight(forward, scratch.resolve("Keys.java"), unknown).equals(unknown), "unknown handle provenance");
-        require(VersionMap.ApiFix.preflight(forward, scratch.resolve("Keys.java"), key.replace("import net.minecraft.client.util.InputUtil;", "import demo.InputUtil;")).equals(key.replace("import net.minecraft.client.util.InputUtil;", "import demo.InputUtil;")), "unrelated InputUtil import");
+        require(ApiFix.preflight(forward, scratch.resolve("Keys.java"), unknown).equals(unknown), "unknown handle provenance");
+        require(ApiFix.preflight(forward, scratch.resolve("Keys.java"), key.replace("import net.minecraft.client.util.InputUtil;", "import demo.InputUtil;")).equals(key.replace("import net.minecraft.client.util.InputUtil;", "import demo.InputUtil;")), "unrelated InputUtil import");
         String shadowedInput = key.replace("class Keys {", "class Keys {\n  Object InputUtil;");
-        require(VersionMap.ApiFix.preflight(forward, scratch.resolve("Keys.java"), shadowedInput).equals(shadowedInput), "InputUtil field shadows import");
-        VersionMap.Known noWindow = new VersionMap.Known(); noWindow.names = "yarn"; noWindow.toVersion = "1.21.9";
-        require(VersionMap.ApiFix.preflight(noWindow, scratch.resolve("Keys.java"), key).equals(key), "absent Window signature");
+        require(ApiFix.preflight(forward, scratch.resolve("Keys.java"), shadowedInput).equals(shadowedInput), "InputUtil field shadows import");
+        MapKnown noWindow = new MapKnown(); noWindow.names = "yarn"; noWindow.toVersion = "1.21.9";
+        require(ApiFix.preflight(noWindow, scratch.resolve("Keys.java"), key).equals(key), "absent Window signature");
 
         Path colorMap = scratch.resolve("color.json");
         Files.writeString(colorMap, """
@@ -86,7 +86,7 @@ public final class PortPreflightTest {
                 { "owner": "net.minecraft.client.gui.DrawContext", "from": "drawText", "desc": "(Lnet/minecraft/client/font/TextRenderer;Lnet/minecraft/text/Text;IIIZ)I", "to": "drawText", "newDesc": "(Lnet/minecraft/client/font/TextRenderer;Lnet/minecraft/text/Text;IIIZ)V" }
               ] }
             """);
-        VersionMap.Known color = VersionMap.Known.load(colorMap);
+        MapKnown color = MapKnown.load(colorMap);
         String rgb = """
             import net.minecraft.client.gui.DrawContext;
             class ColorDemo {
@@ -99,19 +99,19 @@ public final class PortPreflightTest {
               }
             }
             """;
-        String colored = VersionMap.ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), rgb);
+        String colored = ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), rgb);
         require(colored.contains("(config.textColor & 0xFC000000) == 0 ? (config.textColor | 0xFF000000) : config.textColor"), "stable field preserves old alpha fallback");
         require(colored.contains("(color & 0xFC000000) == 0 ? (color | 0xFF000000) : color"), "stable identifier preserves old alpha fallback");
         require(colored.contains("0xFFFFFFFF") && colored.contains("0x80FFFFFF"), "RGB literal folded, explicit ARGB preserved");
         require(colored.contains("nextColor())"), "effectful color expression refused");
-        require(VersionMap.ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), colored).equals(colored), "text color preflight idempotent");
-        require(VersionMap.ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), rgb.replace("import net.minecraft.client.gui.DrawContext;", "import demo.DrawContext;")).equals(rgb.replace("import net.minecraft.client.gui.DrawContext;", "import demo.DrawContext;")), "text color wrong declaring type refused");
-        require(VersionMap.ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), rgb.replace("class ColorDemo {", "class ColorDemo { static class DrawContext {}"))
+        require(ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), colored).equals(colored), "text color preflight idempotent");
+        require(ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), rgb.replace("import net.minecraft.client.gui.DrawContext;", "import demo.DrawContext;")).equals(rgb.replace("import net.minecraft.client.gui.DrawContext;", "import demo.DrawContext;")), "text color wrong declaring type refused");
+        require(ApiFix.preflight(color, scratch.resolve("ColorDemo.java"), rgb.replace("class ColorDemo {", "class ColorDemo { static class DrawContext {}"))
                 .equals(rgb.replace("class ColorDemo {", "class ColorDemo { static class DrawContext {}")), "shadowed DrawContext refused");
-        VersionMap.Known missingColorMap = new VersionMap.Known(); missingColorMap.names = "yarn"; missingColorMap.fromVersion = "1.21.5"; missingColorMap.toVersion = "1.21.6";
-        require(VersionMap.ApiFix.preflight(missingColorMap, scratch.resolve("ColorDemo.java"), rgb).equals(rgb), "missing text API evidence refused");
-        VersionMap.Known wrongHop = VersionMap.Known.load(colorMap); wrongHop.fromVersion = "1.21.4";
-        require(VersionMap.ApiFix.preflight(wrongHop, scratch.resolve("ColorDemo.java"), rgb).equals(rgb), "unknown version hop refused");
+        MapKnown missingColorMap = new MapKnown(); missingColorMap.names = "yarn"; missingColorMap.fromVersion = "1.21.5"; missingColorMap.toVersion = "1.21.6";
+        require(ApiFix.preflight(missingColorMap, scratch.resolve("ColorDemo.java"), rgb).equals(rgb), "missing text API evidence refused");
+        MapKnown wrongHop = MapKnown.load(colorMap); wrongHop.fromVersion = "1.21.4";
+        require(ApiFix.preflight(wrongHop, scratch.resolve("ColorDemo.java"), rgb).equals(rgb), "unknown version hop refused");
 
         lintChecks(scratch);
 
@@ -134,11 +134,11 @@ public final class PortPreflightTest {
         Path overrideLog = scratch.resolve("override.log");
         Files.writeString(overrideLog, repo.resolve("MyScreen.java") + ":4: error: method does not override or implement a method from a supertype\n  public void render() {}\n  ^\n"
             + repo.resolve("MyPanel.java") + ":4: error: method does not override or implement a method from a supertype\n  public void render() {}\n  ^\n");
-        VersionMap.Fix.run(overrideMap, overrideLog, repo, false, null);
+        MapFix.run(overrideMap, overrideLog, repo, false, null);
         require(Files.readString(repo.resolve("MyScreen.java")).equals(screen), "no supertypes: no guess between two renames");
         VersionMap.SUPERS.put("MyScreen", Set.of("Screen", "AbstractContainerEventHandler"));
         VersionMap.SUPERS.put("MyPanel", Set.of("ModPanel", "Panel"));
-        VersionMap.Fix.run(overrideMap, overrideLog, repo, false, null);
+        MapFix.run(overrideMap, overrideLog, repo, false, null);
         require(Files.readString(repo.resolve("MyScreen.java")).contains("void extractRenderState()"), "Screen override renamed as Screen's");
         require(Files.readString(repo.resolve("MyPanel.java")).contains("void draw()"), "override through the mod's own parent renamed as Panel's");
         VersionMap.SUPERS.clear();
@@ -164,7 +164,7 @@ public final class PortPreflightTest {
         Files.writeString(split.resolve("EntityPredicate.java"), "package mod;\nclass EntityPredicate { static Object ANY; }\n");
         Path splitLog = scratch.resolve("split.log");
         Files.writeString(splitLog, split.resolve("Gen.java") + ":6: error: cannot find symbol\n  Object a = InventoryChangeTrigger.TriggerInstance.hasItems();\n             ^\n");
-        VersionMap.Fix.run(splitMap, splitLog, split, false, null);
+        MapFix.run(splitMap, splitLog, split, false, null);
         String kept = Files.readString(split.resolve("Gen.java"));
         require(kept.contains("import net.minecraft.advancements.critereon.*;"), "wildcard kept while the package still exists");
         require(kept.contains("import net.minecraft.advancements.triggers.InventoryChangeTrigger;") && kept.contains("import net.minecraft.advancements.predicates.MinMaxBounds;"), "each moved class used gets its import");
@@ -173,7 +173,7 @@ public final class PortPreflightTest {
         require(!kept.contains("predicates.EntityPredicate"), "the mod's own EntityPredicate is not shadowed");
         Files.writeString(split.resolve("Gen.java"), gen);
         Files.writeString(splitLog, split.resolve("Gen.java") + ":2: error: package net.minecraft.advancements.critereon does not exist\nimport net.minecraft.advancements.critereon.*;\n^\n");
-        VersionMap.Fix.run(splitMap, splitLog, split, false, null);
+        MapFix.run(splitMap, splitLog, split, false, null);
         String gone = Files.readString(split.resolve("Gen.java"));
         require(!gone.contains("critereon") && gone.contains("import net.minecraft.advancements.triggers.InventoryChangeTrigger;"), "wildcard of a gone package replaced");
         require(gone.contains("import java.util.List;"), "other imports untouched");
@@ -194,7 +194,7 @@ public final class PortPreflightTest {
         Path nestedLog = scratch.resolve("nested.log");
         Files.writeString(nestedLog, nested.resolve("Caps.java") + ":3: error: cannot find symbol\n  Object a = Capabilities.ItemHandler.BLOCK;\n                         ^\n  symbol:   variable ItemHandler\n  location: class Capabilities\n"
             + nested.resolve("Caps.java") + ":4: error: cannot find symbol\n  Object b = Other.ItemHandler.BLOCK;\n                  ^\n  symbol:   variable ItemHandler\n  location: class Other\n");
-        VersionMap.Fix.run(nestedMap, nestedLog, nested, false, null);
+        MapFix.run(nestedMap, nestedLog, nested, false, null);
         String renamedCaps = Files.readString(nested.resolve("Caps.java"));
         require(renamedCaps.contains("Capabilities.Item.BLOCK"), "nested class renamed through its outer class: " + renamedCaps);
         require(renamedCaps.contains("Other.ItemHandler.BLOCK"), "another outer class's ItemHandler untouched");
@@ -216,7 +216,7 @@ public final class PortPreflightTest {
         Path dropLog = scratch.resolve("drops.log");
         Files.writeString(dropLog, drops.resolve("Calls.java") + ":3: error: method setSectionDirty in class LevelRenderer cannot be applied to given types;\n    renderer.setSectionDirty(\n            ^\n"
             + drops.resolve("Calls.java") + ":7: error: method resize in class Window cannot be applied to given types;\n    window.resize(w, h);\n          ^\n");
-        VersionMap.Fix.run(dropMap, dropLog, drops, false, null);
+        MapFix.run(dropMap, dropLog, drops, false, null);
         String dropped = Files.readString(drops.resolve("Calls.java"));
         require(dropped.contains("renderer.markDirty(pos, 3);"), "dropped parameter's argument removed and the call renamed: " + dropped);
         require(dropped.contains("window.resize(w, h);"), "an ambiguous drop is left alone");
@@ -226,7 +226,7 @@ public final class PortPreflightTest {
         Files.writeString(dropLog, drops.resolve("Calls.java") + ":7: error: method resize in class Window cannot be applied to given types;\n    window.resize(w, h);\n" + " ".repeat(120) + "^\n"
             + drops.resolve("Calls.java") + ":3: error: method setSectionDirty in class LevelRenderer cannot be applied to given types;\n    renderer.setSectionDirty(\n" + " ".repeat(200) + "^\n"
             + drops.resolve("Calls.java") + ":400: error: method setSectionDirty in class LevelRenderer cannot be applied to given types;\n    renderer.setSectionDirty(\n            ^\n");
-        VersionMap.Fix.run(dropMap, dropLog, drops, false, null);
+        MapFix.run(dropMap, dropLog, drops, false, null);
         require(Files.readString(drops.resolve("Calls.java")).contains("renderer.markDirty(pos, 3);"), "a caret past the line's end still finds the call");
 
         // Calls the game rewrote itself (GameDiff's call-site rewrites): instance -> instance on another owner, static ->
@@ -255,7 +255,7 @@ public final class PortPreflightTest {
             + usesFile + ":8: error: cannot find symbol\n    server.getProfiler().push(\"x\");\n          ^\n  symbol:   method getProfiler()\n  location: variable server of type MinecraftServer\n"
             + usesFile + ":9: error: cannot find symbol\n    int n = FriendlyByteBuf.getVarIntSize(size(list.get(0)));\n                           ^\n  symbol:   method getVarIntSize(int)\n  location: class FriendlyByteBuf\n"
             + usesFile + ":10: error: cannot find symbol\n    graphics.blitSprite(SPRITE, x, y, 9, 9);\n            ^\n  symbol:   method blitSprite(ResourceLocation,int,int,int,int)\n  location: variable graphics of type GuiGraphics\n");
-        VersionMap.Fix.run(rwMap, rwLog, rw, false, null);
+        MapFix.run(rwMap, rwLog, rw, false, null);
         String rewritten = Files.readString(rw.resolve("Uses.java"));
         require(rewritten.contains("BuiltInRegistries.BLOCK.getOrThrow(key)"), "instance rewrite keeps the receiver: " + rewritten);
         require(rewritten.contains("float r = Mth.rotLerpRad(a, b, c);") && rewritten.contains("import net.minecraft.util.Mth;"), "instance -> static helper, imported");
@@ -279,7 +279,7 @@ public final class PortPreflightTest {
         Path ysLog = scratch.resolve("unknown-static.log");
         Files.writeString(ysLog, ys.resolve("Palette.java") + ":3: error: cannot find symbol\n    return PacketByteBuf.getVarIntLength(this.size) + n;\n                        ^\n  symbol:   method getVarIntLength(int)\n  location: class PacketByteBuf\n"
             + ys.resolve("Palette.java") + ":6: error: cannot find symbol\n    return this.manager.isWithinDistance(a, b, c, d, e);\n                       ^\n  symbol:   method isWithinDistance(int,int,int,int,int)\n  location: variable manager of type ServerChunkLoadingManager\n");
-        VersionMap.Fix.run(ysMap, ysLog, ys, false, null);
+        MapFix.run(ysMap, ysLog, ys, false, null);
         String paletted = Files.readString(ys.resolve("Palette.java"));
         require(paletted.contains("return VarInts.getSizeInBytes(this.size) + n;") && paletted.contains("import net.minecraft.network.encoding.VarInts;"), "a call on the class name is static: " + paletted);
         require(paletted.contains("this.manager.isWithinViewDistance(a, b, c, d, e)"), "a call on a value stays an instance call");
@@ -294,7 +294,7 @@ public final class PortPreflightTest {
             + jr.resolve("Targets.java") + ":5: error: constructor Other in class Other cannot be applied to given types;\n    var u = new Other(\"a\", 1, 2, \"b\");\n            ^\n  required: String,int,String\n  found:    String,int,int,String\n  reason: actual and formal argument lists differ in length\n"
             + jr.resolve("Targets.java") + ":6: error: method getDescriptionId in class Item cannot be applied to given types;\n    tip(this.getDescriptionId(stack));\n            ^\n  required: no arguments\n  found:    ItemStack\n  reason: actual and formal argument lists differ in length\n"
             + jr.resolve("Targets.java") + ":7: error: method getDescriptionId in class Item cannot be applied to given types;\n    tip(this.getDescriptionId(stack.copy()));\n            ^\n  required: no arguments\n  found:    ItemStack\n  reason: actual and formal argument lists differ in length\n");
-        VersionMap.Fix.run(map, jrLog, jr, false, null);
+        MapFix.run(map, jrLog, jr, false, null);
         String targeted = Files.readString(jr.resolve("Targets.java"));
         require(targeted.contains("var t = new TextureTarget(w, h,\n        true);\n"), "the argument javac no longer takes goes, its lines kept: " + targeted);
         require(targeted.contains("tip(this.getDescriptionId());"), "a method that takes nothing now loses a plain argument");
@@ -312,7 +312,7 @@ public final class PortPreflightTest {
             + crafting + ":5: error: no suitable method found for shaped(RecipeCategory,Item,int)\n    ShapedRecipeBuilder.shaped(RecipeCategory.DECORATIONS, Items.SCAFFOLDING, 6);\n                       ^\n"
             + "    method ShapedRecipeBuilder.shaped(HolderGetter<Item>,RecipeCategory,ItemLike) is not applicable\n      (argument mismatch; RecipeCategory cannot be converted to HolderGetter<Item>)\n"
             + crafting + ":6: error: method of in class Enchants cannot be applied to given types;\n    Enchants.of(RecipeCategory.TOOLS);\n            ^\n  required: HolderGetter<Enchantment>,RecipeCategory\n  found:    RecipeCategory\n  reason: actual and formal argument lists differ in length\n");
-        VersionMap.Fix.run(map, hgLog, hg, false, null);
+        MapFix.run(map, hgLog, hg, false, null);
         String crafted = Files.readString(hg.resolve("Crafting.java"));
         require(crafted.contains("shaped(net.minecraft.core.registries.BuiltInRegistries.ITEM, RecipeCategory.TOOLS,\n        Items.LEAD)"), "the item registry is passed, the call's lines kept: " + crafted);
         require(crafted.contains("shaped(net.minecraft.core.registries.BuiltInRegistries.ITEM, RecipeCategory.DECORATIONS, Items.SCAFFOLDING, 6)"), "and where javac names only candidates of the same length");
@@ -347,7 +347,7 @@ public final class PortPreflightTest {
             + at.apply(6, "") + "incompatible types: CropBlock cannot be converted to HolderGetter<Block>" + caret.apply(6, "()).")
             + at.apply(7, "") + "incompatible types: ResourceKey<Recipe<?>> cannot be converted to Widget" + caret.apply(7, "id;")
             + at.apply(8, "") + "incompatible types: String cannot be converted to ResourceKey<EntityType<?>>" + caret.apply(8, "id.location().toString"));
-        VersionMap.Fix.run(map, cvLog, cv, false, null);
+        MapFix.run(map, cvLog, cv, false, null);
         String converted = Files.readString(cv.resolve("Ids.java"));
         require(converted.contains("ResourceLocation recipeId = id.location();"), "a key gives its location: " + converted);
         require(converted.contains("byKey(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.RECIPE, entry.getKey()))"), "an id becomes its recipe key");
@@ -386,7 +386,7 @@ public final class PortPreflightTest {
             keyErr.apply(3, ".up") + "  symbol:   variable up\n  location: variable input of type ClientInput\n"
             + keyErr.apply(4, ".up") + "  symbol:   variable up\n  location: variable input of type ClientInput\n"
             + keyErr.apply(5, ".getOrCreateTag") + "  symbol:   method getOrCreateTag(TagKey<Item>)\n  location: variable items of type Registry<Item>\n");
-        VersionMap.Fix.run(chMap, scratch.resolve("chains.log"), ch, false, null);
+        MapFix.run(chMap, scratch.resolve("chains.log"), ch, false, null);
         String chained = Files.readString(ch.resolve("Keys.java"));
         require(chained.contains("if (input.keyPresses.forward() && go) run();"), "a field read becomes the game's chain: " + chained);
         require(chained.contains("    input.up = true;"), "an assigned field is not turned into a call");
@@ -418,7 +418,7 @@ public final class PortPreflightTest {
             + ad.resolve("Hud.java") + ":5: error: no suitable method found for blitSprite(ResourceLocation,int,int,int,int,int,int,int,int)\n" + gui[4] + "\n            ^\n"
             + "    method GuiGraphics.blitSprite(Function<ResourceLocation,RenderType>,ResourceLocation,int,int,int,int) is not applicable\n      (actual and formal argument lists differ in length)\n"
             + "    method GuiGraphics.blitSprite(Function<ResourceLocation,RenderType>,ResourceLocation,int,int,int,int,int,int,int,int) is not applicable\n      (actual and formal argument lists differ in length)\n");
-        VersionMap.Fix.run(adMap, scratch.resolve("arg-defaults.log"), ad, false, null);
+        MapFix.run(adMap, scratch.resolve("arg-defaults.log"), ad, false, null);
         String hud = Files.readString(ad.resolve("Hud.java"));
         require(hud.contains("graphics.blitSprite(net.minecraft.client.renderer.RenderType::guiTextured, SPRITE, x, y, 16, 16);"), "the game's own value goes in first: " + hud);
         require(hud.contains("graphics.blitSprite(OTHER, x, y, 8, 8);"), "a call javac did not name is left alone");
@@ -444,7 +444,7 @@ public final class PortPreflightTest {
         Files.writeString(scratch.resolve("enclosing.log"),
             ep.resolve("ConfigScreen.java") + ":3: error: method renderBackground in class Screen cannot be applied to given types;\n" + configLines[2] + needs
             + ep.resolve("ConfigScreen.java") + ":6: error: method renderBackground in class Screen cannot be applied to given types;\n" + configLines[5] + needs);
-        VersionMap.Fix.run(scratch.resolve("enclosing.json"), scratch.resolve("enclosing.log"), ep, false, null);
+        MapFix.run(scratch.resolve("enclosing.json"), scratch.resolve("enclosing.log"), ep, false, null);
         String config = Files.readString(ep.resolve("ConfigScreen.java"));
         require(config.contains("    renderBackground(context, mouseX, mouseY, delta);\n  }\n  public void tick"), "the enclosing method's parameters are passed: " + config);
         require(config.contains("int ticks) {\n    renderBackground(context);"), "types that do not line up are left: " + config);
@@ -471,7 +471,7 @@ public final class PortPreflightTest {
         Files.writeString(sb.resolve("Sync.java"), String.join("\n", sync) + "\n");
         Files.writeString(scratch.resolve("siblings.log"), sb.resolve("Sync.java") + ":3: error: cannot find symbol\n" + sync[2]
             + "\n                                               ^\n  symbol:   method blockChanged(<null>,BlockPos,<null>,<null>,int)\n  location: variable levelRenderer of type LevelRenderer\n");
-        VersionMap.Fix.run(sbMap, scratch.resolve("siblings.log"), sb, false, null);
+        MapFix.run(sbMap, scratch.resolve("siblings.log"), sb, false, null);
         String synced = Files.readString(sb.resolve("Sync.java"));
         require(synced.contains("Minecraft.getInstance().levelExtractor.blockChanged(null, pos, null, null, 0);"), "the call goes through the holder's other field: " + synced);
         require(synced.contains("Minecraft.getInstance().levelRenderer.needsUpdate();"), "a call javac did not name stays");
@@ -497,7 +497,7 @@ public final class PortPreflightTest {
         };
         Files.writeString(mo.resolve("Boots.java"), String.join("\n", armor) + "\n");
         Files.writeString(scratch.resolve("moved-out.log"), mo.resolve("Boots.java") + ":4: error: cannot find symbol\n" + armor[3] + "\n                ^\n  symbol:   class Type\n  location: class ArmorItem\n");
-        VersionMap.Fix.run(moMap, scratch.resolve("moved-out.log"), mo, false, null);
+        MapFix.run(moMap, scratch.resolve("moved-out.log"), mo, false, null);
         String boots = Files.readString(mo.resolve("Boots.java"));
         require(boots.contains("Boots(ArmorType type)") && boots.contains("Map<ArmorType, Integer> M = new java.util.EnumMap<>(ArmorType.class)"), "every Outer.Nested becomes the moved class: " + boots);
         require(boots.contains("import net.minecraft.world.item.equipment.ArmorType;") && boots.contains("extends ArmorItem"), "the moved class is imported and the outer class stays: " + boots);
@@ -524,7 +524,7 @@ public final class PortPreflightTest {
         Files.writeString(ru.resolve("Cache.java"), String.join("\n", cache) + "\n");
         Files.writeString(scratch.resolve("reused.log"), ru.resolve("Cache.java") + ":2: error: incompatible types: inference variable T#1 has incompatible bounds\n"
             + cache[1] + "\n                                                                        ^\n    equality constraints: Item\n    lower bounds: Optional<Reference<Item>>\n");
-        VersionMap.Fix.run(ruMap, scratch.resolve("reused.log"), ru, false, null);
+        MapFix.run(ruMap, scratch.resolve("reused.log"), ru, false, null);
         String reused = Files.readString(ru.resolve("Cache.java"));
         require(reused.contains("cache(() -> registry.getValue(id))"), "the reused name's old call takes its new name: " + reused);
         require(reused.contains("{ return registry.get(id); }"), "a call javac did not name keeps the reused name");
@@ -544,7 +544,7 @@ public final class PortPreflightTest {
         String heights = ab.resolve("Heights.java").toString();
         Files.writeString(scratch.resolve("abstract.log"), heights + ":1: error: Heights is not abstract and does not override abstract method getMinY() in LevelHeightAccessor\n"
             + "public class Heights implements LevelHeightAccessor {\n       ^\n");
-        VersionMap.Fix.run(abMap, scratch.resolve("abstract.log"), ab, false, null);
+        MapFix.run(abMap, scratch.resolve("abstract.log"), ab, false, null);
         String heighted = Files.readString(ab.resolve("Heights.java"));
         require(heighted.contains("  public int getMinY() {"), "the renamed method takes the name the supertype asks for: " + heighted);
         require(heighted.contains("int getMinBuildHeight(int y)"), "a same-name method with other parameters keeps its name");
@@ -569,7 +569,7 @@ public final class PortPreflightTest {
             renderFile + ":3: error: cannot find symbol\n    RenderSystem.applyModelViewMatrix();\n                ^\n  symbol:   method applyModelViewMatrix()\n  location: class RenderSystem\n"
             + renderFile + ":4: error: cannot find symbol\n    BiomeDefaultFeatures.addDefaultSeagrass(builder);\n                        ^\n  symbol:   method addDefaultSeagrass(Builder)\n  location: class BiomeDefaultFeatures\n"
             + renderFile + ":5: error: cannot find symbol\n    run(() -> RenderSystem.applyModelViewMatrix());\n                          ^\n  symbol:   method applyModelViewMatrix()\n  location: class RenderSystem\n");
-        VersionMap.Fix.run(delMap, delLog, del, false, null);
+        MapFix.run(delMap, delLog, del, false, null);
         String rendered = Files.readString(del.resolve("Render.java"));
         require(rendered.contains("  void f() {\n    \n    BiomeDefaultFeatures.addDefaultSeagrass(builder);"), "the deleted no-argument call goes, line kept: " + rendered);
         require(rendered.contains("run(() -> RenderSystem.applyModelViewMatrix());"), "a deleted call inside an expression is left alone");
@@ -595,7 +595,7 @@ public final class PortPreflightTest {
         Files.writeString(ovLog, ov.resolve("Sound.java") + ":3: error: no suitable method found for getNearest(double,double,double)\n    var a = Direction.getNearest(x, y, z);\n                     ^\n"
             + ov.resolve("Sound.java") + ":5: error: cannot find symbol\n    ClonedLevelChunk.TicksToSave t = null;\n                    ^\n  symbol:   class TicksToSave\n  location: class ClonedLevelChunk\n");
         VersionMap.SUPERS.put("ClonedLevelChunk", Set.of("ChunkAccess", "BlockGetter"));
-        VersionMap.Fix.run(ovMap, ovLog, ov, false, null);
+        MapFix.run(ovMap, ovLog, ov, false, null);
         VersionMap.SUPERS.clear();
         String sounded = Files.readString(ov.resolve("Sound.java"));
         require(sounded.contains("Direction.getApproximateNearest(x, y, z)") && sounded.contains("Direction.getNearest(1, 2, 3)"), "the renamed overload, by its argument types: " + sounded);
@@ -630,7 +630,7 @@ public final class PortPreflightTest {
         VersionMap.SUPERS.put("Ghost", Set.of("Monster", "PathfinderMob", "Mob", "LivingEntity", "Entity"));
         VersionMap.SUPERS.put("Stone", Set.of("Block", "BlockBehaviour"));
         VersionMap.SUPERS.put("Chunk", Set.of("ChunkAccess"));
-        VersionMap.Fix.run(sigMap, sigLog, sig, false, null);
+        MapFix.run(sigMap, sigLog, sig, false, null);
         VersionMap.SUPERS.clear();
         String ghosted = Files.readString(sig.resolve("Ghost.java")), stoned = Files.readString(sig.resolve("Stone.java"));
         require(ghosted.contains("public boolean doHurtTarget(ServerLevel serverLevel, Entity target) {") && ghosted.contains("super.doHurtTarget(serverLevel, target)"), "an added parameter, passed on by super: " + ghosted);
@@ -652,7 +652,7 @@ public final class PortPreflightTest {
         Files.writeString(sig.resolve("Mix.java"), recipe);
         Files.writeString(sigLog, sig.resolve("Mix.java") + ":2" + err);
         VersionMap.SUPERS.put("Mix", Set.of("Recipe"));
-        VersionMap.Fix.run(sigMap, sigLog, sig, false, null);
+        MapFix.run(sigMap, sigLog, sig, false, null);
         VersionMap.SUPERS.clear();
         require(Files.readString(sig.resolve("Mix.java")).equals(recipe.replace("    @Override\n", "\n")), "the removed method's @Override goes, its line kept: " + Files.readString(sig.resolve("Mix.java")));
 
@@ -671,7 +671,7 @@ public final class PortPreflightTest {
         Files.writeString(sigLog, sig.resolve("Lamp.java") + ":2" + err + sig.resolve("Glass.java") + ":2" + err);
         VersionMap.SUPERS.put("Lamp", Set.of("Block", "BlockBehaviour"));
         VersionMap.SUPERS.put("Glass", Set.of("Block", "BlockBehaviour"));
-        VersionMap.Fix.run(sigMap, sigLog, sig, false, null);
+        MapFix.run(sigMap, sigLog, sig, false, null);
         VersionMap.SUPERS.clear();
         require(Files.readString(sig.resolve("Lamp.java")).contains("public boolean propagatesSkylightDown(BlockState state) {"), "unused dropped parameters go");
         require(Files.readString(sig.resolve("Glass.java")).equals(glass), "a body that still uses a dropped parameter is left to the compiler");
@@ -683,7 +683,7 @@ public final class PortPreflightTest {
         Path tpLog = scratch.resolve("type-params.log");
         Files.writeString(tpLog, tp.resolve("GhostRenderer.java") + ":2: error: type PlayerModel does not take parameters\n  PlayerModel<AbstractClientPlayer> model;\n             ^\n"
             + tp.resolve("GhostRenderer.java") + ":3: error: type PlayerModel does not take parameters\n  Map<String, PlayerModel<Map<String, Integer>>> byName;\n                         ^\n");
-        VersionMap.Fix.run(map, tpLog, tp, false, null);
+        MapFix.run(map, tpLog, tp, false, null);
         String typed = Files.readString(tp.resolve("GhostRenderer.java"));
         require(typed.contains("  PlayerModel model;") && typed.contains("Map<String, PlayerModel> byName;"), "type arguments of a class that lost them: " + typed);
         // A class that gained type parameters: a declared type gets wildcards; an extends clause is left to its transform.
@@ -691,7 +691,7 @@ public final class PortPreflightTest {
         Files.writeString(tp.resolve("Renderers.java"), renderers);
         Files.writeString(tpLog, tp.resolve("Renderers.java") + ":2: error: wrong number of type arguments; required 2\n  private <T extends Entity> EntityRenderer<? super T> getRenderer(T entity) {\n                                           ^\n"
             + tp.resolve("Renderers.java") + ":6: error: wrong number of type arguments; required 2\nclass Sub extends EntityRenderer<Entity> {\n                                ^\n");
-        VersionMap.Fix.run(map, tpLog, tp, false, null);
+        MapFix.run(map, tpLog, tp, false, null);
         String widened = Files.readString(tp.resolve("Renderers.java"));
         require(widened.contains("EntityRenderer<? super T, ?> getRenderer(T entity)") && widened.contains("class Sub extends EntityRenderer<Entity> {"), "a declared type gets a wildcard, an extends clause does not: " + widened);
 
@@ -713,7 +713,7 @@ public final class PortPreflightTest {
         Path crLog = scratch.resolve("class-rewrites.log");
         Files.writeString(crLog, cr.resolve("FacingBlock.java") + ":2: error: cannot find symbol\nimport net.minecraft.world.level.block.state.properties.DirectionProperty;\n                                                          ^\n  symbol:   class DirectionProperty\n  location: package net.minecraft.world.level.block.state.properties\n"
             + cr.resolve("Other.java") + ":4: error: cannot find symbol\n  DirectionProperty mine;\n  ^\n  symbol:   class DirectionProperty\n  location: class Other\n");
-        VersionMap.Fix.run(crMap, crLog, cr, false, null);
+        MapFix.run(crMap, crLog, cr, false, null);
         String replaced = Files.readString(cr.resolve("FacingBlock.java"));
         require(replaced.contains("import net.minecraft.world.level.block.state.properties.EnumProperty;") && replaced.contains("static final EnumProperty FACING"), "import and uses switched: " + replaced);
         require(replaced.contains("DirectionPropertyHelper helper;"), "a longer name is untouched");
@@ -753,7 +753,7 @@ public final class PortPreflightTest {
                 { "kind": "field", "owner": "net.minecraft.block.Block", "name": "slipperiness", "desc": "F", "what": "renamed", "was": "net.minecraft.block.Block.slipperiness", "to": "net.minecraft.block.Block.friction", "step": "1.12.2 -> 1.14.4" }
               ] }
             """);
-        VersionMap.Known known = VersionMap.Known.load(map);
+        MapKnown known = MapKnown.load(map);
         String source = """
             import net.minecraft.block.Block;
             class Demo {
@@ -792,7 +792,7 @@ public final class PortPreflightTest {
               }
             }
             """;
-        VersionMap.ApiFix.Lint lint = VersionMap.ApiFix.lintKnown(known, scratch.resolve("Demo.java"), source);
+        ApiFix.Lint lint = ApiFix.lintKnown(known, scratch.resolve("Demo.java"), source);
         require(lint.hits.stream().anyMatch(h -> h.auto() && h.detail().contains("1.12.2 -> 1.14.4")), "auto fixes name their update");
         String[] auto = lint.hits.stream().filter(h -> h.auto()).map(h -> h.oldName()).sorted().toArray(String[]::new);
         require(java.util.Arrays.equals(auto, new String[] {"getBlockState", "slipperiness"}), "unanimous game-owned renames auto-apply: " + String.join(",", auto));
@@ -815,7 +815,7 @@ public final class PortPreflightTest {
             "    return slipperiness;",
             "  }",
             "}");
-        VersionMap.ApiFix.Lint heirLint = VersionMap.ApiFix.lintKnown(known, scratch.resolve("GameChild.java"), heir);
+        ApiFix.Lint heirLint = ApiFix.lintKnown(known, scratch.resolve("GameChild.java"), heir);
         require(heirLint.hits.stream().anyMatch(h -> h.detail().contains("getFoo") && h.detail().contains("[review: unqualified call in game subclass]")), "inherited game calls are reported, never auto-applied");
         require(heirLint.hits.stream().anyMatch(h -> h.detail().contains("slipperiness") && h.detail().contains("[review: unqualified field in game subclass]")), "inherited game fields are reported");
         require(heirLint.hits.stream().noneMatch(h -> h.auto()), "nothing auto-applies without a provable receiver");
@@ -827,7 +827,7 @@ public final class PortPreflightTest {
             "    return getBlockState();",
             "  }",
             "}");
-        VersionMap.ApiFix.Lint staticLint = VersionMap.ApiFix.lintKnown(known, scratch.resolve("StaticUser.java"), staticImp);
+        ApiFix.Lint staticLint = ApiFix.lintKnown(known, scratch.resolve("StaticUser.java"), staticImp);
         require(staticLint.hits.stream().anyMatch(h -> h.auto() && h.detail().startsWith("getBlockState -> getStateContainer")), "unambiguous static imports auto-apply");
         require(lint.hits.stream().anyMatch(h -> h.detail().contains("signature changed") && h.detail().contains("[review args]")), "arity change flagged");
         require(lint.hits.stream().noneMatch(h -> h.detail().contains("keys2")), "matching arity stays quiet");
@@ -835,18 +835,18 @@ public final class PortPreflightTest {
         require(lint.hits.stream().anyMatch(h -> h.auto() && h.detail().startsWith("block.getBlockState")), "findings name the receiver");
         require(!lint.fixed.contains("block.getBlockState()") && !lint.fixed.contains("block.slipperiness"), "old names gone");
         require(lint.fixed.contains("block.getFoo()") && lint.fixed.contains("block.deadMethod()"), "review items untouched");
-        require(VersionMap.ApiFix.lintKnown(known, scratch.resolve("Demo.java"), lint.fixed).hits.stream().noneMatch(h -> h.auto()), "second pass finds nothing left to auto-apply");
+        require(ApiFix.lintKnown(known, scratch.resolve("Demo.java"), lint.fixed).hits.stream().noneMatch(h -> h.auto()), "second pass finds nothing left to auto-apply");
         String shadowed = source.replace("class Demo {", "class Demo {\n  int getBlockState() { return 0; }");
-        VersionMap.ApiFix.Lint shadowedLint = VersionMap.ApiFix.lintKnown(known, scratch.resolve("Shadow.java"), shadowed);
+        ApiFix.Lint shadowedLint = ApiFix.lintKnown(known, scratch.resolve("Shadow.java"), shadowed);
         require(shadowedLint.hits.stream().anyMatch(h -> h.oldName().equals("getBlockState") && h.detail().contains("[self-declared]")), "self-declared names are skipped loudly, not silently");
         require(shadowedLint.hits.stream().noneMatch(h -> h.auto() && h.oldName().equals("getBlockState")), "self-declared names never auto-apply");
         Path repo = scratch.resolve("repo");
         Files.createDirectories(repo);
         Files.writeString(repo.resolve("Demo.java"), source);
-        int files = VersionMap.Preflight.run(map, repo, true);
+        int files = MapPreflight.run(map, repo, true);
         require(files == 1, "dry-run preflight reports the file without writing, got " + files);
         require(Files.readString(repo.resolve("Demo.java")).equals(source), "dry run changes nothing");
-        int wrote = VersionMap.Preflight.run(map, repo, false);
+        int wrote = MapPreflight.run(map, repo, false);
         require(wrote == 1 && Files.readString(repo.resolve("Demo.java")).contains("block.getStateContainer()"), "preflight applies the map fix");
         Path backMap = scratch.resolve("back-map.json");
         Files.writeString(backMap, """
@@ -866,9 +866,9 @@ public final class PortPreflightTest {
               }
             }
             """;
-        VersionMap.ApiFix.Lint back = VersionMap.ApiFix.lintKnown(VersionMap.Known.load(backMap), scratch.resolve("Modern.java"), modern);
+        ApiFix.Lint back = ApiFix.lintKnown(MapKnown.load(backMap), scratch.resolve("Modern.java"), modern);
         require(back.hits.size() == 1 && back.hits.get(0).auto() && back.fixed.contains("block.getBlockState()"), "backports lint the same way, Mojang names to MCP");
-        VersionMap.Known other = new VersionMap.Known();
+        MapKnown other = new MapKnown();
         other.fromVersion = "9";
         other.toVersion = "9";
         other.names = "mcp";
@@ -879,15 +879,15 @@ public final class PortPreflightTest {
         row.put("step", "9 -> 9");
         other.history.add(row);
         require(
-            VersionMap.ApiFix.stepsFor(other, "method", "getBlockState", java.util.Set.of("renamed")).equals("9 -> 9") &&
-            VersionMap.ApiFix.stepsFor(known, "method", "getBlockState", java.util.Set.of("renamed")).contains("1.12.2 -> 1.14.4"),
+            ApiFix.stepsFor(other, "method", "getBlockState", java.util.Set.of("renamed")).equals("9 -> 9") &&
+            ApiFix.stepsFor(known, "method", "getBlockState", java.util.Set.of("renamed")).contains("1.12.2 -> 1.14.4"),
             "step lookup is per-map; cached steps never leak across maps"
         );
         commonWordChecks(scratch, map);
     }
 
     static void commonWordChecks(Path scratch, Path map) throws Exception {
-        VersionMap.Known known = VersionMap.Known.load(map);
+        MapKnown known = MapKnown.load(map);
         Path repo = scratch.resolve("common-repo");
         Files.createDirectories(repo);
         StringBuilder many = new StringBuilder("import net.minecraft.block.Block;\nclass Many {\n");
@@ -905,19 +905,19 @@ public final class PortPreflightTest {
             "    return block.deadField;",
             "  }",
             "}"));
-        String out = capture(() -> VersionMap.Preflight.run(map, repo, true));
+        String out = capture(() -> MapPreflight.run(map, repo, true));
         require(out.lines().filter(line -> line.contains("deadMethod")).count() == 1, "a removed name used 30 times prints once: " + out);
         require(out.contains("30 uses across 2 files") && out.contains("[common-word]"), "the summary names the count and files: " + out);
         require(out.lines().filter(line -> line.contains("deadField")).count() == 2, "a removed name used twice still prints per use: " + out);
         require(out.contains("3 to review"), "the review count matches the printed lines: " + out);
         require(out.contains("0 file(s)") && Files.readString(repo.resolve("ManyA.java")).equals(many.toString()), "dry run changes nothing");
-        List<VersionMap.ApiFix> batch = VersionMap.ApiFix.parseAll(
+        List<ApiFix> batch = ApiFix.parseAll(
             List.of(repo.resolve("ManyA.java"), repo.resolve("Few.java")),
             List.of(Files.readString(repo.resolve("ManyA.java")), Files.readString(repo.resolve("Few.java")))
         );
         require(batch.size() == 2, "batch parse returns one unit per file");
-        VersionMap.ApiFix.Lint single = VersionMap.ApiFix.lintKnown(known, repo.resolve("ManyA.java"), Files.readString(repo.resolve("ManyA.java")));
-        VersionMap.ApiFix.Lint batched = VersionMap.ApiFix.lintParsed(known, batch.get(0), Files.readString(repo.resolve("ManyA.java")));
+        ApiFix.Lint single = ApiFix.lintKnown(known, repo.resolve("ManyA.java"), Files.readString(repo.resolve("ManyA.java")));
+        ApiFix.Lint batched = ApiFix.lintParsed(known, batch.get(0), Files.readString(repo.resolve("ManyA.java")));
         require(batched.hits.equals(single.hits) && batched.fixed.equals(single.fixed), "batch parse lints exactly like single parse");
     }
 

@@ -83,8 +83,8 @@ final class JarPortTakeoverTest {
                 m.visitMethodInsn(Opcodes.INVOKESTATIC, "t9/Draw", "text", "(Ljava/lang/String;)V", false);
             }));
         }
-        port.oldCode = new JarPort.GameCode(before::get, null);
-        port.newCode = new JarPort.GameCode(after::get, null);
+        port.oldCode = new GameCode(before::get, null);
+        port.newCode = new GameCode(after::get, null);
 
         List<Map<String, Object>> runs = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n10/MyButton.class", myButton(false), "n10/MyRow.class", myRow(),

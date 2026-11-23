@@ -50,8 +50,8 @@ final class JarPortFieldTest {
         JarPort port = new JarPort(a, b, map);
         // The new game's own code: twice a holder's value cast to the sound it holds, passed to play.
         Map<String, byte[]> newCode = Map.of("f9/Ui", ui(), "f9/Lazy", lazyUi());
-        port.newCode = new JarPort.GameCode(newCode::get, null, newCode);
-        port.oldCode = new JarPort.GameCode(Map.<String, byte[]>of()::get, null, Map.of());
+        port.newCode = new GameCode(newCode::get, null, newCode);
+        port.oldCode = new GameCode(Map.<String, byte[]>of()::get, null, Map.of());
 
         List<Map<String, Object>> runs = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n9/Mod.class", mod())), "field.jar", runs));
@@ -78,9 +78,9 @@ final class JarPortFieldTest {
             "META-INF/jars/part.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"api-part\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))))));
         Files.write(now, JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"api\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
             "META-INF/jars/part.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"api-part\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))))));
-        names.platform(was, now);
-        JarPortTest.expect(names.platformIds.equals(Set.of("api", "api-part")) && names.platformAliases.equals(Map.of("oldname", "api")),
-            "the platform's modules and the old names it dropped are read from its two jars: " + names.platformIds + " " + names.platformAliases);
+        names.modMetadata.platform(was, now);
+        JarPortTest.expect(names.modMetadata.platformIds.equals(Set.of("api", "api-part")) && names.modMetadata.platformAliases.equals(Map.of("oldname", "api")),
+            "the platform's modules and the old names it dropped are read from its two jars: " + names.modMetadata.platformIds + " " + names.modMetadata.platformAliases);
         // A module renamed (its classes now in a module of another id) is asked of the module holding them, in the new names
         // as the map gives them; one whose classes no module holds was removed, and its dependency goes.
         Path renamedMap = scratch.resolve("route-modules.json");
@@ -98,10 +98,10 @@ final class JarPortFieldTest {
         Files.write(nowMods, JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"api\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
             "META-INF/jars/keymaps.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"keymaps-v1\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
                 "k9/keymaps/Helper.class", empty)))));
-        modules.platform(wasMods, nowMods);
-        JarPortTest.expect(modules.platformAliases.equals(Map.of("keys-v1", "keymaps-v1", "gone-v1", "")),
-            "a renamed module is the one now holding its classes, a removed one is no one: " + modules.platformAliases);
-        Map<String, Object> asked = Json.object(Json.parse(new String(modules.fabricMetadata(
+        modules.modMetadata.platform(wasMods, nowMods);
+        JarPortTest.expect(modules.modMetadata.platformAliases.equals(Map.of("keys-v1", "keymaps-v1", "gone-v1", "")),
+            "a renamed module is the one now holding its classes, a removed one is no one: " + modules.modMetadata.platformAliases);
+        Map<String, Object> asked = Json.object(Json.parse(new String(modules.modMetadata.fabricMetadata(
             "{\"id\": \"m9\", \"depends\": {\"keys-v1\": \">=1.0\", \"gone-v1\": \"*\", \"api\": \">=0.1\"}}".getBytes(java.nio.charset.StandardCharsets.UTF_8), null, Set.of()),
             java.nio.charset.StandardCharsets.UTF_8)));
         JarPortTest.expect(Json.object(asked.get("depends")).keySet().equals(Set.of("keymaps-v1", "api")),

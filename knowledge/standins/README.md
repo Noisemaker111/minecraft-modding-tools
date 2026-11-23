@@ -1,7 +1,7 @@
 # Stand-ins
 
 A stand-in is 1.21.1's API (or any old release's) written on top of the next release, for an old member the game's own
-code has no answer for. `tools/JarPort.java` (`standins`) reads the ones for the update it ports across, compiles them
+code has no answer for. `tools/port/jar/JarPort.java` (`standins`) reads the ones for the update it ports across, compiles them
 against the new release, turns them into port rules, and carries the ones a mod uses inside the ported jar under a package
 of its own (`mmt.standin.mID`, one per jar and update). The next update ports them like the rest of the mod's code: a port
 across several updates crosses each update that has stand-ins on its own (`JarPort.hops`) and the updates between in one

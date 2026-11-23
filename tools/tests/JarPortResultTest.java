@@ -48,8 +48,8 @@ final class JarPortResultTest {
             """);
         JarPort port = new JarPort(a, b, map);
         Map<String, byte[]> code = new HashMap<>(Map.of("r9/Ui", ui()));
-        port.newCode = new JarPort.GameCode(code::get, null, code);
-        port.oldCode = new JarPort.GameCode(Map.<String, byte[]>of()::get, null, Map.of());
+        port.newCode = new GameCode(code::get, null, code);
+        port.oldCode = new GameCode(Map.<String, byte[]>of()::get, null, Map.of());
 
         List<Map<String, Object>> runs = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n12/Mod.class", mod())), "result.jar", runs));

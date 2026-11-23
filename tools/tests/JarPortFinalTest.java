@@ -43,8 +43,8 @@ final class JarPortFinalTest {
         Files.writeString(map, "{}");
         JarPort port = new JarPort(a, b, map);
         Map<String, byte[]> game = game();
-        port.newCode = new JarPort.GameCode(game::get, null);
-        port.oldCode = new JarPort.GameCode(Map.<String, byte[]>of()::get, null);
+        port.newCode = new GameCode(game::get, null);
+        port.oldCode = new GameCode(Map.<String, byte[]>of()::get, null);
 
         List<Map<String, Object>> runs = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n11/MyButton.class", around("n11/MyButton", "u9/Button", false),

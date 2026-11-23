@@ -13,7 +13,8 @@ public final class Bootstrap {
         Path source = harness.resolve("tools/cli"), cache = harness.resolve(".mmt/cli");
         Files.createDirectories(cache);
         List<Path> files;
-        try (var stream = Files.list(source)) {
+        // Every folder under tools/cli: a command with many parts keeps them in a folder of its own (tools/cli/port).
+        try (var stream = Files.walk(source)) {
             files = stream
                 .filter(p -> p.toString().endsWith(".java") && !p.getFileName().toString().equals("Bootstrap.java"))
                 .sorted()
