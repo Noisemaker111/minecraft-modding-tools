@@ -455,7 +455,9 @@ final class Installation {
     /** One self-test suite: a class in tools/tests with a main, and what it is given beside the classpath. */
     record Suite(String name, String main, boolean wantsHarness, boolean wantsScratch) {}
 
+    // perf is listed first: the suites run side by side and it takes longest (its captures last seconds), so it starts first.
     static final List<Suite> SUITES = List.of(
+        new Suite("perf", "PerfTest", true, true),
         new Suite("desugar", "DesugarTests", true, true),
         new Suite("port", "PortTests", true, true),
         new Suite("port-scaffold", "PortScaffoldTests", true, true),
@@ -464,7 +466,6 @@ final class Installation {
         new Suite("build-script", "BuildScriptTests", true, true),
         new Suite("command", "CommandTests", true, true),
         new Suite("game", "GameTests", true, true),
-        new Suite("perf", "PerfTest", true, true),
         new Suite("jdk", "JdkDownloadsTest", false, false),
         new Suite("dependency", "DependenciesTest", false, false),
         new Suite("manifest", "FabricMetadataTest", false, false),
@@ -527,15 +528,36 @@ final class Installation {
         report.stage("test-compile", compile, Map.of());
         if (compile.exit() != 0) throw new IOException(Run.tail(compile.log()));
 
+        // The suites share nothing (each makes its own scratch folder), so they run side by side, one per core; the
+        // report keeps their listed order.
+        List<Path> logs = new ArrayList<>();
+        for (Suite suite : suites) logs.add(report.log(suite.name() + "-tests"));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        List<java.util.concurrent.Future<Run.Result>> runs = new ArrayList<>();
+        try {
+            for (int i = 0; i < suites.size(); i++) {
+                Suite suite = suites.get(i);
+                Path log = logs.get(i);
+                List<String> command = new ArrayList<>(
+                    List.of(jdk.java().toString(), "-cp", own + File.pathSeparator + classes, suite.main())
+                );
+                if (suite.wantsHarness()) command.add(harness.toString());
+                if (suite.wantsScratch()) command.add(report.directory.resolve("fixtures").toString());
+                runs.add(pool.submit(() -> Run.command(command, report.root, Map.of(), log, 120)));
+            }
+        } finally {
+            pool.shutdown();
+        }
         List<Object> results = new ArrayList<>();
         List<String> failed = new ArrayList<>(), passedLines = new ArrayList<>(), failedText = new ArrayList<>();
-        for (Suite suite : suites) {
-            List<String> command = new ArrayList<>(
-                List.of(jdk.java().toString(), "-cp", own + File.pathSeparator + classes, suite.main())
-            );
-            if (suite.wantsHarness()) command.add(harness.toString());
-            if (suite.wantsScratch()) command.add(report.directory.resolve("fixtures").toString());
-            var run = Run.command(command, report.root, Map.of(), report.log(suite.name() + "-tests"), 120);
+        for (int i = 0; i < suites.size(); i++) {
+            Suite suite = suites.get(i);
+            Run.Result run;
+            try {
+                run = runs.get(i).get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw e.getCause() instanceof Exception cause ? cause : e;
+            }
             report.stage(suite.name() + "-tests", run, Map.of());
             boolean ok = run.exit() == 0;
             results.add(
