@@ -27,15 +27,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      mods: ${{ steps.plan.outputs.mods }}
+      first: ${{ steps.plan.outputs.first }}
+      rest: ${{ steps.plan.outputs.rest }}
     steps:
       - uses: actions/checkout@v4
       - id: plan
         env:
           MODS: ${{ inputs.mods }}
         run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          python3 - <<'EOF'
           import json, os
+          import sys
+          sys.path.insert(0, "bench")
+          import smallest_first
           mods = [m["id"] for m in json.load(open("bench/convert-sweep/corpus.json", encoding="utf-8"))["mods"]]
           wanted = [x.strip() for x in os.environ["MODS"].split(",") if x.strip()]
           if wanted != ["all"]:
@@ -43,23 +47,33 @@ jobs:
               if unknown:
                   raise SystemExit(f"No mod {unknown} in bench/convert-sweep/corpus.json; it has {mods}")
               mods = wanted
-          print("mods=" + json.dumps(mods))
+          # The mod whose last recorded run reached the game and back in the fewest seconds: a mod the converter refuses
+          # finishes sooner but proves no compile and no game start.
+          last = {r["id"]: r for r in json.load(open("coverage/sweeps/convert.json", encoding="utf-8"))["runs"]}
+          def size(mod):
+              r = last.get(mod) or {}
+              if not (r.get("game") or {}).get("loaded"):
+                  return float("inf")
+              return r["game"].get("loadSeconds", 0) + (r.get("back") or {}).get("seconds", 0)
+          smallest_first.plan(mods, size, "the mod whose last run reached the game and back soonest")
           EOF
   convert:
-    needs: plan
+    # The plan's other mods, once convert-first (the same steps on its smallest) passed: bench/smallest_first.py.
+    needs: [plan, convert-first]
+    if: needs.plan.outputs.rest != '[]'
     name: ${{ matrix.mod }}
     strategy:
       fail-fast: false
       max-parallel: 12
       matrix:
-        mod: ${{ fromJSON(needs.plan.outputs.mods) }}
+        mod: ${{ fromJSON(needs.plan.outputs.rest) }}
     runs-on: ubuntu-latest
     # Cold: the loaders' setup for both builds, two compiles, two client starts on software OpenGL.
     timeout-minutes: 90
-    env:
+    env: &convert-env
       MOD: ${{ matrix.mod }}
       LABEL: ${{ inputs.label }}
-    steps:
+    steps: &convert-steps
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -98,9 +112,19 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+  convert-first:
+    needs: plan
+    name: ${{ matrix.mod }} (first)
+    strategy:
+      matrix:
+        mod: ${{ fromJSON(needs.plan.outputs.first) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env: *convert-env
+    steps: *convert-steps
   summary:
-    needs: convert
-    if: always() && needs.convert.result != 'skipped'
+    needs: [convert-first, convert]
+    if: always() && needs.convert-first.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
