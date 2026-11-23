@@ -9491,13 +9491,18 @@ public final class JarPort {
             GameDiff.Cls c = standinCls(e.getValue());
             b.classes.put(c.name, c);
         }
-        for (String name : compiled.keySet()) {
+        for (var e : compiled.entrySet()) {
+            String name = e.getKey();
             String old = name.substring(STANDIN.length());
             if (a.classes.containsKey(old) && !b.classes.containsKey(classMap.getOrDefault(old, old))) {
-                // The class is gone with nothing the route moves it to: the stand-in is the class. Settled before any
-                // member is matched, so a stand-in method taking another gone class matches in any order.
-                classMap.put(old, name);
-                inverse.put(name, old);
+                // The class is gone with nothing the route moves it to. A stand-in written as static methods on one
+                // new type, which the game's own classes that were the old one now are, says the class became that
+                // type (1.21.11's PermissionSource, on PermissionSetSupplier); otherwise the stand-in is the class.
+                // Settled before any member is matched, so a stand-in method taking another gone class matches in any order.
+                String became = becameType(old, e.getValue());
+                String to = became != null ? became : name;
+                classMap.put(old, to);
+                inverse.putIfAbsent(to, old);
             }
         }
         for (var e : compiled.entrySet()) {
@@ -9572,6 +9577,58 @@ public final class JarPort {
                     matched, target + "(" + args + ")"));
             }
         }
+    }
+
+    /**
+     * The new type a gone class's stand-in says the class became, or null: the stand-in is a holder (final, no constructor
+     * a mod can call, no public instance method) whose every public static method but isInstance takes that type first,
+     * and every game class that was the old class in the old release and is still there is that type in the new one (at
+     * least one). A holder on a type the game's classes did not move to answers no reference to the class itself.
+     */
+    String becameType(String old, byte[] bytes) {
+        ClassModel cm = ClassFile.of().parse(bytes);
+        if ((cm.flags().flagsMask() & Opcodes.ACC_FINAL) == 0) {
+            return null;
+        }
+        String type = null;
+        for (MethodModel mm : cm.methods()) {
+            int flags = mm.flags().flagsMask();
+            String n = mm.methodName().stringValue();
+            if ((flags & Opcodes.ACC_PUBLIC) == 0 && !n.equals("<init>") || (flags & Opcodes.ACC_SYNTHETIC) != 0 || n.equals("<clinit>")) {
+                continue;
+            }
+            if (n.equals("<init>")) {
+                if ((flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED)) != 0) {
+                    return null;
+                }
+                continue;
+            }
+            if ((flags & Opcodes.ACC_STATIC) == 0) {
+                return null;
+            }
+            if (n.equals("isInstance")) {
+                continue;
+            }
+            Type[] params = Type.getArgumentTypes(mm.methodType().stringValue());
+            if (params.length == 0 || params[0].getSort() != Type.OBJECT || type != null && !type.equals(params[0].getInternalName())) {
+                return null;
+            }
+            type = params[0].getInternalName();
+        }
+        if (type == null || type.startsWith(STANDIN) || !b.classes.containsKey(type)) {
+            return null;
+        }
+        boolean moved = false;
+        for (GameDiff.Cls c : a.classes.values()) {
+            if (c.library || c.name.equals(old) || !b.classes.containsKey(c.name) || !isA(a, c.name, old)) {
+                continue;
+            }
+            if (!isA(b, c.name, type)) {
+                return null;
+            }
+            moved = true;
+        }
+        return moved ? type : null;
     }
 
     /**

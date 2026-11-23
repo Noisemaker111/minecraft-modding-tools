@@ -1,0 +1,17 @@
+{
+ "id": "79R",
+ "title": "Calls into rewritten game code answered by stand-ins",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "On main's jar scoreboard 'call, game: redesigned' (a call to a game method whose class the update rewrote, so the game's own code shows no one-to-one replacement) alone held back 30 nearly-done mods and appeared in 1,293. Grouped by game class, the mods it alone held back were spread over about 35 methods, one or two mods each, so the method is stand-ins (knowledge/standins/FROM-TO/): for each method whose new release has a clear answer, the old method written on the new release, read in both releases' bytecode and checked against the loaders' published migration notes, for every mod that calls it. Methods whose answer is a guess (an item's baked model in 1.21.4, a shader's source in 26.3, a tooltip context's player on NeoForge 26.1.1) are left reported.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "The mods 'call, game: redesigned' alone held back on the touched updates link, no update loses a mod that linked, and a freed mod loads in a real game of the new release",
+ "wrongIf": "a freed mod fails in game on a stand-in's code, or an update's count drops",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates",
+  "port.jar-links.newest"
+ ],
+ "result": ""
+}
