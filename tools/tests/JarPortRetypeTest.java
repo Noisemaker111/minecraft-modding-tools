@@ -219,8 +219,9 @@ final class JarPortRetypeTest {
                 };
             }
         }, 0);
-        JarPortTest.expect(textSugar.equals(List.of("onText(" + GFX + "I" + CI + "Ljava/lang/String;)V 3 Lcom/llamalad7/mixinextras/sugar/Local;")),
-            "the @Local stays on the handler Mixin reads, at the String's place: " + textSugar);
+        JarPortTest.expect(textSugar.equals(List.of("onText(" + GFX + "I" + CI + "Ljava/lang/String;)V 3 Lcom/llamalad7/mixinextras/sugar/Local;",
+                "onRef(" + GFX + "I" + CI + "Lcom/llamalad7/mixinextras/sugar/ref/LocalRef;)V 3 Lcom/llamalad7/mixinextras/sugar/Local;")),
+            "the @Local stays on the handler Mixin reads, at the String's place, a LocalRef<String> as a String: " + textSugar);
 
         // Mixins into two game lambdas, string-building callbacks alike but for their text: 2.0 has only the wipe one, renumbered.
         // Neither mixin requires its place, so the save one is told as finding none, not a break.
@@ -891,8 +892,11 @@ final class JarPortRetypeTest {
         value.visit(null, Type.getObjectType("g6/Title"));
         value.visitEnd();
         target.visitEnd();
-        for (String name : new String[] { "onText", "onCaptured" }) {
-            MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, name, "(" + POSE + "I" + CI + "Ljava/lang/String;)V", null, null);
+        String ref = "Lcom/llamalad7/mixinextras/sugar/ref/LocalRef;";
+        for (String name : new String[] { "onText", "onCaptured", "onRef" }) {
+            boolean byRef = name.equals("onRef");
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, name, "(" + POSE + "I" + CI + (byRef ? ref : "Ljava/lang/String;") + ")V",
+                byRef ? "(" + POSE + "I" + CI + "Lcom/llamalad7/mixinextras/sugar/ref/LocalRef<Ljava/lang/String;>;)V" : null, null);
             AnnotationVisitor av = m.visitAnnotation(JarPortFixesTest.INJECT, false);
             AnnotationVisitor methods = av.visitArray("method");
             methods.visit(null, "render(" + POSE + "I)V");
@@ -903,7 +907,7 @@ final class JarPortRetypeTest {
             point.visitEnd();
             ats.visitEnd();
             av.visitEnd();
-            if (name.equals("onText")) {
+            if (!name.equals("onCaptured")) {
                 m.visitParameterAnnotation(3, "Lcom/llamalad7/mixinextras/sugar/Local;", false).visitEnd();
             }
             m.visitCode();

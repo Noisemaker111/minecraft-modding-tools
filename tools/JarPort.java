@@ -4818,12 +4818,14 @@ public final class JarPort {
         int[] ordinals = new int[params.length];
         Arrays.fill(ordinals, -1);
         boolean[] indexed = new boolean[params.length];
+        String[] generic = new String[1];
         new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
                 if (!name.equals(handler.name) || !desc.equals(handler.desc)) {
                     return null;
                 }
+                generic[0] = signature;
                 return new MethodVisitor(Opcodes.ASM9) {
                     @Override
                     public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
@@ -4859,8 +4861,11 @@ public final class JarPort {
             if (sugar[i].equals(SUGAR + "Share;") || sugar[i].equals(SUGAR + "Cancellable;")) {
                 continue;
             }
-            Type t = Type.getType(desc(params[i].getDescriptor()));
-            if (!sugar[i].equals(SUGAR + "Local;") || argsOnly[i] && (picked[i] || Collections.frequency(now, t) != 1)) {
+            // A LocalRef stands for a local of the type it holds, which a reference to it reads and writes.
+            String held = params[i].getSort() == Type.OBJECT ? localRef(params[i].getInternalName(), generic[0], i) : null;
+            Type t = Type.getType(desc(held != null ? held : params[i].getDescriptor()));
+            if (!sugar[i].equals(SUGAR + "Local;") || argsOnly[i] && (picked[i] || Collections.frequency(now, t) != 1)
+                || held == null && params[i].getSort() == Type.OBJECT && params[i].getInternalName().startsWith(SUGAR.substring(1) + "ref/")) {
                 return false;
             }
             if (argsOnly[i]) {
@@ -4877,6 +4882,65 @@ public final class JarPort {
         return true;
     }
 
+    static final Map<String, String> PRIMITIVE_REFS = Map.of("LocalBooleanRef", "Z", "LocalByteRef", "B", "LocalCharRef", "C", "LocalShortRef", "S",
+        "LocalIntRef", "I", "LocalLongRef", "J", "LocalFloatRef", "F", "LocalDoubleRef", "D");
+
+    /**
+     * The descriptor of the local a MixinExtras LocalRef parameter (the i-th of a handler) stands for: its primitive kind
+     * (LocalIntRef), or the type argument of LocalRef in the handler's generic signature. Null for any other type, or a
+     * LocalRef whose type cannot be read.
+     */
+    static String localRef(String internal, String signature, int param) {
+        String prefix = SUGAR.substring(1) + "ref/";
+        if (!internal.startsWith(prefix)) {
+            return null;
+        }
+        String kind = internal.substring(prefix.length());
+        if (PRIMITIVE_REFS.containsKey(kind)) {
+            return PRIMITIVE_REFS.get(kind);
+        }
+        if (!kind.equals("LocalRef") || signature == null) {
+            return null;
+        }
+        String[] found = new String[1];
+        int[] at = { -1 };
+        new org.objectweb.asm.signature.SignatureReader(signature).accept(new org.objectweb.asm.signature.SignatureVisitor(Opcodes.ASM9) {
+            int depth; // 0: a parameter's own type, 1: its type argument
+
+            @Override
+            public org.objectweb.asm.signature.SignatureVisitor visitParameterType() {
+                at[0]++;
+                depth = 0;
+                return this;
+            }
+
+            @Override
+            public org.objectweb.asm.signature.SignatureVisitor visitReturnType() {
+                at[0] = Integer.MIN_VALUE;
+                return this;
+            }
+
+            @Override
+            public void visitClassType(String name) {
+                if (at[0] == param && depth == 1 && found[0] == null) {
+                    found[0] = "L" + name + ";";
+                }
+            }
+
+            @Override
+            public org.objectweb.asm.signature.SignatureVisitor visitTypeArgument(char wildcard) {
+                depth++;
+                return this;
+            }
+
+            @Override
+            public void visitEnd() {
+                depth = Math.max(0, depth - 1);
+            }
+        });
+        return found[0];
+    }
+
     /**
      * Whether a @Local of type t (without argsOnly) finds the same local in a target's new method as in its old one, at
      * every place each @At finds: the locals there are the method's arguments, then the live locals the game's own frames
@@ -4887,9 +4951,10 @@ public final class JarPort {
      */
     boolean localFound(String key, GameDiff.Meth before, GameDiff.Meth after, Injector inj, List<Found> ats, Type t, int ordinal, boolean indexed) {
         GameCode oldCode = code(a), newCode = code(b);
-        if (indexed || oldCode == null || newCode == null || t.getSort() < Type.INT
-            || t.getSort() == Type.OBJECT && t.getInternalName().startsWith("com/llamalad7/mixinextras/sugar/ref/")) {
-            why(key, "S1 a @Local by index or of a type not told apart: " + t);
+        // An int-like local reads as I where the method has no local variable table, so a boolean one is found only where
+        // the table says boolean, as Mixin's reading would.
+        if (indexed || oldCode == null || newCode == null) {
+            why(key, "S1 a @Local by index: " + t);
             return false;
         }
         String d = t.getDescriptor();
