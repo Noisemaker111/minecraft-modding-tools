@@ -1,0 +1,16 @@
+{
+  "id": "69c",
+  "title": "Mixins whose injection point moved inside a method that is still there",
+  "part": "Port by type of break",
+  "status": "doing",
+  "start": "2026-11-23",
+  "target": "2026-11-23",
+  "text": "The type `mixin injection point gone, game: not read`: an injector's target method still links, but the call or field its @At names is no longer in that method's code (26 mods held by it alone on main's scoreboard, in 307). The old and new method bodies are lined up by the instructions that name something (GameCode.slot), and the @At moves only to what the new code has in the old point's place: the same call at its new ordinal (also where an ordinal still found a place but now lands on another call), another signature of the same call (an @Inject, whose handler takes a place, not the call's arguments), the one other method of the class with the same signature, or a field now written or read through the one method of its class that does it (any injector). An injector follows into a method the old one now calls when every way into that method in the new release came into the old method before; a cancellable one only where the old method does nothing but hand over to it. What stays is reported by what the game did (dropped, moved into a method, another signature...), so the type leaves 'not read'.",
+  "finish": "the type's finishes and mods counts fall on every update measured, none lower, and a mod this frees loads in a real client of the new release",
+  "wrongIf": "a mod this frees fails in a real game on an injection point this moved",
+  "measures": [
+    "port.jar-links.every-update",
+    "port.jar-links.big-updates",
+    "port.jar-links.newest"
+  ]
+}
