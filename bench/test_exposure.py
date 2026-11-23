@@ -798,34 +798,51 @@ with tempfile.TemporaryDirectory() as tmp:
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
           f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
 
-# A jar whose classes need a newer Java than the release runs on is failed before any start, with the Java of its newest
-# class and the release's (version.json's javaVersion). Its multi-release versions/ and nested jars are not what the release
-# loads, so they do not count. On Fabric 1.15 (Java 8) one such mod crashed every start naming no mod (PR #206).
-def class_file(major):
-    return b"\xca\xfe\xba\xbe\x00\x00" + bytes([major >> 8, major & 0xff]) + b"\x00" * 8
+# A jar is failed before any start when a class the loader loads while that side starts (its mixins, its entrypoints,
+# NeoForge's @Mod classes) needs a newer Java than the release runs on (version.json's javaVersion). On Fabric 1.15 (Java
+# 8) a Java 17 mixin crashed every start naming no mod (PR #206). Other classes do not count: More Mobs ships Java 17-25
+# classes for Forge and NeoForge and loads on Java 8, and Boxlib's only too-new start class is its client entrypoint, so
+# it loads on a server.
+def class_file(major, body=b""):
+    return b"\xca\xfe\xba\xbe\x00\x00" + bytes([major >> 8, major & 0xff]) + b"\x00" * 8 + body
 
 
 with tempfile.TemporaryDirectory() as tmp:
     real_home = E.HOME
     E.HOME = Path(tmp) / "home"
     try:
-        for version, java in {"1.15": 8, "1.20.4": 17}.items():
+        for version, java in {"1.15": 8, "1.20.4": 17, "1.21": 21}.items():
             (E.HOME / "versions").mkdir(parents=True, exist_ok=True)
             (E.HOME / "versions" / f"{version}.json").write_text(json.dumps({"javaVersion": {"majorVersion": java}}), encoding="utf-8")
         folder = Path(tmp) / "mods"
         folder.mkdir()
-        (folder / "old.jar").write_bytes(jar({"a/A.class": class_file(52), "META-INF/versions/17/a/A.class": class_file(61),
-                                              "META-INF/jars/new.jar": jar({"b/B.class": class_file(61)})}))
-        (folder / "new.jar").write_bytes(jar({"a/A.class": class_file(52), "a/B.class": class_file(61)}))
-        (folder / "newest.jar").write_bytes(jar({"a/A.class": class_file(65)}))
+        mixins = json.dumps({"package": "m.mixin", "mixins": ["LivingMixin"], "server": ["sub.ServerMixin"]})
+        (folder / "mixin.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "m", "mixins": ["m.mixins.json"], "entrypoints": {"main": ["m.Init"]}}),
+                                                "m.mixins.json": mixins, "m/Init.class": class_file(52), "m/mixin/LivingMixin.class": class_file(61),
+                                                "m/mixin/sub/ServerMixin.class": class_file(52)}))
+        (folder / "server-mixin.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "s", "mixins": [{"config": "s.mixins.json", "environment": "*"}]}),
+                                                       "s.mixins.json": json.dumps({"package": "s", "server": ["A"], "client": ["B"]}),
+                                                       "s/A.class": class_file(61), "s/B.class": class_file(52)}))
+        (folder / "client-entry.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "c", "entrypoints": {"client": ["c.Client"], "main": [{"value": "c.Main::init"}], "modmenu": ["c.Client"]}}),
+                                                       "c/Client.class": class_file(61), "c/Main.class": class_file(52)}))
+        (folder / "multi-loader.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "x", "entrypoints": {"main": ["x.fabric.Init"]}}),
+                                                       "x/fabric/Init.class": class_file(52), "x/neoforge/Config.class": class_file(65)}))
         (folder / "data.jar").write_bytes(jar({"fabric.mod.json": "{}"}))
-        names = ["old.jar", "new.jar", "newest.jar", "data.jar"]
-        found = E.newer_java(folder, names, "1.15")
-        check(sorted(found) == ["new.jar", "newest.jar"] and found["new.jar"].startswith("built for Java 17; Minecraft 1.15 runs on Java 8")
-              and "Java 21" in found["newest.jar"],
-              f"the jars whose own newest class needs a newer Java than 1.15's are named with both Javas: {found}")
-        found = E.newer_java(folder, names, "1.20.4")
-        check(list(found) == ["newest.jar"], f"the release's own Java decides: on 1.20.4 (Java 17) only the Java 21 jar: {found}")
+        names = ["mixin.jar", "server-mixin.jar", "client-entry.jar", "multi-loader.jar", "data.jar"]
+        server = E.newer_java(folder, names, "fabric", "1.15", "server")
+        check(sorted(server) == ["mixin.jar", "server-mixin.jar"] and server["mixin.jar"].startswith("built for Java 17; Minecraft 1.15 runs on Java 8")
+              and "m.mixin.LivingMixin" in server["mixin.jar"],
+              f"on a 1.15 server, the jars whose mixins need Java 17 are named with both Javas and the class: {server}")
+        client = E.newer_java(folder, names, "fabric", "1.15", "client")
+        check(sorted(client) == ["client-entry.jar", "mixin.jar"], f"in a 1.15 client, a too-new client entrypoint counts and a server mixin does not: {client}")
+        check(E.newer_java(folder, names, "fabric", "1.20.4", "client") == {}, "on 1.20.4 (Java 17) the same jars all start")
+        (folder / "neo.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="neo"\n',
+                                              "n/Neo.class": class_file(69, b"Lnet/neoforged/fml/common/Mod;"), "n/Other.class": class_file(52)}))
+        (folder / "neo21.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="neo21"\n',
+                                                "n/Neo.class": class_file(65, b"Lnet/neoforged/fml/common/Mod;"), "n/Later.class": class_file(69)}))
+        found = E.newer_java(folder, ["neo.jar", "neo21.jar"], "neoforge", "1.21", "server")
+        check(list(found) == ["neo.jar"] and "Java 25" in found["neo.jar"],
+              f"on NeoForge 1.21 (Java 21) a @Mod class built for Java 25 is named, and a Java 25 class nothing loads at start is not: {found}")
     finally:
         E.HOME = real_home
 

@@ -673,29 +673,79 @@ def release_java(version):
     return version_meta(version).get("javaVersion", {}).get("majorVersion", 8)
 
 
-def class_java(jar):
-    """The Java release the jar's newest class needs, read from each class file's version as pack-check reads it: the
-    jar's own classes outside META-INF (a multi-release jar's versions/ and the nested jars aside), 0 when it has none."""
+# The annotations that make NeoForge (and Forge) load a class while it loads mods: the mod's own class and its event
+# subscribers. Matched as descriptors in the class file's constant pool.
+MOD_ANNOTATIONS = (b"Lnet/neoforged/fml/common/Mod;", b"Lnet/neoforged/fml/common/EventBusSubscriber;", b"Lnet/neoforged/fml/common/Mod$EventBusSubscriber;",
+                   b"Lnet/minecraftforge/fml/common/Mod;", b"Lnet/minecraftforge/fml/common/Mod$EventBusSubscriber;")
+
+
+def start_classes(z, loader, side):
+    """{class file: what it is} for the classes the loader loads while a game of side ("server" or "client") starts:
+    the mixins of the jar's mixin configs for that side, Fabric's own entrypoints for it (main, preLaunch and the side's),
+    and NeoForge's @Mod classes and event subscribers. A class a jar ships that none
+    of these is (a multi-loader jar's Forge classes, a Quilt plugin, a config screen) is only loaded if something calls it."""
+    names = set(z.namelist())
+    meta = metadata(z, loader) or {}
+    other = "server" if side == "client" else "client"
+    out, configs = {}, []
+    if loader == "fabric":
+        for kind, entries in (meta.get("entrypoints") or {}).items():
+            # Another mod's entrypoint (Mod Menu's, ViaFabric's) is loaded only when that mod is in the pack and calls it.
+            if kind not in ("main", "preLaunch", side):
+                continue
+            for entry in entries if isinstance(entries, list) else [entries]:
+                value = entry if isinstance(entry, str) else entry.get("value", "") if isinstance(entry, dict) else ""
+                out[value.split("::")[0].replace(".", "/") + ".class"] = f"{kind} entrypoint"
+        for m in meta.get("mixins") or []:
+            config = m if isinstance(m, str) else m.get("config", "") if isinstance(m, dict) else ""
+            if isinstance(m, dict) and m.get("environment") == other:
+                continue
+            configs.append(config)
+    else:
+        configs += [m.get("config", "") for m in meta.get("mixins", []) if isinstance(m, dict)]
+        if "META-INF/MANIFEST.MF" in names:
+            for line in z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace").splitlines():
+                if line.startswith("MixinConfigs:"):
+                    configs += [c.strip() for c in line.split(":", 1)[1].split(",")]
+        for n in names:
+            if n.endswith(".class") and not n.startswith("META-INF/"):
+                data = z.read(n)
+                if any(a in data for a in MOD_ANNOTATIONS):
+                    out[n] = "@Mod class"
+    for config in configs:
+        if config not in names:
+            continue
+        try:
+            mixins = json.loads(z.read(config).decode("utf-8", "replace"), strict=False)
+        except ValueError:
+            continue
+        package = (mixins.get("package") or "").replace(".", "/")
+        for group in ("mixins", side):
+            for name in mixins.get(group) or []:
+                if isinstance(name, str):
+                    out[f"{package}/{name.replace('.', '/')}.class"] = f"mixin ({config})"
+    return {n: why for n, why in out.items() if n in names}
+
+
+def newer_java(folder, names, loader, version, side):
+    """{jar: why} for the jars a class of which, loaded while a game of side starts (start_classes), needs a newer Java
+    than the release runs on. Such a jar cannot load there: a mixin of it merged into a game class makes that game class
+    too new as well, so the start crashes naming no mod, and every other mod in it goes without a verdict. The proof
+    leaves these out before any start. Read from each class file's version."""
     import zipfile
-    newest = 0
-    with zipfile.ZipFile(jar) as z:
-        for n in z.namelist():
-            if n.endswith(".class") and not n.startswith("META-INF/") and "/" in n:
-                with z.open(n) as f:
+    runs, out = None, {}
+    for name in names:
+        with zipfile.ZipFile(folder / name) as z:
+            for path, what in sorted(start_classes(z, loader, side).items()):
+                with z.open(path) as f:
                     head = f.read(8)
-                if head[:4] == b"\xca\xfe\xba\xbe":
-                    newest = max(newest, (head[6] << 8 | head[7]) - 44)
-    return newest
-
-
-def newer_java(folder, names, version):
-    """{jar: why} for the jars whose classes need a newer Java than the release runs on. Such a jar cannot load there: a
-    mixin of it merged into a game class makes that game class too new as well, so the start crashes naming no mod and
-    every other mod in it goes without a verdict. The proof leaves these out before any start."""
-    runs = release_java(version)
-    found = {n: class_java(folder / n) for n in names}
-    return {n: f"built for Java {v}; Minecraft {version} runs on Java {runs} (its newest class file), so it is not started"
-            for n, v in found.items() if v > runs}
+                java = (head[6] << 8 | head[7]) - 44 if head[:4] == b"\xca\xfe\xba\xbe" else 0
+                runs = runs or release_java(version)
+                if java > runs:
+                    out[name] = (f"built for Java {java}; Minecraft {version} runs on Java {runs} (its {what} "
+                                 f"{path[:-6].replace('/', '.')}), so it is not started in the {side}")
+                    break
+    return out
 
 
 def registry_ids(version):
@@ -1823,34 +1873,27 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(),
         at = done.stdout.find("{")
         return json.loads(done.stdout[at:]) if at >= 0 else {}, done
 
+    # As on the server, a jar whose client start classes need a newer Java than the release's is failed before any start
+    # (a mod whose only too-new class is its client entrypoint loads on a server).
+    present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
+    misfits = newer_java(pack / "mods", present + [n for n in platform if (pack / "mods" / n).is_file() and n not in kept], loader, to, "client")
+    for name, why in sorted(misfits.items()):
+        print(f"  {name}: {why}")
+    found, result, res, done = dict(misfits), {}, {}, None
     # Each failed start takes at least one jar out (a mod or a library), or ends the client proof with why, so the starts
     # end; their number is not budgeted by the mods, which libraries failing would use up before every mod had a verdict.
     while True:
-        result, done = start()
-        res = result.get("result", {})
         present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
-        if res.get("client", {}).get("opened"):
-            for name in present:
-                verdicts.setdefault(name, "loaded")
-            break
         # The libraries can be what fails too; the platform (kept: Fabric API, whose own id was "fabric" before 1.18.2)
         # cannot be left out.
         libraries = [n for n in platform if (pack / "mods" / n).is_file() and n not in kept]
-        found = {}
-        for finding in res.get("findings", []):
-            if finding.get("severity") != "problem" or finding.get("kind") != "client-start":
-                continue
-            for s in finding.get("suspects", []):
-                top = s.get("jar", "").split("!")[0]
-                if top not in present + libraries:
-                    top = next((n for n in present + libraries if s.get("mod") in mod_ids(pack / "mods" / n)), "")
-                if top:
-                    found.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
         if not found:
-            found = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present + libraries, "*client*.log").items()}
-        failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
-        if not found and not res.get("client", {}).get("toolError"):
-            found = first_failing(pack, present + libraries, loader, start, failure)
+            found = client_culprits(pack, present, libraries, loader, start)
+            if found is None:
+                for name in present:
+                    verdicts.setdefault(name, "loaded")
+                break
+            found, result, res, done = found
         for library in [n for n in found if n in libraries]:
             gives = provides(pack / "mods" / library, loader, to)
             (pack / "mods" / library).rename(pack / "dropped" / library)
@@ -1860,22 +1903,29 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(),
                 asked = needs(pack / "mods" / name, loader) or set()
                 if asked & gives:
                     found.setdefault(name, f"needs the library {library}, which fails in the client: " + found[library][:300])
+                    if library in misfits:
+                        misfits.setdefault(name, found[name])
         blamed = {n: why for n, why in found.items() if n in present}
         if not blamed and any(n in libraries for n in found):
+            found = {}
             continue  # only a library failed: the next start runs without it
         if not blamed:
             # The client itself could not be driven (no mod set makes it fail or pass, or mmt's own step does not fit this
             # release): the server's verdicts stand, and the client is reported as not run, with why.
+            failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
             print(res.get("details", done.stdout[-2000:]))
             print(f"a client start failed and named no mod; the client is not run: {failure}")
             return {"mods": len(names), "loaded": 0, "verdicts": {}, "notRun": failure, "receipt": result.get("receipt")}
         java = built_for_newer_java(res)
         for name, why in blamed.items():
-            verdicts[name] = "failed: " + (java[name] + "; " if name in java else "") + why
+            verdicts[name] = "failed: " + (java[name] + "; " if name in java and name not in misfits else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
-            print(f"  {name}: failed in the client")
-    # As on the server, a dropped mod gets one more start with the mods that loaded: a log can name a bystander.
-    for name in sorted(n for n, v in verdicts.items() if v.startswith("failed")):
+            if name not in misfits:
+                print(f"  {name}: failed in the client")
+        found = {}
+    # As on the server, a dropped mod gets one more start with the mods that loaded: a log can name a bystander. One its
+    # class files fail is not started again.
+    for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and n not in misfits):
         (pack / "dropped" / name).rename(pack / "mods" / name)
         again, _ = start()
         if again.get("result", {}).get("client", {}).get("opened"):
@@ -1886,7 +1936,32 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(),
     for name in names:
         verdicts.setdefault(name, "not started: its jar is in neither the server's pack nor what it dropped")
     loaded = sorted(n for n, v in verdicts.items() if v == "loaded")
-    return {"mods": len(names), "loaded": len(loaded), "verdicts": verdicts}
+    return {"mods": len(names), "loaded": len(loaded), "verdicts": verdicts, "newerJava": sorted(misfits)}
+
+
+def client_culprits(pack, present, libraries, loader, start):
+    """None when a client start opens; else ({jar: why} for the jars a failed one names, by its findings, its log, or
+    halving, and {} when none), with the start's result, its result block and the finished process."""
+    result, done = start()
+    res = result.get("result", {})
+    if res.get("client", {}).get("opened"):
+        return None
+    found = {}
+    for finding in res.get("findings", []):
+        if finding.get("severity") != "problem" or finding.get("kind") != "client-start":
+            continue
+        for s in finding.get("suspects", []):
+            top = s.get("jar", "").split("!")[0]
+            if top not in present + libraries:
+                top = next((n for n in present + libraries if s.get("mod") in mod_ids(pack / "mods" / n)), "")
+            if top:
+                found.setdefault(top, "; ".join(s.get("why", []))[:400] + " | " + str(res.get("client", {}).get("failure", ""))[:300])
+    if not found:
+        found = {n: "the client log names it: " + why for n, why in named_in_errors(result.get("receipt"), pack / "mods", present + libraries, "*client*.log").items()}
+    failure = str(res.get("client", {}).get("failure") or res.get("error") or done.stdout[-300:])[:400]
+    if not found and not res.get("client", {}).get("toolError"):
+        found = first_failing(pack, present + libraries, loader, start, failure)
+    return found, result, res, done
 
 
 def with_needs(chosen, asks, gives):
@@ -2169,7 +2244,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     # A jar built for a newer Java than the release runs on is failed from its class files before the first start, a
     # library with the mods that need it, so the starts hold only jars the release's Java can load.
     present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
-    misfits = newer_java(pack / "mods", present + list(libraries), to)
+    misfits = newer_java(pack / "mods", present + list(libraries), loader, to, "server")
     for name, why in sorted(misfits.items()):
         print(f"  {name}: {why}")
     culprits = dict(misfits)
@@ -2255,7 +2330,9 @@ def load(loader, frm, to, save, mods=None, out=None):
         "notStarted": left,
         "client": client,
         # What the roadmap's step 51 says would prove the server proof wrong: a mod that loads on the server and links, and fails in the client.
-        "loadedOnServerFailedInClient": sorted(n for n, v in client["verdicts"].items() if v.startswith("failed") and verdicts.get(n) == "loaded" and links.get(n)),
+        # A mod whose client start classes need a newer Java (its client entrypoint) is no sign of that.
+        "loadedOnServerFailedInClient": sorted(n for n, v in client["verdicts"].items() if v.startswith("failed") and verdicts.get(n) == "loaded" and links.get(n)
+                                               and n not in client.get("newerJava", ())),
     }
     print(f"{'mod':<60} {'server':<12} client")
     for name in sorted(verdicts):
