@@ -28,14 +28,8 @@ final class HopArgDefaults {
             if (x.refs.length == 0 || y.refs.length == 0) {
                 continue;
             }
-            long[] ta = new long[x.refs.length];
-            long[] tb = new long[y.refs.length];
-            for (int i = 0; i < ta.length; i++) {
-                ta[i] = GameDiff.fnv(hop.token(x.refs[i], true));
-            }
-            for (int j = 0; j < tb.length; j++) {
-                tb[j] = GameDiff.fnv(hop.token(y.refs[j], false));
-            }
+            long[] ta = hop.hashed(x, true);
+            long[] tb = hop.hashed(y, false);
             // What a's code called at each place of b's: the same method linked, or another the game rewrote it to.
             Map<Integer, GameDiff.Ref> before = new HashMap<>();
             for (int[] p : GameHop.align(ta, tb, x.ops.equals(y.ops))) {

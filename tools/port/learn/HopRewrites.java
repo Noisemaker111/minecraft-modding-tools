@@ -29,14 +29,8 @@ final class HopRewrites {
             if (x.refs.length == 0 || y.refs.length == 0) {
                 continue;
             }
-            long[] ta = new long[x.refs.length];
-            long[] tb = new long[y.refs.length];
-            for (int i = 0; i < ta.length; i++) {
-                ta[i] = GameDiff.fnv(hop.token(x.refs[i], true));
-            }
-            for (int j = 0; j < tb.length; j++) {
-                tb[j] = GameDiff.fnv(hop.token(y.refs[j], false));
-            }
+            long[] ta = hop.hashed(x, true);
+            long[] tb = hop.hashed(y, false);
             for (int[] p : GameHop.align(ta, tb, x.ops.equals(y.ops))) {
                 GameDiff.Ref ra = x.refs[p[0]];
                 GameDiff.Ref rb = y.refs[p[1]];
@@ -61,14 +55,8 @@ final class HopRewrites {
             if (x.refs.length == 0) {
                 continue;
             }
-            long[] ta = new long[x.refs.length];
-            long[] tb = new long[y.refs.length];
-            for (int i = 0; i < ta.length; i++) {
-                ta[i] = GameDiff.fnv(hop.token(x.refs[i], true));
-            }
-            for (int j = 0; j < tb.length; j++) {
-                tb[j] = GameDiff.fnv(hop.token(y.refs[j], false));
-            }
+            long[] ta = hop.hashed(x, true);
+            long[] tb = hop.hashed(y, false);
             Set<Integer> gone = droppedIndices(ta, tb);
             for (int i = 0; i < x.refs.length; i++) {
                 GameDiff.Ref ra = x.refs[i];
@@ -258,14 +246,8 @@ final class HopRewrites {
             if (x.refs.length == 0 || y.refs.length == 0) {
                 continue;
             }
-            long[] ta = new long[x.refs.length];
-            long[] tb = new long[y.refs.length];
-            for (int i = 0; i < ta.length; i++) {
-                ta[i] = GameDiff.fnv(hop.token(x.refs[i], true));
-            }
-            for (int j = 0; j < tb.length; j++) {
-                tb[j] = GameDiff.fnv(hop.token(y.refs[j], false));
-            }
+            long[] ta = hop.hashed(x, true);
+            long[] tb = hop.hashed(y, false);
             for (int[] p : GameHop.align(ta, tb, x.ops.equals(y.ops))) {
                 GameDiff.Ref ra = x.refs[p[0]];
                 GameDiff.Ref rb = y.refs[p[1]];
@@ -309,12 +291,7 @@ final class HopRewrites {
         if ((long) n * m > 250_000) {
             return out;
         }
-        int[][] l = new int[n + 1][m + 1];
-        for (int i = n - 1; i >= 0; i--) {
-            for (int j = m - 1; j >= 0; j--) {
-                l[i][j] = ta[i] == tb[j] ? l[i + 1][j + 1] + 1 : Math.max(l[i + 1][j], l[i][j + 1]);
-            }
-        }
+        int[][] l = GameHop.lcs(ta, tb);
         int i = 0;
         int j = 0;
         int gi = 0;

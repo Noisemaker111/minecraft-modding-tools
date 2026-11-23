@@ -19,7 +19,7 @@ ASM = ("tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar")
 def sources(*folders, root=ROOT):
     port = Path(root) / PORT
     if not port.is_dir():
-        raise SystemExit(f"{port} is missing: the porter's sources live there (docs/architecture.md)")
+        raise SystemExit(f"{port} is missing: the porter's sources live there (ARCHITECTURE.md)")
     if folders:
         found = [p for p in port.glob("*.java")]
         for folder in folders:
