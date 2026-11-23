@@ -30,8 +30,9 @@ final class JarPortFixesTest {
             JarPortTest.snap(s, "g3/Light", 0, null);
             JarPortTest.snap(s, "g3/Alloc", 0, null);
         }
-        JarPortTest.snap(a, "g3/Win", 0, null, "go(Z)V", "run()V", "tick()V", "draw()V", "gone()V", "paint(Lg3/Light;" + STR + ")V", "shade(Lg3/Light;)V");
-        JarPortTest.snap(b, "g3/Win", 0, null, "go(ZI)V", "run()V", "tick()V", "draw()V", "paint(Lg3/Alloc;" + STR + ")V", "shade(Lg3/Alloc;)V");
+        JarPortTest.snap(a, "g3/Win", 0, null, "go(Z)V", "run()V", "tick()V", "draw()V", "gone()V", "paint(Lg3/Light;" + STR + ")V", "shade(Lg3/Light;)V", "use()V", "calc(I)V");
+        GameDiff.Cls newWin = JarPortTest.snap(b, "g3/Win", 0, null, "go(ZI)V", "run()V", "tick()V", "draw()V", "paint(Lg3/Alloc;" + STR + ")V", "shade(Lg3/Alloc;)V", "use()V", "calc(IZ)V");
+        newWin.methods.get("calc(IZ)V").flags |= Opcodes.ACC_STATIC;
         JarPortTest.snap(a, "g3/Hook", Opcodes.ACC_ABSTRACT, null, "handle(" + STR + "I)" + STR, "fire()" + STR);
         GameDiff.Cls hook = JarPortTest.snap(b, "g3/Hook", Opcodes.ACC_ABSTRACT, null, "handle(I" + STR + "Lg3/Alloc;)" + STR, "fire()" + STR);
         hook.methods.get("handle(I" + STR + "Lg3/Alloc;)" + STR).flags |= Opcodes.ACC_ABSTRACT;
@@ -78,6 +79,16 @@ final class JarPortFixesTest {
         JarPortTest.expect(unlinked.contains("mixin target changed signature: g3.Win.go(Z)V")
             && unlinked.contains("mixin target changed signature: g3.Win.paint(Lg3/Light;Ljava/lang/String;)V"),
             "and are reported: " + unlinked);
+        // Injectors that take the changed call's arguments, in use(), which kept its signature: a @Redirect reading only the
+        // String is re-declared with the new arguments; one reading the Light stays reported; a @ModifyArg of the String moves.
+        JarPortTest.expect(mixin.get("onUsePaint(Lg3/Win;Lg3/Alloc;" + STR + ")V").equals("use()V INVOKE Lg3/Win;paint(Lg3/Alloc;" + STR + ")V")
+            && mixin.containsKey("onUsePaint$mmt(Lg3/Win;Lg3/Light;" + STR + ")V")
+            && mixin.get("onUseLight(Lg3/Win;Lg3/Light;" + STR + ")V").equals("use()V INVOKE Lg3/Win;paint(Lg3/Light;" + STR + ")V")
+            && mixin.get("onUseText(" + STR + ")" + STR).equals("use()V INVOKE Lg3/Win;paint(Lg3/Alloc;" + STR + ")V"),
+            "a @Redirect and a @ModifyArg follow a call that took other arguments where the handler can take the new ones: " + mixin);
+        // calc(int), which 2.0 made static and gave a boolean: a handler that never reads its own object is made static too.
+        JarPortTest.expect("calc(IZ)V HEAD".equals(mixin.get("onCalc(IZ" + CI + ")V")),
+            "a handler into a target made static follows it: " + mixin);
         JarPortTest.expect(mixin.get("onPaint(Lg3/Alloc;" + STR + CI + ")V").equals("paint(Lg3/Alloc;" + STR + ")V HEAD")
             && mixin.containsKey("onPaint$mmt(Lg3/Light;" + STR + CI + ")V"),
             "a handler that takes the target's arguments is re-declared with the new ones: " + mixin.keySet());
@@ -117,6 +128,15 @@ final class JarPortFixesTest {
             var onPaint = m.getClass().getDeclaredMethod("onPaint", loader.loadClass("g3.Alloc"), String.class, ci);
             onPaint.setAccessible(true);
             onPaint.invoke(m, null, "p", ci.getConstructor().newInstance());
+            var onUsePaint = m.getClass().getDeclaredMethod("onUsePaint", loader.loadClass("g3.Win"), loader.loadClass("g3.Alloc"), String.class);
+            onUsePaint.setAccessible(true);
+            onUsePaint.invoke(m, null, null, "u");
+            var onCalc = m.getClass().getDeclaredMethod("onCalc", int.class, boolean.class, ci);
+            onCalc.setAccessible(true);
+            if (!java.lang.reflect.Modifier.isStatic(onCalc.getModifiers())) {
+                throw new LinkageError("onCalc is not static");
+            }
+            onCalc.invoke(null, 4, true, ci.getConstructor().newInstance());
             Object myHook = loader.loadClass("m3.MyHook").getConstructor().newInstance();
             Object fired = myHook.getClass().getMethod("fire").invoke(myHook);
             Class<?> boxType = loader.loadClass("g3.Box");
@@ -125,7 +145,7 @@ final class JarPortFixesTest {
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(trace.equals("paint:p;a7;size:5"),
+        JarPortTest.expect(trace.equals("paint:p;use:u;calc:4;a7;size:5"),
             "the re-declared handler calls the original with the arguments it had, the game calls the bridged override, "
                 + "and the opened field links with the access transformer applied: " + trace);
     }
@@ -154,6 +174,45 @@ final class JarPortFixesTest {
         handler(w, INJECT, "onSecondTick", "(" + CI + ")V", "go(Z)V", "INVOKE", "Lg3/Win;tick()V", null);
         handler(w, INJECT, "onLocals", "(Z" + CI + "I)V", "go(Z)V", "HEAD", null, null);
         handler(w, "Lorg/spongepowered/asm/mixin/injection/Redirect;", "redirect", "(Lg3/Win;Lg3/Light;" + STR + ")V", "paint(Lg3/Light;" + STR + ")V", "HEAD", null, null);
+        // At use()'s call of paint(light, text): a @Redirect reading only the text, one reading the light, a @ModifyArg of the text.
+        String redirect = "Lorg/spongepowered/asm/mixin/injection/Redirect;";
+        handler(w, redirect, "onUsePaint", "(Lg3/Win;Lg3/Light;" + STR + ")V", "use()V", "INVOKE", "Lg3/Win;paint(Lg3/Light;" + STR + ")V", m -> {
+            JarPortTest.append(m, "use:");
+            m.visitFieldInsn(Opcodes.GETSTATIC, "g2/Log", "out", "Ljava/lang/StringBuilder;");
+            m.visitVarInsn(Opcodes.ALOAD, 3);
+            m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(" + STR + ")Ljava/lang/StringBuilder;", false);
+            m.visitInsn(Opcodes.POP);
+            JarPortTest.append(m, ";");
+        });
+        handler(w, redirect, "onUseLight", "(Lg3/Win;Lg3/Light;" + STR + ")V", "use()V", "INVOKE", "Lg3/Win;paint(Lg3/Light;" + STR + ")V", m -> {
+            m.visitVarInsn(Opcodes.ALOAD, 2);
+            m.visitInsn(Opcodes.POP);
+        });
+        MethodVisitor text = w.visitMethod(Opcodes.ACC_PRIVATE, "onUseText", "(" + STR + ")" + STR, null, null);
+        AnnotationVisitor arg = text.visitAnnotation("Lorg/spongepowered/asm/mixin/injection/ModifyArg;", false);
+        AnnotationVisitor argMethods = arg.visitArray("method");
+        argMethods.visit(null, "use()V");
+        argMethods.visitEnd();
+        AnnotationVisitor argAt = arg.visitAnnotation("at", "Lorg/spongepowered/asm/mixin/injection/At;");
+        argAt.visit("value", "INVOKE");
+        argAt.visit("target", "Lg3/Win;paint(Lg3/Light;" + STR + ")V");
+        argAt.visitEnd();
+        arg.visit("index", 1);
+        arg.visitEnd();
+        text.visitCode();
+        text.visitVarInsn(Opcodes.ALOAD, 1);
+        text.visitInsn(Opcodes.ARETURN);
+        text.visitMaxs(0, 0);
+        text.visitEnd();
+        // calc(int) at HEAD, reading only its int.
+        handler(w, INJECT, "onCalc", "(I" + CI + ")V", "calc(I)V", "HEAD", null, m -> {
+            JarPortTest.append(m, "calc:");
+            m.visitFieldInsn(Opcodes.GETSTATIC, "g2/Log", "out", "Ljava/lang/StringBuilder;");
+            m.visitVarInsn(Opcodes.ILOAD, 1);
+            m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(I)Ljava/lang/StringBuilder;", false);
+            m.visitInsn(Opcodes.POP);
+            JarPortTest.append(m, ";");
+        });
         // Reads the Light the new target no longer passes: nothing can stand in for it.
         handler(w, INJECT, "onShade", "(Lg3/Light;" + CI + ")V", "shade(Lg3/Light;)V", "HEAD", null, m -> {
             m.visitVarInsn(Opcodes.ALOAD, 1);
@@ -246,6 +305,20 @@ final class JarPortFixesTest {
         run.visitMaxs(0, 0);
         run.visitEnd();
         String light = old ? "Lg3/Light;" : "Lg3/Alloc;";
+        MethodVisitor use = w.visitMethod(Opcodes.ACC_PUBLIC, "use", "()V", null, null);
+        use.visitCode();
+        use.visitVarInsn(Opcodes.ALOAD, 0);
+        use.visitInsn(Opcodes.ACONST_NULL);
+        use.visitLdcInsn("u");
+        use.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "g3/Win", "paint", "(" + light + STR + ")V", false);
+        use.visitInsn(Opcodes.RETURN);
+        use.visitMaxs(0, 0);
+        use.visitEnd();
+        MethodVisitor calc = w.visitMethod(Opcodes.ACC_PUBLIC | (old ? 0 : Opcodes.ACC_STATIC), "calc", old ? "(I)V" : "(IZ)V", null, null);
+        calc.visitCode();
+        calc.visitInsn(Opcodes.RETURN);
+        calc.visitMaxs(0, 0);
+        calc.visitEnd();
         for (var e : Map.of("paint", "(" + light + STR + ")V", "shade", "(" + light + ")V").entrySet()) {
             MethodVisitor p = w.visitMethod(Opcodes.ACC_PUBLIC, e.getKey(), e.getValue(), null, null);
             p.visitCode();

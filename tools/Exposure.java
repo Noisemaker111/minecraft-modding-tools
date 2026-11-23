@@ -46,6 +46,15 @@ public final class Exposure {
         for (Object o : Json.array(Json.read(Path.of(report)).get("unlinkedByMods"))) {
             String member = Json.text(Json.object(o), "member", "");
             String key = key(a, member);
+            String[] added = key == null && member.startsWith("abstract method not written: ") ? added(a, b, member) : null;
+            if (added != null) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("game", added[0]);
+                row.put("gameDetail", added[1]);
+                row.put("portable", false);
+                row.put("part", part(b, added[2]));
+                said.put(member, row);
+            }
             if (key == null) {
                 continue;
             }
@@ -752,6 +761,53 @@ public final class Exposure {
             return new String[] {"redesigned", e.sites() + " uses, " + e.kept() + " in methods b kept, none line up"};
         }
         return new String[] {"replaced", e.best() + " at " + e.votes() + " of " + e.aligned() + " aligned uses (" + e.sites() + " uses)"};
+    }
+
+    /**
+     * What the game's own code shows of an abstract method a mod class does not write that the old release did not have,
+     * which key() gives no GameDiff key: "retyped" where the old class declared a method of that name and as many
+     * parameters with other types; "moved" where the game's own subclasses that write it stopped writing one old method,
+     * most of them the same (the porter moves a mod's override of that one into it); else "added", a method the game
+     * asks of its subclasses beside what they wrote before (the porter writes it as most of them do, or empty where it
+     * gives nothing back and takes over no work). {game, detail, the declaring class}; null for a line of another kind.
+     */
+    static String[] added(GameDiff.Snap a, GameDiff.Snap b, String line) {
+        Matcher m = REFERENCE.matcher(line.replaceAll(" \\(in [^)]*\\)$", ""));
+        if (!m.matches() || m.group(2) == null || m.group(3) == null) {
+            return null;
+        }
+        String k = m.group(1).replace('.', '/'), name = m.group(2), desc = m.group(3);
+        GameDiff.Cls now = b.classes.get(k), before = a.classes.get(k);
+        if (now == null || now.methods.get(name + desc) == null) {
+            return null;
+        }
+        int params = org.objectweb.asm.Type.getArgumentTypes(desc).length;
+        for (GameDiff.Meth om : before == null ? List.<GameDiff.Meth>of() : before.methods.values()) {
+            if (om.name.equals(name) && !now.methods.containsKey(om.name + om.desc) && org.objectweb.asm.Type.getArgumentTypes(om.desc).length == params) {
+                return new String[] {"retyped", "the old release's " + name + om.desc + " has other types", dotted(k)};
+            }
+        }
+        int had = 0;
+        Map<String, Integer> dropped = new HashMap<>();
+        for (GameDiff.Cls c : b.classes.values()) {
+            GameDiff.Meth w = c.methods.get(name + desc);
+            GameDiff.Cls old = a.classes.get(c.name);
+            if (w == null || (w.flags & 0x0400) != 0 || c.name.equals(k) || old == null || !JarPort.subtype(b, c.name, k)) {
+                continue;
+            }
+            had++;
+            for (GameDiff.Meth om : old.methods.values()) {
+                if (!om.name.startsWith("<") && !om.isStatic() && (om.flags & 0x0002) == 0 && !c.methods.containsKey(om.name + om.desc)) {
+                    dropped.merge(om.name + om.desc, 1, Integer::sum);
+                }
+            }
+        }
+        int writers = had;
+        Map.Entry<String, Integer> most = dropped.entrySet().stream().max(Map.Entry.<String, Integer>comparingByValue().thenComparing(Map.Entry.comparingByKey())).orElse(null);
+        if (most != null && most.getValue() >= 2 && most.getValue() * 10 >= writers * 8) {
+            return new String[] {"moved", most.getKey() + " at " + most.getValue() + " of " + writers + " game subclasses that write it", dotted(k)};
+        }
+        return new String[] {"added", writers == 0 ? "no game class of the old release writes it" : writers + " game subclasses write it beside what they wrote before", dotted(k)};
     }
 
     static String dotted(String internal) {
