@@ -583,7 +583,7 @@ with tempfile.TemporaryDirectory() as tmp:
         sys.stdout = sys.__stdout__
     check(lines[0] == "every update: 14 -> 16 of 20 (+2)" and lines[1] == "big updates: 4 -> 6 of 10 (+2)" and "updates higher: fabric 1.1 -> 2.0 4 -> 6" in lines,
           f"compare names the counts and the update that moved: {lines}")
-    check(same[3:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
+    check(same[E.HEADS:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
     board = Path(tmp) / "scoreboard"
     board.mkdir()
     measures = board / "points.json"
@@ -620,6 +620,53 @@ with tempfile.TemporaryDirectory() as tmp:
         E.ROOT = repo
     check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
           and len(json.loads(measures.read_text(encoding="utf-8"))["port.jar-links.every-update"]) == 3, "a sweep of an older commit that finishes later is not recorded")
+    check((board / "any-version.md").read_text(encoding="utf-8").startswith("# Any mod, any version") and len(points["port.jar-links.any-version"]) == 3,
+          "main's sweep also writes the any-version page and its measure")
+
+# Any mod, any version: the most-used release's mods to every other release, back as well as forward. A mod counts only
+# when its port links on every one; a release whose job did not run, or where the mod was unreadable, is not reached.
+with tempfile.TemporaryDirectory() as tmp:
+    E.INDEX = Path(tmp) / "index.json"
+    E.INDEX.write_text(json.dumps({
+        "allVersions": [{"id": v, "status": "indexed"} for v in ("1.0", "1.1", "2.0", "2.1")],
+        "families": {"list": [{"id": "1", "versions": ["1.0", "1.1"], "hub": "1.1", "mods": {"1.1": 9}},
+                              {"id": "2", "versions": ["2.0", "2.1"], "hub": "2.0", "mods": {"2.0": 3}}]}}), encoding="utf-8")
+    E.FIRST = {"fabric": "1.0", "neoforge": "2.0"}
+    pins, E.PINS = E.PINS, Path(tmp) / "pins"
+    E.PINS.mkdir()
+    (E.PINS / "neoforge-2.0.json").write_text(json.dumps({"mods": [{"slug": "e", "file": "e.jar"}, {"slug": "f", "file": "f.jar"}]}), encoding="utf-8")
+    check(E.any_version("fabric") == [("1.1", "1.0"), ("1.1", "2.0"), ("1.1", "2.1")] and ("fabric", "1.1", "1.0") in
+          {("fabric", *p) for p in E.runs("fabric")}, f"the most-used release goes to every other release, the older ones too: {E.any_version('fabric')}")
+
+    def ported(frm, to, verdicts, unreadable=()):
+        return {"loader": "fabric", "from": frm, "to": to, "modsRead": len(verdicts), "modsThatLink": 0, "top": [],
+                "unreadable": {m: "bad" for m in unreadable},
+                "verdicts": {f"{m}--{m}.jar": {"left": ["x"] * len(t), "types": t} for m, t in verdicts.items()}}
+
+    split, linked, field = "call, game: split", "call, game: linked", "field, game: split"
+    runs = Path(tmp) / "runs"
+    runs.mkdir()
+    for s in (ported("1.1", "1.0", {"a": [], "b": [split], "c": [], "d": []}),
+              ported("1.1", "2.0", {"a": [], "b": [], "c": [linked], "d": []}),
+              ported("1.1", "2.1", {"a": [], "b": [], "c": [linked, field]}, ["d--d.jar"])):
+        (runs / f"fabric-{s['from']}-{s['to']}.json").write_text(json.dumps(s), encoding="utf-8")
+    sys.stdout = io.StringIO()
+    try:
+        a = E.join(runs)["anyVersion"]
+    finally:
+        sys.stdout = sys.__stdout__
+        E.PINS = pins
+    fab, neo = a["loaders"]["fabric"], a["loaders"]["neoforge"]
+    check((a["every"], a["mods"]) == (1, 6) and a["everywhere"]["fabric"] == ["a"],
+          f"only the mod that links on every release counts, out of every pinned mod, a loader whose jobs did not run too: {a['every']} of {a['mods']}")
+    check(fab["reached"] == {"a": 3, "b": 2, "c": 1, "d": 2} and (fab["everyNewer"], fab["everyOlder"]) == (2, 3),
+          f"each mod's releases reached, a mod unreadable on one release missing it: {fab}")
+    check(neo["notRun"] == ["2.1"] and all(m["missing"] == ["2.1"] for m in a["held"] if m["loader"] == "neoforge"), f"a release that did not run is named and not reached: {neo}")
+    check([(t["type"], t["finishes"], t["mods"]) for t in a["types"]][:3] == [("not run", 2, 2), (split, 1, 1), ("unreadable", 1, 1)]
+          and next(t for t in a["types"] if t["type"] == linked)["finishes"] == 0,
+          f"a type frees the mods it alone keeps from every release; a mod held by two types is freed by neither: {a['types']}")
+    check([(t["loader"], t["release"], t["finishes"], t["mods"]) for t in a["releases"]][:3] == [("neoforge", "2.1", 2, 2), ("fabric", "2.1", 1, 2), ("fabric", "1.0", 1, 1)],
+          f"a release frees the mods that miss only it: {a['releases']}")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:
@@ -798,11 +845,12 @@ with tempfile.TemporaryDirectory() as tmp:
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
           f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
 
-# A jar is failed before any start when a class the loader loads while that side starts (its mixins, its entrypoints,
-# NeoForge's @Mod classes) needs a newer Java than the release runs on (version.json's javaVersion). On Fabric 1.15 (Java
-# 8) a Java 17 mixin crashed every start naming no mod (PR #206). Other classes do not count: More Mobs ships Java 17-25
-# classes for Forge and NeoForge and loads on Java 8, and Boxlib's only too-new start class is its client entrypoint, so
-# it loads on a server.
+# One Java check serves the link check and the game proof: a jar is failed when a class the JVM loads of it needs a newer
+# Java than the release runs on (version.json's javaVersion). For a jar the loader starts, that is its start classes (its
+# mixins, its entrypoints, NeoForge's @Mod classes) for the side; on Fabric 1.15 (Java 8) a Java 17 mixin crashed every
+# start naming no mod (PR #206). Its other classes do not count: More Mobs ships Java 17-25 classes for Forge and
+# NeoForge and loads on Java 8, and Boxlib's only too-new start class is its client entrypoint, so it loads on a server.
+# A nested mod is loaded as a mod and counts the same way; a library the loader starts nothing of counts every class.
 def class_file(major, body=b""):
     return b"\xca\xfe\xba\xbe\x00\x00" + bytes([major >> 8, major & 0xff]) + b"\x00" * 8 + body
 
@@ -828,12 +876,29 @@ with tempfile.TemporaryDirectory() as tmp:
         (folder / "multi-loader.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "x", "entrypoints": {"main": ["x.fabric.Init"]}}),
                                                        "x/fabric/Init.class": class_file(52), "x/neoforge/Config.class": class_file(65)}))
         (folder / "data.jar").write_bytes(jar({"fabric.mod.json": "{}"}))
-        names = ["mixin.jar", "server-mixin.jar", "client-entry.jar", "multi-loader.jar", "data.jar"]
+        # Fabric API's modules are jar-in-jar mods: their mixins load at start. A module whose own "java" dependency
+        # refuses the release's Java is not loaded (C2ME's native math module asks Java 22), nor is a jar with no metadata.
+        module = jar({"fabric.mod.json": json.dumps({"id": "api-module", "mixins": ["api.mixins.json"]}),
+                      "api.mixins.json": json.dumps({"package": "api", "mixins": ["WorldMixin"]}), "api/WorldMixin.class": class_file(61)})
+        gated = jar({"fabric.mod.json": json.dumps({"id": "natives", "depends": {"java": ">=22"}, "entrypoints": {"main": ["g.Natives"]}}),
+                     "g/Natives.class": class_file(66)})
+        (folder / "bundle.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "b", "entrypoints": {"main": ["b.Init"]}}), "b/Init.class": class_file(52),
+                                                 "META-INF/jars/module.jar": module}))
+        (folder / "gated.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "g", "entrypoints": {"main": ["g.Init"]}}), "g/Init.class": class_file(65),
+                                                "META-INF/jars/natives.jar": gated, "META-INF/jars/plain.jar": jar({"p/P.class": class_file(66)})}))
+        # A library starts nothing of its own: the mods that use it load its classes, so every one counts.
+        (folder / "library.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "lib"}), "l/Api.class": class_file(52), "l/Impl.class": class_file(61)}))
+        names = ["mixin.jar", "server-mixin.jar", "client-entry.jar", "multi-loader.jar", "data.jar", "bundle.jar", "library.jar"]
         server = E.newer_java(folder, names, "fabric", "1.15", "server")
-        check(sorted(server) == ["mixin.jar", "server-mixin.jar"] and server["mixin.jar"].startswith("built for Java 17; Minecraft 1.15 runs on Java 8")
+        check(sorted(server) == ["bundle.jar", "library.jar", "mixin.jar", "server-mixin.jar"] and "module.jar!api.WorldMixin" in server["bundle.jar"]
+              and "l.Impl" in server["library.jar"],
+              f"on a 1.15 server a nested module's Java 17 mixin and a Java 17 library class count: {server}")
+        check(E.newer_java(folder, ["gated.jar"], "fabric", "1.21", "server") == {},
+              "a nested module asking a newer Java than the release's, and a nested jar no loader reads, are not loaded")
+        check(sorted(server) == ["bundle.jar", "library.jar", "mixin.jar", "server-mixin.jar"] and server["mixin.jar"].startswith("built for Java 17; Minecraft 1.15 runs on Java 8")
               and "m.mixin.LivingMixin" in server["mixin.jar"],
               f"on a 1.15 server, the jars whose mixins need Java 17 are named with both Javas and the class: {server}")
-        client = E.newer_java(folder, names, "fabric", "1.15", "client")
+        client = E.newer_java(folder, names[:5], "fabric", "1.15", "client")
         check(sorted(client) == ["client-entry.jar", "mixin.jar"], f"in a 1.15 client, a too-new client entrypoint counts and a server mixin does not: {client}")
         check(E.newer_java(folder, names, "fabric", "1.20.4", "client") == {}, "on 1.20.4 (Java 17) the same jars all start")
         (folder / "neo.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="neo"\n',
@@ -845,5 +910,35 @@ with tempfile.TemporaryDirectory() as tmp:
               f"on NeoForge 1.21 (Java 21) a @Mod class built for Java 25 is named, and a Java 25 class nothing loads at start is not: {found}")
     finally:
         E.HOME = real_home
+# The link check reads the same classes, on both sides: a mod with one the release's JVM refuses does not link there
+# (ports back meet it). A nested mod counts; a multi-release jar's newer copies, module-info and another loader's
+# classes in a jar for several do not.
+with tempfile.TemporaryDirectory() as tmp:
+    nested, plain, multi = Path(tmp) / "nested.jar", Path(tmp) / "plain.jar", Path(tmp) / "multi.jar"
+    nested.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "n", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
+                            "META-INF/jars/lib.jar": jar({"fabric.mod.json": json.dumps({"id": "l", "entrypoints": {"client": ["lib.L"]}}), "lib/L.class": class_file(65)})}))
+    plain.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "p", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
+                           "META-INF/versions/21/a/A.class": class_file(65), "module-info.class": class_file(65)}))
+    multi.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "m", "entrypoints": {"main": ["m.fabric.Init"]}}), "m/fabric/Init.class": class_file(61),
+                           "m/neoforge/Init.class": class_file(65)}))
+    asked, E.release_java = E.release_java, lambda v: {"old": 17, "new": 21}[v]
+    try:
+        def report():
+            return {"mods": [{"mod": n, "unlinked": []} for n in ("nested.jar", "plain.jar", "multi.jar")], "linked": 3, "unlinkedByMods": []}
+        jars = {"nested.jar": nested, "plain.jar": plain, "multi.jar": multi}
+        back, forward = E.with_target_java(report(), jars, "fabric", "old"), E.with_target_java(report(), jars, "fabric", "new")
+    finally:
+        E.release_java = asked
+    check(back["linked"] == 2 and E.left(back["mods"][0]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
+          and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
+          f"a mod whose nested mod needs a newer Java than the release's does not link on it; one whose too-new classes never load does: {back}")
+    check(forward["linked"] == 3 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
+
+# A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
+# PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.
+skipped = E.not_loaded({"findings": [
+    {"kind": "loader-mismatch", "severity": "warning", "summary": "a.jar is written for another loader (META-INF/neoforge.mods.toml)", "jars": ["a.jar"]},
+    {"kind": "java", "severity": "warning", "suspects": [{"jar": "b.jar", "why": ["Java 21"]}]}]})
+check(list(skipped) == ["a.jar"] and "another loader" in skipped["a.jar"], f"a jar the loader skips is named, a Java warning is not: {skipped}")
 
 print(f"exposure: {checks} checks passed")

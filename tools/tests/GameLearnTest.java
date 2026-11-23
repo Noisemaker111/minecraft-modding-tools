@@ -56,10 +56,24 @@ final class GameLearnTest {
         JarPortTest.expect(once.equals("make:m;blit:m,7.0,9.0,256;jump;"), "the learned replacements run in the ported mod on the JVM: " + once);
         String twice = run(a, GameDiff.read("3.0", List.copyOf(newGame.values()), null, List.of()), map, newGame);
         JarPortTest.expect(twice.equals(once), "a replacement learned on the first of two updates applies on a port across both: " + twice);
+        // Uses of one member may carry different numbers of operands (the game's map order decides which is read first):
+        // a backward port from 1.21.1 to 1.20.3 stopped the whole chain on one when the longest was read last.
+        GameDiff.Node computed = new GameDiff.Node('x', null, null, "I");
+        GameDiff.Node literal = new GameDiff.Node('k', null, 1, "I");
+        Map<GameDiff.Node, Set<String>> uneven = new LinkedHashMap<>();
+        uneven.put(new GameDiff.Node('s', null, null, "V", computed), Set.of("r"));
+        uneven.put(new GameDiff.Node('s', null, null, "V", literal, literal), Set.of("r"));
+        boolean kept;
+        try {
+            kept = GameDiff.Learner.beyondLiterals("r", uneven);
+        } catch (ArrayIndexOutOfBoundsException shorter) {
+            kept = false;
+        }
+        JarPortTest.expect(kept, "a use with fewer operands passes no literal where it has none, and is read without failing the map");
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
-        System.out.println("game-learn: 11 checks passed");
+        System.out.println("game-learn: 12 checks passed");
     }
 
     /** The mod ported from a to b with the route map, run on this JVM against the new game's classes: its trace. */
