@@ -789,7 +789,7 @@ final class PackLoaders {
         Path dir = context.cache().resolve("agents").resolve("spawn-area-" + HexFormat.of().formatHex(hash.digest()).substring(0, 16));
         Path jar = dir.resolve("spawn-area.jar");
         if (Files.isRegularFile(jar)) return jar;
-        // Built in a folder and file of this run's own: pack-checks run side by side on one machine.
+        // Built in a folder of this run's own: pack-checks run side by side on one machine.
         Files.createDirectories(dir);
         Path classes = Files.createTempDirectory(dir, "classes-");
         try {
@@ -801,28 +801,7 @@ final class PackLoaders {
             java.util.jar.Manifest manifest = new java.util.jar.Manifest();
             manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
             manifest.getMainAttributes().putValue("Premain-Class", "SpawnArea");
-            Path part = Files.createTempFile(dir, "spawn-area-", ".part");
-            Set<String> entries = new HashSet<>();
-            try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(part), manifest); var input = new ZipFile(asm.toFile()); var walk = Files.walk(classes)) {
-                for (Path file : walk.filter(Files::isRegularFile).sorted().toList()) {
-                    String name = classes.relativize(file).toString().replace('\\', '/');
-                    out.putNextEntry(new ZipEntry(name));
-                    out.write(Relocate.classes(Files.readAllBytes(file)));
-                    out.closeEntry();
-                    entries.add(name);
-                }
-                var items = input.entries();
-                while (items.hasMoreElements()) {
-                    ZipEntry entry = items.nextElement();
-                    if (!entry.getName().startsWith("org/objectweb/asm/") || !entry.getName().endsWith(".class") || !entries.add(entry.getName())) continue;
-                    out.putNextEntry(new ZipEntry(Relocate.name(entry.getName())));
-                    try (var stream = input.getInputStream(entry)) {
-                        out.write(Relocate.classes(stream.readAllBytes()));
-                    }
-                    out.closeEntry();
-                }
-            }
-            Files.move(part, jar, StandardCopyOption.REPLACE_EXISTING);
+            Relocate.agentJar(classes, asm, manifest, jar);
         } finally {
             PackCheck.deleteTree(classes);
         }
