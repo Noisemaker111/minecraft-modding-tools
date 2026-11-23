@@ -12,6 +12,17 @@ import org.gradle.api.tasks.testing.Test
 def selected = System.getProperty('mmt.project', '')
 // explain names two projects, the one that fails and one that builds, separated by a comma.
 def selectedPaths = selected ? selected.split(',')*.trim() : []
+// A path given in other case than the build's (:neoforge for a project settings renamed :NeoForge) is the project Gradle's
+// own task selection picks for it: an exact path first, else the one path equal ignoring case (Gradle's NameMatcher,
+// https://docs.gradle.org/current/userguide/command_line_interface.html#sec:name_abbreviation).
+gradle.projectsLoaded { g ->
+    def paths = g.rootProject.allprojects*.path
+    selectedPaths = selectedPaths.collect { wanted ->
+        if (wanted in paths) return wanted
+        def same = paths.findAll { it.equalsIgnoreCase(wanted) }
+        same.size() == 1 ? same[0] : wanted
+    }
+}
 def planning = System.getProperty('mmt.metadataMode', '') == 'plan'
 // Test hook for mmt's fallback: behave like an init script that registers too late
 // whenever Gradle is configuring on demand, so the retry without it can be exercised.

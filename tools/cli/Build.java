@@ -75,7 +75,7 @@ final class Build {
     /** Stops the Gradle daemons mmt started for this checkout; null if it never started any. */
     Run.Result stopDaemons() throws Exception {
         if (!Files.isDirectory(daemons())) return null;
-        Path wrapper = project.root.resolve("gradle/wrapper/gradle-wrapper.jar");
+        Path wrapper = GradleWrapper.jar(project.root);
         Run.Result result = Run.command(
             List.of(
                 jdk.java().toString(),
@@ -143,10 +143,12 @@ final class Build {
         boolean cold = coldSetup();
         int seconds = gradleTimeout(UserState.env("GRADLE_TIMEOUT"));
         try {
+            Map<String, String> environment = new TreeMap<>(BuildSecrets.environment(BuildSecrets.given(project)));
+            environment.put("JAVA_HOME", jdk.home().toString());
             return Run.command(
                 command,
                 project.root,
-                Map.of("JAVA_HOME", jdk.home().toString()),
+                environment,
                 report.log(stage),
                 seconds
             );
@@ -158,6 +160,15 @@ final class Build {
     Run.Result gradle(List<String> arguments, String stage) throws Exception {
         List<String> command = command(arguments);
         Run.Result result = timed(command, stage);
+        // A plugin resolved to a release built for a newer Gradle than the wrapper's: once, the newest of its line.
+        String newer = result.exit() == 0 ? null : GradleWrapper.rise(project.root, Files.readString(result.log()));
+        if (newer != null) {
+            // The Java Gradle runs on stays: a newer release of a line runs on every Java its older ones did.
+            report.stage(stage, result, Json.map("gradle", project.wrapperVersion(), "risesTo", newer));
+            command = command(arguments);
+            stage = stage + "-gradle-" + newer;
+            result = timed(command, stage);
+        }
         boolean fallback = result.exit() != 0 && configuresOnDemand() && selectionFailed(result.log());
         report.stage(
             stage,
@@ -262,10 +273,7 @@ final class Build {
     }
 
     List<String> command(List<String> arguments) throws IOException {
-        Path wrapper = project.root.resolve("gradle/wrapper/gradle-wrapper.jar");
-        if (!Files.isRegularFile(wrapper)) throw new IOException(
-            "Missing " + wrapper + "; restore this project's Gradle wrapper jar."
-        );
+        Path wrapper = GradleWrapper.jar(project.root);
         List<String> command = new ArrayList<>(
             List.of(
                 jdk.java().toString(),
@@ -306,6 +314,7 @@ final class Build {
             command.add("-Dorg.gradle.java.installations.paths=" + String.join(",", toolchains));
         }
         if (!selected.isBlank()) command.add("-Dmmt.project=" + selected);
+        command.addAll(BuildSecrets.arguments(BuildSecrets.given(project)));
         Path pins = project.state().resolve("plugin-pins.txt");
         if (Files.isRegularFile(pins)) command.add("-Dmmt.pluginPins=" + Files.readString(pins).trim());
         // Libraries mmt ported from source (LibraryPort) resolve from its local repository, and only from there.
@@ -387,6 +396,19 @@ final class Build {
                 Files.writeString(pins, existing.isEmpty() ? pin : existing + "," + pin);
                 report.stages.add(Json.map("name", "plugin-pin", "pin", pin));
                 result = gradle(task, stage + "-pinned");
+            }
+        }
+        // A build that reads its author's publishing secrets while it loads stops everyone else's checkout; mmt never
+        // publishes, so the secrets it names get placeholders (BuildSecrets) and the build is read once more.
+        if (result.exit() != 0) {
+            SortedSet<String> secrets = BuildSecrets.named(project);
+            SortedSet<String> given = BuildSecrets.given(project);
+            if (!given.containsAll(secrets) && BuildSecrets.stoppedOn(Run.gradleFailure(result.log()))) {
+                given.addAll(secrets);
+                Files.createDirectories(BuildSecrets.file(project).getParent());
+                Files.write(BuildSecrets.file(project), given);
+                report.stages.add(Json.map("name", "secret-placeholders", "names", new ArrayList<>(given)));
+                result = gradle(task, stage + "-secret-placeholders");
             }
         }
         String unreachable = result.exit() == 0

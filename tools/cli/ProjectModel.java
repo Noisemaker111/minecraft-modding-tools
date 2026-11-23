@@ -75,11 +75,14 @@ public final class ProjectModel {
         return root.resolve(".mmt/portable");
     }
 
+    /** The Gradle release the build runs on: its wrapper's, or GradleWrapper.NAMED_BY_NONE when it has no wrapper. */
     String wrapperVersion() throws IOException {
-        Path props = root.resolve("gradle/wrapper/gradle-wrapper.properties");
-        Matcher matcher = Pattern.compile("gradle-([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)-(?:bin|all)").matcher(read(props));
-        if (!matcher.find()) throw new IOException("No Gradle wrapper distribution found in " + props);
-        return matcher.group(1);
+        String url = GradleWrapper.distributionUrl(root);
+        String version = GradleWrapper.version(url);
+        if (version == null) throw new IOException(
+            "No Gradle release in " + root.resolve(GradleWrapper.PROPERTIES) + ": its distributionUrl is " + url
+        );
+        return version.replaceFirst("-.*", "");
     }
 
     /** Explicit compile/toolchain requirement; zero means the project does not state one plainly. */

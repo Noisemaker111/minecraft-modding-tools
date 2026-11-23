@@ -237,6 +237,7 @@ CHECKS = {
     "port-plan": (True, None, on_fixture("port-plan", *java("tools/tests/PortPlanCacheTest.java", "{root}", JAR))),
     "legacy-agent": (True, ("nt",), legacy_agent),
     "fastlane-isolation": (True, None, [java("tools/tests/FastLaneIsolationTest.java", ".", JAR)]),
+    "build-setup": (True, None, [java("tools/tests/BuildSetupTest.java", ".", JAR)]),
     "jar-port": (False, None, jar_port),
     "fingerprint": (True, None, [[sys.executable, "bench/test_fingerprint.py", JAR]]),
     "runtime-natives": (True, ("posix",), [java("tools/tests/RuntimeNativesTest.java", ".", JAR)]),

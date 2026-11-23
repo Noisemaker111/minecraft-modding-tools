@@ -588,23 +588,11 @@ public final class Mmt {
                         }
                         Run.Result run = build.gradle(tasks, options.command);
                         exit = run.exit() == 0 ? 0 : 1;
-                        result = Json.map(
-                            "tier",
-                            options.command.equals("compile") ? "compile" : "logic",
-                            "tasks",
+                        result = buildResult(
+                            options.command,
                             tasks,
-                            "log",
-                            run.log().toString(),
-                            "gameVerified",
-                            false,
-                            "details",
-                            options.command.equals("compile")
-                                ? "Compiled " + String.join(", ", tasks) + "."
-                                : Run.tail(run.log())
-                        );
-                        if (run.exit() != 0) result.put(
-                            "reason",
-                            Run.gradleFailure(run.log(), model) + "\nLog: " + run.log()
+                            run,
+                            run.exit() == 0 ? null : Run.gradleFailure(run.log(), model)
                         );
                         if (options.command.equals("test") && run.exit() == 0) {
                             Map<String, Object> counts = TestResults.readTasks(model, tasks, report.id);
@@ -702,6 +690,27 @@ public final class Mmt {
             } catch (IOException ignored) {}
         }
         System.exit(exit);
+    }
+
+    /** What compile or test reports for one Gradle run; failure is Gradle's own reason, or null when the run passed. */
+    static Map<String, Object> buildResult(String command, List<String> tasks, Run.Result run, String failure)
+        throws IOException {
+        boolean compile = command.equals("compile");
+        Map<String, Object> result = Json.map(
+            "tier",
+            compile ? "compile" : "logic",
+            "tasks",
+            tasks,
+            "log",
+            run.log().toString(),
+            "gameVerified",
+            false,
+            // A build that failed did not compile: its details say why, never "Compiled".
+            "details",
+            !compile ? Run.tail(run.log()) : failure != null ? failure : "Compiled " + String.join(", ", tasks) + "."
+        );
+        if (failure != null) result.put("reason", failure + "\nLog: " + run.log());
+        return result;
     }
 
     /** An exception as a sentence: file-system errors whose message is only a path get their meaning back. */

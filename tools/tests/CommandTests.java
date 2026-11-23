@@ -74,6 +74,27 @@ public final class CommandTests {
         check(!FastLane.gameFree(Json.map("projects", List.of())), "no test source set is never treated as game-free");
     }
 
+    /** compile --json: a build that failed says why in details, the field a reader takes first, never "Compiled". */
+    static void compileResultChecks(Path scratch) throws Exception {
+        Path log = Files.writeString(scratch.resolve("compile.log"), "BUILD FAILED\n");
+        var failed = Mmt.buildResult(
+            "compile",
+            List.of(":fabric:build"),
+            new Run.Result(1, log, 1),
+            "Gradle could not resolve a dependency: a:b:1."
+        );
+        check(
+            failed.get("details").equals("Gradle could not resolve a dependency: a:b:1.") &&
+            String.valueOf(failed.get("reason")).startsWith("Gradle could not resolve a dependency: a:b:1."),
+            "a failed compile's details carry Gradle's reason, not \"Compiled\": " + failed.get("details")
+        );
+        var passed = Mmt.buildResult("compile", List.of(":fabric:build"), new Run.Result(0, log, 1), null);
+        check(
+            passed.get("details").equals("Compiled :fabric:build.") && !passed.containsKey("reason"),
+            "a compile that passed says what it compiled and has no reason: " + passed
+        );
+    }
+
     /** plugin-check picks MockBukkit by the plugin's own Paper API line, and refuses a line it has no MockBukkit for. */
     static void pluginCheckChecks(Path home) throws Exception {
         Map<String, Object> paper = Json.map(
@@ -264,6 +285,7 @@ public final class CommandTests {
             count++;
         }
         fastLaneChecks();
+        compileResultChecks(scratch);
         pluginCheckChecks(home);
         System.out.println(count + " command checks passed");
     }
