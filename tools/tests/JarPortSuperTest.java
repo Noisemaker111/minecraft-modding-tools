@@ -33,6 +33,7 @@ final class JarPortSuperTest {
             JarPortTest.snap(s, "s7/ArrowR", 0, "s7/Rend", "<init>(" + took + ")V");
             JarPortTest.snap(s, "s7/BoxR", 0, "s7/Rend", "<init>(" + took + ")V");
             JarPortTest.snap(s, "s7/Lone", 0, null, "<init>(" + took + ")V");
+            JarPortTest.snap(s, "s7/Bubble", 0, null, old ? "<init>(I)V" : "<init>(IZ)V");
             JarPortTest.snap(s, "s7/Factory", Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, null, "make(" + took + ")" + REND);
             JarPortTest.snap(s, "s7/Reg", 0, null, "<init>()V", "make(" + took + ")" + REND).ifaces.add("s7/Factory");
             if (old) {
@@ -112,6 +113,20 @@ final class JarPortSuperTest {
             "m7.mixins.json", "{\"package\": \"m7\", \"mixins\": [\"InitMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "init.jar", runs);
         JarPortTest.expect(unlinked(runs).equals(List.of("mixin target changed signature: s7.ArrowR.<init>(Ls7/Disp;)V")),
             "an injector into a reshaped constructor taking its old arguments is reported, one taking none is not: " + unlinked(runs));
+        // A handler taking the old arguments where the new constructor takes one more: Mixin wants all of them.
+        ClassWriter bub = JarPortRetypeTest.writer("m7/BubbleMixin", "java/lang/Object");
+        AnnotationVisitor bt = bub.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor bv = bt.visitArray("value");
+        bv.visit(null, Type.getObjectType("s7/Bubble"));
+        bv.visitEnd();
+        bt.visitEnd();
+        JarPortFixesTest.handler(bub, JarPortFixesTest.INJECT, "onInit", "(I" + ci + ")V", "<init>", "TAIL", null, null);
+        bub.visitEnd();
+        List<Map<String, Object>> bubbles = new ArrayList<>();
+        port.port(JarPortTest.jar(Map.of("m7/BubbleMixin.class", bub.toByteArray(),
+            "m7.mixins.json", "{\"package\": \"m7\", \"mixins\": [\"BubbleMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "bubble.jar", bubbles);
+        JarPortTest.expect(unlinked(bubbles).equals(List.of("mixin target changed signature: s7.Bubble.<init>(I)V")),
+            "a handler taking the old arguments of a constructor that now takes more is reported: " + unlinked(bubbles));
         // Named by its old descriptor: Mixin only finds no place, a break where a place is required.
         for (int require : new int[] { 1, 0 }) {
             ClassWriter n = JarPortRetypeTest.writer("m7/NamedMixin", "java/lang/Object");

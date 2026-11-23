@@ -4752,7 +4752,7 @@ public final class JarPort {
     /**
      * An injector into a target's constructor that the update reshaped: named with its old descriptor, which the new class
      * lacks, or by name alone with a handler that takes the old constructor's arguments before its CallbackInfo, which
-     * no constructor of the new class starts with (Mixin then refuses the handler's descriptor). The report, or null.
+     * no constructor of the new class takes (Mixin then refuses the handler's descriptor). The report, or null.
      */
     String constructorChanged(List<String> owners, String mdesc, String handlerDesc) {
         Type[] params = Type.getArgumentTypes(handlerDesc);
@@ -4764,11 +4764,11 @@ public final class JarPort {
                 continue;
             }
             for (GameDiff.Meth k : was.methods.values()) {
-                if (!k.name.equals("<init>") || (mdesc != null ? !k.desc.equals(mdesc) : captured.isEmpty() || !startsWith(desc(k.desc), captured))) {
+                if (!k.name.equals("<init>") || (mdesc != null ? !k.desc.equals(mdesc) : captured.isEmpty() || !takesExactly(desc(k.desc), captured))) {
                     continue;
                 }
                 boolean kept = mdesc != null ? now.methods.containsKey("<init>" + desc(mdesc))
-                    : now.methods.values().stream().anyMatch(n -> n.name.equals("<init>") && startsWith(n.desc, captured));
+                    : now.methods.values().stream().anyMatch(n -> n.name.equals("<init>") && takesExactly(n.desc, captured));
                 if (!kept) {
                     return "mixin target changed signature: " + Exposure.dotted(o) + ".<init>" + k.desc;
                 }
@@ -4777,9 +4777,9 @@ public final class JarPort {
         return null;
     }
 
-    static boolean startsWith(String desc, List<Type> first) {
-        Type[] t = Type.getArgumentTypes(desc);
-        return t.length >= first.size() && Arrays.asList(t).subList(0, first.size()).equals(first);
+    /** Whether a constructor takes exactly the arguments a handler captures before its CallbackInfo, as Mixin wants. */
+    static boolean takesExactly(String desc, List<Type> first) {
+        return Arrays.asList(Type.getArgumentTypes(desc)).equals(first);
     }
 
     static Found keep(String text) {
