@@ -85,9 +85,9 @@ jobs:
         id: freed
         if: always()
         run: echo "mods=$(cat freed.txt 2>/dev/null)" >> "$GITHUB_OUTPUT"
-      - if: steps.freed.outputs.mods != ''
+      - if: ${{ !cancelled() && steps.freed.outputs.mods != '' }}
         uses: ./.github/actions/game
-      - if: steps.freed.outputs.mods != ''
+      - if: ${{ !cancelled() && steps.freed.outputs.mods != '' }}
         name: Start them on a server and in a client
         env:
           FREED: ${{ steps.freed.outputs.mods }}
