@@ -1,12 +1,14 @@
 """A pull request's port check: the ports its change can move, compared with main's row of each; it fails when a mod that links on main stops linking."""
 import re
 
+import port_tools
 from portboard import gameload, gamereleases, mainrecord, settings
 
 
 # What every port reads: the porter's sources, the port rules, this file and the change index (the releases a port crosses,
 # and which updates are big). A change to one can move any mod of any port.
-SHARED = {"knowledge/fixes.json", "bench/exposure.py", settings.INDEX.relative_to(settings.ROOT).as_posix()} | {f"tools/{n}" for n in (*JAR_SOURCES, *settings.MAP_SOURCES, *settings.NAME_SOURCES)}
+SHARED = ({"knowledge/fixes.json", "bench/exposure.py", "bench/port_tools.py", settings.INDEX.relative_to(settings.ROOT).as_posix()}
+          | set(port_tools.sources(root=settings.ROOT)) | {p.relative_to(settings.ROOT).as_posix() for p in (settings.ROOT / "bench" / "portboard").glob("*.py")})
 NAMED = re.compile(r"^[ \t*_>-]*port check:?[*_]*\s*(.+)$", re.I | re.M)
 PAIR = re.compile(r"\b(fabric|neoforge):(\d[\w.]*)(?::(\d[\w.]*))?\b")
 
