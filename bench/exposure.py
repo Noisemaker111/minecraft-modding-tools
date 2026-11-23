@@ -1762,8 +1762,9 @@ def fabric_apis(versions):
     """fabric_api of each release, read with one Java process."""
     missing = [v for v in dict.fromkeys(versions) if v not in FABRIC_APIS]
     if missing:
+        # Its errors go to the run's output: a sweep job that failed here said only "exit status 1".
         out = subprocess.run([java(), "-Xmx1g", "-cp", jar_tools(), "Exposure", "--fabric-api", ",".join(missing)],
-                             capture_output=True, text=True, check=True).stdout
+                             stdout=subprocess.PIPE, text=True, check=True).stdout
         for line in out.splitlines():
             v, _, path = line.partition("\t")
             FABRIC_APIS[v] = Path(path) if path else None

@@ -149,7 +149,7 @@ with tempfile.TemporaryDirectory() as tmp:
                 raise AssertionError("waited on after the failed job")
             return json.dumps({"status": "in_progress", "conclusion": "", "url": "https://x/run/5", "headSha": "a" * 40, "jobs": polls.pop(0)})
         if a[0] == "api" and a[1].endswith("/logs"):
-            return "2026-11-23T10:03:59.1Z Exception in thread main\n2026-11-23T10:04:00.0Z ##[error]Process completed with exit code 1.\n2026-11-23T10:04:01.0Z Post job cleanup."
+            return "2026-11-23T10:03:59.1Z \x1b[31mException in thread main\x1b[0m\n2026-11-23T10:04:00.0Z ##[error]Process completed with exit code 1.\n2026-11-23T10:04:01.0Z Post job cleanup."
         if a[0] == "api":
             return json.dumps([{"name": "exposure-0", "id": 1}])
         if a[:2] == ("run", "download"):
@@ -171,7 +171,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(compared == [(["fabric-1.21.1-1.21.2.json"], "a" * 40)], f"the finished update's summary is compared as its job finishes: {compared}")
     check(view["conclusion"] == "failure" and not polls, f"the wait ends at the first failed job: {view['conclusion']}")
     check(("run", "cancel") not in calls, "the run is left going")
-    check("Process completed with exit code 1" in text and "Post job cleanup" not in text and "https://x/run/5" in text and "--run 5" in text,
+    check("    Exception in thread main\n" in text and "Process completed with exit code 1" in text and "Post job cleanup" not in text and "https://x/run/5" in text and "--run 5" in text,
           f"the failure prints its log's end and the run: {text}")
     check(C.download_new(5, out, {"exposure-0"}, gh=run_gh) == [], "an artifact already downloaded is not downloaded again")
     check(C.log_tail(1, gh=lambda *a, **k: "\ufeff<?xml version=\"1.0\"?><Error><Code>BlobNotFound</Code></Error>") == [],

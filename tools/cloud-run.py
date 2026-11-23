@@ -227,7 +227,8 @@ def failed_step(job):
 def log_tail(job_id, lines=25, gh=None):
     """The last lines of a finished job's log, from the job's own log (gh run view --log waits for the whole run)."""
     gh = gh or globals()["gh"]
-    text = gh("api", f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs", check=False) or ""
+    # Job logs carry colour codes, which gh prints only when allowed to; they are taken out here.
+    text = re.sub(r"\x1b\[[0-9;]*m", "", gh("api", "--allow-escape-sequences", f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs", check=False) or "")
     if text.lstrip("\ufeff").startswith("<?xml"):
         return []  # a job cancelled before it logged has no log: GitHub answers with a storage error page
     # Each line starts with a timestamp; the post-job cleanup after the failed step says nothing about it.
