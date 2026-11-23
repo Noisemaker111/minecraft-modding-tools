@@ -109,6 +109,7 @@ final class PortJar {
         }
         List<Object> unlinked = Json.array(row.get("unlinked"));
         List<Object> silent = Json.array(row.get("silent"));
+        List<Object> skipped = row.get("skipped") == null ? List.of() : Json.array(row.get("skipped"));
         Map<String, Object> changed = Json.object(row.get("changed"));
         int renamed = changed.values().stream().mapToInt(v -> ((Number) v).intValue()).sum();
         StringBuilder details = new StringBuilder();
@@ -127,6 +128,10 @@ final class PortJar {
         if (!silent.isEmpty()) {
             details.append("\n").append(silent.size()).append(" methods override game methods ").append(to).append(" no longer has; they load and are never called.");
         }
+        if (!skipped.isEmpty()) {
+            details.append("\n").append(skipped.size()).append(" nested jars are not loaded on ").append(to).append(" and were left as they were:\n");
+            skipped.forEach(s -> details.append("  ").append(s).append('\n'));
+        }
         details.append("\nCheck it in the game: mmt pack-check --pack FOLDER_WITH_mods --minecraft ").append(to).append(" --loader ").append(loader);
         return Json.map(
             "ok", unlinked.isEmpty(),
@@ -137,6 +142,7 @@ final class PortJar {
             "changed", changed,
             "unlinked", unlinked,
             "silent", silent,
+            "skipped", skipped,
             "details", details.toString().strip()
         );
     }

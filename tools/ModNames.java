@@ -828,7 +828,7 @@ public final class ModNames {
         }
 
         byte[] jar(byte[] bytes, Map<String, Set<String>> originals) throws IOException {
-            return jar(bytes, new Jar(classesIn(bytes), originals));
+            return jar(bytes, new Jar(classesIn(bytes, game.version), originals));
         }
 
         Set<String> gameNames; // name + desc (Mojang) of every game method whose intermediary name is another
@@ -885,7 +885,7 @@ public final class ModNames {
                     }
                 });
             }
-            Jar jar = new Jar(classesIn(bytes), originals);
+            Jar jar = new Jar(classesIn(bytes, game.version), originals);
             List<String> out = new ArrayList<>();
             for (var e : jar.own.entrySet()) {
                 Own o = e.getValue();
@@ -945,6 +945,11 @@ public final class ModNames {
          * reads them all as one, and gives the outer jar and every nested one the same names.
          */
         static List<byte[]> classesIn(byte[] bytes) throws IOException {
+            return classesIn(bytes, null);
+        }
+
+        /** The classes of a jar and of the nested jars Fabric loads on release (null: on any release). */
+        static List<byte[]> classesIn(byte[] bytes, String release) throws IOException {
             List<byte[]> out = new ArrayList<>();
             Map<String, byte[]> jars = new LinkedHashMap<>();
             byte[] meta = null;
@@ -959,7 +964,8 @@ public final class ModNames {
                     }
                 }
             }
-            // Only the nested jars Fabric loads (fabric.mod.json's "jars"), after the jar's own classes, which win a name both have.
+            // Only the nested jars Fabric loads (fabric.mod.json's "jars", each where its own "minecraft" holds), after the
+            // jar's own classes, which win a name both have.
             Set<String> listed = new HashSet<>();
             try {
                 Object list = meta == null ? null : Json.object(Json.parse(new String(meta, StandardCharsets.UTF_8))).get("jars");
@@ -972,8 +978,8 @@ public final class ModNames {
                 // no nested jars Fabric would load
             }
             for (var e : jars.entrySet()) {
-                if (listed.contains(e.getKey())) {
-                    out.addAll(classesIn(e.getValue()));
+                if (listed.contains(e.getKey()) && (release == null || JarPort.fabricLoads(e.getValue(), release))) {
+                    out.addAll(classesIn(e.getValue(), release));
                 }
             }
             return out;
