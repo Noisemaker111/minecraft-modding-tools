@@ -1,0 +1,11 @@
+{
+ "id": "79A",
+ "title": "Abstract methods the update added are written as the game writes them",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "The third biggest type of break on the jar scoreboard was 'abstract method not written, game: not read': a mod class extends or implements a game type that gained an abstract method the old release did not have, so the port does not load or throws AbstractMethodError, and the change map read nothing about it because its key is the old release's member. The change map now reads it from the game's own subclasses that write the method: 'retyped' (the old class had the method with other types), 'moved' (most of them stopped writing one old method, which the porter already moves a mod's override into) or 'added' (they write it beside what they wrote before). For an added one the porter writes the method into the mod class: the body most of the game's own subclasses write that a mod class can carry (two or more alike, using only what the class inherits and public members), or, for a method with no result, an empty one, since the old release never asked the class. Never where the class writes a method the game no longer calls, where a method the class inherited before now hands its work to the new one on its object, or where a game method from the old release now calls it in place of work it did itself.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "The type's mods fall and the mods it alone held back link, with no update losing a mod that linked; the freed mods load in a real game of the new release",
+ "wrongIf": "a mod freed by a written method fails in game on that method, or a written method gives a value the game's own subclasses do not show"
+}
