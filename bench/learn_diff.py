@@ -23,7 +23,7 @@ import exposure  # noqa: E402
 
 ROOT = exposure.ROOT
 OUT = ROOT / ".runs" / "learn-diff"
-SOURCES = [f"tools/{n}" for n in exposure.JAR_SOURCES] + ["tools/cli/Json.java"]
+SOURCES = [f"tools/{n}" for n in exposure.JAR_SOURCES]
 
 
 def base_classes(ref):

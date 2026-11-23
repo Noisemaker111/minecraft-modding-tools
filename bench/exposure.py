@@ -268,7 +268,7 @@ def compile_tools():
 
 
 # What a route map is built from: it changes with GameDiff or VersionMap, not with Exposure itself.
-MAP_SOURCES = ("GameDiff.java", "VersionMap.java", "Exposure.java", "ModNames.java", "FixExpr.java", "cli/Json.java")
+MAP_SOURCES = ("GameDiff.java", "VersionMap.java", "Exposure.java", "ModNames.java", "FixExpr.java", "cli/Json.java", "cli/Versions.java")
 
 
 def tools_key(*names):
@@ -332,7 +332,6 @@ MAPPINGS = Path(os.path.expanduser("~")) / ".mmt" / "mappings"  # VersionMap.cac
 PLATFORM = {
     "neoforge-maven-metadata.xml": "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml",
     "fabric-loader-maven-metadata.xml": "https://maven.fabricmc.net/net/fabricmc/fabric-loader/maven-metadata.xml",
-    "fabric-api-maven-metadata.xml": "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml",
 }
 
 
@@ -353,13 +352,11 @@ def platform_bytes():
 
 
 def platform_key(loader, route):
-    """Which loader releases a port and Exposure read: NeoForge's (and its FML libraries') are the ones the route map names
-    for each release, chosen from the same release list; Fabric's API and loader builds are chosen from their release
-    lists, which the map does not name, so those lists themselves."""
+    """Which loader releases a port and Exposure read: the builds the route map names for each release (NeoForge's, and
+    the Fabric API file of each); Fabric Loader's build is chosen from its release list, which the map does not name."""
     platform_bytes()
-    if loader == "fabric":
-        return b"".join((MAPPINGS / n).read_bytes() for n in ("fabric-api-maven-metadata.xml", "fabric-loader-maven-metadata.xml"))
-    return json.dumps(json.loads(route.read_text(encoding="utf-8")).get("loader"), sort_keys=True).encode()
+    loader_list = (MAPPINGS / "fabric-loader-maven-metadata.xml").read_bytes() if loader == "fabric" else b""
+    return json.dumps(json.loads(route.read_text(encoding="utf-8")).get("loader"), sort_keys=True).encode() + loader_list
 
 
 def content_key(*parts):
@@ -384,7 +381,10 @@ def route_maps(updates, loader, classes):
     each as its own chain: a long port has a map per step (stops), and a process per map started cold and read both
     releases again every time."""
     folder = keyed_at("maps", content_key(tools_key(*MAP_SOURCES), platform_bytes(), java_version()))
-    targets = [folder / f"{loader}-{frm}-{to}.json" for frm, to in updates]
+    # Fabric API is chosen per release (Exposure.fabricApi), not from a list platform_bytes holds: a map is kept per choice.
+    jars = fabric_apis([v for frm, to in updates for v in chain(frm, to)]) if loader == "fabric" else {}
+    apis = lambda frm, to: "-" + content_key(*(jars[v].name if jars[v] else "" for v in chain(frm, to))) if jars else ""
+    targets = [folder / f"{loader}-{frm}-{to}{apis(frm, to)}.json" for frm, to in updates]
     missing = {t: (frm, to) for t, (frm, to) in zip(targets, updates) if not t.is_file()}
     if missing:
         parts = {t: part_of(t) for t in missing}
@@ -398,13 +398,14 @@ def route_maps(updates, loader, classes):
 
 
 ASM = [ROOT / "tools" / "perf" / "lib" / "asm-9.9.jar", ROOT / "tools" / "perf" / "lib" / "asm-commons-9.9.jar"]
-JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java")
+JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
+               "cli/Versions.java")
 
 
 def tools_classes_key():
     """The porter's sources and the ASM it is built with, hashed: what its classes, and so every port, are made of."""
     if "key" not in CLASSES:
-        CLASSES["key"] = content_key(tools_key(*JAR_SOURCES, "cli/Json.java"), *(a.read_bytes() for a in ASM))
+        CLASSES["key"] = content_key(tools_key(*JAR_SOURCES), *(a.read_bytes() for a in ASM))
     return CLASSES["key"]
 
 
@@ -418,7 +419,7 @@ def jar_tools():
         return CLASSES["path"]
     out = keyed_at("classes", tools_classes_key()) / "classes"
     if not (out / "JarPort.class").is_file():
-        sources = [ROOT / "tools" / n for n in JAR_SOURCES] + [ROOT / "tools" / "cli" / "Json.java"]
+        sources = [ROOT / "tools" / n for n in JAR_SOURCES]
         javac = java().replace("java.exe", "javac.exe") if java().endswith("java.exe") else java() + "c"
         part = part_of(out)
         subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", os.pathsep.join(map(str, ASM)), "-d", str(part)] + [str(s) for s in sources],
@@ -495,7 +496,7 @@ def mojang_names(loader, version, jars):
 
 
 # What reading a jar in Mojang's names is built from.
-NAME_SOURCES = ("ModNames.java", "Exposure.java", "VersionMap.java", "cli/Json.java")
+NAME_SOURCES = ("ModNames.java", "Exposure.java", "VersionMap.java", "cli/Json.java", "cli/Versions.java")
 
 
 def shipped_obfuscated(loader, version):
@@ -1322,25 +1323,24 @@ def fabric_meta(jar):
 
 
 def fabric_api(version):
-    """Fabric API's newest release for a game version (kept in ~/.mmt/exposure/platform/), or None: the jar players install,
-    from Fabric's own Modrinth project. Fabric's maven publishes fabric-api as metadata only, and its pom leaves out the
-    deprecated modules the released jar carries (1.19.1: fabric-networking-v0 and eight more), so a pack built from it would
-    start on another Fabric API than players have. A cached jar without its modules is not taken."""
-    folder = HOME / "platform"
-    have = [p for p in sorted(folder.glob(f"fabric-api-for-{version}--*.jar")) if len(nested_ids(p.read_bytes())) > 1]
-    if have:
-        return have[-1]
-    versions = api("project/fabric-api/version", {"loaders": json.dumps(["fabric"]), "game_versions": json.dumps([version])}) or []
-    # A release with one file need not mark it primary (Fabric API for 1.18 does not).
-    files = [f for v in versions for f in v.get("files", []) if f.get("primary") or len(v.get("files", [])) == 1]
-    if not files:
-        return None
-    folder.mkdir(parents=True, exist_ok=True)
-    target = folder / f"fabric-api-for-{version}--{files[0]['filename']}"
-    part = part_of(target)
-    with urllib.request.urlopen(urllib.request.Request(files[0]["url"], headers=AGENT), timeout=120) as r:
-        part.write_bytes(r.read())
-    return publish(part, target)
+    """The Fabric API players install on a release (a jar in ~/.mmt/mappings/), or None: Exposure.fabricApi chooses it, so
+    the game a port is started in runs the jar the link check and the route map read."""
+    return fabric_apis([version])[version]
+
+
+def fabric_apis(versions):
+    """fabric_api of each release, read with one Java process."""
+    missing = [v for v in dict.fromkeys(versions) if v not in FABRIC_APIS]
+    if missing:
+        out = subprocess.run([java(), "-Xmx1g", "-cp", jar_tools(), "Exposure", "--fabric-api", ",".join(missing)],
+                             capture_output=True, text=True, check=True).stdout
+        for line in out.splitlines():
+            v, _, path = line.partition("\t")
+            FABRIC_APIS[v] = Path(path) if path else None
+    return {v: FABRIC_APIS[v] for v in versions}
+
+
+FABRIC_APIS = {}
 
 
 # The loaders and the game a mod may ask for, which every pack has.
