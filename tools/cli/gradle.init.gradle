@@ -49,9 +49,10 @@ if (portedLibraries) {
 // root (https://maven.neoforged.net, Embeddium) or through another loader's or Architectury's maven that no longer
 // mirrors them (Moonlight, Model Gap Fix). NeoForged serves NeoForge and NeoGradle from /releases, the repository its
 // MDKs declare; the root, Forge's and Architectury's mavens answer 404 for them (checked 2026-11-23). So that repository
-// is added last wherever a build already declares repositories, for those groups alone: what resolved before still
+// is added last wherever a build already declares repositories, for those groups alone (with the Forge libraries
+// NeoGradle depends on, net.minecraftforge:srgutils and :unsafe, which it serves too): what resolved before still
 // resolves from where it did (Gradle takes the first repository that has a module).
-def loaderMavens = ['https://maven.neoforged.net/releases': 'net\\.neoforged(\\..*)?']
+def loaderMavens = ['https://maven.neoforged.net/releases': 'net\\.(neoforged|minecraftforge)(\\..*)?']
 def addLoaderMavens = { handler ->
     loaderMavens.each { address, groups ->
         if (handler.any { it.hasProperty('url') && it.url.toString().startsWith(address) }) return
