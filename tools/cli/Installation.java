@@ -150,7 +150,7 @@ final class Installation {
         return files;
     }
 
-    static Path home() throws Exception {
+    static synchronized Path home() throws Exception {
         Path location = Path.of(Mmt.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         // A child started by perf-optimize (PerfOptimize.childJava) is handed its parent's resources; a test hands its own.
         // Not mmt.home: the portable launchers set that to the ZIP's folder, which has no resources.
@@ -165,7 +165,18 @@ final class Installation {
             ".mmt/packages",
             Fingerprints.bytes(Files.readAllBytes(location))
         );
-        try (var jar = new JarFile(location.toFile())) {
+        Files.createDirectories(directory);
+        // Commands from one package often start together (the checks, the desktop app): one unpacks while the others
+        // wait, so none sees a file another is replacing. The JVM's own threads share one lock, hence synchronized.
+        try (
+            var channel = java.nio.channels.FileChannel.open(
+                directory.resolve(".unpack.lock"),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE
+            );
+            var lock = channel.lock();
+            var jar = new JarFile(location.toFile())
+        ) {
             List<String> names;
             try (var input = jar.getInputStream(jar.getJarEntry(RESOURCE_LIST))) {
                 names = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).lines().toList();
@@ -180,14 +191,7 @@ final class Installation {
                     Files.createDirectories(file.getParent());
                     Path temporary = Files.createTempFile(file.getParent(), "resource-", ".tmp");
                     Files.write(temporary, bytes);
-                    try {
-                        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (IOException busy) {
-                        // Two commands from one package starting at once both unpack it; on Windows the second cannot
-                        // replace a file the first just wrote and holds open. Those bytes are the same ones.
-                        Files.deleteIfExists(temporary);
-                        if (!Files.isRegularFile(file) || !Arrays.equals(Files.readAllBytes(file), bytes)) throw busy;
-                    }
+                    Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
         }
