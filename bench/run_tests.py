@@ -22,7 +22,6 @@ daemon (GRADLE). The demo mod is copied for the checks that run mmt on it, so tw
 keeps its own scratch folder.
 """
 import argparse
-import heapq
 import json
 import os
 import shutil
@@ -67,32 +66,6 @@ GRADLE = ("fast", "port-plan", "legacy-agent", "runtime-natives")
 SHARED = ("fast", "port-plan", "legacy-agent")
 
 
-class Slots:
-    """No more commands at once than the machine has cores (self-test's suites and Gradle use more on their own). A
-    free slot goes to the waiting command of the earliest-listed lane: the long lanes are listed first, and a short
-    test queued ahead of them would otherwise make the whole run wait (fast waited 29 s behind jar-port's tests)."""
-
-    def __init__(self, count):
-        self.free = count
-        self.waiting = []
-        self.changed = threading.Condition()
-
-    def take(self, rank):
-        with self.changed:
-            ticket = (rank, time.monotonic_ns(), threading.get_ident())
-            heapq.heappush(self.waiting, ticket)
-            self.changed.wait_for(lambda: self.free and self.waiting[0] == ticket)
-            heapq.heappop(self.waiting)
-            self.free -= 1
-            self.changed.notify_all()
-
-    def give(self):
-        with self.changed:
-            self.free += 1
-            self.changed.notify_all()
-
-
-SLOTS = Slots(CORES)
 
 
 def fixture(check):
@@ -263,14 +236,10 @@ def affected(changed, names):
 def execute(name, item, rank):
     """Runs one command when a slot is free; its report line (with the end of its output when it failed) and whether it passed."""
     command, env = item if isinstance(item, tuple) else (item, {})
-    SLOTS.take(rank)
-    try:
-        started = time.monotonic()
-        done = subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
-        took = time.monotonic() - started
-    finally:
-        SLOTS.give()
+    started = time.monotonic()
+    done = subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    took = time.monotonic() - started
     shown = " ".join(str(c) for c in command)
     if done.returncode:
         return f"FAIL {name} ({took:.0f} s): {shown}\n{done.stdout[-4000:]}{done.stderr[-4000:]}", False
@@ -364,7 +333,12 @@ def main(argv=None):
         print(f"{len(changed)} files changed against origin/main: running {', '.join(names)}"
               + (f" (self-test: {', '.join(suites)})" if suites else "") + "; --all runs every check", flush=True)
     started = time.monotonic()
+    cpu0 = Path("/proc/stat").read_text().split("\n")[0].split()[1:] if Path("/proc/stat").exists() else None
     failed = run_all(names, suites)
+    if cpu0:
+        cpu1 = Path("/proc/stat").read_text().split("\n")[0].split()[1:]
+        d = [int(b) - int(a) for a, b in zip(cpu0, cpu1)]
+        print(f"machine CPU busy {100 * (sum(d) - d[3] - d[4]) / sum(d):.0f}% of {os.cpu_count()} cores", flush=True)
     print(f"{len(names) - len(failed)} of {len(names)} checks passed in {time.monotonic() - started:.0f} s"
           + (f"; failed: {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0
