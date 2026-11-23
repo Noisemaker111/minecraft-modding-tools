@@ -22,6 +22,7 @@ daemon (GRADLE). The demo mod is copied for the checks that run mmt on it, so tw
 keeps its own scratch folder.
 """
 import argparse
+import heapq
 import json
 import os
 import shutil
@@ -66,6 +67,32 @@ GRADLE = ("fast", "port-plan", "legacy-agent", "runtime-natives")
 SHARED = ("fast", "port-plan", "legacy-agent")
 
 
+class Slots:
+    """No more commands at once than the machine has cores (self-test's suites and Gradle use more on their own). A
+    free slot goes to the waiting command of the earliest-listed lane: the long lanes are listed first, and a short
+    test queued ahead of them would otherwise make the whole run wait (fast waited 29 s behind jar-port's tests)."""
+
+    def __init__(self, count):
+        self.free = count
+        self.waiting = []
+        self.changed = threading.Condition()
+
+    def take(self, rank):
+        with self.changed:
+            ticket = (rank, time.monotonic_ns(), threading.get_ident())
+            heapq.heappush(self.waiting, ticket)
+            self.changed.wait_for(lambda: self.free and self.waiting[0] == ticket)
+            heapq.heappop(self.waiting)
+            self.free -= 1
+            self.changed.notify_all()
+
+    def give(self):
+        with self.changed:
+            self.free += 1
+            self.changed.notify_all()
+
+
+SLOTS = Slots(CORES)
 
 
 def fixture(check):
@@ -113,13 +140,54 @@ def jar_port_tests(folder=ROOT / "tools" / "tests"):
     return sorted({p.relative_to(ROOT).as_posix() for pattern in JAR_PORT_TESTS for p in folder.glob(pattern)})
 
 
+class Unavailable(Exception):
+    """Something a check needs is not on this machine; the message says what and where it was looked for."""
+
+
+def jdk_feature(home):
+    """The feature release of the JDK at home (25 for 25.0.1), from its release file; None when it is no JDK."""
+    try:
+        line = next(l for l in (home / "release").read_text(errors="replace").splitlines() if l.startswith("JAVA_VERSION="))
+        version = line.split("=", 1)[1].strip('"')
+        return int(version.split(".")[1] if version.startswith("1.") else version.split(".")[0].split("-")[0].split("+")[0])
+    except (OSError, StopIteration, ValueError, IndexError):
+        return None
+
+
+def jdk(feature):
+    """The home of a JDK of feature or newer, looked for where mmt looks (Runtimes.installed): JAVA_HOME and the
+    JAVA*_HOME variables, the javac on PATH, then mmt's own downloads and the usual install folders."""
+    candidates = [Path(os.environ[k]) for k in ("JAVA_HOME", "JDK_HOME", f"JAVA{feature}_HOME") if os.environ.get(k)]
+    on_path = shutil.which("javac")
+    if on_path:
+        candidates.append(Path(on_path).resolve().parent.parent)
+    # actions/setup-java names each JDK it installs JAVA_HOME_<feature>_<arch>.
+    candidates += [Path(v) for k, v in sorted(os.environ.items()) if k.startswith("JAVA_HOME_") and k[10:].split("_")[0].isdigit() and v]
+    user = Path.home()
+    folders = [user / ".mmt" / "jdks", ROOT / ".tools", user / ".gradle" / "jdks", user / ".jdks", user / "tools", Path("/usr/lib/jvm"),
+               Path("/Library/Java/JavaVirtualMachines")]
+    if WINDOWS:
+        folders += [Path(os.environ.get("ProgramFiles", "C:/Program Files")) / v for v in ("Eclipse Adoptium", "Java", "Microsoft", "JetBrains")]
+    for folder in folders:
+        if folder.is_dir():
+            for child in sorted(folder.iterdir()):
+                candidates += [child, child / "Contents" / "Home"]
+    javac = "javac.exe" if WINDOWS else "javac"
+    for home in candidates:
+        if (home / "bin" / javac).is_file() and (jdk_feature(home) or 0) >= feature:
+            return home
+    raise Unavailable(f"needs JDK {feature} or newer, and none was found in JAVA_HOME, JAVA{feature}_HOME, the javac on PATH, "
+                      f"~/.mmt/jdks or the usual install folders. Install one (any Temurin {feature}+), or set JAVA{feature}_HOME to it.")
+
+
 def jar_port():
     out = ROOT / ".runs" / "jarport-tests"
     asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
     tests = jar_port_tests()
-    yield ["javac", "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
+    home = jdk(25)
+    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
            "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/cli/Versions.java", "tools/SourceAnswers.java", *tests]
-    yield Together(java("-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem)) for test in tests)
+    yield Together([str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem)] for test in tests)
 
 
 def console_accessor():
@@ -236,10 +304,14 @@ def affected(changed, names):
 def execute(name, item, rank):
     """Runs one command when a slot is free; its report line (with the end of its output when it failed) and whether it passed."""
     command, env = item if isinstance(item, tuple) else (item, {})
-    started = time.monotonic()
-    done = subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
-    took = time.monotonic() - started
+    SLOTS.take(rank)
+    try:
+        started = time.monotonic()
+        done = subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        took = time.monotonic() - started
+    finally:
+        SLOTS.give()
     shown = " ".join(str(c) for c in command)
     if done.returncode:
         return f"FAIL {name} ({took:.0f} s): {shown}\n{done.stdout[-4000:]}{done.stderr[-4000:]}", False
@@ -265,8 +337,11 @@ def run(name, suites=None, rank=0):
             lines += [line for line, _ in results]
             if not all(ok for _, ok in results):
                 passed = False
-                if not isinstance(item, Together) and (item[0] if isinstance(item, tuple) else item)[0] == "javac":
+                if not isinstance(item, Together) and Path((item[0] if isinstance(item, tuple) else item)[0]).stem == "javac":
                     break
+    except Unavailable as missing:
+        lines.append(f"FAIL {name}: {missing}")
+        passed = False
     except Exception as error:  # a generator that prepares its commands (a fixture copy, legacy-agent's agent) failed
         lines.append(f"FAIL {name}: {type(error).__name__}: {error}")
         passed = False
@@ -333,12 +408,7 @@ def main(argv=None):
         print(f"{len(changed)} files changed against origin/main: running {', '.join(names)}"
               + (f" (self-test: {', '.join(suites)})" if suites else "") + "; --all runs every check", flush=True)
     started = time.monotonic()
-    cpu0 = Path("/proc/stat").read_text().split("\n")[0].split()[1:] if Path("/proc/stat").exists() else None
     failed = run_all(names, suites)
-    if cpu0:
-        cpu1 = Path("/proc/stat").read_text().split("\n")[0].split()[1:]
-        d = [int(b) - int(a) for a, b in zip(cpu0, cpu1)]
-        print(f"machine CPU busy {100 * (sum(d) - d[3] - d[4]) / sum(d):.0f}% of {os.cpu_count()} cores", flush=True)
     print(f"{len(names) - len(failed)} of {len(names)} checks passed in {time.monotonic() - started:.0f} s"
           + (f"; failed: {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0
