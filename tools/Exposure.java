@@ -45,6 +45,16 @@ public final class Exposure {
         Map<String, Object> said = new LinkedHashMap<>();
         for (Object o : Json.array(Json.read(Path.of(report)).get("unlinkedByMods"))) {
             String member = Json.text(Json.object(o), "member", "");
+            if (member.startsWith(POINT_GONE)) {
+                String[] read = pointSays(a, b, member.substring(POINT_GONE.length()).replaceAll(" \\(in [^)]*\\)$", ""));
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("game", read[0]);
+                row.put("gameDetail", read[1]);
+                row.put("portable", false);
+                row.put("part", read[2]);
+                said.put(member, row);
+                continue;
+            }
             String key = key(a, member);
             String[] added = key == null && member.startsWith("abstract method not written: ") ? added(a, b, member) : null;
             if (added != null) {
@@ -69,6 +79,66 @@ public final class Exposure {
         Files.writeString(Path.of(out), Json.write(said), StandardCharsets.UTF_8);
         System.out.printf("%s -> %s: what the game's own code did, for %d references%n", from, to, said.size());
     }
+
+    static final String POINT_GONE = "mixin injection point gone: ";
+
+    /**
+     * What the game's new code has where a mixin's injection point was (JarPort's "POINT in METHOD", the method in new
+     * names): {game, detail, part}. game is JarPort.GameCode.slot's reading of the old and new method ("dropped",
+     * "helper", "overload", "accessor", "renamed", "ordinal"), "fewer" where the instruction is still there fewer times
+     * than the injector's ordinal needs, "local" for a @ModifyVariable's local, or "not read".
+     */
+    static String[] pointSays(GameDiff.Snap a, GameDiff.Snap b, String line) {
+        int in = line.lastIndexOf(" in ");
+        Matcher method = in < 0 ? null : METHOD.matcher(line.substring(in + 4));
+        if (method == null || !method.matches()) {
+            return new String[] { "not read", null, "game" };
+        }
+        String owner = method.group(1).replace('.', '/'), name = method.group(2), desc = method.group(3), point = line.substring(0, in);
+        if (point.startsWith("LOAD ") || point.startsWith("STORE ")) {
+            return new String[] { "local", null, "game" };
+        }
+        // The point: a call (owner.name(desc)) or a field (owner.nameDESC, its name read from the old class's fields).
+        Matcher call = METHOD.matcher(point);
+        String[] p = null;
+        if (call.matches()) {
+            p = new String[] { "m", call.group(1).replace('.', '/'), call.group(2), call.group(3) };
+        } else if (point.lastIndexOf('.') > 0) {
+            String pOwner = point.substring(0, point.lastIndexOf('.')).replace('.', '/'), rest = point.substring(point.lastIndexOf('.') + 1);
+            GameDiff.Cls c = a.classes.get(pOwner);
+            for (String f : c == null ? Set.<String>of() : c.fields.keySet()) {
+                if (rest.startsWith(f) && rest.length() > f.length() && c.fields.get(f).desc.equals(rest.substring(f.length()))) {
+                    p = new String[] { "f", pOwner, f, rest.substring(f.length()) };
+                }
+            }
+        }
+        String part = p == null ? "game" : part(a, dotted(p[1]));
+        GameDiff.Cls was = a.classes.get(owner);
+        List<GameDiff.Meth> named = was == null ? List.of() : was.methods.values().stream().filter(x -> x.name.equals(name)).toList();
+        String oldDesc = was != null && was.methods.containsKey(name + desc) ? desc : named.size() == 1 ? named.get(0).desc : null;
+        if (p == null || oldDesc == null) {
+            return new String[] { "not read", null, part };
+        }
+        JarPort.GameCode before, after;
+        try {
+            before = JarPort.GameCode.of(a.version);
+            after = JarPort.GameCode.of(b.version);
+        } catch (Exception unreadable) {
+            return new String[] { "not read", null, part };
+        }
+        List<String[]> now = after.steps(owner, name, desc), then = before.steps(owner, name, oldDesc);
+        String[] q = p;
+        java.util.function.Predicate<String[]> same = x -> (q[0].equals("m") ? x[0].equals("m") : x[0].equals("f") || x[0].equals("p")) && x[2].equals(q[2]) && x[3].equals(q[3]);
+        long has = now == null ? -1 : now.stream().filter(same).count(), had = then == null ? -1 : then.stream().filter(same).count();
+        if (has > 0) {
+            return new String[] { "fewer", "the method makes it " + has + " times, the old one " + had, part };
+        }
+        JarPort.GameCode.Slot slot = JarPort.GameCode.slot(before, after, x -> x, new String[] { owner, name, oldDesc }, new String[] { owner, name, desc },
+            p[0].charAt(0), p[1], p[2], p[3], -1);
+        return new String[] { slot.game(), slot.detail(), part };
+    }
+
+    static final Pattern METHOD = Pattern.compile("^([\\w.$]+)\\.([\\w$<>]+)(\\(.*)$");
 
     /** What a key (a class, or owner.member) names: the game's, the loader's API, or one of the libraries the release ships (DataFixerUpper, Brigadier...). */
     static String part(GameDiff.Snap a, String key) {
