@@ -449,7 +449,7 @@ public final class JarPort {
                 port.portTo = to;
                 port.decided = decided;
                 if ("fabric".equals(loader)) {
-                    port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
+                    port.platform(Exposure.FabricApi.of(stops.get(i)), Exposure.FabricApi.of(stops.get(i + 1)));
                 }
                 if (book != null) {
                     port.fixes(Path.of(book));

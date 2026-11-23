@@ -313,10 +313,13 @@ public final class VersionMap {
             Files.deleteIfExists(p);
         }
         Files.createDirectories(cache);
-        HttpResponse<byte[]> r = HTTP.send(
-            HttpRequest.newBuilder(URI.create(url)).build(),
-            HttpResponse.BodyHandlers.ofByteArray()
-        );
+        HttpResponse<byte[]> r;
+        try {
+            r = HTTP.send(HttpRequest.newBuilder(URI.create(url)).build(), HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException failed) {
+            // The client's own messages name no address (a refused connection's is empty).
+            throw new IOException("download of " + url + " failed: " + failed, failed);
+        }
         if (r.statusCode() != 200) {
             throw new IOException("HTTP " + r.statusCode() + " for " + url);
         }
@@ -418,7 +421,8 @@ public final class VersionMap {
                     "Minecraft " +
                     version +
                     " has no published intermediary (versions from 26.1 ship " +
-                    "unobfuscated); this map covers obfuscated versions only for now"
+                    "unobfuscated); this map covers obfuscated versions only for now (" + e.getMessage() + ")",
+                    e
                 );
             }
             Tiny it = Tiny.parse(zipEntry(inter, "mappings/mappings.tiny")); // official, intermediary

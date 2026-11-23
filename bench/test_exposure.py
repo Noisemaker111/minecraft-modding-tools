@@ -49,6 +49,7 @@ check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1
 check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
 check("names no update: fabric:1.20.1:99.9" in plan("fabric:1.20.1:99.9"), f"--only naming no update stops: {plan('fabric:1.20.1:99.9')}")
 
+REPO, EXPOSURE_HOME = E.ROOT, E.HOME
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
@@ -102,6 +103,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(len(seen) == 8 and all(s.endswith('"}') for s in seen), "no reader sees half a file")
     check(len(set(seen)) == 1, "one writer's file is kept and the others are dropped")
     check(not list(third.glob("*.part")), "no part file is left behind")
+E.ROOT, E.HOME = REPO, EXPOSURE_HOME
 
 
 
@@ -987,5 +989,64 @@ skipped = E.not_loaded({"findings": [
     {"kind": "loader-mismatch", "severity": "warning", "summary": "a.jar is written for another loader (META-INF/neoforge.mods.toml)", "jars": ["a.jar"]},
     {"kind": "java", "severity": "warning", "suspects": [{"jar": "b.jar", "why": ["Java 21"]}]}]})
 check(list(skipped) == ["a.jar"] and "another loader" in skipped["a.jar"], f"a jar the loader skips is named, a Java warning is not: {skipped}")
+
+# The Fabric API lookup (Exposure --fabric-api). Searching for a release's build reads up to two jars per release of its
+# family and the release's mappings, ~107 downloads for 1.20.1 to 26.3, and any one failing stopped a cloud port job with
+# only "returned non-zero exit status 1". The answer is kept in the cache the cloud jobs restore, keyed by Fabric's release
+# list: a kept answer is used without searching, and a changed list (a new build) gets a fresh one. A failure names the
+# release and the download or file. Run on a planted ~/.mmt/mappings (Java's user.home) and ~/.mmt/exposure.
+with tempfile.TemporaryDirectory() as tmp:
+    home = Path(tmp)
+    cache = home / ".mmt" / "mappings"
+    cache.mkdir(parents=True)
+    listed = cache / "fabric-api-maven-metadata.xml"
+
+    def release_list(*builds):
+        listed.write_text("<metadata><versioning><versions>" + "".join(f"<version>{b}</version>" for b in builds) + "</versions></versioning></metadata>",
+                          encoding="utf-8")
+
+    def api_jar(release):
+        module = jar({"fabric.mod.json": json.dumps({"id": "fabric-api-base"})})
+        return jar({"fabric.mod.json": json.dumps({"id": "fabric-api", "depends": {"minecraft": release}}), "META-INF/jars/base.jar": module})
+
+    release_list("0.1.0+26.9", "0.2.0+26.8")
+    (cache / "fabric-api-0.1.0+26.9.jar").write_bytes(api_jar("26.9"))
+    whole = api_jar("26.8")
+    (cache / "fabric-api-0.2.0+26.8.jar").write_bytes(whole[:len(whole) // 2])  # a download cut off and kept
+    tools = E.jar_tools()  # compiled before user.home moves, into this machine's shared classes
+    saved_env = {k: os.environ.get(k) for k in ("JAVA_TOOL_OPTIONS", "MMT_EXPOSURE_HOME")}
+    os.environ["JAVA_TOOL_OPTIONS"] = f"-Duser.home={home}"
+    os.environ["MMT_EXPOSURE_HOME"] = str(home / "exposure")
+
+    def lookup(release):
+        E.FABRIC_APIS.clear()  # each lookup a new run, as each cloud job is
+        try:
+            return E.fabric_apis([release])[release]
+        except BaseException as error:  # noqa: BLE001 - what the job printed, whatever it raised
+            return str(error)
+
+    try:
+        found = lookup("26.9")
+        answers = sorted((home / "exposure" / "maps" / "fabric-api").iterdir())
+        # Searching again would turn this build down: a kept answer is used without reading the builds.
+        (cache / "fabric-api-0.1.0+26.9.jar").write_bytes(api_jar("99.0"))
+        kept = lookup("26.9")
+        # Fabric publishes a newer build for 26.9: the list the answer came from changed, so it is not served.
+        (cache / "fabric-api-0.3.0+26.9.jar").write_bytes(api_jar("26.9"))
+        release_list("0.1.0+26.9", "0.3.0+26.9", "0.2.0+26.8")
+        fresh = lookup("26.9")
+        said = lookup("26.8")
+    finally:
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        E.FABRIC_APIS.clear()
+    check(tools and found == cache / "fabric-api-0.1.0+26.9.jar" and len(answers) == 1, f"the lookup reads the release list and jar, and keeps its answer: {found}, {answers}")
+    check(kept == found, f"a kept answer is used while Fabric's release list is the same: {kept}")
+    check(fresh == cache / "fabric-api-0.3.0+26.9.jar", f"a changed release list gets a fresh answer, not the kept one: {fresh}")
+    check(isinstance(said, str) and "26.8" in said and "fabric-api-0.2.0+26.8.jar" in said and "not a whole jar" in said
+          and "returned non-zero exit status" not in said, f"a failed Fabric API lookup names the release and the file that failed: {said}")
 
 print(f"exposure: {checks} checks passed")
