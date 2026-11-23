@@ -80,6 +80,7 @@ public final class PackageAcceptanceTest {
         }
         check(shellExecutable, "POSIX launcher is marked executable in ZIP");
         Path outside = Path.of(args[2]).toAbsolutePath();
+        firstLaunchesTogether(extracted, outside);
         if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")) {
             Path launcher = extracted.resolve("mmt.cmd");
             String javaHome = System.getProperty("java.home");
@@ -202,6 +203,30 @@ public final class PackageAcceptanceTest {
                 "missing Java explains prerequisite"
             );
         }
+    }
+
+    /**
+     * A new package's first commands, started together on a fresh user folder, all unpack it and run: on Windows one
+     * used to fail replacing a file another had just written.
+     */
+    static void firstLaunchesTogether(Path extracted, Path outside) throws Exception {
+        Path home = Files.createTempDirectory(outside, "fresh-home-");
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        List<Process> started = new ArrayList<>();
+        int count = Math.max(2, Runtime.getRuntime().availableProcessors());
+        for (int i = 0; i < count; i++) started.add(
+            new ProcessBuilder(java, "-Duser.home=" + home, "-jar", extracted.resolve("mmt.jar").toString(), "discover", "--root",
+                extracted.resolve("mmt.jar").toString())
+                .directory(outside.toFile())
+                .redirectErrorStream(true)
+                .start()
+        );
+        List<String> failed = new ArrayList<>();
+        for (Process process : started) {
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            if (process.waitFor() != 2 || !output.contains("Gradle source directory")) failed.add(output);
+        }
+        check(failed.isEmpty(), count + " first launches of a new package at once all unpack it and run" + (failed.isEmpty() ? "" : ":\n" + failed));
     }
 
     record Outcome(int exit, String output) {}
