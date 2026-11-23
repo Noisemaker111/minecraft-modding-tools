@@ -1,0 +1,314 @@
+name: Cloud source scoreboard
+# Any mod, any version, from source (python bench/source_ports.py) on GitHub's runners. The jar scoreboard's mods (the 150
+# most downloaded of Fabric 1.20.1 and of NeoForge 1.21.1) whose source is pinned in bench/exposure/sources/ are first
+# built on their own release (baseline, a few mods a job); each one that builds is then ported with mmt port --fix, first
+# to the newest and the oldest release of its loader (ends), then, for each mod that passed an end, to every other
+# release on that side (rest): a mod that misses an end cannot go to any version, so the rest of that side is not run
+# for it and counts as not reached (the whole grid was most of a day of every runner). A port job is one loader, target
+# and group of mods, so a target's game setup is made once a job, and every jar a port built gets the jar scoreboard's
+# own check. The summary joins them into the any-version table (source_ports.py join).
+#
+# Main's table: a run on main (dispatched with tools/cloud-run source --ref main) that finished every job is saved as
+# scoreboard/source.json on the generated branch with its port.source.any-version point and the site rebuilt, as
+# cloud-exposure.yml saves the jar table. It is not started by every push: a whole run is hours of runners, so it runs
+# when asked, and the newest dispatch on main replaces a waiting one (concurrency below).
+# prove=LOADER:SLUG:TO runs only the game proof of one source port instead: the port, the link check, and the mod started
+# hidden in a real client of the target on a virtual display (source_ports.py prove).
+run-name: "Cloud source scoreboard: ${{ inputs.prove || inputs.only || 'every mod' }}${{ inputs.to && format(' to {0}', inputs.to) || '' }} ${{ inputs.request }}"
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Only these mods (slugs, comma-separated); empty for every mod with source
+        default: ''
+      to:
+        description: Only these targets (comma-separated); empty for every release of each loader
+        default: ''
+      prove:
+        description: LOADER:SLUG:TO to run only the game proof of one source port
+        default: ''
+      request:
+        description: Set by tools/cloud-run to find the run it started
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: cloud-source-${{ github.ref }}-${{ inputs.prove != '' }}-${{ inputs.only }}-${{ inputs.to }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: inputs.prove == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          ONLY: ${{ inputs.only }}
+        run: echo "jobs=$(python3 bench/source_ports.py plan ${ONLY:+--only "$ONLY"})" >> "$GITHUB_OUTPUT"
+  baseline:
+    needs: plan
+    name: baseline ${{ matrix.job }}
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        job: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      JOB: ${{ matrix.job }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          # Every Java a pinned build or a target may ask for; mmt picks one by setup-java's JAVA_HOME_<N>_X64. The last is the default.
+          java-version: |
+            8
+            16
+            17
+            21
+            25
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build each pinned source on its own release
+        run: python bench/source_ports.py baseline --loader "${JOB%%:*}" --mods "${JOB#*:}" --out summary --timeout 2400
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: baseline-${{ strategy.job-index }}
+          path: summary/
+          if-no-files-found: ignore
+          retention-days: 14
+  plan-ends:
+    needs: [plan, baseline]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'baseline-*'
+          path: runs
+      - id: plan
+        env:
+          TO: ${{ inputs.to }}
+        run: |
+          mkdir -p runs
+          jobs=$(python3 bench/source_ports.py port-plan runs --phase ends ${TO:+--to "$TO"})
+          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+          echo "ends: $(python3 -c "import json, sys; print(len(json.loads(sys.argv[1])))" "$jobs") jobs" | tee -a "$GITHUB_STEP_SUMMARY"
+  ends:
+    needs: [plan, plan-ends]
+    if: always() && needs.plan-ends.result == 'success' && needs.plan-ends.outputs.jobs != '[]'
+    name: ends ${{ matrix.job }}
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        job: ${{ fromJSON(needs.plan-ends.outputs.jobs) }}
+    runs-on: ubuntu-latest
+    # A job ports a group of mods to one target; it starts no new port after 5 hours (--budget), so the link check and the
+    # upload still run inside GitHub's 6.
+    timeout-minutes: 355
+    env:
+      JOB: ${{ matrix.job }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          # Every Java a pinned build or a target may ask for; mmt picks one by setup-java's JAVA_HOME_<N>_X64. The last is the default.
+          java-version: |
+            8
+            16
+            17
+            21
+            25
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Port each mod to this target and link the jars that built
+        shell: bash
+        run: |
+          IFS=: read -r LOADER TO MODS <<< "$JOB"
+          python bench/source_ports.py port --loader "$LOADER" --to "$TO" --mods "$MODS" --out summary --timeout 2400 --budget 18000 | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-ends-${{ strategy.job-index }}
+          path: summary/source-*.json
+          if-no-files-found: ignore
+          retention-days: 14
+  plan-rest:
+    needs: [plan, baseline, ends]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-*'
+          path: runs
+      - id: plan
+        env:
+          TO: ${{ inputs.to }}
+        run: |
+          mkdir -p runs
+          jobs=$(python3 bench/source_ports.py port-plan runs --phase rest ${TO:+--to "$TO"})
+          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+          echo "rest: $(python3 -c "import json, sys; print(len(json.loads(sys.argv[1])))" "$jobs") jobs" | tee -a "$GITHUB_STEP_SUMMARY"
+  rest:
+    needs: [plan, plan-rest]
+    if: always() && needs.plan-rest.result == 'success' && needs.plan-rest.outputs.jobs != '[]'
+    name: rest ${{ matrix.job }}
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        job: ${{ fromJSON(needs.plan-rest.outputs.jobs) }}
+    runs-on: ubuntu-latest
+    # A job ports a group of mods to one target; it starts no new port after 5 hours (--budget), so the link check and the
+    # upload still run inside GitHub's 6.
+    timeout-minutes: 355
+    env:
+      JOB: ${{ matrix.job }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          # Every Java a pinned build or a target may ask for; mmt picks one by setup-java's JAVA_HOME_<N>_X64. The last is the default.
+          java-version: |
+            8
+            16
+            17
+            21
+            25
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Port each mod to this target and link the jars that built
+        shell: bash
+        run: |
+          IFS=: read -r LOADER TO MODS <<< "$JOB"
+          python bench/source_ports.py port --loader "$LOADER" --to "$TO" --mods "$MODS" --out summary --timeout 2400 --budget 18000 | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-rest-${{ strategy.job-index }}
+          path: summary/source-*.json
+          if-no-files-found: ignore
+          retention-days: 14
+  summary:
+    needs: [plan, baseline, ends, rest]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Join every job into the any-version table
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          python3 bench/source_ports.py join artifacts --out source.json | tee summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "$COMMIT" > commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: summary
+          path: |
+            summary.md
+            source.json
+            commit.txt
+          retention-days: 90
+  record:
+    # Only a whole run on main, every job finished, is main's table.
+    needs: [baseline, ends, rest, summary]
+    if: >-
+      always() && github.ref == 'refs/heads/main' && inputs.only == '' && inputs.to == '' && inputs.prove == ''
+      && needs.summary.result == 'success' && needs.baseline.result == 'success' && needs.ends.result == 'success'
+      && (needs.rest.result == 'success' || needs.rest.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: generated
+          path: .runs/generated
+          ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: summary
+          path: ${{ runner.temp }}/summary
+      - name: Save main's source table and point to the generated branch
+        env:
+          TABLE: ${{ runner.temp }}/summary/source.json
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python bench/generated.py publish --dir .runs/generated --source "$TABLE" --commit "$GITHUB_SHA" --run "$RUN"
+  prove:
+    if: inputs.prove != ''
+    name: prove ${{ inputs.prove }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      PROVE: ${{ inputs.prove }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          # Every Java a pinned build or a target may ask for; mmt picks one by setup-java's JAVA_HOME_<N>_X64. The last is the default.
+          java-version: |
+            8
+            16
+            17
+            21
+            25
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Virtual display with software OpenGL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 >/dev/null
+          Xvfb :99 -screen 0 1280x720x24 -nolisten tcp &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+          echo "SDL_VIDEO_DRIVER=offscreen" >> "$GITHUB_ENV"
+          ./mmt preferences --background on --quiet on
+      - name: Port the mod from source, link it, and start it in a real client
+        shell: bash
+        run: |
+          IFS=: read -r LOADER SLUG TO <<< "$PROVE"
+          python bench/source_ports.py prove --loader "$LOADER" --mod "$SLUG" --to "$TO" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prove
+          path: |
+            .runs/source-ports/prove-*.json
+            .runs/source-ports/clones/*/.runs/portable/*/*.log
+            .runs/source-ports/clones/*/.runs/portable/*/result.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14

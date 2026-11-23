@@ -412,7 +412,8 @@ def route_maps(updates, loader, classes):
         parts = {t: part_of(t) for t in missing}
         args = [java(), f"-Xmx{HEAP}g", "-cp", str(classes), "GameDiff"] + (["--loader", loader] if loader else [])
         for t, (frm, to) in missing.items():
-            args += ["--chain", ",".join(chain(frm, to)), "--out", str(parts[t])]
+            # A map from a release to itself links a jar built for that release (bench/source_ports.py), with nothing renamed.
+            args += ["--chain", ",".join(chain(frm, to) if frm != to else [frm, to]), "--out", str(parts[t])]
         subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
         for t, part in parts.items():
             publish(part, t)

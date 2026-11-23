@@ -1,0 +1,15 @@
+{
+ "id": "87",
+ "title": "One count for any mod, any version, from source",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "The jar side has its headline (port.jar-links.any-version, step 86), but the source side had only the corpus count (port.corpus-builds: our own pinned corpus, a few jumps each), which is not the same question. bench/source_ports.py asks it of source: the jar scoreboard's 300 mods, each pinned to the commit of its pinned jar from the repository its own metadata names, built on its own release, then ported with mmt port --fix to every other release of its loader, forward and back, on GitHub's runners (tools/cloud-run source). A port counts when it builds with no hand edits and the built jar links by the jar scoreboard's own check; a mod counts when every target passes. What holds the rest back is ranked by type of break, as the jar count is, and main's table is kept on the generated branch next to the jar table, a second headline line on ROADMAP.md and the website.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "port.source.any-version computed by a cloud run of this branch with every target of both loaders run, how many mods have source, the top blockers by type of break; three mods checked by hand against their per-target results; one source-ported mod started in a real client",
+ "wrongIf": "a mod counted as going to any version from source has a target whose port did not build or whose built jar does not link, or a mod with no source or a target that did not run is left out of the count instead of counted as not reached",
+ "measures": [
+  "port.source.any-version",
+  "port.jar-links.any-version"
+ ]
+}

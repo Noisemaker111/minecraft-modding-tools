@@ -1,6 +1,7 @@
 """What the bot writes after a merge lives on the `generated` branch, never on main: the website (docs/, which GitHub
-Pages serves from that branch), ROADMAP.md, and main's jar scoreboard (scoreboard/all.json, and scoreboard/points.json
-with the points of every measure marked recordedBy in coverage/measures.json).
+Pages serves from that branch), ROADMAP.md, main's jar scoreboard (scoreboard/all.json), main's source scoreboard
+(scoreboard/source.json, bench/source_ports.py), and scoreboard/points.json with the points of every measure marked
+recordedBy in coverage/measures.json.
 
 main requires a pull request to be up to date before it merges. When the bot committed these files to main, each of its
 up to three commits after a merge put every open pull request behind again, and each paid another CI round to catch up.
@@ -8,9 +9,10 @@ On their own branch they cost a pull request nothing, and main is still never re
 
     python bench/generated.py build [--dir DIR]        the site and ROADMAP.md as main would publish them (default .runs/generated)
     python bench/generated.py show PATH                a file from the generated branch, fetched first (scoreboard/all.json)
-    python bench/generated.py publish --dir CHECKOUT [--table T --commit SHA --run URL]
-                                                       build into a checkout of the branch, record a scoreboard sweep with
-                                                       --table, commit and push; the workflows run this, never by hand
+    python bench/generated.py publish --dir CHECKOUT [--table T | --source T] [--commit SHA --run URL]
+                                                       build into a checkout of the branch, record a jar scoreboard sweep
+                                                       with --table or a source one with --source, commit and push; the
+                                                       workflows run this, never by hand
 """
 import argparse
 import json
@@ -24,6 +26,7 @@ BRANCH = "generated"
 REF = f"origin/{BRANCH}"
 TABLE = "scoreboard/all.json"
 POINTS = "scoreboard/points.json"
+SOURCE = "scoreboard/source.json"
 
 
 def git(*args, cwd=ROOT, check=True):
@@ -67,20 +70,24 @@ def build(folder):
     porting_map.main(docs)
 
 
-def record_and_build(folder, table=None, commit=None, run=None):
+def record_and_build(folder, table=None, commit=None, run=None, source=None):
     if table:
         import exposure
         exposure.record_main(table, commit, run, Path(folder) / "scoreboard")
+    if source:
+        import source_ports
+        source_ports.record_main(source, commit, run, Path(folder) / "scoreboard")
     build(folder)
 
 
-def publish(folder, table=None, commit=None, run=None, attempts=5):
+def publish(folder, table=None, commit=None, run=None, attempts=5, source=None):
     """Builds into FOLDER, a checkout of the generated branch, and pushes one commit with whatever changed. When another
     run pushed first, takes its commit and builds again on top, so neither run's scoreboard point is lost."""
     folder = Path(folder)
-    subject = f"Main's jar scoreboard at {commit[:10]}" if table else f"Site and ROADMAP.md at main {git('rev-parse', '--short=10', 'HEAD').stdout.strip()}"
+    subject = (f"Main's jar scoreboard at {commit[:10]}" if table else f"Main's source scoreboard at {commit[:10]}" if source
+               else f"Site and ROADMAP.md at main {git('rev-parse', '--short=10', 'HEAD').stdout.strip()}")
     for _ in range(attempts):
-        record_and_build(folder, table, commit, run)
+        record_and_build(folder, table, commit, run, source)
         git("add", "-A", ".", cwd=folder)
         if git("diff", "--cached", "--quiet", cwd=folder, check=False).returncode == 0:
             print(f"{BRANCH} already matches main")
@@ -105,6 +112,7 @@ def main(argv=None):
     p = sub.add_parser("publish", help="build into a checkout of the branch and push (the workflows run this)")
     p.add_argument("--dir", type=Path, required=True)
     p.add_argument("--table", type=Path, help="a sweep of main to record as main's scoreboard")
+    p.add_argument("--source", type=Path, help="a source scoreboard run of main to record as main's source table")
     p.add_argument("--commit", help="the main commit the sweep ran")
     p.add_argument("--run", help="the sweep's run URL")
     args = ap.parse_args(argv)
@@ -118,16 +126,16 @@ def main(argv=None):
         return 0
     if args.cmd == "build":
         if not (args.dir / "scoreboard").is_dir() and fetch():
-            for name in (TABLE, POINTS):
+            for name in (TABLE, POINTS, SOURCE):
                 text = read(name)
                 if text is not None:
                     (args.dir / name).parent.mkdir(parents=True, exist_ok=True)
                     (args.dir / name).write_text(text, encoding="utf-8", newline="\n")
         build(args.dir)
         return 0
-    if args.table and not (args.commit and args.run):
-        ap.error("--table needs --commit and --run")
-    publish(args.dir, args.table, args.commit, args.run)
+    if (args.table or args.source) and not (args.commit and args.run):
+        ap.error("--table and --source need --commit and --run")
+    publish(args.dir, args.table, args.commit, args.run, source=args.source)
     return 0
 
 
