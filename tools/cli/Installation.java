@@ -15,7 +15,6 @@ final class Installation {
         "tools/perf/lib/asm-commons-9.9.jar",
         "tools/perf/lib/ASM-LICENSE.txt",
         "tools/cli/Json.java",
-        "tools/cli/Versions.java",
         "tools/cli/Relocate.java",
         "tools/cli/QuietOptions.java",
         "tools/agent/PortableAgent.java",

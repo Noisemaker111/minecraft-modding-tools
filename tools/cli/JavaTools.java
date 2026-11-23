@@ -26,7 +26,6 @@ final class JavaTools {
             build.harness.resolve("tools/JarPort.java"),
             build.harness.resolve("tools/PortChains.java"),
             build.harness.resolve("tools/cli/Json.java"),
-            build.harness.resolve("tools/cli/Versions.java"),
             build.harness.resolve("tools/MixinAudit.java"),
             build.harness.resolve("tools/GamePrep.java")
         );
