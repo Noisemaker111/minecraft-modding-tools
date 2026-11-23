@@ -26,6 +26,8 @@ on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
     paths:
+      - 'mmt'
+      - 'tools/launcher/**'
       - 'tools/cli/**'
       - 'tools/servercheck/**'
       - 'tools/plugincheck/**'
