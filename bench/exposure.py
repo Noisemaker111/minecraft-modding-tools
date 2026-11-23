@@ -36,7 +36,7 @@ prints what a branch's table changes against main's (tools/cloud-run exposure fi
 Every stage is kept in ~/.mmt/exposure/ under the content of everything it reads (the porter's classes, the route map,
 the rules, the loaders' release lists, the JVM, each mod's jar), shared by every worktree and run on the machine, so a
 run computes only what an edit can change: an edit to JarPort ports every mod again (each one runs the code it touched),
-but reuses the downloads, the names, the map, the data check and most of Exposure's answers; an edit to anything else
+but reuses the downloads, the names, the map, the registry reports and most of Exposure's answers; an edit to anything else
 reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before, and the
 load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
 
@@ -56,10 +56,11 @@ twice, is a VerifyError or ClassFormatError in game though every reference links
 route (a removed class moved to the class the game put in its place) the verifier refuses for a mod is left out for that
 mod, and the old class is then a stand-in's (knowledge/standins) or reported gone.
 
-jars also checks each mod's data files against the new release: a built-in game id (an enchantment effect type, a loot
-function, a data component) that the old release registers and the new one does not, read from each release's own
-data generator report. A server refuses such a file, which the link check cannot see; modsThatLinkAndData counts the
-mods that pass both.
+The port also carries each mod's data files to the new release (tools/DataIds.java): ids the game's own data fixers
+rename, files the game would skip, tag entries made optional; what is left is each mod's "data" in the report, a
+built-in game id (an enchantment effect type, a feature, a data component) the old release registers and the new one
+does not, read from each release's own data generator report. The server refuses such a file, which the link check
+cannot see; modsThatLinkAndData counts the mods that pass both.
 
 steps measures the porter on every update at once, with no mods: GameDiff links each release to the next from the
 game's own code, and for every update it counts the classes, methods and fields with no counterpart in the next release (renames,
@@ -421,7 +422,7 @@ def route_maps(updates, loader, classes):
 
 
 ASM = [ROOT / "tools" / "perf" / "lib" / "asm-9.9.jar", ROOT / "tools" / "perf" / "lib" / "asm-commons-9.9.jar"]
-JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Downgrade.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
+JAR_SOURCES = ("JarPort.java", "DataIds.java", "FixExpr.java", "PortChains.java", "Downgrade.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
                "cli/Versions.java")
 
 
@@ -558,15 +559,25 @@ def port_key(loader, frm, to, runtime=False):
     pinned = (PINS / f"{loader}-{frm}.json").read_bytes() if shipped_obfuscated(loader, frm) and (PINS / f"{loader}-{frm}.json").is_file() else b""
     steps = stops(loader, frm, to)
     maps = routes(loader, frm, to)
+    # The registry reports the data pass reads (DataIds), or that a release has none.
+    reports = [(HOME / "registries" / f"{v}.json").read_bytes() if (HOME / "registries" / f"{v}.json").is_file() else b"none" for v in steps]
     return content_key(tools_classes_key(), *(r.read_bytes() for r in maps), (ROOT / "knowledge" / "fixes.json").read_bytes(),
                        *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), standins_key(loader, "jdk", None), *(platform_key(loader, r) for r in maps),
-                       java_check_key(), java_version(), loader, frm, to, runtime, pinned)
+                       *reports, java_check_key(), java_version(), loader, frm, to, runtime, pinned)
 
 
 def java_check_key():
     """The source of the Java check jar_port runs on each ported jar (JAVA_CHECK): a kept port holds its answer."""
     import inspect
     return content_key(*(inspect.getsource(globals()[name]).encode() for name in JAVA_CHECK))
+
+
+def registry_reports(versions):
+    """Each release's registry report (its own data generator's, in ~/.mmt/exposure/registries/), made by DataIds where
+    missing: the port's data pass reads them, and port_key keys every port by them, so they are made before either."""
+    if all((HOME / "registries" / f"{v}.json").is_file() for v in versions):
+        return
+    subprocess.run([java(), "-cp", jar_tools(), "DataIds", *versions], check=True)
 
 
 def standins_key(loader, frm, to):
@@ -590,6 +601,7 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     classpath = jar_tools()
     steps = stops(loader, frm, to)
     maps = routes(loader, frm, to)
+    registry_reports(steps)
     out_dir.mkdir(parents=True, exist_ok=True)
     rows, todo, keys, checked = {}, [], {}, 0
     if cache:
@@ -878,98 +890,6 @@ def with_java_checked(row, loader, to, runs):
     return row
 
 
-def registry_ids(version):
-    """Every id the release registers in its built-in registries, by registry, from its own data generator's report
-    (the vanilla server run with --reports), kept in ~/.mmt/exposure/registries/; None when that release's generator does
-    not run here."""
-    cache = HOME / "registries" / f"{version}.json"
-    if cache.is_file():
-        return json.loads(cache.read_text(encoding="utf-8"))
-    meta = version_meta(version)
-    work = ROOT / ".runs" / "exposure" / "registries" / version
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True)
-    server = work / "server.jar"
-    with urllib.request.urlopen(urllib.request.Request(meta["downloads"]["server"]["url"], headers=AGENT), timeout=300) as r:
-        server.write_bytes(r.read())
-    import zipfile
-    with zipfile.ZipFile(server) as z:
-        bundled = "META-INF/versions.list" in z.namelist()
-    # From 1.18 the server jar is a bundler that names the class to run; before, the generator is on its class path.
-    command = ([java(), "-DbundlerMainClass=net.minecraft.data.Main", "-jar", str(server)] if bundled
-               else [java(), "-cp", str(server), "net.minecraft.data.Main"]) + ["--reports", "--output", str(work / "generated")]
-    done = subprocess.run(command, cwd=work, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    report = work / "generated" / "reports" / "registries.json"
-    if done.returncode or not report.is_file():
-        return None
-    ids = {name: sorted(entry["entries"]) for name, entry in json.loads(report.read_text(encoding="utf-8")).items()}
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    part = part_of(cache)
-    part.write_text(json.dumps(ids), encoding="utf-8")
-    publish(part, cache)
-    return ids
-
-
-GAME_ID = re.compile(r"^minecraft:[a-z0-9_./-]+$")
-# Keys whose value a codec looks up in a built-in registry, by the game's own data format: the dispatch keys of every
-# typed object (an enchantment effect, a feature, a placement), a loot function and a loot or predicate condition. Any
-# other string may name something data-driven or of another kind, so it is not judged.
-DECODED_BY = {"type", "function", "condition"}
-
-
-def data_check(frm, to, mods):
-    """What each mod's data files (and its nested mods') name of the game that the new release no longer registers: a
-    built-in id of the old release (an enchantment effect type, a data component, a loot function ...) that is in no
-    registry of the new one. The server refuses such a file when it loads the mod's data, which the link check cannot see.
-    None when either release's registry report is not available."""
-    old, new = registry_ids(frm), registry_ids(to)
-    if old is None or new is None:
-        return None
-    gone = {}
-    present = {i for ids in new.values() for i in ids}
-    for registry, ids in old.items():
-        for i in ids:
-            if i not in present:
-                gone.setdefault(i, registry)
-    import io
-    import zipfile
-
-    def scan(data, name, found):
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            for entry in z.namelist():
-                if entry.endswith(".jar") and entry.startswith(("META-INF/jarjar/", "META-INF/jars/")):
-                    scan(z.read(entry), name, found)
-                elif entry.startswith("data/") and entry.endswith(".json") and "/tags/" not in entry:
-                    # A tag naming a missing entry is skipped with a warning; the files below are refused.
-                    try:
-                        value = json.loads(z.read(entry).decode("utf-8-sig"))
-                    except (ValueError, UnicodeDecodeError):
-                        continue
-                    stack = [(None, value)]
-                    while stack:
-                        key, v = stack.pop()
-                        if isinstance(v, dict):
-                            for k, item in v.items():
-                                # A data component is named by its key ("minecraft:food" in an item's components).
-                                if key == "components" and k.lstrip("!") in gone:
-                                    found.setdefault(f"data id gone: {gone[k.lstrip('!')]} {k.lstrip('!')}", entry)
-                                stack.append((k, item))
-                        elif isinstance(v, list):
-                            stack.extend((key, item) for item in v)
-                        elif key in DECODED_BY and isinstance(v, str) and GAME_ID.match(v) and v in gone:
-                            found.setdefault(f"data id gone: {gone[v]} {v}", entry)
-
-    out = {}
-    for jar in mods:
-        found = {}
-        try:
-            scan(jar.read_bytes(), jar.name, found)
-        except (OSError, zipfile.BadZipFile):
-            continue
-        out[jar.name] = sorted(f"{ref} (in {where})" for ref, where in found.items())
-    return out
-
-
 LOADER_REF = re.compile(r": (?:net\.neoforged|net\.fabricmc)\.")
 
 
@@ -1183,13 +1103,14 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
         if not pinned:
             raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
     compile_tools()  # once, before the threads below that run it
-    # Reading the jars' names, the game's change maps and the data reports need nothing from each other.
+    # Reading the jars' names, the game's change maps and the releases' registry reports need nothing from each other.
     with ThreadPoolExecutor(3) as pool:
         named = pool.submit(timed, "names", mojang_names, loader, frm, pinned)
         mapped = pool.submit(timed, "map", routes, loader, frm, to)
-        checked = pool.submit(timed, "data", data_check, frm, to, pinned)
-        (mods, unread), data = named.result(), checked.result()
+        reported = pool.submit(timed, "reports", registry_reports, stops(loader, frm, to))
+        mods, unread = named.result()
         mapped.result()
+        reported.result()
     # A run of some mods only (kind) keeps its report apart: load reads the whole update's.
     written = work / ("report.json" if not kind else "report-type.json")
     report = timed("port", jar_port, loader, frm, to, mods, work / "mods", written, False, True) if mods else {"linked": 0, "mods": [], "unlinkedByMods": []}
@@ -1200,6 +1121,8 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
         written.write_text(json.dumps(report, indent=1), encoding="utf-8")
     said = timed("game", game_says, loader, frm, to, written) if report["unlinkedByMods"] else {}
     rows = [m for m in report["mods"] if "error" not in m]
+    # What the port left of each mod's data, judged when both releases' registry reports could be made.
+    data = {m["mod"]: [u.split(": ", 1)[1] for u in m["data"]] for m in rows} if all("data" in m for m in rows) else None
     data_by = {}
     for mod, refs in (data or {}).items():
         for ref in refs:
@@ -1217,7 +1140,7 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
         "modsHeldOnlyByLoader": sum(1 for m in rows if m["unlinked"] and all(LOADER_REF.search(u) for u in m["unlinked"])),
         "unreadable": {**unread, **{m["mod"]: m["error"] for m in report["mods"] if "error" in m}},
         "top": [{**r, **said.get(r["member"], {})} for r in report["unlinkedByMods"][:40]],
-        # Where this run's time went: download, names, map and data ran side by side; port and game after them.
+        # Where this run's time went: download, names, map and reports ran side by side; port and game after them.
         "seconds": seconds,
     }
     order = nearest(rows, data, said)

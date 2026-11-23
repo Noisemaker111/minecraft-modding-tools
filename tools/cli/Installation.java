@@ -61,6 +61,7 @@ final class Installation {
         "tools/VersionMap.java",
         "tools/GameDiff.java",
         "tools/JarPort.java",
+        "tools/DataIds.java",
         "tools/ModNames.java",
         "tools/FixExpr.java",
         "tools/SourceAnswers.java",

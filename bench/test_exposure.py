@@ -706,7 +706,8 @@ with tempfile.TemporaryDirectory() as tmp:
 # scoreboard after every edit, and porting every mod again is most of a run.
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
-    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
+    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops,
+             E.registry_reports)
     E.ROOT, E.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     fixes = root / "knowledge" / "fixes.json"
@@ -733,6 +734,8 @@ with tempfile.TemporaryDirectory() as tmp:
     E.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
     E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
     E.tools_classes_key, E.platform_key, E.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
+    asked_reports = []
+    E.registry_reports = asked_reports.append
 
     def port():
         return E.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
@@ -750,10 +753,18 @@ with tempfile.TemporaryDirectory() as tmp:
         standin.parent.mkdir(parents=True, exist_ok=True)
         standin.write_text("package mmt.standin.a; public final class B {}", encoding="utf-8")
 
+    def report_of(version):
+        return E.HOME / "registries" / f"{version}.json"
+
+    def write_report():
+        report_of("1.1").parent.mkdir(parents=True, exist_ok=True)
+        report_of("1.1").write_text('{"minecraft:item": ["minecraft:a"]}', encoding="utf-8")
+
+    check(asked_reports and asked_reports[0] == ["1.0", "1.1"], f"the port asks for each release's registry report first: {asked_reports}")
     for change in (lambda: fixes.write_text('[{"id": "x"}]', encoding="utf-8"), lambda: route.write_text('{"rewrites": []}', encoding="utf-8"),
                    write_standin, lambda: standin.write_text("package mmt.standin.a; public final class B { }", encoding="utf-8"),
                    lambda: setattr(E, "tools_classes_key", lambda: "tools-2"), lambda: setattr(E, "platform_key", lambda loader, r: b"other loader"),
-                   lambda: setattr(E, "java_version", lambda: "java 26")):
+                   lambda: setattr(E, "java_version", lambda: "java 26"), write_report, lambda: report_of("1.1").write_text('{"minecraft:item": ["minecraft:b"]}', encoding="utf-8")):
         runs = len(ported)
         change()
         port()
@@ -782,7 +793,8 @@ with tempfile.TemporaryDirectory() as tmp:
     except SystemExit as failed:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
-    (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
+    (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops,
+     E.registry_reports) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}
@@ -942,7 +954,8 @@ with tempfile.TemporaryDirectory() as tmp:
             rows.append({"mod": j.name, "out": str(out / j.name), "unlinked": [], "silent": []})
         return rows
 
-    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java)
+    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java,
+             E.registry_reports)
     E.ROOT, E.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     (root / "knowledge" / "fixes.json").write_text("[]", encoding="utf-8")
@@ -950,6 +963,7 @@ with tempfile.TemporaryDirectory() as tmp:
     E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools = fake_port, (lambda updates, *a: [root / "route.json"]), (lambda: "classes"), (lambda: "classes")
     E.tools_classes_key, E.platform_key, E.java_version, E.stops = (lambda: "tools"), (lambda loader, r: b"platform"), (lambda: "java 25"), (lambda loader, frm, to: [frm, to])
     E.release_java = lambda v: {"old": 17, "new": 21}[v]
+    E.registry_reports = lambda versions: None  # these mods carry no data
     try:
         def port(to, cache=False):
             return E.jar_port("fabric", "1.0", to, list(came.values()), root / f"out-{to}", root / f"report-{to}.json", cache=cache)
@@ -960,7 +974,8 @@ with tempfile.TemporaryDirectory() as tmp:
         shutil.rmtree(root / "out-old")
         kept = first, port("old", cache=True)
     finally:
-        (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java) = saved
+        (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java,
+         E.registry_reports) = saved
     check([m["mod"] for m in back["mods"] if m["unlinked"]] == ["nested.jar"] and back["linked"] == 3
           and E.left(back["mods"][1]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
           and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
