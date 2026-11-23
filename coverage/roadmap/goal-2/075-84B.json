@@ -2,11 +2,12 @@
  "id": "84B",
  "title": "The game proof judges every mod when some are built for a newer Java",
  "part": "Port by type of break",
- "status": "doing",
- "text": "On Fabric 1.14.4 -> 1.15 the game proof (tools/cloud-run load) gave no mod a verdict (cloud-load 45168999181, PR #206). Some of the pinned mods are built for Java 11 to 25, and 1.15 runs on Java 8. When one of them has a mixin into a game class, the class the mixin is merged into is too new for Java 8 as well (LivingEntity, 'class file version 61.0'), so the server crashes and the log names no mod. The halving fallback could not help, because its baseline start failed too, and the run stopped. On 1.16 the same mods failed one start at a time, with 'built for Java 17; Minecraft 1.16 runs on Java 8' added to whatever else the log said.",
+ "status": "done",
+ "text": "On Fabric 1.14.4 -> 1.15 the game proof (tools/cloud-run load) gave no mod a verdict (cloud-load 45168999181, PR #206). Some of the pinned mods are built for Java 11 to 25, and 1.15 runs on Java 8. When one of them has a mixin into a game class, the class the mixin is merged into is too new for Java 8 as well (LivingEntity, 'class file version 61.0'), so the server crashes and the log names no mod. The halving fallback could not help, because its baseline start failed too: on a bare 1.15 server the world could save before the sand under a cactus, kelp or seagrass had fallen, and pack-check read the plant breaking after the reload as the save changing blocks. On 1.16 the same mods failed one start at a time.",
  "start": "2026-11-23",
  "target": "2026-11-23",
+ "done": "2026-11-23",
  "finish": "tools/cloud-run load -f updates=fabric:1.14.4:1.15 gives every mod it starts a server verdict, and names each mod built for a newer Java than 1.15's Java 8 with that reason, without starting it",
  "wrongIf": "a mod the class-file check fails loads on the release's own Java, or a start still crashes on a class file version and names no mod",
- "result": ""
+ "result": "Cloud-load 45186351095 on 8187824: all 97 mods of Fabric 1.14.4 -> 1.15 have a server verdict (37 loaded, 34 client-only, 26 failed) and 71 a client verdict (59 loaded), plus 5 not started with why. Against main's receipt (84 mods in both) no verdict moved. 11 mods are named before any start, each with the class that needs the newer Java (Flame Sweeping, Fast Minecart, GCA, Konfig, mclogs, StackDeobfuscator and 5 more), and Boxlib for the client only (its client entrypoint is Java 17; it loads on the server). The check reads only what the loader loads at start (mixins, Fabric's own entrypoints, NeoForge's @Mod classes): a first version that read each jar's newest class failed More Mobs, Fake Fabric Loader and Boxlib, which main's receipt shows loading on Java 8 (cloud-load 45181484254). A bare 1.15 server now passes pack-check twice in a row; before, it failed every time on kelp, seagrass, cactus or dead bush."
 }
