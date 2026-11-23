@@ -1,0 +1,17 @@
+{
+  "format": ["java", "python"],
+  "minTokens": 70,
+  "maxLines": 100000,
+  "maxSize": "10mb",
+  "ignore": [
+    "**/tests/**",
+    "**/test_*.py",
+    "**/stubs/**",
+    "**/__pycache__/**",
+    "**/packcheck/game/**",
+    "**/packcheck/fingerprint/**",
+    "**/bench/**/*.java"
+  ],
+  "reporters": ["json"],
+  "silent": true
+}
