@@ -10,7 +10,7 @@ compiles its sources runs when one of them changed; the checks that use the pack
 carries changed; the python checks always run (about 10 s). A change to the porter's sources alone (what jar-port
 compiles) needs only jar-port and the self-test suite that runs it (port: mmt port --jar), as self-test has no game and
 no network to run the rest of them with. Agents reran the whole suite (about 3 minutes) 352 times in 36 hours while
-iterating; CI still runs all of it on every push.
+iterating; CI runs all of it once a pull request is ready (a draft's pushes start nothing).
 
 The self-test runs from the packaged jar, as users get it, not from the checkout. On Linux it runs with LC_ALL=C
 so a child's non-ASCII output is read through a non-UTF-8 console; Windows gives cp1252. No game, no network

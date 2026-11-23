@@ -443,6 +443,22 @@ public final class ErrorMessageTests {
             text.contains("Crash report: " + crash),
             "the crash report's cause and path are shown: " + text
         );
+        // The client check (pack-check --side client) says the same cause on one line, never the report's system details:
+        // a ported mod that crashed a 1.18.2 client was failed with only "GL debug messages ... Using VBOs: Yes".
+        String noCausedBy = "---- Minecraft Crash Report ----\nDescription: Rendering screen\n\n" +
+            "java.lang.NoSuchMethodError: 'void net.minecraft.client.gui.screens.Screen.renderBackground()'\n" +
+            "\tat knot//net.minecraft.client.renderer.GameRenderer.render(GameRenderer.java:880)\n" +
+            "\tat knot//customskinloader.gui.SkinScreen.render(SkinScreen.java:52)\n\n" +
+            "A detailed walkthrough of the error\n-- System Details --\nDetails:\n\tGL debug messages: \n\tUsing VBOs: Yes\n" +
+            "\tIs Modded: Definitely; Client brand changed to 'fabric'\n\tType: Integrated Server (map_client)\n";
+        String said = PackClient.crashCause(noCausedBy);
+        require(
+            said.equals(
+                "Description: Rendering screen; java.lang.NoSuchMethodError: 'void net.minecraft.client.gui.screens.Screen.renderBackground()'; " +
+                "first frame in the mod's code: customskinloader.gui.SkinScreen.render(SkinScreen.java:52)"
+            ),
+            "the client check names the crash's cause, not its system details: " + said
+        );
     }
 
     /** --root src gave a generic "no Gradle build" message. */

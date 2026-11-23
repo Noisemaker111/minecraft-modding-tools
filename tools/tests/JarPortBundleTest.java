@@ -83,6 +83,16 @@ final class JarPortBundleTest {
             "every step of a port carries the last release's module and none carries the first's: " + jars(results) + " " + unlinked(results)
                 + " " + minecraft(out.get("META-INF/jars/mc1201.jar")) + " " + minecraft(out.get("META-INF/jars/mc1203.jar")));
 
+        // A plan of several targets shares one trunk of steps (JarPort.portAll); a bundle whose carried modules depend on
+        // the release the port ends at cannot share it, as its first step already differs, while a jar of no bundle can.
+        Path bundleJar = Files.write(scratch.resolve("steps.jar"), JarPortTest.jar(steps)), plainJar = Files.write(scratch.resolve("plain.jar"), JarPortTest.jar(Map.of(
+            "fabric.mod.json", meta("plain", "*", "META-INF/jars/common.jar"), "META-INF/jars/common.jar", module("plain-common", null, "b7/plain/Hook", "kept"))));
+        List<JarPort.Target> plan = List.of(new JarPort.Target(List.of("1.20.1", "1.20.2"), List.of("m"), map, ""),
+            new JarPort.Target(List.of("1.20.1", "1.20.2", "1.20.3"), List.of("m", "m"), map, ""));
+        JarPortTest.expect(!JarPort.sameChoices(bundleJar, plan, "fabric"), "a bundle carrying another module to each target is ported to each on its own");
+        JarPortTest.expect(JarPort.sameChoices(plainJar, plan, "fabric") && JarPort.sameChoices(bundleJar, plan, "neoforge"),
+            "a jar that carries the same to every target, and every jar on NeoForge, shares the trunk");
+
         // NeoForge's loader picks no module by its "minecraft": every nested jar is ported, as before.
         GameDiff.Snap na = new GameDiff.Snap("1.20.1"), nb = new GameDiff.Snap("1.20.2");
         nb.loaderVersion = "20.2.1";
