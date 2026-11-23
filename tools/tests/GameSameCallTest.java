@@ -11,7 +11,8 @@ import org.objectweb.asm.*;
  * learned, since the override may read it. Lst(wide, screen, top, bottom) became Lst(wide, height, y) over a new
  * superclass Pane whose getBottom() is getY() + height: the game reads top as getY() and bottom as getBottom(), so the old
  * call is Lst($1, $4 - $3, $3), the screen height nothing reads any more dropped. Pt(a) became Pt(a, c), c a value the
- * old object never held: nothing is learned. The learned lines are applied by JarPort to a mod that then runs on this
+ * old object never held, and Fol(r, spread) became Fol(r) while size(), which the update kept, still read spread: nothing
+ * is learned for either. The learned lines are applied by JarPort to a mod that then runs on this
  * JVM, its own list subclass's super(...) call included.
  *
  *   java -cp asm.jar:CLASSES GameSameCallTest SCRATCH   (in the jar-port check of bench/run_tests.py)
@@ -48,6 +49,7 @@ final class GameSameCallTest {
         check(learned, s + "Lst.<init>(IIII)V", "new net.minecraft.s5.Lst($1, $4 - $3, $3)",
             "a constructor's new parameters are solved so every field the new release reads holds what the old one stored");
         check(learned, s + "Pt.<init>(I)V", null, "a parameter for a value the old object never held is not made up");
+        check(learned, s + "Fol.<init>(II)V", null, "an argument is not dropped while a method the update kept still used what it set");
 
         Path map = scratch.resolve("route-samecall.json");
         Files.writeString(map, "{\"learned\": [" + String.join(",\n", lines) + "]}");
@@ -56,7 +58,7 @@ final class GameSameCallTest {
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
-        System.out.println("game-samecall: 8 checks passed");
+        System.out.println("game-samecall: 9 checks passed");
     }
 
     static void check(Map<String, String> learned, String key, String want, String what) {
@@ -345,6 +347,36 @@ final class GameSameCallTest {
             c.visitInsn(Opcodes.RETURN);
             c.visitMaxs(0, 0);
             c.visitEnd();
+        }));
+        // Fol 1.0: Fol(r, spread) keeps both, size() is r + spread. 2.0: Fol(r) keeps r, size() is r.
+        out.put(U + "Fol", cls("Fol", 0, null, w -> {
+            w.visitField(Opcodes.ACC_PUBLIC, "r", "I", null, null).visitEnd();
+            if (!two) {
+                w.visitField(Opcodes.ACC_PUBLIC, "spread", "I", null, null).visitEnd();
+            }
+            MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", two ? "(I)V" : "(II)V", null, null);
+            c.visitCode();
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            put(c, U + "Fol", "r", 1);
+            if (!two) {
+                put(c, U + "Fol", "spread", 2);
+            }
+            c.visitInsn(Opcodes.RETURN);
+            c.visitMaxs(0, 0);
+            c.visitEnd();
+            MethodVisitor z = w.visitMethod(Opcodes.ACC_PUBLIC, "size", "()I", null, null);
+            z.visitCode();
+            z.visitVarInsn(Opcodes.ALOAD, 0);
+            z.visitFieldInsn(Opcodes.GETFIELD, U + "Fol", "r", "I");
+            if (!two) {
+                z.visitVarInsn(Opcodes.ALOAD, 0);
+                z.visitFieldInsn(Opcodes.GETFIELD, U + "Fol", "spread", "I");
+                z.visitInsn(Opcodes.IADD);
+            }
+            z.visitInsn(Opcodes.IRETURN);
+            z.visitMaxs(0, 0);
+            z.visitEnd();
         }));
         return out;
     }

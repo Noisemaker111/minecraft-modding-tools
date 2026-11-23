@@ -7248,6 +7248,7 @@ public final class GameDiff {
         final Set<Meth> solving = new LinkedHashSet<>();
         final Map<String, List<Cls>> declaring = new HashMap<>(); // name + desc -> b's classes that declare it
         final Map<String, String> readings = new HashMap<>(); // a's field "owner/name" -> what b reads on $0 for it ("getBottom()", "width")
+        Map<String, List<Meth>> users; // a's field "owner/name" -> a's methods other than constructors that use it
         static final String WHY = System.getProperty("gamediff.samecall", ""); // a method name: why it is or is not solved
 
         SameCall(Hop h, Learner learner) {
@@ -7379,7 +7380,7 @@ public final class GameDiff {
             List<String> out = null;
             try {
                 out = work(x, y, depth);
-                if (out == null && x.name.equals("<init>")) {
+                if (out == null && x.name.equals("<init>") && (x.owner.flags & ACC_ENUM) == 0) {
                     out = new Built(x, y).solve();
                 }
             } catch (RuntimeException unreadable) {
@@ -7580,11 +7581,24 @@ public final class GameDiff {
                     why("not run");
                     return null;
                 }
-                List<Lin[]> left = new ArrayList<>();
+                // The learner's readings and fields the same class kept are what the new release is shown to read; a
+                // field the update moved up into another class under its name (the list's height, now the widget's)
+                // may have changed meaning there, so it only settles what the others leave open.
+                List<Lin[]> sure = new ArrayList<>(), named = new ArrayList<>();
                 for (var e : was.entrySet()) {
                     String read = reading(e.getKey());
+                    boolean weak = false;
                     if (read == null) {
-                        continue;
+                        read = movedUp(e.getKey());
+                        weak = read != null;
+                    }
+                    if (read == null) {
+                        Meth still = stillReads(e.getKey());
+                        if (still != null && (e.getValue() != null || opaque.contains(e.getKey()))) {
+                            why("field " + e.getKey() + " has no reading, yet " + still.sig() + ", which the new release kept, uses it");
+                            return null;
+                        }
+                        continue; // nothing the new release kept uses it: what was passed for it is not needed
                     }
                     if (opaque.contains(e.getKey())) {
                         why("field " + e.getKey() + " holds what no sum says, and is read as " + read);
@@ -7598,53 +7612,10 @@ public final class GameDiff {
                         why("field " + e.getKey() + ", read as " + read + ", not worked out on the new object");
                         return null;
                     }
-                    left.add(new Lin[] {r, e.getValue()});
+                    (weak ? named : sure).add(new Lin[] {r, e.getValue()});
                 }
                 Map<String, Lin> sol = new HashMap<>();
-                for (boolean moved = true; moved && !left.isEmpty();) {
-                    moved = false;
-                    List<Lin[]> next = new ArrayList<>();
-                    for (Lin[] q : left) {
-                        Lin r = q[0];
-                        for (var s : sol.entrySet()) {
-                            Long cf = r == null ? null : r.terms().get(s.getKey());
-                            if (cf != null) {
-                                Lin rest = new Lin(without(r.terms(), s.getKey()), r.k(), r.type());
-                                Lin v = s.getValue().times(cf);
-                                r = v == null ? (cf == 1 && rest.terms().isEmpty() && rest.k() == 0 ? s.getValue() : null) : rest.plus(v, 1);
-                            }
-                        }
-                        if (r == null) {
-                            why("an equation mixes values that are not sums");
-                            return null;
-                        }
-                        List<String> unknown = r.terms().keySet().stream().filter(a -> a.startsWith("#")).toList();
-                        if (unknown.isEmpty()) {
-                            if (!r.same(q[1])) {
-                                why("the new object holds " + r.text() + " where the old one held " + q[1].text());
-                                return null;
-                            }
-                            moved = true;
-                        } else if (unknown.size() == 1 && Math.abs(r.terms().get(unknown.get(0))) == 1) {
-                            String u = unknown.get(0);
-                            long cu = r.terms().get(u);
-                            Lin rest = new Lin(without(r.terms(), u), r.k(), r.type());
-                            Lin v = q[1].plus(rest, -1);
-                            v = v == null ? null : cu == 1 ? v : v.times(-1);
-                            if (v == null) {
-                                why("no sum solves " + u);
-                                return null;
-                            }
-                            sol.put(u, v);
-                            moved = true;
-                        } else {
-                            next.add(q);
-                        }
-                    }
-                    left = next;
-                }
-                if (!left.isEmpty()) {
-                    why(left.size() + " equations left");
+                if (!settle(sure, sol, false) || !settle(named, sol, true)) {
                     return null;
                 }
                 List<String> out = new ArrayList<>();
@@ -7664,6 +7635,95 @@ public final class GameDiff {
                     out.add(f);
                 }
                 return out;
+            }
+
+            /**
+             * Solves each equation (the new object's reading = the old value) for the one new parameter left in it, until
+             * none moves. An equation with nothing left to solve must hold; a weak one that does not is the field meaning
+             * something else now, and is passed over. Every sure equation must be used.
+             */
+            boolean settle(List<Lin[]> left, Map<String, Lin> sol, boolean weak) {
+                for (boolean moved = true; moved && !left.isEmpty();) {
+                    moved = false;
+                    List<Lin[]> next = new ArrayList<>();
+                    for (Lin[] q : left) {
+                        Lin r = q[0];
+                        for (var s : sol.entrySet()) {
+                            Long cf = r == null ? null : r.terms().get(s.getKey());
+                            if (cf != null) {
+                                Lin rest = new Lin(without(r.terms(), s.getKey()), r.k(), r.type());
+                                Lin v = s.getValue().times(cf);
+                                r = v == null ? (cf == 1 && rest.terms().isEmpty() && rest.k() == 0 ? s.getValue() : null) : rest.plus(v, 1);
+                            }
+                        }
+                        if (r == null) {
+                            if (weak) {
+                                moved = true;
+                                continue;
+                            }
+                            why("an equation mixes values that are not sums");
+                            return false;
+                        }
+                        List<String> unknown = r.terms().keySet().stream().filter(a -> a.startsWith("#")).toList();
+                        if (unknown.isEmpty()) {
+                            if (!r.same(q[1]) && !weak) {
+                                why("the new object holds " + r.text() + " where the old one held " + q[1].text());
+                                return false;
+                            }
+                            moved = true;
+                        } else if (unknown.size() == 1 && Math.abs(r.terms().get(unknown.get(0))) == 1) {
+                            String u = unknown.get(0);
+                            long cu = r.terms().get(u);
+                            Lin rest = new Lin(without(r.terms(), u), r.k(), r.type());
+                            Lin v = q[1].plus(rest, -1);
+                            v = v == null ? null : cu == 1 ? v : v.times(-1);
+                            if (v == null) {
+                                why("no sum solves " + u);
+                                return false;
+                            }
+                            sol.put(u, v);
+                            moved = true;
+                        } else {
+                            next.add(q);
+                        }
+                    }
+                    left = next;
+                }
+                if (!left.isEmpty() && !weak) {
+                    why(left.size() + " equations left");
+                    return false;
+                }
+                return true;
+            }
+
+            /** a's field key as the new release has it under its name in a class above the new object's ("height"), or null. */
+            String movedUp(String key) {
+                int dot = key.lastIndexOf('.');
+                Fld f = h.a.field(key.substring(0, dot), key.substring(dot + 1));
+                Fld fy = f == null ? null : h.fAB.get(f);
+                return fy != null && (fy.owner.name + "." + fy.name).equals(fieldKey(h.b, y.owner.name, fy.name)) ? fy.name : null;
+            }
+
+            /** A method of the old release, other than a constructor, that uses a's field key and that the new release kept. */
+            Meth stillReads(String key) {
+                if (users == null) {
+                    users = new HashMap<>();
+                    for (Cls k : h.a.classes.values()) {
+                        for (Meth m : k.methods.values()) {
+                            for (Ref r : m.refs) {
+                                if (r != null && r.kind() == 'f' && !m.name.equals("<init>")) {
+                                    users.computeIfAbsent(r.owner() + "." + r.name(), z -> new ArrayList<>()).add(m);
+                                }
+                            }
+                        }
+                    }
+                }
+                for (Meth m : users.getOrDefault(key, List.of())) {
+                    if (h.mAB.get(m) != null) {
+                        return m;
+                    }
+                }
+                return null;
             }
 
             void why(String s) {
