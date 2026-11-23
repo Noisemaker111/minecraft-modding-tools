@@ -34,7 +34,7 @@ final class ConvertDataTests {
             "a recipe's custom ingredients move between NeoForge's type and Fabric's fabric:type (NeoForge's compound is Fabric's any), the recipe's own type and a stack stay: " + Json.write(fabricRecipe)
         );
     
-        String mixin = Convert.neoforgeParametersOutOfMixin(
+        String mixin = ToFabric.neoforgeParametersOutOfMixin(
             "@Mixin(BlockRenderDispatcher.class)\nclass M {\n@Inject(method = \"renderBreakingTexture(Lnet/minecraft/world/level/block/state/BlockState;Lcom/mojang/blaze3d/vertex/VertexConsumer;Lnet/neoforged/neoforge/client/model/data/ModelData;)V\", at = @At(\"HEAD\"))\n" +
             "void hide(BlockState state, VertexConsumer consumer, net.neoforged.neoforge.client.model.data.ModelData data, CallbackInfo info) {}\n}"
         );
@@ -51,11 +51,11 @@ final class ConvertDataTests {
         ConvertTests.check(
             "method_58010".equals(LambdaTargets.intermediary(mojang, tiny, "net.minecraft.util.datafix.schemas.V3818_3", "lambda$registerTypes$0")) &&
                 LambdaTargets.intermediary(mojang, tiny, "net.minecraft.Other", "lambda$registerTypes$0") == null &&
-                "net.minecraft.util.datafix.schemas.V3818_3".equals(Convert.mixinOwner("import net.minecraft.util.datafix.schemas.V3818_3;\n@Mixin(V3818_3.class)\nclass M {}")),
+                "net.minecraft.util.datafix.schemas.V3818_3".equals(ToFabric.mixinOwner("import net.minecraft.util.datafix.schemas.V3818_3;\n@Mixin(V3818_3.class)\nclass M {}")),
             "a mixin's game lambda target by the compiler's name has Loom's intermediary name, through Mojang's and intermediary's mappings"
         );
     
-        String lookups = Convert.enumExtensionLookups(
+        String lookups = ToFabric.enumExtensionLookups(
             "A a = RecipeBookCategories.valueOf(\"MOD_TAB\"); B b = RecipeBookCategories.valueOf(\"CRAFTING_MISC\"); C c = HumanoidModel.ArmPose.valueOf(\"MOD_POSE\");",
             List.of(new String[] { "RecipeBookCategories", "MOD_TAB" }, new String[] { "HumanoidModel.ArmPose", "MOD_POSE" }),
             "demo.bridge"
@@ -73,7 +73,7 @@ final class ConvertDataTests {
                 "\"tool\":{\"fabric:type\":\"fabric:any\",\"ingredients\":[{\"fabric:type\":\"demo:item_ability\"},{\"tag\":\"c:tools/knife\"}]}}"),
             "an ingredient's alternatives holding a custom ingredient are Fabric's any; a list of ingredients stays a list: " + Json.write(alternatives)
         );
-        Map<String, String> unwired = Convert.unwiredSourceSets(Json.object(Json.parse(
+        Map<String, String> unwired = ConvertCompile.unwiredSourceSets(Json.object(Json.parse(
             "{\"projects\":[{\"path\":\":\",\"sourceSets\":[" +
             "{\"name\":\"main\",\"classesTask\":\"classes\",\"output\":[\"/p/build/main\"],\"runtime\":[\"/c/minecraft-merged-1.21.1.jar\"]}," +
             "{\"name\":\"test\",\"classesTask\":\"testClasses\",\"output\":[],\"runtime\":[\"/p/build/main\",\"/c/junit.jar\"]}," +
@@ -87,44 +87,44 @@ final class ConvertDataTests {
         );
         String keys = "package demo;\n\nimport net.minecraft.client.KeyMapping;\n\nclass K {\n" +
             "    KeyMapping a = new KeyMapping(\"a\", CONTEXT, key, CATEGORY);\n    KeyMapping b = new KeyMapping(\"b\", InputConstants.Type.KEYSYM, 71, CATEGORY);\n}\n";
-        String repairedKeys = Convert.contextKeyMappings(keys, Set.of(6, 99), "demo.loaderbridge");
+        String repairedKeys = ConvertCompile.contextKeyMappings(keys, Set.of(6, 99), "demo.loaderbridge");
         ConvertTests.check(
             repairedKeys.equals(keys.replace("import net.minecraft.client.KeyMapping;\n", "import net.minecraft.client.KeyMapping;\nimport demo.loaderbridge.KeyConflictContext;\n")
                 .replace("a = new KeyMapping(", "a = KeyConflictContext.keyMapping(")) &&
-            Convert.contextKeyMappings(keys.replace("package demo;", "package demo.loaderbridge;"), Set.of(6), "demo.loaderbridge").equals(
+            ConvertCompile.contextKeyMappings(keys.replace("package demo;", "package demo.loaderbridge;"), Set.of(6), "demo.loaderbridge").equals(
                 keys.replace("package demo;", "package demo.loaderbridge;").replace("a = new KeyMapping(", "a = KeyConflictContext.keyMapping(")
             ) &&
-            Convert.contextKeyMappings(keys, Set.of(7 - 6), "demo.loaderbridge").equals(keys),
+            ConvertCompile.contextKeyMappings(keys, Set.of(7 - 6), "demo.loaderbridge").equals(keys),
             "a refused KeyMapping constructor with a conflict context is the bridge's KeyConflictContext.keyMapping, imported once; other lines stay: " + repairedKeys
         );
         String failure = "> Could not find lib:base:3.\n     Required by:\n         root project 'demo' > net.demo:Ponder-Fabric-1.21.1:1.0.44\n" +
             "         root project 'demo' > net.demo:Ponder-Fabric-1.21.1:1.0.44 > net.demo:Ponder-Common-1.21.1:1.0.44\n";
         String depsBuild = "dependencies {\n    compileOnly(\"net.demo:Ponder-Fabric-${mc}:${ponder}\")\n    modCompileOnly 'net.demo:Ponder-Fabric-$mc:2'\n" +
             "    compileOnly(\"net.demo:Other:1\")\n    implementation(\"net.demo:Ponder-Fabric-1.21.1:1.0.44\")\n}\n";
-        String nonTransitive = Convert.nonTransitiveCompileOnly(failure, depsBuild, Map.of("mc", "1.21.1", "ponder", "1.0.44"));
+        String nonTransitive = ConvertCompile.nonTransitiveCompileOnly(failure, depsBuild, Map.of("mc", "1.21.1", "ponder", "1.0.44"));
         ConvertTests.check(
             depsBuild.replace("    compileOnly(\"net.demo:Ponder-Fabric-${mc}:${ponder}\")", "    compileOnly(\"net.demo:Ponder-Fabric-${mc}:${ponder}\") { transitive = false }")
                 .replace("    modCompileOnly 'net.demo:Ponder-Fabric-$mc:2'", "    modCompileOnly('net.demo:Ponder-Fabric-$mc:2') { transitive = false }").equals(nonTransitive) &&
-            Convert.nonTransitiveCompileOnly(failure, depsBuild, Map.of("mc", "26.1", "ponder", "1")) == null &&
-            Convert.nonTransitiveCompileOnly("> Could not find a:b:1.", depsBuild, Map.of()) == null,
+            ConvertCompile.nonTransitiveCompileOnly(failure, depsBuild, Map.of("mc", "26.1", "ponder", "1")) == null &&
+            ConvertCompile.nonTransitiveCompileOnly("> Could not find a:b:1.", depsBuild, Map.of()) == null,
             "a compile-only dependency whose own dependencies cannot be found is made non-transitive, matched with the build's properties; others stay: " + nonTransitive
         );
         ConvertTests.check(
-            Convert.otherTypeNamed("import com.demo.util.mod.Mod;\nimport net.neoforged.fml.common.Mod;\n", "Mod", "net.neoforged.fml.common.Mod") &&
-            !Convert.otherTypeNamed("import net.neoforged.fml.common.Mod;\nimport com.demo.Modded;\n", "Mod", "net.neoforged.fml.common.Mod"),
+            ToNeoForge.otherTypeNamed("import com.demo.util.mod.Mod;\nimport net.neoforged.fml.common.Mod;\n", "Mod", "net.neoforged.fml.common.Mod") &&
+            !ToNeoForge.otherTypeNamed("import net.neoforged.fml.common.Mod;\nimport com.demo.Modded;\n", "Mod", "net.neoforged.fml.common.Mod"),
             "a mod's own type named Mod, imported, is found (so the @Mod convert writes is qualified); NeoForge's own or a longer name is not"
         );
         String placeholderToml = "[[mods]]\nmodId = \"demo\"\nversion = \"$version\"\n";
         ConvertTests.check(
-            Convert.unexpandedVersion(placeholderToml, "plugins {}\n").equals("[[mods]]\nmodId = \"demo\"\nversion = \"${file.jarVersion}\"\n") &&
-            Convert.unexpandedVersion(placeholderToml.replace("$version", "${version}"), "").contains("version = \"${file.jarVersion}\"") &&
-            Convert.unexpandedVersion(placeholderToml, "processResources { filesMatching(\"META-INF/neoforge.mods.toml\") { expand version: project.version } }").equals(placeholderToml) &&
-            Convert.unexpandedVersion(placeholderToml.replace("$version", "1.2.0"), "").equals(placeholderToml.replace("$version", "1.2.0")),
+            ToNeoForge.unexpandedVersion(placeholderToml, "plugins {}\n").equals("[[mods]]\nmodId = \"demo\"\nversion = \"${file.jarVersion}\"\n") &&
+            ToNeoForge.unexpandedVersion(placeholderToml.replace("$version", "${version}"), "").contains("version = \"${file.jarVersion}\"") &&
+            ToNeoForge.unexpandedVersion(placeholderToml, "processResources { filesMatching(\"META-INF/neoforge.mods.toml\") { expand version: project.version } }").equals(placeholderToml) &&
+            ToNeoForge.unexpandedVersion(placeholderToml.replace("$version", "1.2.0"), "").equals(placeholderToml.replace("$version", "1.2.0")),
             "a mod version left as a Gradle placeholder no build step expands is NeoForge's ${file.jarVersion}; an expanded or literal version stays"
         );
         ConvertTests.check(
-            Convert.fabricOnly("fabric-screen-api-v1") && Convert.fabricOnly("fabric-key-mapping-api-v1") && Convert.fabricOnly("fabric-api") &&
-            !Convert.fabricOnly("fabric-language-kotlin") && !Convert.fabricOnly("sodium"),
+            ToNeoForge.fabricOnly("fabric-screen-api-v1") && ToNeoForge.fabricOnly("fabric-key-mapping-api-v1") && ToNeoForge.fabricOnly("fabric-api") &&
+            !ToNeoForge.fabricOnly("fabric-language-kotlin") && !ToNeoForge.fabricOnly("sodium"),
             "Fabric API's modules (fabric-...-vN) and Fabric API itself are no NeoForge dependency; other fabric- mods still are"
         );
         Map<String, String> mod = Map.of(
@@ -134,9 +134,9 @@ final class ConvertDataTests {
         String overMod = "class Frame extends FramedMiddle { ItemStack c() { return IBlockExtension.getCloneItemStack(super, level, pos); } }";
         String overGame = "class Torch extends net.minecraft.world.level.block.TorchBlock { int l() { return Math.max(1, IBlockExtension.getLightEmission(super, state)); } int m() { return Other.x(super, 1); } }";
         ConvertTests.check(
-            Convert.superHookCalls(overMod, mod, Set.of("IBlockExtension")).equals(overMod.replace("IBlockExtension.getCloneItemStack(super, ", "super.getCloneItemStack(")) &&
-            Convert.superHookCalls(overGame, mod, Set.of("IBlockExtension")).equals(overGame.replace("getLightEmission(super, ", "getLightEmission(this, ")),
-            "a bridge hook helper given super is super's own method when a mod ancestor declares it, else the helper given this: " + Convert.superHookCalls(overGame, mod, Set.of("IBlockExtension"))
+            ToFabric.superHookCalls(overMod, mod, Set.of("IBlockExtension")).equals(overMod.replace("IBlockExtension.getCloneItemStack(super, ", "super.getCloneItemStack(")) &&
+            ToFabric.superHookCalls(overGame, mod, Set.of("IBlockExtension")).equals(overGame.replace("getLightEmission(super, ", "getLightEmission(this, ")),
+            "a bridge hook helper given super is super's own method when a mod ancestor declares it, else the helper given this: " + ToFabric.superHookCalls(overGame, mod, Set.of("IBlockExtension"))
         );
     }
 }

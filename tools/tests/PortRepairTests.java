@@ -71,7 +71,7 @@ public final class PortRepairTests {
                     .matcher(test.get("error").toString())
                     .find()
             ) throw new AssertionError(id + ": match misses its test error");
-            String after = Port.rewrite(rule, test.get("before").toString());
+            String after = PortRules.rewrite(rule, test.get("before").toString());
             if (after.equals(test.get("before")) || !after.equals(test.get("after"))) throw new AssertionError(
                 id + ": rewrite gave\n" + after + "\nexpected\n" + test.get("after")
             );
@@ -94,7 +94,7 @@ public final class PortRepairTests {
                 "HUD.java:3: error: cannot find symbol\nimport com.mojang.blaze3d.platform.GlStateManager;\n  symbol:   class GlStateManager\n  location: package com.mojang.blaze3d.platform\n";
             check(
                 java.util.regex.Pattern.compile(rule.get("match").toString()).matcher(log).find() &&
-                Port.rewrite(
+                PortRules.rewrite(
                     rule,
                     "import com.mojang.blaze3d.platform.GlStateManager;\nimport com.mojang.blaze3d.platform.NativeImage;\n"
                 ).equals(
@@ -132,15 +132,15 @@ public final class PortRepairTests {
                     .find()
             ) throw new AssertionError(id + ": match misses its test error");
             String after = "line".equals(rule.get("scope"))
-                ? Port.rewriteReported(rule, test.get("before").toString(), test.get("error").toString(), file -> true)
-                : Port.rewrite(rule, test.get("before").toString());
+                ? PortRules.rewriteReported(rule, test.get("before").toString(), test.get("error").toString(), file -> true)
+                : PortRules.rewrite(rule, test.get("before").toString());
             if (after.equals(test.get("before")) || !after.equals(test.get("after"))) throw new AssertionError(
                 id + ": rewrite gave\n" + after + "\nexpected\n" + test.get("after")
             );
             // The same file from a Windows checkout (core.autocrlf): the rule still fires and the file keeps CRLF.
             String windowsBefore = test.get("before").toString().replace("\r\n", "\n").replace("\n", "\r\n");
             if (!"line".equals(rule.get("scope")) && !windowsBefore.equals(test.get("before"))) {
-                String windowsAfter = Port.rewrite(rule, windowsBefore);
+                String windowsAfter = PortRules.rewrite(rule, windowsBefore);
                 String expected = test.get("after").toString().replace("\r\n", "\n").replace("\n", "\r\n");
                 if (!windowsAfter.equals(expected)) throw new AssertionError(
                     id + ": on CRLF source the rewrite gave\n" + windowsAfter + "\nexpected\n" + expected
@@ -149,8 +149,8 @@ public final class PortRepairTests {
             String[] range = Json.text(rule, "jump", "").replaceAll("\\(.*", "").trim().split("\\s*->\\s*");
             if (
                 rule.containsKey("silent") &&
-                !(Port.crosses(Json.text(rule, "jump", ""), range[0], range[1]) &&
-                    !Port.crosses(Json.text(rule, "jump", ""), range[1], range[1]))
+                !(PortRules.crosses(Json.text(rule, "jump", ""), range[0], range[1]) &&
+                    !PortRules.crosses(Json.text(rule, "jump", ""), range[1], range[1]))
             ) throw new AssertionError(
                 id + ": a silent rule must run on the port across its own update and on no other"
             );
@@ -178,9 +178,9 @@ public final class PortRepairTests {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("knowledge/fixes.json has no layered-draw-layer-neoforge rule"));
             check(
-                Port.loaderFits(layer, Set.of("neoforge")) &&
-                !Port.loaderFits(layer, Set.of("fabric")) &&
-                Port.loaderFits(Json.map("id", "any"), Set.of("fabric")),
+                PortRules.loaderFits(layer, Set.of("neoforge")) &&
+                !PortRules.loaderFits(layer, Set.of("fabric")) &&
+                PortRules.loaderFits(Json.map("id", "any"), Set.of("fabric")),
                 "a rule for one loader (NeoForge's GuiLayer for the removed LayeredDraw.Layer) runs only on that loader's projects"
             );
         }
@@ -193,13 +193,13 @@ public final class PortRepairTests {
     static void accessorChecks(Path home, Path scratch) throws Exception {
         String chain = "x = a.b(c, d(e)).f[0].getExhaustion();";
         check(
-            chain.substring(Port.receiverStart(chain, chain.indexOf(".getExhaustion"))).startsWith("a.b(c"),
+            chain.substring(JavaText.receiverStart(chain, chain.indexOf(".getExhaustion"))).startsWith("a.b(c"),
             "a call's receiver is the whole chain of names, calls and indexes before it"
         );
         String created = "return new Stats(1).getExhaustion();";
         check(
             created
-                .substring(Port.receiverStart(created, created.indexOf(".getExhaustion")))
+                .substring(JavaText.receiverStart(created, created.indexOf(".getExhaustion")))
                 .startsWith("new Stats(1)"),
             "a receiver made with new keeps its new"
         );
@@ -235,10 +235,10 @@ public final class PortRepairTests {
             new Build(project, home, "", new Mmt.Report(root, "port")),
             Json.map("projects", List.of())
         );
-        port.transaction = project.state().resolve("ports/accessor");
-        Files.createDirectories(port.transaction);
-        port.saveInProgress();
-        port.track(hud);
+        port.journal.transaction = project.state().resolve("ports/accessor");
+        Files.createDirectories(port.journal.transaction);
+        port.journal.saveInProgress();
+        port.journal.track(hud);
         var rule = Json.array(Json.read(home.resolve("knowledge/fixes.json")).get("rules"))
             .stream()
             .map(Json::object)
@@ -249,7 +249,7 @@ public final class PortRepairTests {
             hud +
             ":5: error: cannot find symbol\n\t\treturn player.getHungerManager().getExhaustion();\n\t\t                                ^\n  symbol:   method getExhaustion()\n  location: class HungerManager\n";
         check(
-            port.applyAccessor(rule, log),
+            port.sourceMixins.applyAccessor(rule, log),
             "a removed getter named by javac on its owner class is repaired by the accessor rule"
         );
         check(
@@ -257,7 +257,7 @@ public final class PortRepairTests {
             !Files.readString(hud).contains("import mod.mixin"),
             "the import a rule adds waits for the end of the round, so javac's line numbers still hold for the steps after it"
         );
-        port.flushImports();
+        port.rules.flushImports();
         Path accessor = java.resolve("mixin/HungerManagerAccessor.java");
         String source = Files.readString(accessor);
         check(
@@ -280,8 +280,8 @@ public final class PortRepairTests {
             repaired.contains("import mod.mixin.HungerManagerAccessor;"),
             "only the call javac reported goes through the accessor; the mod's own getter of the same name is kept"
         );
-        Port.finishTransaction(project, port.transaction, port.before);
-        Port.undo(project, port.transaction.getFileName().toString());
+        PortJournal.finishTransaction(project, port.journal.transaction, port.journal.before);
+        PortJournal.undo(project, port.journal.transaction.getFileName().toString());
         check(
             !Files.exists(accessor) &&
             Files.readString(config).equals(listed) &&
@@ -289,10 +289,10 @@ public final class PortRepairTests {
             "undo, given the port's bare id, deletes the accessor it wrote and restores the config and the call"
         );
         check(
-            Port.registerMixin("{\"package\": \"a\", \"mixins\": []}", "X").equals(
+            PortMixins.registerMixin("{\"package\": \"a\", \"mixins\": []}", "X").equals(
                 "{\"package\": \"a\", \"mixins\": [\"X\"]}"
             ) &&
-            Port.registerMixin("{\"package\": \"a\", \"mixins\": [\"Y\"]}", "X").equals(
+            PortMixins.registerMixin("{\"package\": \"a\", \"mixins\": [\"Y\"]}", "X").equals(
                 "{\"package\": \"a\", \"mixins\": [\"X\", \"Y\"]}"
             ),
             "a mixin goes first in a config's common list, empty or not"
@@ -332,10 +332,10 @@ public final class PortRepairTests {
             new Build(project, home, "", new Mmt.Report(root, "port")),
             Json.map("projects", List.of())
         );
-        port.transaction = project.state().resolve("ports/accessor-no-mixins");
-        Files.createDirectories(port.transaction);
-        port.saveInProgress();
-        port.track(hunt);
+        port.journal.transaction = project.state().resolve("ports/accessor-no-mixins");
+        Files.createDirectories(port.journal.transaction);
+        port.journal.saveInProgress();
+        port.journal.track(hunt);
         var rule = Json.array(Json.read(home.resolve("knowledge/fixes.json")).get("rules"))
             .stream()
             .map(Json::object)
@@ -346,10 +346,10 @@ public final class PortRepairTests {
             hunt +
             ":5: error: cannot find symbol\n            zombieHorse.setOwnerUUID(owner);\n                       ^\n  symbol:   method setOwnerUUID(UUID)\n  location: variable zombieHorse of type ZombieHorse\n";
         check(
-            port.applyAccessor(rule, log),
+            port.sourceMixins.applyAccessor(rule, log),
             "an accessor on a subclass's receiver (a ZombieHorse for AbstractHorse's field) runs in a mod with no mixins config"
         );
-        port.flushImports();
+        port.rules.flushImports();
         Path config = root.resolve("src/main/resources/zombiemod.mmt.mixins.json"), accessor = java.resolve(
             "mixin/AbstractHorseAccessor.java"
         );
@@ -369,8 +369,8 @@ public final class PortRepairTests {
             ),
             "the removed setter's UUID is passed as the field's EntityReference through the accessor's setter"
         );
-        Port.finishTransaction(project, port.transaction, port.before);
-        Port.undo(project, port.transaction.getFileName().toString());
+        PortJournal.finishTransaction(project, port.journal.transaction, port.journal.before);
+        PortJournal.undo(project, port.journal.transaction.getFileName().toString());
         check(
             !Files.exists(config) &&
             !Files.exists(accessor) &&
@@ -391,7 +391,7 @@ public final class PortRepairTests {
         String strings =
             "method = \"of(Lnet/minecraft/client/item/TooltipData;)Lnet/minecraft/client/gui/tooltip/TooltipComponent;\"\n@Mixin(targets = \"net.minecraft.client.item.TooltipContext$Default\")\nTooltipData data = null; // net/minecraft/client/item/TooltipData\n";
         check(
-            Port.classNamesInStrings(strings, classes).equals(
+            PortRules.classNamesInStrings(strings, classes).equals(
                 "method = \"of(Lnet/minecraft/item/tooltip/TooltipData;)Lnet/minecraft/client/gui/tooltip/TooltipComponent;\"\n@Mixin(targets = \"net.minecraft.item.tooltip.TooltipType$Default\")\nTooltipData data = null; // net/minecraft/client/item/TooltipData\n"
             ),
             "a moved game class inside a string gets its full new name, in descriptor and dotted form; code and comments are left to the other renames"
@@ -400,14 +400,14 @@ public final class PortRepairTests {
         String data = "x".repeat(60000) + "\\\"" + "y".repeat(60000);
         String huge = "String a = \"" + data + " net.minecraft.client.item.TooltipData\";\n";
         check(
-            Port.classNamesInStrings(huge, classes).equals(
+            PortRules.classNamesInStrings(huge, classes).equals(
                 "String a = \"" + data + " net.minecraft.item.tooltip.TooltipData\";\n"
             ),
             "a string literal tens of kilobytes long with an escape inside is scanned, and the game class at its end renamed"
         );
         String stack =
             "\t@Inject(at = @At(\"RETURN\"), method = \"getTooltip(Lnet/minecraft/entity/player/PlayerEntity;Lnet/minecraft/item/tooltip/TooltipType;)Ljava/util/List;\")\n\tprivate void getTooltipFromItem(PlayerEntity player, TooltipType context, CallbackInfoReturnable<List> info)\n\t{\n\t}\n";
-        String named = Port.repairMixinSource(
+        String named = PortMixins.repairMixinSource(
             stack,
             "Critical injection failure: @Inject annotation on getTooltipFromItem could not find any targets matching 'getTooltip(Lnet/minecraft/entity/player/PlayerEntity;Lnet/minecraft/item/tooltip/TooltipType;)Ljava/util/List;' in net/minecraft/item/ItemStack. No refMap loaded."
         );
@@ -415,7 +415,7 @@ public final class PortRepairTests {
             named.contains("method = \"getTooltip\")"),
             "a target pinned to a descriptor the game no longer has is named by its method name alone"
         );
-        String handler = Port.repairMixinSource(
+        String handler = PortMixins.repairMixinSource(
             named,
             "Invalid descriptor on appleskin.mixins.json:ItemStackMixin from mod appleskin->@Inject::getTooltipFromItem(Lnet/minecraft/entity/player/PlayerEntity;Lnet/minecraft/item/tooltip/TooltipType;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V! Expected (Lnet/minecraft/item/Item$TooltipContext;Lnet/minecraft/entity/player/PlayerEntity;Lnet/minecraft/item/tooltip/TooltipType;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V but found (Lnet/minecraft/entity/player/PlayerEntity;Lnet/minecraft/item/tooltip/TooltipType;Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V [INJECT_APPLY]"
         );
@@ -428,7 +428,7 @@ public final class PortRepairTests {
             handler.lines().filter(l -> l.contains("getTooltipFromItem(")).findFirst().orElse("")
         );
         check(
-            Port.repairMixinSource(
+            PortMixins.repairMixinSource(
                 named,
                 "Invalid descriptor on x->@Inject::getTooltipFromItem(La;)V! Expected (Lb;)V but found (La;)V"
             ).equals(named),
@@ -463,7 +463,7 @@ public final class PortRepairTests {
             );
             Build build = new Build(project, home, "", new Mmt.Report(root, "port"));
             Target.Setup setup = new Target.Setup(build, Json.map(), "1.21.6", List.of());
-            check(Target.loomEdit(setup, build, "1.8-SNAPSHOT", "1.10.5"), "a stated Loom version can be raised");
+            check(TargetFabric.loomEdit(setup, build, "1.8-SNAPSHOT", "1.10.5"), "a stated Loom version can be raised");
             Path changed = root.resolve(property ? "gradle.properties" : "build.gradle");
             check(
                 setup
@@ -544,7 +544,7 @@ public final class PortRepairTests {
                 List.of()
             );
             check(
-                Target.parchmentEdit(setup, build, setup.to, c.release()) &&
+                TargetParchment.parchmentEdit(setup, build, setup.to, c.release()) &&
                 (c.wantProps() == null || setup.text(root.resolve("gradle.properties")).equals(c.wantProps())) &&
                 (c.wantBuild() == null || setup.text(root.resolve("build.gradle")).equals(c.wantBuild())),
                 "Parchment follows the target (" +
@@ -566,7 +566,7 @@ public final class PortRepairTests {
         Build plainBuild = new Build(new ProjectModel(plain), home, "", new Mmt.Report(plain, "port"));
         Target.Setup untouched = new Target.Setup(plainBuild, Json.map(), "26.3", List.of());
         check(
-            !Target.parchmentEdit(untouched, plainBuild, "26.3", null) && untouched.edits().isEmpty(),
+            !TargetParchment.parchmentEdit(untouched, plainBuild, "26.3", null) && untouched.edits().isEmpty(),
             "a build without Parchment is left alone and nothing is looked up"
         );
         neoGradleChecks(home, scratch);
@@ -613,7 +613,7 @@ public final class PortRepairTests {
             }
             Target.Setup setup = new Target.Setup(build, Json.map(), to, List.of());
             setup.pins.put("minecraft_version", "1.21");
-            Target.neoGradleFollows(setup, build, to);
+            TargetNeoForge.neoGradleFollows(setup, build, to);
             String plugin = setup.text(root.resolve("build.gradle")), wrapper = setup.text(
                 root.resolve("gradle/wrapper/gradle-wrapper.properties")
             );
@@ -667,7 +667,7 @@ public final class PortRepairTests {
             );
             Target.Setup setup = new Target.Setup(build, Json.map(), to, List.of());
             setup.pins.put("minecraft_version", "1.21.1");
-            Target.unitTestsInFml(setup, build, to, "26.3.0.103");
+            TargetNeoForge.unitTestsInFml(setup, build, to, "26.3.0.103");
             String script = setup.text(root.resolve("build.gradle"));
             if (to.equals("26.3")) check(
                 script.contains("testRuntimeOnly 'net.neoforged.fancymodloader:junit-fml:12.0.12'") &&
@@ -687,11 +687,11 @@ public final class PortRepairTests {
         Files.writeString(mod.resolve("neoforge.mods.toml"), "modId=\"corpse\"\n[[dependencies.corpse]]\n    modId = \"neoforge\"\n    versionRange = \"[21.0,)\"\n"
             + "[[dependencies.corpse]]\n    modId = \"minecraft\"\n    type = \"required\"\n    versionRange = \"[1.21,1.21.1]\"\n");
         Target.Setup setup = new Target.Setup(null, Json.map("directory", scratch.resolve("literal-range").toString()), "1.21.2", List.of());
-        Target.literalGameRange(setup, "1.21.2");
+        TargetManifest.literalGameRange(setup, "1.21.2");
         String after = setup.text(mod.resolve("neoforge.mods.toml"));
         check(after.contains("versionRange = \"[1.21.2]\"") && after.contains("versionRange = \"[21.0,)\""), "the game range follows, NeoForge's stays: " + after);
         Target.Setup open = new Target.Setup(null, Json.map("directory", scratch.resolve("literal-range").toString()), "1.21.1", List.of());
-        Target.literalGameRange(open, "1.21.1");
+        TargetManifest.literalGameRange(open, "1.21.1");
         check(open.edits().isEmpty(), "a range that takes the target is left as written");
     }
 
@@ -702,9 +702,9 @@ public final class PortRepairTests {
             + "    public static final class Builder<T extends BlockEntity> {\n        final Set<Block> validBlocks;\n"
             + "        public BlockEntityType<T> build(Type<?> t) { if (t == null) { return null; } return new BlockEntityType<>(); }\n    }\n"
             + "    class Inner { }\n}\n";
-        String carried = Port.nestedDeclaration(oldGame, "Builder");
+        String carried = PortCarriedClasses.nestedDeclaration(oldGame, "Builder");
         if (carried == null || !carried.startsWith("    public static final class Builder") || !carried.endsWith("    }") || carried.contains("Inner")) throw new IllegalStateException("static nested class carried whole: " + carried);
-        if (Port.nestedDeclaration(oldGame, "Inner") != null) throw new IllegalStateException("an inner class is not carried");
+        if (PortCarriedClasses.nestedDeclaration(oldGame, "Inner") != null) throw new IllegalStateException("an inner class is not carried");
         // An access transformer follows the map: a renamed method keeps its access under the new name and descriptor, a
         // field under its new name, a moved class in a descriptor follows; an entry the map does not know stays as written.
         List<String> at = new ArrayList<>(List.of(
@@ -716,13 +716,13 @@ public final class PortRepairTests {
         Map<String, String[]> members = new HashMap<>();
         members.put("net.minecraft.client.gui.GuiGraphics blitSprite(Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;IIIIIIIII)V", new String[] { "net.minecraft.client.gui.GuiGraphics", "blitSprite", "(Ljava/util/function/Function;Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;IIIIIIIIII)V" });
         members.put("net.minecraft.client.renderer.LevelRenderer rainSoundTime", new String[] { "net.minecraft.client.renderer.WeatherEffectRenderer", "rainSoundTime", "" });
-        int followed = Port.followMap(at, Map.of("old.Thing", "fresh.Thing"), members);
+        int followed = PortAccess.followMap(at, Map.of("old.Thing", "fresh.Thing"), members);
         if (followed != 3
             || !at.get(0).equals("public net.minecraft.client.gui.GuiGraphics blitSprite(Ljava/util/function/Function;Lnet/minecraft/client/renderer/texture/TextureAtlasSprite;IIIIIIIIII)V # Jade")
             || !at.get(1).equals("public net.minecraft.client.renderer.WeatherEffectRenderer rainSoundTime")
             || !at.get(2).contains("(Lnet/minecraft/world/entity/animal/Animal;Lfresh/Thing;)")
             || !at.get(3).equals("public net.minecraft.world.level.biome.Biome TEMPERATURE_NOISE")) throw new IllegalStateException("access transformer follows the map: " + at);
-        String top = Port.topLevel("package a;\n\nimport b.C;\n\n@Deprecated\npublic final class Gone {\n    int x;\n}\n", "Gone");
+        String top = PortCarriedClasses.topLevel("package a;\n\nimport b.C;\n\n@Deprecated\npublic final class Gone {\n    int x;\n}\n", "Gone");
         if (top == null || !top.startsWith("@Deprecated\npublic final class Gone") || !top.endsWith("}")) throw new IllegalStateException("a top-level class is carried from its annotations on: " + top);
         count++;
     }

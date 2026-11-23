@@ -343,7 +343,7 @@ public final class TrustTest {
             "projects",
             List.of(Json.map("plugins", List.of("net.neoforged.moddev.NeoForgeModDevPlugin")))
         );
-        Map<String, Object> accepted = Port.verifyModMetadata(project, neo, "1.21.4");
+        Map<String, Object> accepted = PortMetadata.verifyModMetadata(project, neo, "1.21.4");
         require(
             Boolean.TRUE.equals(accepted.get("ok")) && Boolean.TRUE.equals(accepted.get("checked")),
             "Architectury's [1.21,) accepts 1.21.4: " + accepted.get("details")

@@ -86,8 +86,8 @@ final class JarPortRetypeTest {
                            "newDesc": "(I)V", "newStatic": false, "votes": 3, "of": 3}]}
             """);
         JarPort port = new JarPort(a, b, map);
-        port.oldCode = new JarPort.GameCode(Map.of("g6/Title", title(true), "g6/Screen", screen(true), "g6/Lam", lam(true))::get, null);
-        port.newCode = new JarPort.GameCode(Map.of("g6/Title", title(false), "g6/Screen", screen(false), "g6/Lam", lam(false))::get, null);
+        port.oldCode = new GameCode(Map.of("g6/Title", title(true), "g6/Screen", screen(true), "g6/Lam", lam(true))::get, null);
+        port.newCode = new GameCode(Map.of("g6/Title", title(false), "g6/Screen", screen(false), "g6/Lam", lam(false))::get, null);
 
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m6/MyScreen.class", myScreen(), "m6/MyChild.class", myChild(), "m6/Extra.class", extra(), "m6/Lambda.class", lambda())), "retype.jar", results));
@@ -381,8 +381,8 @@ final class JarPortRetypeTest {
         List<String> nestedUnlinked = nestedRuns.stream().flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
         JarPortTest.expect(nestedUnlinked.isEmpty(), "a jar nested for the other loader is never loaded here, so it holds nothing back: " + nestedUnlinked);
         // A nested jar the platform provides (a Fabric API module beside the mod): the platform's newer copy runs instead.
-        port.platformIds = Set.of("platform-part", "platform-top");
-        port.platformAliases = Map.of("plat", "plat-api");
+        port.modMetadata.platformIds = Set.of("platform-part", "platform-top");
+        port.modMetadata.platformAliases = Map.of("plat", "plat-api");
         List<Map<String, Object>> platformRuns = new ArrayList<>();
         byte[] nests = port.port(JarPortTest.jar(Map.of("META-INF/jars/platform-part.jar", JarPortTest.jar(Map.of("p6/UsesGone.class", JarPortTest.real("p6/UsesGone", "java/lang/Object", 0, new String[] { "g6/Model" }, w -> JarPortTest.traced(w, "quads", "()V", "", m -> { })),
             "fabric.mod.json", "{\"id\": \"platform-part\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
@@ -392,8 +392,8 @@ final class JarPortRetypeTest {
         JarPortTest.expect("*".equals(asks.get("platform-top")), "the version of the platform the mod asks for, numbered as the old release's was, is left to the new one's: " + asks);
         JarPortTest.expect("*".equals(asks.get("plat-api")) && !asks.containsKey("plat"),
             "a name the old platform answered to and the new one does not is asked of the module that gave it: " + asks);
-        port.platformIds = Set.of();
-        port.platformAliases = Map.of();
+        port.modMetadata.platformIds = Set.of();
+        port.modMetadata.platformAliases = Map.of();
         List<String> platformUnlinked = platformRuns.stream().flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
         JarPortTest.expect(platformUnlinked.isEmpty() && platformRuns.stream().anyMatch(r -> String.valueOf(r.get("skipped")).contains("the platform's own module")),
             "a nested jar the platform provides runs as the platform's own, so it holds nothing back: " + platformUnlinked + " " + platformRuns);

@@ -20,16 +20,16 @@ public final class FabricMetadataTest {
             Path manifest = resources.resolve("fabric.mod.json");
             Files.writeString(manifest, original);
             Map<String, Object> selected = project(root, resources);
-            var edits = Target.manifestEdits(selected, "1.21.6");
+            var edits = TargetManifest.manifestEdits(selected, "1.21.6");
             require(edits.size() == 1 && edits.get(0).file().equals(manifest.toRealPath()), "one owned manifest edit");
             var forge = Json.map("dependencies", List.of(Json.map("group", "net.minecraftforge")));
             require(
-                Target.manifestEditsForModel(Json.map("projects", List.of(forge)), "1.21.6").isEmpty(),
+                TargetManifest.manifestEditsForModel(Json.map("projects", List.of(forge)), "1.21.6").isEmpty(),
                 "prepared Forge port bypasses Fabric manifest setup"
             );
             selected.put("dependencies", List.of(Json.map("group", "net.fabricmc")));
             require(
-                Target.manifestEditsForModel(Json.map("projects", List.of(forge, selected)), "1.21.6").size() == 1,
+                TargetManifest.manifestEditsForModel(Json.map("projects", List.of(forge, selected)), "1.21.6").size() == 1,
                 "prepared multi-project port checks only Fabric manifest"
             );
             require(
@@ -52,16 +52,16 @@ public final class FabricMetadataTest {
             var placeholder = Json.object(Json.parse(original));
             Json.object(placeholder.get("depends")).put("minecraft", "${minecraft_version}");
             Files.writeString(manifest, Json.write(placeholder));
-            require(Target.manifestEdits(selected, "1.21.6").isEmpty(), "processed placeholder retains owner");
+            require(TargetManifest.manifestEdits(selected, "1.21.6").isEmpty(), "processed placeholder retains owner");
             Json.object(placeholder.get("depends")).remove("minecraft");
             Files.writeString(manifest, Json.write(placeholder));
-            require(Target.manifestEdits(selected, "1.21.6").isEmpty(), "missing Minecraft constraint is not invented");
+            require(TargetManifest.manifestEdits(selected, "1.21.6").isEmpty(), "missing Minecraft constraint is not invented");
             Json.object(placeholder.get("depends")).put("minecraft", List.of("~1.20.1", "1.21.6"));
             Files.writeString(manifest, Json.write(placeholder));
-            require(Target.manifestEdits(selected, "1.21.6").isEmpty(), "a list with an alternative that accepts the target is left alone");
+            require(TargetManifest.manifestEdits(selected, "1.21.6").isEmpty(), "a list with an alternative that accepts the target is left alone");
             Json.object(placeholder.get("depends")).put("minecraft", List.of("1.21", "1.21.1"));
             Files.writeString(manifest, Json.write(placeholder));
-            var listed = Target.manifestEdits(selected, "1.21.6");
+            var listed = TargetManifest.manifestEdits(selected, "1.21.6");
             require(
                 listed.size() == 1 && "1.21.6".equals(Json.object(Json.object(Json.parse(listed.get(0).after())).get("depends")).get("minecraft")),
                 "a list none of whose alternatives accepts the target becomes the target release (Sound Physics)"
@@ -69,22 +69,22 @@ public final class FabricMetadataTest {
             Json.object(placeholder.get("depends")).put("minecraft", ">=1.20.1 <1.22");
             Files.writeString(manifest, Json.write(placeholder));
             require(
-                Target.manifestEdits(selected, "1.21.6").isEmpty(),
+                TargetManifest.manifestEdits(selected, "1.21.6").isEmpty(),
                 "range that already accepts the target is left byte-exact"
             );
             Json.object(placeholder.get("depends")).put("minecraft", ">1.18");
             Files.writeString(manifest, Json.write(placeholder));
-            require(Target.manifestEdits(selected, "1.21.6").isEmpty(), "real Trinkets wide range needs no rewrite");
+            require(TargetManifest.manifestEdits(selected, "1.21.6").isEmpty(), "real Trinkets wide range needs no rewrite");
             Json.object(placeholder.get("depends")).put("minecraft", ">=1.20.1 <1.21");
             Files.writeString(manifest, Json.write(placeholder));
-            var ranged = Target.manifestEdits(selected, "1.21.6");
+            var ranged = TargetManifest.manifestEdits(selected, "1.21.6");
             require(
                 ranged.size() == 1 && "1.21.6".equals(Json.object(Json.object(Json.parse(ranged.get(0).after())).get("depends")).get("minecraft")),
                 "a range that excludes the target becomes the target release"
             );
             Json.object(placeholder.get("depends")).put("minecraft", ">=26.3");
             Files.writeString(manifest, Json.write(placeholder));
-            var lower = Target.manifestEdits(selected, "26.2");
+            var lower = TargetManifest.manifestEdits(selected, "26.2");
             require(
                 lower.size() == 1 && "26.2".equals(Json.object(Json.object(Json.parse(lower.get(0).after())).get("depends")).get("minecraft")),
                 "a backport below a lower bound (Krypton 26.3 -> 26.2) retargets the bound"
@@ -116,7 +116,7 @@ public final class FabricMetadataTest {
                 }
                 """;
             Files.writeString(manifest, formatted);
-            var formattedEdits = Target.manifestEdits(selected, "1.21.6");
+            var formattedEdits = TargetManifest.manifestEdits(selected, "1.21.6");
             require(formattedEdits.size() == 1, "formatted manifest edited once");
             int dependsAt = formatted.indexOf("\"depends\"");
             String expected =
@@ -139,12 +139,12 @@ public final class FabricMetadataTest {
             jar(libs.resolve("fixture-1.0-sources.jar"), "{\"depends\":{\"minecraft\":\"1.21.6\"}}");
             jar(libs.resolve("fixture-1.0.jar"), "{\"depends\":{\"minecraft\":\">=1.21.5 <1.21.6\"}}");
             require(
-                Boolean.FALSE.equals(Port.verifyFabricMetadata(root, "1.21.6").get("ok")),
+                Boolean.FALSE.equals(PortMetadata.verifyFabricMetadata(root, "1.21.6").get("ok")),
                 "packaged range that refuses the target fails"
             );
             jar(libs.resolve("fixture-1.0.jar"), "{\"depends\":{\"minecraft\":[\">=1.21.5 <1.21.6\",\"1.21.6\"]}}");
             require(
-                Boolean.TRUE.equals(Port.verifyFabricMetadata(root, "1.21.6").get("ok")),
+                Boolean.TRUE.equals(PortMetadata.verifyFabricMetadata(root, "1.21.6").get("ok")),
                 "a list accepts the target when one entry does"
             );
             System.out.println("Fabric manifest target and guards: PASS");
@@ -166,7 +166,7 @@ public final class FabricMetadataTest {
 
     static void reject(Map<String, Object> selected, String message) throws Exception {
         try {
-            Target.manifestEdits(selected, "1.21.6");
+            TargetManifest.manifestEdits(selected, "1.21.6");
             throw new AssertionError(message + " accepted");
         } catch (IOException expected) {
             require(expected.getMessage().contains(message), message + " diagnostic");

@@ -77,7 +77,7 @@ final class ConvertBridgeTests {
                         Json.write(Json.object(meta.get("entrypoints")).get("demo")).equals("[\"demo.Demo\"]") &&
                         Files.readString(dir.resolve("src/main/java/demo/Demo.java")).equals(mod.get("src/main/java/demo/Demo.java")) &&
                         !Files.exists(dir.resolve("src/main/java/demo/fabricbridge")) &&
-                        !Files.exists(dir.resolve(Convert.INJECTED_INTERFACES)) && !gradle.contains("interfaceInjectionData"),
+                        !Files.exists(dir.resolve(ConvertBridges.INJECTED_INTERFACES)) && !gradle.contains("interfaceInjectionData"),
                         "back to Fabric, the entrypoints and custom values other mods read are fabric.mod.json's again and the bridge is gone: " + Json.write(meta) + "\n" + gradle
                     );
                 }
@@ -96,8 +96,8 @@ final class ConvertBridgeTests {
             Object found = custom instanceof Map<?, ?> map ? map.get("loom:injected_interfaces") : null;
             return found instanceof Map<?, ?> ? Json.object(found) : Map.of();
         }
-        Path data = dir.resolve(Convert.INJECTED_INTERFACES);
-        boolean named = Files.readString(dir.resolve("build.gradle")).contains("interfaceInjectionData {\n\t\tfrom(file('" + Convert.INJECTED_INTERFACES + "'))");
+        Path data = dir.resolve(ConvertBridges.INJECTED_INTERFACES);
+        boolean named = Files.readString(dir.resolve("build.gradle")).contains("interfaceInjectionData {\n\t\tfrom(file('" + ConvertBridges.INJECTED_INTERFACES + "'))");
         return named && Files.isRegularFile(data) ? Json.object(Json.parse(Files.readString(data))) : Map.of();
     }
 

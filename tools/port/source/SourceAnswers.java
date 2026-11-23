@@ -139,7 +139,7 @@ final class SourceAnswers {
      */
     String[] answer(String owner, String name, String desc, boolean field, boolean statik) {
         String internal = owner.replace('.', '/');
-        if (renamed.contains(owner + "." + name + (field ? "" : desc)) || port.kept(internal, field, name, desc)) {
+        if (renamed.contains(owner + "." + name + (field ? "" : desc)) || port.mixinRetargets.kept(internal, field, name, desc)) {
             return null;
         }
         String self = "L" + internal + ";";
@@ -156,7 +156,7 @@ final class SourceAnswers {
             } catch (RuntimeException unreadable) {
                 continue;
             }
-            if (port.answerLinks(expr, opDesc, !statik && !name.equals("<init>"))) {
+            if (port.ruleCode.answerLinks(expr, opDesc, !statik && !name.equals("<init>"))) {
                 return new String[] { expr, a.source() };
             }
         }

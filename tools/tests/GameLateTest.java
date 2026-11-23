@@ -22,17 +22,17 @@ final class GameLateTest {
         Map<String, byte[]> oldGame = game(false), newGame = game(true);
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of());
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
-        GameDiff.Learner learner = new GameDiff.Learner(hop);
+        GameLearner learner = new GameLearner(hop);
         List<String> lines = new ArrayList<>();
         Map<String, String> learned = new TreeMap<>();
-        for (GameDiff.Learner.Learned l : learner.learn()) {
+        for (GameLearner.Learned l : learner.learn()) {
             learned.put(l.owner() + "." + l.name() + l.desc(), l.expr());
             lines.add(l.json("1.0 -> 2.0"));
         }
         Map<String, String> late = new TreeMap<>();
-        for (GameDiff.Learner.Chained c : learner.chains) {
+        for (LearnChains.Chained c : learner.learnChains.chains) {
             lines.add(c.json("1.0 -> 2.0"));
             if (c.at() == -2) {
                 late.put(c.x().name(), c.expr());

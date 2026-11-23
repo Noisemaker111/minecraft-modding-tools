@@ -447,7 +447,7 @@ public final class ChangeIndex {
 				Map<String, Set<String>> goneKeys = new HashMap<>(), freshKeys = new HashMap<>();
 				for (String k : A.keySet()) { goneKeys.put(k, memberKeys(A.get(k))); }
 				for (String k : B.keySet()) { freshKeys.put(k, memberKeys(B.get(k))); }
-				Map<String, String> links = VersionMap.Chain.linkBySharedIds(gone, fresh, goneKeys, freshKeys);
+				Map<String, String> links = MapChain.linkBySharedIds(gone, fresh, goneKeys, freshKeys);
 				for (var e : links.entrySet()) {
 					pairs.put(A.get(e.getKey()), B.get(e.getValue()));
 					gone.remove(e.getKey());

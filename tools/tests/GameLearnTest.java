@@ -23,11 +23,11 @@ final class GameLearnTest {
         Map<String, byte[]> oldGame = game(false), newGame = game(true);
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of());
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
-        Map<String, GameDiff.Learner.Learned> learned = new TreeMap<>();
+        Map<String, GameLearner.Learned> learned = new TreeMap<>();
         List<String> lines = new ArrayList<>();
-        for (GameDiff.Learner.Learned l : new GameDiff.Learner(hop).learn()) {
+        for (GameLearner.Learned l : new GameLearner(hop).learn()) {
             learned.put(l.owner() + "." + l.name() + l.desc(), l);
             lines.add(l.json("1.0 -> 2.0"));
         }
@@ -65,7 +65,7 @@ final class GameLearnTest {
         uneven.put(new GameDiff.Node('s', null, null, "V", literal, literal), Set.of("r"));
         boolean kept;
         try {
-            kept = GameDiff.Learner.beyondLiterals("r", uneven);
+            kept = LearnVotes.beyondLiterals("r", uneven);
         } catch (ArrayIndexOutOfBoundsException shorter) {
             kept = false;
         }
@@ -121,8 +121,8 @@ final class GameLearnTest {
         return trace;
     }
 
-    static String expr(Map<String, GameDiff.Learner.Learned> learned, String key) {
-        GameDiff.Learner.Learned l = learned.get(key);
+    static String expr(Map<String, GameLearner.Learned> learned, String key) {
+        GameLearner.Learned l = learned.get(key);
         return l == null ? "nothing learned" : l.expr();
     }
 

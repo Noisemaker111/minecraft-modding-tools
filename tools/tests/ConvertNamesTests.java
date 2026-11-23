@@ -15,7 +15,7 @@ final class ConvertNamesTests {
             "\"methods\":[{\"owner\":\"net.minecraft.client.render.WorldRenderer\",\"from\":\"scheduleBlockRender\",\"desc\":\"(Lnet/minecraft/util/math/BlockPos;)V\",\"to\":\"setSectionDirty\"}]," +
             "\"fields\":[{\"owner\":\"net.minecraft.client.render.WorldRenderer\",\"from\":\"world\",\"desc\":\"Lnet/minecraft/client/world/ClientWorld;\",\"to\":\"level\"}]}"
         ));
-        String mojangWidener = Convert.widenerToMojang(
+        String mojangWidener = ConvertAccess.widenerToMojang(
             "accessWidener v2 named\n# opens\naccessible class net/minecraft/client/render/WorldRenderer\n" +
             "accessible method net/minecraft/client/render/WorldRenderer scheduleBlockRender (Lnet/minecraft/util/math/BlockPos;)V\n" +
             "accessible field net/minecraft/client/render/WorldRenderer world Lnet/minecraft/client/world/ClientWorld;\n" +

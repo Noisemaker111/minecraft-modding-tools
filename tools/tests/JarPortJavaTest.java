@@ -191,7 +191,7 @@ final class JarPortJavaTest {
         Path map = scratch.resolve("route.json");
         Files.writeString(map, "{}");
         JarPort port = new JarPort(a, b, map);
-        port.jdkStandins = Downgrade.Standins.of(Path.of("knowledge/standins/jdk"));
+        port.olderJava.jdkStandins = Downgrade.Standins.of(Path.of("knowledge/standins/jdk"));
         return port;
     }
 
@@ -206,7 +206,7 @@ final class JarPortJavaTest {
         if (exit != 0) {
             throw new IllegalStateException("the Java 21 mod does not compile");
         }
-        return JarPort.readClasses(out);
+        return StandinClasses.readClasses(out);
     }
 
     static Map<String, byte[]> classesOf(Map<String, byte[]> entries) {

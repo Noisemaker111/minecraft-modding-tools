@@ -50,7 +50,7 @@ final class JarPortSelfLoadedTest {
         JarPortTest.expect(unlinked.stream().noneMatch(u -> u.contains("app.jar") || u.contains("own.jar")),
             "a jar naming the game only in text, and one written in other names, are no part of the port: " + unlinked);
 
-        Map<String, byte[]> written = JarPort.entries(out, "self.jar", new HashMap<>());
+        Map<String, byte[]> written = JarEntries.entries(out, "self.jar", new HashMap<>());
         String recorded = new String(written.get("loader.properties"), StandardCharsets.UTF_8);
         JarPortTest.expect(recorded.contains("pinnedFileMd5=" + hex("MD5", written.get("payload.jar"))) && !recorded.contains(md5),
             "the digest the mod records of a jar it carries is the ported jar's: " + recorded);

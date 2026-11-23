@@ -20,17 +20,17 @@ final class GameRemovedTest {
         Map<String, byte[]> oldGame = game(false), newGame = game(true);
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of());
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
-        GameDiff.Learner learner = new GameDiff.Learner(hop);
+        GameLearner learner = new GameLearner(hop);
         Map<String, String> learned = new TreeMap<>();
         List<String> lines = new ArrayList<>();
-        for (GameDiff.Learner.Learned l : learner.learn()) {
+        for (GameLearner.Learned l : learner.learn()) {
             learned.put(l.owner() + "." + l.name() + l.desc(), l.expr());
             lines.add(l.json("1.0 -> 2.0"));
         }
         List<String> classes = new ArrayList<>();
-        for (GameDiff.Hop.ClassRewrite r : learner.typeRewrites) {
+        for (HopRewrites.ClassRewrite r : learner.learnTypeMap.typeRewrites) {
             classes.add("{\"step\": \"1.0 -> 2.0\", \"from\": \"" + r.from().name.replace('/', '.') + "\", \"to\": \"" + r.to().name.replace('/', '.') + "\", \"votes\": " + r.votes() + ", \"of\": " + r.total() + "}");
         }
         String r = "net.minecraft.r.";

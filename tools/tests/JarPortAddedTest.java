@@ -76,8 +76,8 @@ final class JarPortAddedTest {
         Files.writeString(map, "{}");
         JarPort port = new JarPort(a, b, map);
         Map<String, byte[]> game = game();
-        port.oldCode = new JarPort.GameCode(x -> null, null);
-        port.newCode = new JarPort.GameCode(game::get, null);
+        port.oldCode = new GameCode(x -> null, null);
+        port.newCode = new GameCode(game::get, null);
 
         List<Map<String, Object>> runs = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of(

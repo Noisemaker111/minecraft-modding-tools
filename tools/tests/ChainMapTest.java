@@ -38,7 +38,7 @@ public final class ChainMapTest {
                 "m|class_1|method_12|(J)V|net/b/Gamma|wander|(J)V",
                 "f|class_1|field_20|I|net/b/Gamma|total|I",
                 "f|class_1|field_21|I|net/b/Gamma|flicker|I"));
-        VersionMap.Chain chain = VersionMap.Chain.of(List.of("1", "2", "3"), tables::get);
+        MapChain chain = MapChain.of(List.of("1", "2", "3"), tables::get);
         VersionMap.Diff d = chain.diff;
         check(d.classRenamed.size() == 1 && d.classRenamed.get(0)[0].equals("net/a/Alpha") && d.classRenamed.get(0)[1].equals("net/b/Gamma"),
                 "a class renamed twice (Alpha -> Beta -> Gamma) maps straight to its final name");
@@ -56,7 +56,7 @@ public final class ChainMapTest {
         check(d.fieldRemoved.isEmpty(), "a field removed and back by the end (same id) is not reported as removed");
         Path map = scratch.resolve("chain.json");
         Files.writeString(map, chain.json("mojmap"));
-        VersionMap.Known known = VersionMap.Known.load(map);
+        MapKnown known = MapKnown.load(map);
         check("net.b.Gamma".equals(known.classFqn.get("net.a.Alpha")) && known.methodGone.contains("dropped"), "the chained map loads with the existing map reader");
         String text = Files.readString(map);
         check(text.contains("\"chain\": [\"1\", \"2\", \"3\"]") && text.contains("\"step\": \"2 -> 3\""), "the map records its chain and per-update history");
