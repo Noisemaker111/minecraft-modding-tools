@@ -1853,7 +1853,7 @@ public final class JarPort {
     String successor(String s) {
         String found = successors.computeIfAbsent(s, k -> {
             GameDiff.Cls old = a.classes.get(k);
-            if (old == null || b.classes.containsKey(k)) {
+            if (old == null || b.classes.containsKey(k) && !becameInterface(k)) {
                 return "";
             }
             // The old class written on the new release: a mod's subclasses extend it, though the route moves the class's
@@ -1871,6 +1871,9 @@ public final class JarPort {
             }
             String moved = votes.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(null);
             if (moved == null) {
+                if (becameInterface(k)) {
+                    return "java/lang/Object";
+                }
                 if (b.classes.containsKey(cls(k))) {
                     return "";
                 }
@@ -1880,6 +1883,15 @@ public final class JarPort {
             return moved.equals(cls(k)) ? "" : moved;
         });
         return found.isEmpty() ? null : found;
+    }
+
+    /**
+     * Whether a game class became an interface (1.17's BlockEntityRenderer): what extended it extends what the game's own
+     * subclasses extend now, and implements it.
+     */
+    boolean becameInterface(String s) {
+        GameDiff.Cls old = a.classes.get(s), now = b.classes.get(cls(s));
+        return old != null && now != null && (old.flags & Opcodes.ACC_INTERFACE) == 0 && (now.flags & Opcodes.ACC_INTERFACE) != 0;
     }
 
     /** A mod class's superclass in the new release (new names): what replaces one the game removed, or its new name. */
@@ -2457,6 +2469,17 @@ public final class JarPort {
         for (GameDiff.RawCls rc : mod.classes.values()) {
             if (mod.mixinTargets.getOrDefault(rc.name, List.of()).isEmpty()) {
                 abstracts(mod, rc);
+            }
+        }
+        // A mod class's constructor moves after its mod superclass's has (1.17: a renderer extending the mod's own renderer).
+        for (boolean grew = true; grew;) {
+            grew = false;
+            for (GameDiff.RawCls rc : mod.classes.values()) {
+                if (mod.mixinTargets.getOrDefault(rc.name, List.of()).isEmpty()) {
+                    for (GameDiff.RawMeth m : List.copyOf(rc.methods.values())) {
+                        grew |= m.name.equals("<init>") && constructor(mod, rc, m);
+                    }
+                }
             }
         }
     }
@@ -3389,6 +3412,232 @@ public final class JarPort {
     }
 
     /**
+     * A mod constructor whose super(...) or this(...) goes to a constructor that now takes another type in a place, one
+     * the old value is read from (1.17's EntityRenderer(EntityRenderDispatcher) became EntityRenderer(EntityRendererProvider
+     * .Context), whose getEntityRenderDispatcher() is the dispatcher): it moves whole to take the new type in place of its
+     * own parameter of the old one, as the game's own subclasses' constructors did, the old value worked out first as the
+     * game's code reads it (Retype). Its super call is then given the new value (Sites.given), and so is each call that
+     * makes the class where that value is at hand (a moved lambda or override); a call that has none keeps the old
+     * constructor, whose super call is reported. A mod class's constructor follows its mod superclass's that moved. True
+     * when a constructor moved.
+     */
+    boolean constructor(Mod mod, GameDiff.RawCls rc, GameDiff.RawMeth m) {
+        byte[] bytes = mod.bytes.get(rc.name);
+        if (bytes == null || (new ClassReader(bytes).readShort(6) & 0xFFFF) < Opcodes.V1_6
+            || mod.bridges.getOrDefault(rc.name, List.of()).stream().anyMatch(br -> br.target().equals(m.name) && br.targetDesc().equals(m.desc))) {
+            return false;
+        }
+        String[] call = delegate(bytes, m.desc);
+        if (call == null) {
+            return false;
+        }
+        String owner = call[0], desc = call[1];
+        Type[] was = Type.getArgumentTypes(desc(desc));
+        String newCall;
+        String[][] via = new String[was.length][];
+        if (mod.classes.containsKey(owner)) {
+            Bridge parent = mod.bridges.getOrDefault(owner, List.of()).stream()
+                .filter(br -> br.via() != null && br.target().equals("<init>") && br.targetDesc().equals(desc)).findFirst().orElse(null);
+            if (parent == null) {
+                return false;
+            }
+            newCall = parent.desc();
+            for (int i = 0; i < was.length; i++) {
+                if (parent.via()[i] != null) {
+                    String[] steps = new String[parent.via()[i].length + 1];
+                    steps[0] = String.valueOf(parent.from()[i]);
+                    System.arraycopy(parent.via()[i], 0, steps, 1, parent.via()[i].length);
+                    via[i] = steps;
+                }
+            }
+        } else {
+            newCall = retypedConstructor(owner, desc);
+            if (newCall == null) {
+                return false;
+            }
+            Type[] now = Type.getArgumentTypes(newCall);
+            for (int i = 0; i < was.length; i++) {
+                if (now[i].equals(was[i])) {
+                    continue;
+                }
+                String[] steps = reading(owner, was[i], now[i], 0);
+                if (steps == null || !sameShape(owner, was[i], now[i])) {
+                    why(rc.name + ".<init>" + m.desc, "C super " + owner + ".<init>" + desc + " -> " + newCall + " reading=" + (steps == null ? null : String.join(" ", steps))
+                        + " shape=" + sameShape(owner, was[i], now[i]));
+                    return false;
+                }
+                via[i] = new String[steps.length + 1];
+                via[i][0] = String.valueOf(i);
+                System.arraycopy(steps, 0, via[i], 1, steps.length);
+            }
+        }
+        // Each place that changed type is filled from the constructor's one parameter of the old type, which becomes the new.
+        Type[] own = Type.getArgumentTypes(desc(m.desc)), params = own.clone(), newTypes = Type.getArgumentTypes(newCall);
+        int[] from = new int[own.length];
+        String[][] steps = new String[own.length][];
+        boolean any = false;
+        for (int k = 0; k < own.length; k++) {
+            from[k] = k;
+        }
+        for (int i = 0; i < was.length; i++) {
+            if (via[i] == null) {
+                continue;
+            }
+            int p = -1;
+            for (int k = 0; k < own.length; k++) {
+                if (own[k].equals(was[i])) {
+                    p = p == -1 ? k : -2;
+                }
+            }
+            if (p < 0 || steps[p] != null) {
+                return false;
+            }
+            params[p] = newTypes[Integer.parseInt(via[i][0])];
+            steps[p] = Arrays.copyOfRange(via[i], 1, via[i].length);
+            any = true;
+        }
+        String newDesc = Type.getMethodDescriptor(Type.VOID_TYPE, params);
+        if (!any || rc.methods.containsKey("<init>" + oldDesc(newDesc))) {
+            return false;
+        }
+        mod.bridges.computeIfAbsent(rc.name, k -> new ArrayList<>()).add(new Bridge("<init>", newDesc, "<init>", m.desc, from, m.flags, steps));
+        mod.change("constructor moved to what its superclass's constructor takes now");
+        return true;
+    }
+
+    /**
+     * The new release's constructor (new names) a game class's old constructor (old names) became when the update only
+     * changed the types of some of its parameters: the route map's, else the class's one constructor with as many
+     * parameters whose other parameters are the old ones in place. Null when the old one still links, or none or several fit.
+     */
+    String retypedConstructor(String owner, String desc) {
+        GameDiff.Cls holder = b.classes.get(cls(owner));
+        Type[] was = Type.getArgumentTypes(desc(desc));
+        if (!a.classes.containsKey(owner) || holder == null || holder.methods.containsKey("<init>" + desc(desc))) {
+            return null;
+        }
+        String[] moved = route.method(owner, "<init>", desc);
+        if (moved[0].equals(holder.name) && holder.methods.containsKey("<init>" + moved[2])) {
+            return Type.getArgumentTypes(moved[2]).length == was.length ? moved[2] : null;
+        }
+        String found = null;
+        for (GameDiff.Meth k : holder.methods.values()) {
+            Type[] t = Type.getArgumentTypes(k.desc);
+            if (!k.name.equals("<init>") || (k.flags & Opcodes.ACC_PRIVATE) != 0 || t.length != was.length) {
+                continue;
+            }
+            boolean fits = true;
+            for (int i = 0; i < t.length && fits; i++) {
+                // A type in another place, or a primitive in place of another, is a reshaped constructor, not a retyped one.
+                fits = t[i].equals(was[i]) || t[i].getSort() == Type.OBJECT && was[i].getSort() == Type.OBJECT && !Arrays.asList(was).contains(t[i]);
+            }
+            if (fits) {
+                if (found != null) {
+                    return null;
+                }
+                found = k.desc;
+            }
+        }
+        return found;
+    }
+
+    /**
+     * How the new release reads a value of type old from the value of type now that a game constructor takes in its place
+     * (steps as Retype gives them, new names): what the class's own two constructor bodies show, else its game
+     * superclass's, which it hands the value to (MobRenderer passes the context on; EntityRenderer reads
+     * context.getEntityRenderDispatcher() where it stored the dispatcher).
+     */
+    String[] reading(String owner, Type old, Type now, int depth) {
+        GameDiff.Cls c = a.classes.get(owner);
+        if (c == null || depth > 6) {
+            return null;
+        }
+        for (GameDiff.Meth k : c.methods.values()) {
+            Type[] was = Type.getArgumentTypes(desc(k.desc));
+            if (!k.name.equals("<init>") || Arrays.stream(was).filter(old::equals).count() != 1) {
+                continue;
+            }
+            String newDesc = retypedConstructor(owner, k.desc);
+            if (newDesc == null) {
+                continue;
+            }
+            Type[] t = Type.getArgumentTypes(newDesc);
+            int i = Arrays.asList(was).indexOf(old);
+            if (!t[i].equals(now)) {
+                continue;
+            }
+            String[][] found = retype.conversions(owner, "<init>", k.desc, new String[] { cls(owner), "<init>", newDesc }, pair(t, was));
+            if (found != null && found[i] != null && Integer.parseInt(found[i][0]) == i) {
+                return Arrays.copyOfRange(found[i], 1, found[i].length);
+            }
+        }
+        return c.sup == null ? null : reading(c.sup, old, now, depth + 1);
+    }
+
+    /**
+     * Whether the game's own subclasses of owner moved their constructors the same way: most of those that took the old
+     * type take the new one now (1.17's renderers, each EntityRenderDispatcher parameter an EntityRendererProvider.Context).
+     */
+    boolean sameShape(String owner, Type old, Type now) {
+        int yes = 0, total = 0;
+        for (GameDiff.Cls c : a.classes.values()) {
+            if (!owner.equals(c.sup) || c.methods.values().stream().noneMatch(k -> takes(k, old, true))) {
+                continue;
+            }
+            total++;
+            GameDiff.Cls after = b.classes.get(cls(c.name));
+            if (after != null && after.methods.values().stream().anyMatch(k -> takes(k, now, false)) && after.methods.values().stream().noneMatch(k -> takes(k, old, false))) {
+                yes++;
+            }
+        }
+        return yes >= 2 && yes * 10 >= total * 8;
+    }
+
+    /** Whether k is a constructor with a parameter of type t (new names; k's in old names when old). */
+    boolean takes(GameDiff.Meth k, Type t, boolean old) {
+        return k.name.equals("<init>") && Arrays.stream(Type.getArgumentTypes(old ? desc(k.desc) : k.desc)).anyMatch(t::equals);
+    }
+
+    /** The class and descriptor of the super(...) or this(...) call a constructor's body makes, or null. */
+    static String[] delegate(byte[] bytes, String desc) {
+        String[][] out = new String[1][];
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            String self, sup;
+
+            @Override
+            public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+                self = name;
+                sup = superName;
+            }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String d, String signature, String[] exceptions) {
+                return !name.equals("<init>") || !d.equals(desc) ? null : new MethodVisitor(Opcodes.ASM9) {
+                    int news;
+
+                    @Override
+                    public void visitTypeInsn(int opcode, String type) {
+                        news += opcode == Opcodes.NEW ? 1 : 0;
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String name, String d, boolean itf) {
+                        if (opcode != Opcodes.INVOKESPECIAL || !name.equals("<init>") || out[0] != null) {
+                            return;
+                        }
+                        if (news > 0) {
+                            news--;
+                        } else if (owner.equals(sup) || owner.equals(self)) {
+                            out[0] = new String[] { owner, d };
+                        }
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return out[0];
+    }
+
+    /**
      * Whether a mod method only ever passes the parameter in slot to game methods whose parameters changed: then it needs
      * no value of its own in a moved body, because each such call is given what the game passes now instead (Sites.given;
      * keyPressed(key, scan, mods) only passing scan and mods on to super.keyPressed). Read as GameDiff reads bodies.
@@ -4085,6 +4334,9 @@ public final class JarPort {
                     }
                     mod.supers.put(name, new String[] { superName, replaced });
                     mod.change("superclass the game removed replaced by the one its own subclasses extend now");
+                    if (becameInterface(superName) && (interfaces == null || !Arrays.asList(interfaces).contains(superName))) {
+                        interfaces = interfaces == null ? new String[] { superName } : java.util.stream.Stream.concat(Arrays.stream(interfaces), java.util.stream.Stream.of(superName)).toArray(String[]::new);
+                    }
                     superName = inverse.getOrDefault(replaced, replaced);
                     signature = null; // its type arguments were the old superclass's
                 } else if (superName != null) {
@@ -8768,13 +9020,21 @@ public final class JarPort {
             if (!mod.mixinTargets.containsKey(mod.self) || self == null || !owner.equals(self.sup) || !key.contains(".<init>(")) {
                 return false;
             }
-            String now = cls(owner);
+            String[] moved = a.classes.containsKey(owner) ? route.method(owner, "<init>", desc) : null;
+            return zeroSuper(owner, cls(owner), desc, moved);
+        }
+
+        /**
+         * A mixin's super(...) (desc, old names) written as one to class now (new names; owner in the old ones, as the
+         * renamer runs after): the constructor moved names when now has it, else its one with the fewest parameters,
+         * each passed its type's zero. False when now has no constructor a subclass may call.
+         */
+        boolean zeroSuper(String owner, String now, String desc, String[] moved) {
             GameDiff.Cls holder = b.classes.get(now);
-            if (holder == null) {
+            if (holder == null && !now.equals("java/lang/Object")) {
                 return false;
             }
-            String[] moved = a.classes.containsKey(owner) ? route.method(owner, "<init>", desc) : null;
-            String chosen = moved != null && moved[0].equals(now) && holder.methods.containsKey("<init>" + moved[2]) ? moved[2] : null;
+            String chosen = holder == null ? "()V" : moved != null && moved[0].equals(now) && holder.methods.containsKey("<init>" + moved[2]) ? moved[2] : null;
             if (chosen == null) {
                 for (GameDiff.Meth m : holder.methods.values()) {
                     if (m.name.equals("<init>") && (m.flags & Opcodes.ACC_PRIVATE) == 0
@@ -8800,8 +9060,10 @@ public final class JarPort {
             GameDiff.Cls now = b.classes.get(replaced[1]);
             boolean has = replaced[1].equals("java/lang/Object") ? desc.equals("()V") : now != null && now.methods.containsKey("<init>" + desc(desc));
             if (!has && mod.mixinTargets.containsKey(mod.self)) {
-                // Mixin never runs a mixin's own super(...): only what follows it is merged into the target's constructors.
-                super.visitMethodInsn(Opcodes.INVOKESPECIAL, inverse.getOrDefault(replaced[1], replaced[1]), "<init>", desc, itf);
+                // Mixin never runs a mixin's own super(...) (see mixinSuper).
+                if (!zeroSuper(inverse.getOrDefault(replaced[1], replaced[1]), replaced[1], desc, null)) {
+                    super.visitMethodInsn(Opcodes.INVOKESPECIAL, inverse.getOrDefault(replaced[1], replaced[1]), "<init>", desc, itf);
+                }
                 return;
             }
             if (!has) {
@@ -8825,8 +9087,9 @@ public final class JarPort {
                     if (decl.owner().equals(own.sup) && now.startsWith(STANDIN) && b.method(now, name, desc(desc)) != null) {
                         return true; // the old class's stand-in, which the class extends now, has it: the call stays on the class
                     }
-                    if (!decl.owner().equals(own.sup) || b.method(now, name, desc(desc)) != null) {
-                        return false;
+                    if (!decl.owner().equals(own.sup) || b.method(now, name, desc(desc)) != null
+                        || opcode == Opcodes.INVOKEVIRTUAL && becameInterface(own.sup) && b.method(cls(own.sup), name, desc(desc)) != null) {
+                        return false; // still there, or reached through the interface the class implements now
                     }
                     mod.unlinked.add("inherited from a removed superclass: " + Exposure.dotted(own.sup) + "." + name + desc + " (in " + Exposure.dotted(mod.self) + ")");
                     return true;
