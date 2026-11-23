@@ -172,6 +172,7 @@ public final class PerfTest {
             if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly();
         }
         allocationCharges(scratch, jdk, agent);
+        unsampledSurvivors();
         Path rooted = scratch.resolve("rooted");
         Files.createDirectories(rooted);
         Path rootRequest = Performance.request(rooted, 1, 0, false);
@@ -209,9 +210,11 @@ public final class PerfTest {
                 + "try { Thread.sleep(12); } catch (InterruptedException stop) { return; } } }, \"Server thread\"); server.start(); server.join(); } }"),
             fixture(classes, "com/example/alloc/Spawner.java", "package com.example.alloc; public class Spawner { static volatile Object sink; "
                 + "public static void tick() { sink = new byte[256 * 1024]; } public static int tiny(int x) { return x + 1; } }"),
-            // Keeper allocates an eighth of Spawner's bytes but keeps them for seconds: young collections copy its arrays, not Spawner's.
-            fixture(classes, "com/example/alloc/Keeper.java", "package com.example.alloc; public class Keeper { static final int[][] RING = new int[300][]; static int next; "
-                + "public static void keep() { RING[next] = new int[8192]; next = (next + 1) % RING.length; } }"));
+            // Keeper allocates a quarter of Spawner's bytes but keeps them for seconds: young collections copy its arrays, not Spawner's.
+            // Its arrays are Spawner's size so JFR samples them as often per allocation; an array that fits in a TLAB was sampled
+            // about twice a second, and a capture that sampled none of it had no site to charge the copying to.
+            fixture(classes, "com/example/alloc/Keeper.java", "package com.example.alloc; public class Keeper { static final int[][] RING = new int[60][]; static int next, tick; "
+                + "public static void keep() { if (tick++ % 4 != 0) return; RING[next] = new int[64 * 1024]; next = (next + 1) % RING.length; } }"));
         List<String> javac = new ArrayList<>(List.of(jdk.resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
             "--release", "17", "-d", classes.toString()));
         for (Path file : sources) javac.add(file.toString());
@@ -255,6 +258,19 @@ public final class PerfTest {
             process.destroy();
             if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly();
         }
+    }
+
+    /** Young collections copied mostly int[], but no int[] allocation was sampled: the copying is not handed to the byte[] site that was. */
+    static void unsampledSurvivors() {
+        Properties none = new Properties();
+        PerfReport report = new PerfReport(none, new PerfAttribution(none, none, null, List.of()));
+        report.copiedClasses.put("[I", 12_000_000L);
+        report.copiedClasses.put("[B", 2_000_000L);
+        report.allocationSitesByClass.put("[B", new HashMap<>(Map.of("Spawner.tick:1", 30_000_000L, "Loader.read:7", 10_000_000L)));
+        Map<String, Double> sites = report.survivingSites();
+        String top = sites.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse("none");
+        check(top.startsWith("[I ") && sites.get(top) == 12_000_000 && sites.get("Spawner.tick:1") == 1_500_000,
+            "copying of a class with no sampled allocation stays under that class, not the sampled site: " + sites);
     }
 
     /** perf-toggle's round snippet, run by the agent's own eval: FAST sums by formula instead of a loop, WRONG changes the result. */
