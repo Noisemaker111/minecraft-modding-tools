@@ -55,6 +55,7 @@ public final class JarPort {
         final Set<String> widened = new HashSet<>(); // "owner.name" or "owner.name+desc" the mod's access transformer opens
         final Set<String> unlinked = new TreeSet<>();
         final Set<String> silent = new TreeSet<>(); // overrides the new release no longer calls: the mod loads, a hook is quiet
+        final Set<String> skipped = new TreeSet<>(); // nested jars the loader does not load on the new release, each with why: left as they are
         final Set<String> refused = new TreeSet<>(); // why a mixin handler did not follow its target (why), for the scoreboard
         final Set<String> data = new TreeSet<>(); // game ids the mod's data names that the release lacks (DataIds), when judged
         final Map<String, Integer> changed = new TreeMap<>();
@@ -404,6 +405,7 @@ public final class JarPort {
         Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<String, Map<String, String>> decided = new java.util.concurrent.ConcurrentHashMap<>();
         // Biggest first, so no big jar starts when the others are done.
         List<Path> order = new ArrayList<>(jars);
         order.sort(Comparator.comparingLong((Path j) -> j.toFile().length()).reversed().thenComparing(Path::toString));
@@ -444,6 +446,8 @@ public final class JarPort {
                 port.between = !last;
                 port.originalsDir = originalsDir;
                 port.origin = from;
+                port.portTo = to;
+                port.decided = decided;
                 if ("fabric".equals(loader)) {
                     port.platform(Exposure.FabricApi.of(stops.get(i)), Exposure.FabricApi.of(stops.get(i + 1)));
                 }
@@ -503,7 +507,7 @@ public final class JarPort {
                 Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
                 Files.write(dest, ported);
                 // Every step's results: a reference one step could not link stays as it was, in that step's names, and breaks there.
-                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>(), data = new TreeSet<>();
+                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), skipped = new TreeSet<>(), refused = new TreeSet<>(), data = new TreeSet<>();
                 boolean judged = false;
                 Map<String, Integer> changed = new TreeMap<>();
                 for (Map<String, Object> n : nested.getOrDefault(jar, List.of())) {
@@ -514,6 +518,9 @@ public final class JarPort {
                     }
                     for (Object u : Json.array(n.get("silent"))) {
                         silent.add(n.get("jar") + ": " + u);
+                    }
+                    for (Object u : n.get("skipped") == null ? List.of() : Json.array(n.get("skipped"))) {
+                        skipped.add(n.get("jar") + ": " + u);
                     }
                     if (n.get("data") != null) {
                         judged = true;
@@ -534,6 +541,7 @@ public final class JarPort {
                 row.put("changed", changed);
                 row.put("unlinked", new ArrayList<>(unlinked));
                 row.put("silent", new ArrayList<>(silent));
+                row.put("skipped", new ArrayList<>(skipped));
                 row.put("refused", new ArrayList<>(refused));
                 if (judged) {
                     // What the mod's data names that the release lacks: the server stops on it, which linking cannot show.
@@ -600,7 +608,7 @@ public final class JarPort {
             // Two of a class's methods the hand-back gives one intermediary name is a class the JVM refuses to load
             // (GeckoLib's GeoProjectilesRenderer on 1.19); only the names Fabric runs show it.
             byte[] handed = back == null ? null : back.jar(out, originals);
-            for (byte[] c : handed == null ? List.<byte[]>of() : ModNames.Back.classesIn(handed)) {
+            for (byte[] c : handed == null ? List.<byte[]>of() : ModNames.Back.classesIn(handed, b.version)) {
                 for (String twice : declaredTwice(c)) {
                     unlinked.add("does not verify in Fabric's names: method declared twice: " + twice);
                 }
@@ -1009,24 +1017,23 @@ public final class JarPort {
     byte[] port(byte[] jar, String name, List<Map<String, Object>> results, Set<String> grants) throws IOException {
         Map<String, Long> times = new HashMap<>();
         Map<String, byte[]> entries = entries(jar, name, times);
-        // NeoForge's loader reads META-INF/mods.toml up to 1.20.4 (FML 2) and only META-INF/neoforge.mods.toml from 1.20.5
-        // (FML 3); a jar keeping the old name is skipped without a word.
-        boolean renamed = false;
-        if (loader.equals("neoforge") && compareVersions(to, "1.20.5") >= 0 && entries.containsKey("META-INF/mods.toml")
-            && !entries.containsKey("META-INF/neoforge.mods.toml")) {
-            Map<String, byte[]> moved = new LinkedHashMap<>();
-            entries.forEach((k, v) -> moved.put(k.equals("META-INF/mods.toml") ? "META-INF/neoforge.mods.toml" : k, v));
-            entries = moved;
-            times.put("META-INF/neoforge.mods.toml", times.getOrDefault("META-INF/mods.toml", 0L));
-            renamed = true;
+        String renamed = null;
+        if (loader.equals("neoforge")) {
+            String wanted = metadataFile(), other = wanted.equals(NEW_TOML) ? OLD_TOML : NEW_TOML;
+            if (entries.containsKey(other) && !entries.containsKey(wanted)) {
+                renamed = wanted.substring(wanted.lastIndexOf('/') + 1);
+                entries = moved(entries, times, other, wanted);
+            }
         }
+        Map<String, String> notLoaded = notLoaded(entries, name);
         Set<String> nested = nested(entries);
+        nested.removeAll(notLoaded.keySet());
         List<String> copied = copyNewer(entries, name);
         boolean outermost = grants == null;
         if (outermost) {
             typesUsed = false;
             Map<String, List<byte[]>> all = new HashMap<>();
-            carried(entries, all);
+            carried(entries, name, all);
             tree = new Carried(all);
             grants = new HashSet<>();
             for (String text : accessTransformers(entries, name)) {
@@ -1034,19 +1041,20 @@ public final class JarPort {
             }
         }
         Mod mod = new Mod();
-        if (renamed) {
-            mod.change("metadata renamed to neoforge.mods.toml");
+        if (renamed != null) {
+            mod.change("metadata renamed to " + renamed);
         }
+        notLoaded.forEach((n, why) -> mod.skipped.add(n + ": " + why));
         if (!copied.isEmpty()) {
             mod.change("newer game code copied for: " + copied);
         }
         mod.widened.addAll(grants);
         boolean judged = data(mod, entries);
-        // NeoForge's loader (FML 4 to 11) reads the access transformers neoforge.mods.toml lists, or else
+        // NeoForge's loader (FML 1 to 11) reads the access transformers its metadata lists, or else
         // META-INF/accesstransformer.cfg, for every mod file, nested ones included.
         // Fabric's reads the access widener fabric.mod.json names, for every mod file too.
         byte[] fmj = entries.get("fabric.mod.json");
-        mod.canWiden = entries.containsKey("META-INF/neoforge.mods.toml") || fmj != null;
+        mod.canWiden = loader.equals("neoforge") && entries.containsKey(metadataFile()) || fmj != null;
         boolean nativeGame = false; // a class naming the game as this loader's build does
         Map<String, byte[]> jarEntries = entries;
         for (var e : entries.entrySet()) {
@@ -1072,7 +1080,7 @@ public final class JarPort {
             if (name.contains("!")) {
                 // A jar nested for the other loader of a jar for several (Fabric API's modules beside the NeoForge classes)
                 // is never loaded by this one.
-                mod.silent.add("nested jar for another loader, not loaded here: " + name);
+                mod.skipped.add("nested jar for another loader, not loaded here: " + name);
             } else {
                 mod.unlinked.add("built for another loader: every class names the game as another loader's build does");
             }
@@ -1200,8 +1208,8 @@ public final class JarPort {
                 }
                 if (n.equals("META-INF/MANIFEST.MF")) {
                     data = unsigned(data);
-                } else if (n.equals("META-INF/neoforge.mods.toml") || n.equals("META-INF/mods.toml")) {
-                    data = metadata(new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
+                } else if (n.equals(NEW_TOML) || n.equals(OLD_TOML)) {
+                    data = metadata(mod, new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
                 } else if (n.equals("fabric.mod.json")) {
                     data = runsOn(fabricMetadata(data, widener, platformNested), mod.lowered);
                 } else if (n.equals("pack.mcmeta")) {
@@ -1218,7 +1226,7 @@ public final class JarPort {
                     if (nestedId != null) {
                         // The platform's own module (a Fabric API module a mod nests): the loader runs the platform's newer
                         // copy of that mod id instead, so this one is no part of the mod there.
-                        mod.silent.add("nested platform module, the platform's own runs instead: " + nestedId + " (" + n + ")");
+                        mod.skipped.add(n + ": the platform's own module, its copy of " + nestedId + " runs instead");
                     } else {
                         data = portedNested.get(n);
                     }
@@ -1255,6 +1263,7 @@ public final class JarPort {
         result.put("changed", mod.changed);
         result.put("unlinked", new ArrayList<>(mod.unlinked));
         result.put("silent", new ArrayList<>(mod.silent));
+        result.put("skipped", new ArrayList<>(mod.skipped));
         result.put("refused", new ArrayList<>(mod.refused));
         if (judged) {
             result.put("data", new ArrayList<>(mod.data));
@@ -1477,8 +1486,125 @@ public final class JarPort {
         return nested;
     }
 
+    /** The jars nested in a jar (named as port names it) that the loader loads on the release ported to. */
+    Set<String> loadedNested(Map<String, byte[]> entries, String name) {
+        Set<String> out = nested(entries);
+        out.removeAll(notLoaded(entries, name).keySet());
+        return out;
+    }
+
+    // The last release of the whole port, which with origin decides the nested jars it carries (notLoaded): a step between
+    // them would retarget a module it carries to a release its bundle has no module for. Null: this step's own releases.
+    String portTo;
+    // A port of several steps: each jar's choice of nested jars by its name as port names it (outer.jar!inner.jar), made
+    // at the first step and kept for every step after, where a module a step ported asks for that step's release. Null: chosen each time.
+    Map<String, Map<String, String>> decided;
+
+    /**
+     * The nested jars the loader passes over on the release ported to, each with why. They are left as they are, neither
+     * ported nor linked, and keep the releases their metadata names, so the loader goes on passing them over.
+     *
+     * Fabric Loader loads a nested mod where its own "minecraft" holds (fabricLoads), which is how a bundle of one module
+     * per release (ViaFabric's viafabric-mc1144 to -mc12111) runs only the module for the release it starts on. A module
+     * that accepts neither release is loaded on neither. One that accepts the old release only is passed over when the
+     * bundle carries a module that accepts the new release and not the old: the loader runs that one instead. With no
+     * such module, the old release's module is ported and asks for the new release, as every nested mod is.
+     *
+     * NeoForge's loader picks among nested jars by their artifacts' version ranges, and refuses a mod whose "minecraft"
+     * range fails instead of passing it over, so no jar's metadata picks a module per release there: every nested jar is
+     * ported, as before. A bundle that picks its module in its own code reads to the porter as modules loaded together.
+     */
+    Map<String, String> notLoaded(Map<String, byte[]> entries, String name) {
+        Map<String, String> kept = decided == null ? null : decided.get(name);
+        if (kept != null) {
+            return kept;
+        }
+        Map<String, String> out = new TreeMap<>();
+        if (!loader.equals("fabric")) {
+            return out;
+        }
+        String from = origin != null ? origin : a.version;
+        String until = portTo != null ? portTo : to;
+        Map<String, Object> ranges = new TreeMap<>();
+        for (String n : nested(entries)) {
+            Object range = fabricMinecraft(entries.get(n));
+            if (range != null) {
+                ranges.put(n, range);
+            }
+        }
+        String forNew = null;
+        for (var e : ranges.entrySet()) {
+            if (forNew == null && fabricAccepts(e.getValue(), until) && !fabricAccepts(e.getValue(), from)) {
+                forNew = e.getKey();
+            }
+        }
+        for (var e : ranges.entrySet()) {
+            boolean old = fabricAccepts(e.getValue(), from);
+            boolean now = fabricAccepts(e.getValue(), until);
+            String range = "minecraft " + Json.write(e.getValue());
+            if (!old && !now) {
+                out.put(e.getKey(), "not loaded on " + from + " or " + until + " (" + range + ")");
+            } else if (old && !now && forNew != null) {
+                out.put(e.getKey(), "for " + from + " (" + range + "); the loader runs " + forNew.substring(forNew.lastIndexOf('/') + 1) + " on " + until + " instead");
+            }
+        }
+        if (decided != null) {
+            decided.put(name, out);
+        }
+        return out;
+    }
+
+    /**
+     * Whether Fabric Loader loads a nested mod on a release, by the mod's own fabric.mod.json: its resolver takes a nested
+     * mod only when the mod's "depends" hold, and passes it over otherwise. A jar that names no "minecraft", or whose
+     * metadata cannot be read, is loaded.
+     */
+    static boolean fabricLoads(byte[] jar, String release) {
+        Object range = fabricMinecraft(jar);
+        return range == null || fabricAccepts(range, release);
+    }
+
+    /** The "minecraft" a jar's fabric.mod.json depends on, or null. */
+    static Object fabricMinecraft(byte[] jar) {
+        if (jar == null) {
+            return null;
+        }
+        try (ZipInputStream z = new ZipInputStream(new ByteArrayInputStream(jar))) {
+            for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                if (e.getName().equals("fabric.mod.json")) {
+                    Object meta = Json.parse(new String(z.readAllBytes(), StandardCharsets.UTF_8));
+                    return meta instanceof Map<?, ?> m && m.get("depends") instanceof Map<?, ?> d ? d.get("minecraft") : null;
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Whether a fabric.mod.json version predicate accepts a release: a string of terms that must all hold ("||" between
+     * alternatives), or a list any one of which may. Build metadata after "+" never counts in Fabric's comparison.
+     */
+    static boolean fabricAccepts(Object range, String release) {
+        if (range instanceof List<?> any) {
+            for (Object r : any) {
+                if (fabricAccepts(r, release)) {
+                    return true;
+                }
+            }
+            return any.isEmpty();
+        }
+        for (String alternative : String.valueOf(range).split("\\|\\|")) {
+            if (Versions.matches(alternative.replaceAll("\\+[^\\s]*", ""), release)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Every access transformer in a jar and its nested jars. */
-    static List<String> accessTransformers(Map<String, byte[]> entries, String name) throws IOException {
+    List<String> accessTransformers(Map<String, byte[]> entries, String name) throws IOException {
         List<String> out = new ArrayList<>();
         for (String file : atFiles(entries)) {
             byte[] at = entries.get(file);
@@ -1486,18 +1612,22 @@ public final class JarPort {
                 out.add(new String(at, StandardCharsets.UTF_8));
             }
         }
-        for (String n : nested(entries)) {
-            out.addAll(accessTransformers(entries(entries.get(n), name + "!" + n, new HashMap<>()), name + "!" + n));
+        for (String n : loadedNested(entries, name)) {
+            String inner = name + "!" + n.substring(n.lastIndexOf('/') + 1);
+            out.addAll(accessTransformers(entries(entries.get(n), inner, new HashMap<>()), inner));
         }
         return out;
     }
 
     static final Pattern DECLARED_AT = Pattern.compile("\\[\\[accessTransformers\\]\\][^\\[]*?file\\s*=\\s*(?:\"([^\"]+)\"|'([^']+)')");
 
-    /** The access transformers the loader reads from a jar: those its neoforge.mods.toml lists, else the default one. */
+    /**
+     * The access transformers the loader reads from a jar: those its metadata lists (FML 1, NeoForge 20.2, already reads
+     * [[accessTransformers]]), else the default one.
+     */
     static List<String> atFiles(Map<String, byte[]> entries) {
         List<String> out = new ArrayList<>();
-        byte[] toml = entries.get("META-INF/neoforge.mods.toml");
+        byte[] toml = entries.getOrDefault(NEW_TOML, entries.get(OLD_TOML));
         if (toml != null) {
             Matcher m = DECLARED_AT.matcher(new String(toml, StandardCharsets.UTF_8));
             while (m.find()) {
@@ -2190,7 +2320,7 @@ public final class JarPort {
     }
 
     /** Every class in a jar and its nested jars, by name. */
-    static void carried(Map<String, byte[]> entries, Map<String, List<byte[]>> out) throws IOException {
+    void carried(Map<String, byte[]> entries, String name, Map<String, List<byte[]>> out) throws IOException {
         for (var e : entries.entrySet()) {
             if (e.getKey().endsWith(".class") && !e.getKey().startsWith("META-INF/versions/")) {
                 try {
@@ -2200,8 +2330,9 @@ public final class JarPort {
                 }
             }
         }
-        for (String n : nested(entries)) {
-            carried(entries(entries.get(n), n, new HashMap<>()), out);
+        for (String n : loadedNested(entries, name)) {
+            String inner = name + "!" + n.substring(n.lastIndexOf('/') + 1);
+            carried(entries(entries.get(n), inner, new HashMap<>()), inner, out);
         }
     }
 
@@ -6433,7 +6564,7 @@ public final class JarPort {
 
     GameCode newCode, oldCode; // read when an injection point is first checked; tests set them
 
-    String origin; // the release the whole port started from, which the data pass judges the mod's data ids against
+    String origin; // the release the whole port started from: the data pass judges the mod's data ids against it, and with portTo it decides the nested jars carried
     DataIds.Step dataStep; // the data pass of this step: made on first use; tests set it
     boolean codeTried;
 
@@ -12381,21 +12512,94 @@ public final class JarPort {
         return languageRange;
     }
 
+    static final String OLD_TOML = "META-INF/mods.toml", NEW_TOML = "META-INF/neoforge.mods.toml";
+
+    /** FancyModLoader versions from Forge's line (Forge 1.20.1 is FML 47) count as older than NeoForge's own FML 1. */
+    static final int FORGE_FML = 47;
+
+    /**
+     * The major version of the FancyModLoader the release's NeoForge runs, which decides the metadata it reads: from the
+     * loader's own pom (languageRange), else the FML each release's newest NeoForge ships (read from their poms: 1.20.2
+     * and 1.20.3 run FML 1, 1.20.4 FML 2, 1.20.5 and 1.20.6 FML 3, 1.21 and 1.21.1 FML 4; before 1.20.2 Forge's FML 47).
+     */
+    int fml() {
+        Matcher range = Pattern.compile("\\[(\\d+),").matcher(languageRange());
+        if (range.lookingAt()) {
+            int major = Integer.parseInt(range.group(1));
+            return major >= FORGE_FML ? 0 : major;
+        }
+        return compareVersions(to, "1.20.2") < 0 ? 0 : compareVersions(to, "1.20.4") < 0 ? 1 : compareVersions(to, "1.20.5") < 0 ? 2
+            : compareVersions(to, "1.21") < 0 ? 3 : 4;
+    }
+
+    /**
+     * The metadata file the release's NeoForge reads. FML 3 (NeoForge 20.5) renamed META-INF/mods.toml to
+     * META-INF/neoforge.mods.toml (NeoForge's 20.5 release notes, "mods.toml renamed"), and FML 1 and 2 read only the old
+     * name (their ModFileParser names "mods.toml", not "META-INF/neoforge.mods.toml"). A jar keeping the other name is
+     * skipped without a word, so the port writes the one the release reads.
+     */
+    String metadataFile() {
+        return fml() >= 3 ? NEW_TOML : OLD_TOML;
+    }
+
+    /** entries with from renamed to to, in the same place, keeping its time. */
+    static Map<String, byte[]> moved(Map<String, byte[]> entries, Map<String, Long> times, String from, String to) {
+        Map<String, byte[]> moved = new LinkedHashMap<>();
+        entries.forEach((k, v) -> moved.put(k.equals(from) ? to : k, v));
+        times.put(to, times.getOrDefault(from, 0L));
+        return moved;
+    }
+
+    /**
+     * Keys of a mod's [[mods]] entry that only newer NeoForge reads, each with the first FML that does. Read on an older
+     * one, the key is ignored and what it declares never happens, and nothing older says it another way: data-driven enum
+     * extensions came with FML 4 (NeoForge 21.0: net.neoforged.fml.common.asm.enumextension, which FML 3 lacks; it
+     * replaced IExtensibleEnum's create methods), and feature flags a mod declares with NeoForge 21.1's FeatureFlagLoader.
+     */
+    static final Map<String, String> NEWER_KEYS = Map.of("enumExtensions", "1.21", "featureFlags", "1.21.1");
+
+    /** Dependency types FML 1's mandatory flag can say; incompatible and discouraged (FML 2) it cannot. */
+    static final Map<String, String> MANDATORY = Map.of("required", "true", "optional", "false");
+
+    static final Pattern DEPENDENCY_TYPE = Pattern.compile("(?m)^(\\s*)type\\s*=\\s*\"([A-Za-z]+)\"[ \\t]*\\r?\\n?");
+    static final Pattern DEPENDENCY_MANDATORY = Pattern.compile("(?m)^(\\s*)mandatory\\s*=\\s*\"?(true|false)\"?[ \\t]*\\r?\\n?");
+
+    String metadata(String toml) {
+        return metadata(new Mod(), toml);
+    }
+
     /**
      * The loader metadata asks for the new release: the game's and the loader's version ranges of each dependency block,
-     * and the version of the loader's own language provider.
+     * and the version of the loader's own language provider. Each dependency says whether it is needed the way the
+     * release's FML reads it: FML 1 (NeoForge 20.2, 20.3) only by mandatory=true|false and fails a block without it
+     * ("Missing required field mandatory in dependency"); FML 2 and 3 read type="required|optional|incompatible|discouraged"
+     * and still the deprecated mandatory; FML 4 on reads only type, so a mandatory=false block is required there. A key
+     * only newer releases read is a break on an older one.
      */
-    String metadata(String toml) {
+    String metadata(Mod mod, String toml) {
         String language = languageRange();
         if (!language.isEmpty() && Pattern.compile("(?m)^\\s*modLoader\\s*=\\s*\"(javafml|lowcodefml)\"").matcher(toml).find()) {
             toml = toml.replaceFirst("(?m)^(\\s*loaderVersion\\s*=\\s*)\"[^\"]*\"", "$1" + Matcher.quoteReplacement("\"" + language + "\""));
         }
+        if (loader.equals("neoforge")) {
+            for (var key : NEWER_KEYS.entrySet()) {
+                if (compareVersions(to, key.getValue()) < 0 && Pattern.compile("(?m)^\\s*" + key.getKey() + "\\s*=").matcher(toml).find()) {
+                    mod.unlinked.add("metadata " + key.getKey() + " has no form before " + key.getValue() + ": NeoForge for " + to + " does not read it");
+                }
+            }
+        }
+        int fml = loader.equals("neoforge") ? fml() : -1;
         Matcher m = BLOCK.matcher(toml);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
             String block = m.group();
+            if (fml >= 0) {
+                block = dependencyType(mod, block, fml);
+            }
             Matcher id = Pattern.compile("modId\\s*=\\s*\"([^\"]+)\"").matcher(block);
-            if (id.find()) {
+            if (block.isEmpty()) {
+                // dropped: FML 1 cannot say it
+            } else if (id.find()) {
                 String range = switch (id.group(1)) {
                     case "minecraft" -> "[" + to + "]";
                     case "neoforge", "forge" -> loaderTo == null ? null : "[" + loaderTo.replaceAll("^(\\d+\\.\\d+).*", "$1") + ",)";
@@ -12409,10 +12613,41 @@ public final class JarPort {
                 if (id.group(1).equals("forge") && loader.equals("neoforge") && compareVersions(to, "1.20.2") >= 0) {
                     block = block.replaceFirst("modId\\s*=\\s*\"forge\"", "modId=\"neoforge\"");
                 }
+                // And the reverse: NeoForge for 1.20.1 (47.1) is Forge's line, which provides "forge".
+                if (id.group(1).equals("neoforge") && loader.equals("neoforge") && compareVersions(to, "1.20.2") < 0) {
+                    block = block.replaceFirst("modId\\s*=\\s*\"neoforge\"", "modId=\"forge\"");
+                }
             }
             m.appendReplacement(sb, Matcher.quoteReplacement(block));
         }
         return m.appendTail(sb).toString();
+    }
+
+    /**
+     * A dependency block saying whether it is needed as the release's FML reads it (metadata). A type FML 1 cannot say
+     * (incompatible, discouraged) drops the block, reported: the loader no longer refuses the pair, though the mod runs.
+     */
+    static String dependencyType(Mod mod, String block, int fml) {
+        Matcher type = DEPENDENCY_TYPE.matcher(block), mandatory = DEPENDENCY_MANDATORY.matcher(block);
+        boolean typed = type.find(), flagged = mandatory.find();
+        if (fml <= 1 && typed && !flagged) {
+            String kind = type.group(2).toLowerCase(Locale.ROOT);
+            String flag = MANDATORY.get(kind);
+            if (flag == null) {
+                Matcher id = Pattern.compile("modId\\s*=\\s*\"([^\"]+)\"").matcher(block);
+                mod.silent.add("dependency type " + kind + " has no form before NeoForge 20.4, left out: " + (id.find() ? id.group(1) : "?"));
+                mod.change("dependency type the release cannot read left out");
+                return "";
+            }
+            mod.change("dependency type written as mandatory");
+            return block.substring(0, type.start()) + type.group(1) + "mandatory=" + flag + "\n" + block.substring(type.end());
+        }
+        if (fml >= 2 && flagged && !typed) {
+            mod.change("dependency mandatory written as type");
+            return block.substring(0, mandatory.start()) + mandatory.group(1) + "type=\"" + (mandatory.group(2).equals("true") ? "required" : "optional") + "\"\n"
+                + block.substring(mandatory.end());
+        }
+        return block;
     }
 
     /** The access widener a fabric.mod.json names, or null. */

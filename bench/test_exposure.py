@@ -970,6 +970,18 @@ with tempfile.TemporaryDirectory() as tmp:
     check(forward["linked"] == 4 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
     check(ported_now == list(came) and kept[1]["mods"] == [{k: v for k, v in m.items() if k != "out"} for m in kept[0]["mods"]] and kept[1]["linked"] == 3,
           f"a kept port keeps the Java check of the jar it wrote, which is gone when it is read again: {ported_now}, {kept[1]}")
+    # A bundle's module for a newer release, which JarPort left out as not loaded on this one, never runs on its Java.
+    bundled = root / "bundle.jar"
+    bundled.write_bytes(wrote["nested.jar"])
+
+    def checked(skipped):
+        row = {"mod": "bundle.jar", "out": str(bundled), "unlinked": [], "skipped": skipped}
+        return E.with_java_checked(row, "fabric", "old", lambda: 17)["unlinked"]
+
+    check(checked(["bundle.jar: META-INF/jars/lib.jar: not loaded on 1.0 or 2.0 (minecraft \"3.0\")"]) == [],
+          "a nested module the loader does not load on the release asks nothing of its Java")
+    check(checked(["bundle.jar: META-INF/jars/other.jar: not loaded"]) == ["bundle.jar: built for a newer Java: Java 21 classes, Java 17 runs old"],
+          "skipping another nested jar leaves the loaded module's Java counted")
 
 # A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
 # PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.

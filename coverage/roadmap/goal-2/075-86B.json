@@ -1,0 +1,16 @@
+{
+ "id": "86B",
+ "title": "Ports to older releases write the metadata their loader reads",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "Step 86 found that, after the Java version, the largest blocker to porting back is metadata: a jar ported to an older release kept what only newer loaders read, and the loader skipped it without a word. NeoForge before 20.5 reads META-INF/mods.toml, not neoforge.mods.toml; NeoForge 20.2 and 20.3 (FML 1) fail a dependency without mandatory, and FML 4 on reads only type; a mixin config's compatibilityLevel and fabric.mod.json's java dependency name a Java the older release does not run. JarPort now writes, for each target release, the metadata that release's loader reads, in the jar and every nested jar, from the FML version the release's own pom names and the loaders' own files. What no older loader can say (enumExtensions before NeoForge 21.0, featureFlags before 21.1) is a break; a dependency type FML 1 cannot say is left out and reported.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "JarPortMetadataTest fails without the handler; tools/cloud-run exposure against main for any version, every update and big updates; tools/cloud-run load on NeoForge 1.21.1 -> 1.20.4 and Fabric 1.20.1 -> 1.19.2 with every linked mod loaded or failed for a reason other than its metadata",
+ "wrongIf": "a ported mod that links is skipped by the older loader for its metadata, or a mod that loaded on main's receipt fails because of the rewritten metadata",
+ "measures": [
+  "port.jar-links.any-version",
+  "port.jar-links.every-update"
+ ],
+ "result": "in progress: cloud exposure 45197438746 and load 45197468271 on 73d7c66"
+}

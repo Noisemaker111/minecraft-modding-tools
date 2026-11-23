@@ -395,7 +395,7 @@ final class JarPortRetypeTest {
         port.platformIds = Set.of();
         port.platformAliases = Map.of();
         List<String> platformUnlinked = platformRuns.stream().flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
-        JarPortTest.expect(platformUnlinked.isEmpty() && platformRuns.stream().anyMatch(r -> String.valueOf(r.get("silent")).contains("nested platform module")),
+        JarPortTest.expect(platformUnlinked.isEmpty() && platformRuns.stream().anyMatch(r -> String.valueOf(r.get("skipped")).contains("the platform's own module")),
             "a nested jar the platform provides runs as the platform's own, so it holds nothing back: " + platformUnlinked + " " + platformRuns);
 
         // A mod class on the removed Part extends what the game's own subclasses of it extend now, not Graphics.
