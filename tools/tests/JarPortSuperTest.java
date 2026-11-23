@@ -89,6 +89,29 @@ final class JarPortSuperTest {
             && tileInit.contains("java/lang/Object.<init>()V"),
             "a mixin of a class that became an interface extends what the target does now and implements it: " + tile.getSuperName() + " "
                 + Arrays.toString(tile.getInterfaces()) + " " + tileInit);
+        constructorInjectors(port);
+    }
+
+    /**
+     * Injectors into ArrowR's constructor, which took a Disp and takes a Ctx: one whose handler takes the Disp before its
+     * CallbackInfo, and one naming the old descriptor, are reported; one taking only the CallbackInfo is not.
+     */
+    static void constructorInjectors(JarPort port) throws Exception {
+        String ci = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
+        ClassWriter w = JarPortRetypeTest.writer("m7/InitMixin", "java/lang/Object");
+        AnnotationVisitor target = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor value = target.visitArray("value");
+        value.visit(null, Type.getObjectType("s7/ArrowR"));
+        value.visitEnd();
+        target.visitEnd();
+        JarPortFixesTest.handler(w, JarPortFixesTest.INJECT, "onArgs", "(" + DISP + ci + ")V", "<init>", "TAIL", null, null);
+        JarPortFixesTest.handler(w, JarPortFixesTest.INJECT, "onPlain", "(" + ci + ")V", "<init>", "TAIL", null, null);
+        w.visitEnd();
+        List<Map<String, Object>> runs = new ArrayList<>();
+        port.port(JarPortTest.jar(Map.of("m7/InitMixin.class", w.toByteArray(),
+            "m7.mixins.json", "{\"package\": \"m7\", \"mixins\": [\"InitMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "init.jar", runs);
+        JarPortTest.expect(unlinked(runs).equals(List.of("mixin target changed signature: s7.ArrowR.<init>(Ls7/Disp;)V")),
+            "an injector into a reshaped constructor taking its old arguments is reported, one taking none is not: " + unlinked(runs));
     }
 
     static List<String> unlinked(List<Map<String, Object>> results) {

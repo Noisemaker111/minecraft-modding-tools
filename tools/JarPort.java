@@ -4660,6 +4660,14 @@ public final class JarPort {
             mod.change("mixin injection moved to the target's new signature");
             return moved;
         }
+        Matcher ctor = key.equals("method") && handler != null && mod.injectors.containsKey(handler) ? MEMBER.matcher(text) : null;
+        if (ctor != null && ctor.matches() && "<init>".equals(ctor.group(2))) {
+            String changed = constructorChanged(ctor.group(1) != null ? List.of(ctor.group(1)) : targets, ctor.group(3), handler.substring(handler.indexOf('(')));
+            if (changed != null) {
+                mod.unlinked.add(changed);
+                return text;
+            }
+        }
         Found f = find(targets, key, text);
         if (f.report() != null && f.report().contains(".lambda$") && handler != null && mod.injectors.containsKey(handler)) {
             // A lambda the new release no longer has stops the game only where the injector requires its place.
@@ -4724,6 +4732,39 @@ public final class JarPort {
             }
         }
         return null;
+    }
+
+    /**
+     * An injector into a target's constructor that the update reshaped: named with its old descriptor, which the new class
+     * lacks, or by name alone with a handler that takes the old constructor's arguments before its CallbackInfo, which
+     * no constructor of the new class starts with (Mixin then refuses the handler's descriptor). The report, or null.
+     */
+    String constructorChanged(List<String> owners, String mdesc, String handlerDesc) {
+        Type[] params = Type.getArgumentTypes(handlerDesc);
+        int ci = callbackAt(params);
+        List<Type> captured = ci > 0 ? Arrays.stream(params, 0, ci).map(t -> Type.getType(desc(t.getDescriptor()))).toList() : List.of();
+        for (String o : owners) {
+            GameDiff.Cls was = a.classes.get(o), now = b.classes.get(cls(o));
+            if (was == null || now == null) {
+                continue;
+            }
+            for (GameDiff.Meth k : was.methods.values()) {
+                if (!k.name.equals("<init>") || (mdesc != null ? !k.desc.equals(mdesc) : captured.isEmpty() || !startsWith(desc(k.desc), captured))) {
+                    continue;
+                }
+                boolean kept = mdesc != null ? now.methods.containsKey("<init>" + desc(mdesc))
+                    : now.methods.values().stream().anyMatch(n -> n.name.equals("<init>") && startsWith(n.desc, captured));
+                if (!kept) {
+                    return "mixin target changed signature: " + Exposure.dotted(o) + ".<init>" + k.desc;
+                }
+            }
+        }
+        return null;
+    }
+
+    static boolean startsWith(String desc, List<Type> first) {
+        Type[] t = Type.getArgumentTypes(desc);
+        return t.length >= first.size() && Arrays.asList(t).subList(0, first.size()).equals(first);
     }
 
     static Found keep(String text) {
