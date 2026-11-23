@@ -82,9 +82,9 @@ public final class JarPort {
         final Set<String> unmoved = new HashSet<>(); // class.name+desc of bodies a call in them cannot be given its arguments
         final Map<String, Object[]> twins = new LinkedHashMap<>(); // class.name+desc -> {parameter, new type, steps} (Sites.twin)
         final Map<String, Integer> requires = new HashMap<>(); // mixin class -> its config's injectors.defaultRequire
-        final Set<String> mixinConfigs = new HashSet<>(); // entries that are mixin configs
         final Map<String, String[]> supers = new HashMap<>(); // class -> {removed superclass (old name), what it extends now (new name)}
         final Set<String> foreign = new HashSet<>(); // entries of classes built for another loader (otherLoader), left as they are
+        int lowered; // the Java this jar's classes were lowered to (lowerJava), 0 when the new release's Java runs them as they came
 
         void change(String kind) {
             changed.merge(kind, 1, Integer::sum);
@@ -1128,6 +1128,9 @@ public final class JarPort {
             mod.changed.clear();
             mod.changed.putAll(wasChanged);
         }
+        if (!between) {
+            lowerJava(mod, rewritten, entries, name);
+        }
         verify(mod, rewritten, entries);
         bundle(mod, rewritten, entries, name);
         List<String> atFiles = atFiles(entries);
@@ -1197,11 +1200,9 @@ public final class JarPort {
                 } else if (n.equals(NEW_TOML) || n.equals(OLD_TOML)) {
                     data = metadata(mod, new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
                 } else if (n.equals("fabric.mod.json")) {
-                    data = fabricMetadata(mod, data, widener, platformNested);
+                    data = runsOn(fabricMetadata(data, widener, platformNested), mod.lowered);
                 } else if (n.equals("pack.mcmeta")) {
                     data = packMetadata(mod, data);
-                } else if (mod.mixinConfigs.contains(n)) {
-                    data = mixinConfig(mod, data);
                 } else if (n.equals(widener)) {
                     String text = accessWidener(mod, new String(data, StandardCharsets.UTF_8));
                     if (!mod.grants.isEmpty()) {
@@ -1227,6 +1228,9 @@ public final class JarPort {
                         mod.change("members opened through the mod's access transformer");
                     }
                     data = text.getBytes(StandardCharsets.UTF_8);
+                }
+                if (mod.lowered > 0 && n.endsWith(".json") && !n.equals("fabric.mod.json")) {
+                    data = mixinLevel(data, mod.lowered);
                 }
                 ZipEntry entry = new ZipEntry(n);
                 entry.setTime(times.getOrDefault(n, 0L));
@@ -6071,7 +6075,6 @@ public final class JarPort {
             if (!(pkg instanceof String p)) {
                 continue;
             }
-            mod.mixinConfigs.add(e.getKey());
             Object injectors = config.get("injectors");
             int require = injectors instanceof Map<?, ?> m && m.get("defaultRequire") instanceof Number n ? n.intValue() : 0;
             for (String list : List.of("mixins", "client", "server")) {
@@ -10545,6 +10548,8 @@ public final class JarPort {
     static final String STANDIN = "mmt/standin/";
 
     final Map<String, byte[]> standins = new HashMap<>(); // stand-in class (internal, unrelocated) -> its bytes
+    /** Stand-ins for the JDK methods an older Java lacks (standins/jdk/), which a mod lowered to that Java calls instead. */
+    Downgrade.Standins jdkStandins = Downgrade.Standins.NONE;
 
     /**
      * Reads the stand-ins written for this update (knowledge/standins/FROM-TO/): Java sources, one class per old game
@@ -11001,6 +11006,62 @@ public final class JarPort {
             rewritten.put(move.map(name) + ".class", relocate(standins.get(name), move));
         }
         mod.change("stand-ins carried: " + used.stream().filter(n -> !n.matches(".*\\$\\d+$")).map(n -> Exposure.dotted(n.substring(STANDIN.length()))).toList());
+    }
+
+    /**
+     * The jar's classes lowered to the Java the new release runs on, when they were built for a newer one (Downgrade): the
+     * release's JVM refuses a newer class file outright. What that Java cannot run is reported, and the JDK stand-ins the
+     * classes call now are carried under a package of the jar's own.
+     */
+    void lowerJava(Mod mod, Map<String, byte[]> rewritten, Map<String, byte[]> entries, String jarName) {
+        int java = b.java > 0 ? b.java : standinJava(b.version);
+        Set<String> breaks = new TreeSet<>();
+        Map<String, Integer> changed = new TreeMap<>();
+        Map<String, byte[]> carried = new Downgrade(java, jdkStandins).lower(rewritten, standinHome(jarName, "java", "java" + java), breaks, changed);
+        if (changed.isEmpty()) {
+            return;
+        }
+        mod.lowered = java;
+        mod.unlinked.addAll(breaks);
+        changed.forEach((k, v) -> mod.changed.merge(k, v, Integer::sum));
+        entries.putAll(carried);
+        rewritten.putAll(carried);
+        if (!carried.isEmpty()) {
+            mod.change("JDK stand-ins carried: " + carried.keySet().stream().filter(n -> !n.matches(".*\\$\\d+\\.class$"))
+                .map(n -> Exposure.dotted(n.substring(n.indexOf("/java/") + 1, n.length() - 6))).toList());
+        }
+    }
+
+    static final Pattern MIXIN_LEVEL = Pattern.compile("(\"compatibilityLevel\"\\s*:\\s*\"JAVA_)(\\d+)(\")");
+
+    /**
+     * A Mixin config asking for a newer Java than the jar was lowered to asks for that one: Mixin refuses a level the JVM
+     * running it does not reach (JAVA_17 on Java 8), and the lowered classes need no more.
+     */
+    static byte[] mixinLevel(byte[] json, int java) {
+        String text = new String(json, StandardCharsets.UTF_8);
+        Matcher m = MIXIN_LEVEL.matcher(text);
+        if (!m.find() || Integer.parseInt(m.group(2)) <= java) {
+            return json;
+        }
+        return m.replaceFirst("$1" + java + "$3").getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** fabric.mod.json asking for the Java the jar was lowered to: Fabric Loader refuses a mod whose "java" dependency the JVM does not meet. */
+    static byte[] runsOn(byte[] fmj, int java) {
+        if (java == 0) {
+            return fmj;
+        }
+        try {
+            Map<String, Object> meta = Json.object(Json.parse(new String(fmj, StandardCharsets.UTF_8)));
+            if (meta.get("depends") instanceof Map<?, ?> depends && depends.containsKey("java")) {
+                Json.object(depends).put("java", ">=" + java);
+                return Json.write(meta).getBytes(StandardCharsets.UTF_8);
+            }
+        } catch (RuntimeException unreadable) {
+            // the loader cannot read it either
+        }
+        return fmj;
     }
 
     /**
@@ -11681,6 +11742,7 @@ public final class JarPort {
         if (!dirs.isEmpty()) {
             standins(dirs);
         }
+        jdkStandins = Downgrade.Standins.of(root.resolve("jdk"));
     }
 
     /**
@@ -12457,56 +12519,6 @@ public final class JarPort {
         return block;
     }
 
-    Integer targetJava; // the Java the release runs on (its version.json's javaVersion), 0 when unknown
-
-    int targetJava() {
-        if (targetJava == null) {
-            try {
-                Matcher m = Pattern.compile("\"javaVersion\"\\s*:\\s*\\{[^}]*\"majorVersion\"\\s*:\\s*(\\d+)").matcher(GameDiff.versionJson(to));
-                // Releases before 1.17 name none: they run on Java 8.
-                targetJava = m.find() ? Integer.parseInt(m.group(1)) : 8;
-            } catch (Exception unreadable) {
-                targetJava = 0;
-            }
-        }
-        return targetJava;
-    }
-
-    static final Pattern COMPATIBILITY = Pattern.compile("(\"compatibilityLevel\"\\s*:\\s*\")JAVA_(\\d+)\"");
-
-    /**
-     * A mixin config's compatibilityLevel names the Java the mod was built for. Mixin refuses a level the running Java
-     * does not support ("The requested compatibility level %s could not be set. Level is not supported by the active
-     * JRE", MixinEnvironment in Mixin 0.8.5 to 0.8.7), and the game stops before it loads: on an older release the level
-     * is that release's Java, which is the most its classes can need there.
-     */
-    byte[] mixinConfig(Mod mod, byte[] data) {
-        int runs = targetJava();
-        String text = new String(data, StandardCharsets.UTF_8);
-        Matcher m = COMPATIBILITY.matcher(text);
-        if (runs <= 0 || !m.find() || Integer.parseInt(m.group(2)) <= runs) {
-            return data;
-        }
-        mod.change("mixin compatibility level lowered to the release's Java");
-        return (text.substring(0, m.start()) + m.group(1) + "JAVA_" + runs + "\"" + text.substring(m.end())).getBytes(StandardCharsets.UTF_8);
-    }
-
-    static final Pattern FIRST_NUMBER = Pattern.compile("(?:1\\.)?(\\d+)");
-
-    /**
-     * A fabric.mod.json "java" dependency (">=21") asks for the Java the mod was built for; Fabric Loader refuses the mod
-     * on a release that runs an older one. On such a release it asks for that release's Java instead.
-     */
-    String javaRange(Mod mod, String asked) {
-        int runs = targetJava();
-        Matcher m = FIRST_NUMBER.matcher(asked.replaceAll("^[^0-9]*", ""));
-        if (runs <= 0 || !m.lookingAt() || Integer.parseInt(m.group(1)) <= runs) {
-            return asked;
-        }
-        mod.change("java dependency lowered to the release's Java");
-        return ">=" + runs;
-    }
-
     /** The access widener a fabric.mod.json names, or null. */
     static String widenerFile(byte[] fmj) {
         try {
@@ -12518,10 +12530,9 @@ public final class JarPort {
 
     /**
      * fabric.mod.json asks for the new release: its "minecraft" dependency becomes the release ported to, and it names the
-     * access widener the port wrote when the mod had none, and its "java" dependency the release's Java where that is
-     * older. Anything unreadable is left as it is.
+     * access widener the port wrote when the mod had none. Anything unreadable is left as it is.
      */
-    byte[] fabricMetadata(Mod mod, byte[] data, String widener, Set<String> platformNested) {
+    byte[] fabricMetadata(byte[] data, String widener, Set<String> platformNested) {
         Map<String, Object> meta;
         try {
             meta = Json.object(Json.parse(new String(data, StandardCharsets.UTF_8)));
@@ -12530,9 +12541,6 @@ public final class JarPort {
         }
         if (meta.get("depends") instanceof Map<?, ?> depends && depends.containsKey("minecraft")) {
             Json.object(depends).put("minecraft", to);
-        }
-        if (meta.get("depends") instanceof Map<?, ?> depends && depends.get("java") instanceof String asked) {
-            Json.object(depends).put("java", javaRange(mod, asked));
         }
         // A name the old platform answered to and the new one does not is asked of the module that gave it.
         if (meta.get("depends") instanceof Map<?, ?> depends) {

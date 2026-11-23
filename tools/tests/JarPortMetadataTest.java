@@ -6,8 +6,8 @@ import java.util.*;
  * A jar ported to a release gets the metadata that release's loader reads, its nested jars too:
  * - NeoForge before 20.5 reads META-INF/mods.toml, from 20.5 only META-INF/neoforge.mods.toml;
  * - NeoForge 20.2 and 20.3 (FML 1) say a dependency is needed only by mandatory, FML 4 on only by type;
- * - a key only newer NeoForge reads (enumExtensions) is a break, a dependency type FML 1 cannot say is reported;
- * - a mixin config's compatibilityLevel and fabric.mod.json's "java" ask for no newer Java than the release runs.
+ * - a key only newer NeoForge reads (enumExtensions) is a break, a dependency type FML 1 cannot say is reported.
+ * The Java a mixin config and fabric.mod.json ask for follows the classes' own lowering (JarPortJavaTest).
  */
 final class JarPortMetadataTest {
 
@@ -17,7 +17,6 @@ final class JarPortMetadataTest {
         Path scratch = Files.createDirectories(Path.of(args[0]));
         neoforgeBack(scratch);
         neoforgeForward(scratch);
-        fabricBack(scratch);
         if (failures > 0) {
             System.out.println(failures + " metadata checks failed");
             System.exit(1);
@@ -41,13 +40,12 @@ final class JarPortMetadataTest {
         return data == null ? null : new String(data, StandardCharsets.UTF_8);
     }
 
-    static JarPort port(Path scratch, String to, String loader, String language, int java) throws Exception {
+    static JarPort port(Path scratch, String to, String loader, String language) throws Exception {
         Path map = scratch.resolve("route-metadata.json");
         Files.writeString(map, "{}");
         JarPort port = new JarPort(new GameDiff.Snap("1.0"), new GameDiff.Snap(to), map);
         port.loader = loader;
         port.languageRange = language;
-        port.targetJava = java;
         return port;
     }
 
@@ -92,7 +90,7 @@ final class JarPortMetadataTest {
             "META-INF/jarjar/metadata.json", utf8("{\"jars\": [{\"identifier\": {\"group\": \"g\", \"artifact\": \"inner\"}, \"version\": {\"range\": \"[1,)\", \"artifactVersion\": \"1\"}, \"path\": \"META-INF/jarjar/inner.jar\"}]}"),
             "META-INF/jarjar/inner.jar", inner));
         List<Map<String, Object>> results = new ArrayList<>();
-        JarPort port = port(scratch, "1.20.3", "neoforge", "[1,)", 17);
+        JarPort port = port(scratch, "1.20.3", "neoforge", "[1,)");
         Map<String, byte[]> out = JarPortTest.entries(port.port(JarPortTest.jar(files), "outer.jar", results));
         Map<String, byte[]> nested = JarPortTest.entries(out.get("META-INF/jarjar/inner.jar"));
         for (var jar : List.of(Map.entry("outer", out), Map.entry("inner", nested))) {
@@ -108,9 +106,6 @@ final class JarPortMetadataTest {
                 jar.getKey() + ": the incompatible block FML 1 cannot say is left out, the others kept: " + toml);
             expect(toml.contains("loaderVersion=\"[1,)\"") && toml.contains("config=\"" + jar.getKey() + ".mixins.json\""),
                 jar.getKey() + ": the release's language version, and the mixin config list FML 1 reads too: " + toml);
-            String mixins = text(jar.getValue(), jar.getKey() + ".mixins.json");
-            expect(mixins.contains("\"compatibilityLevel\": \"JAVA_17\"") && mixins.contains("\"required\": true"),
-                jar.getKey() + ": the mixin config asks for the Java 1.20.3 runs, the rest as it was: " + mixins);
         }
         List<String> unlinked = all(results, "unlinked"), silent = all(results, "silent");
         expect(unlinked.stream().anyMatch(u -> u.contains("enumExtensions")) && results.get(results.size() - 1).get("jar").equals("outer.jar")
@@ -135,34 +130,16 @@ final class JarPortMetadataTest {
                 mandatory=false
                 versionRange="[15,)"
             """));
-        files.put("old.mixins.json", utf8("{\"package\": \"old.mixin\", \"compatibilityLevel\": \"JAVA_17\", \"mixins\": []}"));
-        JarPort port = port(scratch, "1.21.1", "neoforge", "[4,)", 21);
+        JarPort port = port(scratch, "1.21.1", "neoforge", "[4,)");
         Map<String, byte[]> out = JarPortTest.entries(port.port(JarPortTest.jar(files), "old.jar", new ArrayList<>()));
         String toml = text(out, "META-INF/neoforge.mods.toml");
         expect(toml != null && !out.containsKey("META-INF/mods.toml"), "NeoForge 21.1 reads only neoforge.mods.toml: " + out.keySet());
         expect(toml != null && toml.contains("type=\"optional\"") && !toml.contains("mandatory"),
             "FML 4 reads only type: mandatory=false becomes optional, not required: " + toml);
-        expect(text(out, "old.mixins.json").contains("JAVA_17"), "a lower compatibility level is kept on a newer Java");
         Map<String, byte[]> typed = new LinkedHashMap<>(neoforgeJar("same", Map.of()));
-        Map<String, byte[]> at204 = JarPortTest.entries(port(scratch, "1.20.4", "neoforge", "[2,)", 17).port(JarPortTest.jar(typed), "same.jar", new ArrayList<>()));
+        Map<String, byte[]> at204 = JarPortTest.entries(port(scratch, "1.20.4", "neoforge", "[2,)").port(JarPortTest.jar(typed), "same.jar", new ArrayList<>()));
         String toml204 = text(at204, "META-INF/mods.toml");
         expect(toml204 != null && toml204.contains("type=\"incompatible\"") && !toml204.contains("mandatory"),
             "NeoForge 20.4 (FML 2) reads type, so every type stays: " + toml204);
-    }
-
-    /** Fabric 1.20.1 to 1.16.5, which runs Java 8: the java dependency and the mixin level ask for Java 8. */
-    static void fabricBack(Path scratch) throws Exception {
-        Map<String, byte[]> files = new LinkedHashMap<>();
-        files.put("fabric.mod.json", utf8("{\"schemaVersion\": 1, \"id\": \"fab\", \"version\": \"1\", \"mixins\": [\"fab.mixins.json\"],"
-            + " \"depends\": {\"minecraft\": \"~1.20.1\", \"java\": \">=17\", \"fabricloader\": \">=0.14\"}}"));
-        files.put("fab.mixins.json", utf8("{\"package\": \"fab.mixin\", \"compatibilityLevel\": \"JAVA_17\", \"mixins\": []}"));
-        Map<String, byte[]> out = JarPortTest.entries(port(scratch, "1.16.5", "fabric", "", 8).port(JarPortTest.jar(files), "fab.jar", new ArrayList<>()));
-        Map<String, Object> depends = Json.object(Json.object(Json.parse(text(out, "fabric.mod.json"))).get("depends"));
-        expect(">=8".equals(depends.get("java")) && "1.16.5".equals(depends.get("minecraft")) && ">=0.14".equals(depends.get("fabricloader")),
-            "Fabric Loader is asked for the Java and game 1.16.5 run, the loader range kept: " + depends);
-        expect(text(out, "fab.mixins.json").contains("\"JAVA_8\""), "the mixin config asks for Java 8: " + text(out, "fab.mixins.json"));
-        Map<String, byte[]> forward = JarPortTest.entries(port(scratch, "1.21.1", "fabric", "", 21).port(JarPortTest.jar(files), "fab.jar", new ArrayList<>()));
-        expect(">=17".equals(Json.object(Json.object(Json.parse(text(forward, "fabric.mod.json"))).get("depends")).get("java")),
-            "a release on a newer Java keeps the mod's own Java range");
     }
 }

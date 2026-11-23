@@ -101,7 +101,7 @@ final class JarPortFieldTest {
         modules.platform(wasMods, nowMods);
         JarPortTest.expect(modules.platformAliases.equals(Map.of("keys-v1", "keymaps-v1", "gone-v1", "")),
             "a renamed module is the one now holding its classes, a removed one is no one: " + modules.platformAliases);
-        Map<String, Object> asked = Json.object(Json.parse(new String(modules.fabricMetadata(modules.new Mod(),
+        Map<String, Object> asked = Json.object(Json.parse(new String(modules.fabricMetadata(
             "{\"id\": \"m9\", \"depends\": {\"keys-v1\": \">=1.0\", \"gone-v1\": \"*\", \"api\": \">=0.1\"}}".getBytes(java.nio.charset.StandardCharsets.UTF_8), null, Set.of()),
             java.nio.charset.StandardCharsets.UTF_8)));
         JarPortTest.expect(Json.object(asked.get("depends")).keySet().equals(Set.of("keymaps-v1", "api")),
