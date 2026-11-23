@@ -70,6 +70,8 @@ public final class JarPort {
         final Map<String, Injector> injectors = new HashMap<>(); // mixin class.handler+desc -> its @Inject, @Redirect...
         final Map<String, String> retargets = new HashMap<>(); // class.handler+desc + " " + annotation string -> what is written instead
         final Map<String, Adapter> adapters = new HashMap<>(); // class.handler+desc -> the handler re-declared for its target's new parameters
+        final Set<String> staticized = new HashSet<>(); // class.handler+desc of handlers made static, as their targets now are
+        final Map<String, Integer> argIndexes = new HashMap<>(); // class.handler+desc of a @ModifyArg -> the index its argument has in the call's new signature
         final Map<String, List<Bridge>> bridges = new HashMap<>(); // class -> methods added with a game method's new signature
         final Set<String> grants = new TreeSet<>(); // lines the port adds to the mod's access transformer (new names)
         boolean canWiden; // the loader reads this jar's access transformer
@@ -1410,7 +1412,7 @@ public final class JarPort {
                             };
                         }
                         if (INJECTORS.contains(annotation)) {
-                            Injector inj = new Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1 }, new boolean[1]);
+                            Injector inj = new Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1, -1 }, new boolean[1]);
                             mod.injectors.put(rc.name + "." + name + desc, inj);
                             return injection(inj, null);
                         }
@@ -1457,7 +1459,7 @@ public final class JarPort {
      * A handler's injector (its annotation): the target method strings, each @At's {value, target, ordinal} (in @Slice
      * too), and its require (-1: the mixin config's defaultRequire).
      */
-    /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none; an @At's is in ats. */
+    /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none, then its index (a @ModifyArg's argument); an @At's is in ats. */
     record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable) {}
 
     /**
@@ -1493,6 +1495,8 @@ public final class JarPort {
                     inj.cancellable()[0] = true;
                 } else if (at == null && "ordinal".equals(n) && v instanceof Integer i && i >= 0) {
                     inj.ordinal()[0] = i;
+                } else if (at == null && "index".equals(n) && v instanceof Integer i && i >= 0) {
+                    inj.ordinal()[1] = i;
                 } else if (at != null && v instanceof String s && ("value".equals(n) || "target".equals(n))) {
                     at["value".equals(n) ? 0 : 1] = s;
                 } else if (at != null && "ordinal".equals(n) && v instanceof Integer i && i >= 0) {
@@ -3940,6 +3944,10 @@ public final class JarPort {
                     signature = null;
                 }
                 boolean moved = mod.split.getOrDefault(self[0], List.of()).stream().anyMatch(l -> l.name().equals(name) && l.desc().equals(desc));
+                boolean staticized = mod.staticized.contains(key) && mod.retargets.keySet().stream().anyMatch(r -> r.startsWith(key + " "));
+                if (staticized) {
+                    access |= Opcodes.ACC_STATIC;
+                }
                 MethodVisitor mv = super.visitMethod(moved ? access & ~Opcodes.ACC_PRIVATE : access, newName, newDesc, signature, exceptions);
                 if (moved && mv != null) {
                     mv = new MethodVisitor(Opcodes.ASM9, mv) {
@@ -3950,9 +3958,14 @@ public final class JarPort {
                     };
                 }
                 int locals = mod.maxLocals.getOrDefault(key, 0);
+                if (staticized && adapter == null && mv != null) {
+                    mv = new Staticize(mv);
+                    mod.change("mixin handler made static, as its target now is");
+                }
                 if (adapter != null && mv != null) {
                     int body = access & ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED) | Opcodes.ACC_PRIVATE;
-                    mv = new Split(mv, super.visitMethod(body, name + "$mmt", desc, originalSignature, exceptions), self[0], name, desc, access, adapter, mod.selfInterface);
+                    MethodVisitor code = super.visitMethod(body, name + "$mmt", desc, originalSignature, exceptions);
+                    mv = new Split(mv, staticized ? new Staticize(code) : code, self[0], name, desc, access, adapter, mod.selfInterface);
                     mod.change("mixin handler re-declared for its target's new parameters");
                 }
                 return mv == null ? null : new Sites(mod, mv, locals, targets, callers, key, where);
@@ -4072,6 +4085,10 @@ public final class JarPort {
         return new AnnotationVisitor(Opcodes.ASM9, av) {
             @Override
             public void visit(String name, Object value) {
+                if ("index".equals(name) && value instanceof Integer && handler != null && mod.argIndexes.containsKey(handler)) {
+                    super.visit(name, mod.argIndexes.get(handler)); // a @ModifyArg's argument, where the call's new signature has it
+                    return;
+                }
                 super.visit(name, value instanceof String s && name != null && MEMBER_KEYS.contains(name) ? member(mod, targets, name, s, handler) : value);
             }
 
@@ -4445,15 +4462,184 @@ public final class JarPort {
         }
     }
 
+    /**
+     * Whether a handler follows a target the update made static by being made static itself, as Mixin asks of a handler
+     * into a static method: the old target was an instance method, the handler is one, and its body never reads its own
+     * object (slot 0) and no method of the mixin calls it. Records it in staticized when so.
+     */
+    boolean staticizes(Mod mod, String key, GameDiff.RawMeth handler, GameDiff.Meth before, GameDiff.Meth after) {
+        if (before.isStatic() || !after.isStatic() || (handler.flags & Opcodes.ACC_STATIC) != 0) {
+            return false;
+        }
+        String owner = key.substring(0, key.indexOf('.'));
+        byte[] bytes = mod.bytes.get(owner);
+        if (bytes == null) {
+            return false;
+        }
+        boolean[] blocked = { false };
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                boolean self = name.equals(handler.name) && desc.equals(handler.desc);
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitVarInsn(int op, int var) {
+                        blocked[0] |= self && var == 0;
+                    }
+
+                    @Override
+                    public void visitIincInsn(int var, int inc) {
+                        blocked[0] |= self && var == 0;
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int op, String o, String n, String d, boolean itf) {
+                        blocked[0] |= o.equals(owner) && n.equals(handler.name) && d.equals(handler.desc);
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        if (blocked[0]) {
+            why(key, "T1 its target is static now and it reads its own object");
+            return false;
+        }
+        mod.staticized.add(key);
+        return true;
+    }
+
+    static final String WRAP_CONDITION = "WrapWithCondition;", REDIRECT = "/Redirect;", MODIFY_RECEIVER = "/ModifyReceiver;",
+        MODIFY_VALUE = "/ModifyExpressionValue;", MODIFY_ARG = "/ModifyArg;";
+
+    /**
+     * An injector other than @Inject whose @At names a call that only took other arguments, in a method that kept its
+     * signature (a call the update changed, as 1.21.4's ClientInput.tick(boolean, float) became tick()). Its @At moves to
+     * the call's new signature where the handler stays valid there, by what the handler takes of the call:
+     * a @ModifyExpressionValue takes only its result, so the result type must be the same; a @ModifyArg takes one
+     * argument, found in the new call where its type stands once on each side, the index rewritten; a @Redirect,
+     * @WrapWithCondition or @ModifyReceiver takes the receiver and every argument, so it is re-declared with the new
+     * arguments and its body gets the old ones from them (convert: a type found once on each side, or a subtype), a
+     * default only where the body never reads one. A @WrapOperation passes the arguments on to the call as an array and
+     * stays reported. The call must be as static as before, and still made where the old method made it (pointsKept).
+     */
+    void followCall(Mod mod, String key, List<String> targets, GameDiff.RawMeth handler, Injector inj, List<Found> into, List<Found> points) {
+        String kind = inj.kind();
+        String label = "A-" + kind.substring(kind.lastIndexOf('/') + 1, kind.length() - 1);
+        int which = -1;
+        for (int i = 0; i < points.size(); i++) {
+            Found at = points.get(i);
+            if (at != null && at.kind() == 's') {
+                if (which >= 0 || at.desc() == null) {
+                    why(key, label + "1 several changed calls, or no one new signature");
+                    return;
+                }
+                which = i;
+            }
+        }
+        String[] point = inj.ats().get(which);
+        Found at = points.get(which);
+        Matcher m = MEMBER.matcher(point[1]);
+        if (!point[0].startsWith("INVOKE") || !m.matches() || m.group(1) == null || m.group(3) == null) {
+            why(key, label + "2 not a call written with its owner and descriptor");
+            return;
+        }
+        Decl oldDecl = declaringOld(mod, m.group(1), 'm', m.group(2), m.group(3));
+        GameDiff.Cls oldCls = oldDecl == null ? null : a.classes.get(oldDecl.owner());
+        GameDiff.Meth before = oldCls == null ? null : oldCls.methods.get(m.group(2) + m.group(3));
+        GameDiff.Meth after = b.method(at.owner(), at.name(), at.desc());
+        if (before == null || after == null || before.isStatic() != after.isStatic()) {
+            why(key, label + "3 the call is not read on both sides, or changed staticness");
+            return;
+        }
+        if (!pointsKept(targets, inj, into, points)) {
+            why(key, label + "4 the new call is not where the old one was");
+            return;
+        }
+        Type[] was = Type.getArgumentTypes(desc(m.group(3))), now = Type.getArgumentTypes(at.desc());
+        Type wasResult = Type.getReturnType(desc(m.group(3))), nowResult = Type.getReturnType(at.desc());
+        Type[] hp = Type.getArgumentTypes(desc(handler.desc));
+        if (kind.endsWith(MODIFY_VALUE)) {
+            if (!wasResult.equals(nowResult)) {
+                why(key, label + "5 its result changed type");
+                return;
+            }
+        } else if (kind.endsWith(MODIFY_ARG)) {
+            int index = inj.ordinal().length > 1 ? inj.ordinal()[1] : -1;
+            if (hp.length != 1) {
+                why(key, label + "6 it takes every argument");
+                return;
+            }
+            int old = index;
+            if (old < 0) {
+                List<Integer> same = new ArrayList<>();
+                for (int k = 0; k < was.length; k++) {
+                    if (was[k].equals(hp[0])) {
+                        same.add(k);
+                    }
+                }
+                old = same.size() == 1 ? same.get(0) : -1;
+            }
+            int[] paired = pair(was, now);
+            int fresh = -1;
+            for (int j = 0; j < now.length; j++) {
+                if (old >= 0 && paired[j] == old) {
+                    fresh = j;
+                }
+            }
+            if (fresh < 0 || !now[fresh].equals(hp[0]) || index < 0 && Arrays.stream(now).filter(hp[0]::equals).count() != 1) {
+                why(key, label + "7 its argument is not in the new call once");
+                return;
+            }
+            if (index >= 0 && fresh != index) {
+                mod.argIndexes.put(key, fresh);
+            }
+        } else if (kind.endsWith(REDIRECT) || kind.endsWith(WRAP_CONDITION) || kind.endsWith(MODIFY_RECEIVER)) {
+            int r = before.isStatic() ? 0 : 1;
+            int captured = r + was.length;
+            Type wantResult = kind.endsWith(REDIRECT) ? wasResult : kind.endsWith(WRAP_CONDITION) ? Type.BOOLEAN_TYPE : null;
+            Type result = Type.getReturnType(desc(handler.desc));
+            if (hp.length < captured || !Arrays.equals(Arrays.copyOfRange(hp, r, captured), was) || kind.endsWith(REDIRECT) && !wasResult.equals(nowResult)
+                || wantResult != null && !result.equals(wantResult)) {
+                why(key, label + "8 it does not take the call's arguments as they were, or the result changed");
+                return;
+            }
+            boolean[] unread = unread(mod, key.substring(0, key.indexOf('.')), handler.name, handler.desc, (handler.flags & Opcodes.ACC_STATIC) != 0, captured);
+            boolean[] args = unread == null ? null : Arrays.copyOfRange(unread, r, captured);
+            int[] conv = convert(now, was, args);
+            if (conv == null) {
+                why(key, label + "9 it reads an argument the new call does not take");
+                return;
+            }
+            int rest = hp.length - captured;
+            Type[] desc = new Type[r + now.length + rest];
+            int[] from = new int[captured];
+            for (int k = 0; k < r; k++) {
+                desc[k] = hp[k];
+                from[k] = k;
+            }
+            for (int j = 0; j < now.length; j++) {
+                desc[r + j] = now[j];
+            }
+            for (int k = 0; k < was.length; k++) {
+                from[r + k] = conv[k] < 0 ? -1 : r + conv[k];
+            }
+            for (int k = 0; k < rest; k++) {
+                desc[r + now.length + k] = hp[captured + k];
+            }
+            mod.adapters.put(key, new Adapter(Type.getMethodDescriptor(result, desc), from, captured, new String[captured][]));
+        } else {
+            why(key, label + "0 this injector passes the call's arguments on");
+            return;
+        }
+        mod.retargets.put(key + " " + point[1], at.changed());
+    }
+
     void retargetOther(Mod mod, String key, List<String> targets, GameDiff.RawMeth handler, Injector inj) {
         List<Found> into = inj.methods().stream().map(s -> find(targets, "method", s)).toList();
         List<Found> points = inj.ats().stream().map(at -> at[1] == null ? null : find(targets, "target", at[1])).toList();
         into = cancels(mod, key, handler, inj) ? into : Objects.requireNonNullElse(deeper(targets, inj, into, points), into);
         if (into.stream().noneMatch(f -> f.kind() == 's')) {
-            for (Found at : points) {
-                if (at != null && at.kind() == 's') {
-                    why(key, "A1-" + inj.kind().substring(inj.kind().lastIndexOf('/') + 1, inj.kind().length() - 1) + " its @At names a call that changed signature");
-                }
+            if (points.stream().anyMatch(at -> at != null && at.kind() == 's')) {
+                followCall(mod, key, targets, handler, inj, into, points);
             }
             { why(key, "O1"); return; }
         }
@@ -4466,7 +4652,7 @@ public final class JarPort {
             GameDiff.Meth before = oldMethod(targets, inj.methods().get(i));
             GameDiff.Meth after = f.desc() == null ? null : b.method(f.owner(), f.name(), f.desc());
             if (before == null || after == null || f.changed() == null || !Type.getReturnType(desc(before.desc)).equals(Type.getReturnType(after.desc))
-                || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0) {
+                || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 && !staticizes(mod, key, handler, before, after)) {
                 { why(key, before == null ? "O2-old" : after == null ? "O2-new" : f.changed() == null ? "O2-changed" : ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 ? "O2-static" : "O2-result"); return; }
             }
             Type[] bp = Type.getArgumentTypes(desc(before.desc)), ap = Type.getArgumentTypes(after.desc);
@@ -4844,7 +5030,7 @@ public final class JarPort {
                     GameDiff.Meth before = oldMethod(targets, old);
                     GameDiff.Meth after = f.desc() == null ? null : b.method(f.owner(), f.name(), f.desc());
                     if (before == null || after == null || !Type.getReturnType(desc(before.desc)).equals(Type.getReturnType(after.desc))
-                        || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0) {
+                        || ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 && !staticizes(mod, key, handler, before, after)) {
                         { why(key, before == null ? "I8-old" : after == null ? "I8-new" : ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 ? "I8-static" : "I8-result"); return; }
                     }
                 }
@@ -4869,7 +5055,7 @@ public final class JarPort {
                     String[][] read = retype.conversions(before.owner.name, before.name, before.desc, new String[] { f.owner(), f.name(), f.desc() }, paired);
                     // A handler merged into its target runs on the target object, so what that object answers (Screen.init's
                     // Minecraft, now this.minecraft) is read there, where the members read are open to the target's code.
-                    String[][] learned = (handler.flags & Opcodes.ACC_STATIC) == 0 && openTo(read, f.owner()) ? read : Retype.withoutThis(read);
+                    String[][] learned = (handler.flags & Opcodes.ACC_STATIC) == 0 && !mod.staticized.contains(key) && openTo(read, f.owner()) ? read : Retype.withoutThis(read);
                     from = new int[captured];
                     for (int i = 0; i < captured; i++) {
                         if (paired[i] >= 0) {
@@ -4879,7 +5065,7 @@ public final class JarPort {
                             via[i] = Arrays.copyOfRange(learned[i], 1, learned[i].length);
                         } else if (unread != null && unread[i]) {
                             from[i] = -1;
-                        } else if ((handler.flags & Opcodes.ACC_STATIC) == 0 && kept(before, i, f.owner()) != null) {
+                        } else if ((handler.flags & Opcodes.ACC_STATIC) == 0 && !mod.staticized.contains(key) && kept(before, i, f.owner()) != null) {
                             from[i] = THIS;
                             via[i] = new String[] { kept(before, i, f.owner()) };
                         } else {
@@ -6429,6 +6615,48 @@ public final class JarPort {
     }
 
     /** A mixin handler in two: its annotations go to the handler with the new parameters, its body to name$mmt, which the handler calls. */
+    /**
+     * An instance method's code written as a static method's, for a handler that never reads its own object: each local
+     * moves down one slot, and full frames lose the object. Compressed frames are relative to the start, which the
+     * writer reads from the static access.
+     */
+    static final class Staticize extends MethodVisitor {
+        Staticize(MethodVisitor mv) {
+            super(Opcodes.ASM9, mv);
+        }
+
+        @Override
+        public void visitVarInsn(int opcode, int var) {
+            super.visitVarInsn(opcode, var - 1);
+        }
+
+        @Override
+        public void visitIincInsn(int var, int increment) {
+            super.visitIincInsn(var - 1, increment);
+        }
+
+        @Override
+        public void visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack) {
+            if ((type == Opcodes.F_FULL || type == Opcodes.F_NEW) && numLocal > 0) {
+                super.visitFrame(type, numLocal - 1, Arrays.copyOfRange(local, 1, numLocal), numStack, stack);
+                return;
+            }
+            super.visitFrame(type, numLocal, local, numStack, stack);
+        }
+
+        @Override
+        public void visitLocalVariable(String name, String desc, String signature, Label start, Label end, int index) {
+            if (index > 0) {
+                super.visitLocalVariable(name, desc, signature, start, end, index - 1);
+            }
+        }
+
+        @Override
+        public AnnotationVisitor visitLocalVariableAnnotation(int typeRef, TypePath typePath, Label[] start, Label[] end, int[] index, String descriptor, boolean visible) {
+            return null;
+        }
+    }
+
     final class Split extends MethodVisitor {
         final MethodVisitor handler;
         final String owner, name, desc;
@@ -6501,7 +6729,7 @@ public final class JarPort {
                 stack += now[j].getSize();
             }
             handler.visitMethodInsn(isStatic ? Opcodes.INVOKESTATIC : Opcodes.INVOKESPECIAL, owner, name + "$mmt", desc, itf);
-            handler.visitInsn(Opcodes.RETURN);
+            handler.visitInsn(Type.getReturnType(desc).getOpcode(Opcodes.IRETURN));
             handler.visitMaxs(stack + 3, next);
             handler.visitEnd();
         }
@@ -6541,9 +6769,12 @@ public final class JarPort {
                     return null;
                 }
                 String newDesc = oldDesc(br.desc());
-                Track track = new Track(owner, access, br.name(), newDesc, out.visitMethod(access, br.name(), newDesc, null, exceptions));
-                Shift shift = new Shift(track, br, desc, stored, (access & Opcodes.ACC_STATIC) != 0);
                 String key = owner + "." + name + desc;
+                // A handler made static, as its target now is (staticizes): written as a static method under everything else.
+                boolean staticized = mod.staticized.contains(key) && mod.retargets.keySet().stream().anyMatch(r -> r.startsWith(key + " "));
+                MethodVisitor written = out.visitMethod(staticized ? access | Opcodes.ACC_STATIC : access, br.name(), newDesc, null, exceptions);
+                Track track = new Track(owner, access, br.name(), newDesc, staticized ? new Staticize(written) : written);
+                Shift shift = new Shift(track, br, desc, stored, (access & Opcodes.ACC_STATIC) != 0);
                 // A mixin handler's code runs in its targets, and its annotations name them (as in rewrite).
                 List<String> targets = mod.mixinTargets.getOrDefault(owner, List.of());
                 List<String> callers = new ArrayList<>(targets.isEmpty() ? List.of(owner) : targets.stream().map(JarPort.this::cls).toList());
