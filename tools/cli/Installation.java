@@ -165,6 +165,9 @@ final class Installation {
             ".mmt/packages",
             Fingerprints.bytes(Files.readAllBytes(location))
         );
+        // The folder is named for the jar's bytes, so once unpacked whole it never changes: a command reads nothing more.
+        Path unpacked = directory.resolve(".unpacked");
+        if (Files.isRegularFile(unpacked)) return directory;
         Files.createDirectories(directory);
         // Commands from one package often start together (the checks, the desktop app): one unpacks while the others
         // wait, so none sees a file another is replacing. The JVM's own threads share one lock, hence synchronized.
@@ -177,6 +180,7 @@ final class Installation {
             var lock = channel.lock();
             var jar = new JarFile(location.toFile())
         ) {
+            if (Files.isRegularFile(unpacked)) return directory;
             List<String> names;
             try (var input = jar.getInputStream(jar.getJarEntry(RESOURCE_LIST))) {
                 names = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).lines().toList();
@@ -194,6 +198,8 @@ final class Installation {
                     Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
+            // Last, so a folder an interrupted command left half unpacked is unpacked again.
+            Files.writeString(unpacked, "");
         }
         return directory;
     }
