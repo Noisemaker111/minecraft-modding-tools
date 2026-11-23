@@ -206,6 +206,21 @@ final class JarPortRetypeTest {
             && textMembers.containsKey("method onCaptured(" + POSE + "I" + CI + "Ljava/lang/String;)V")
             && textUnlinked.equals(List.of("mixin target changed signature: g6.Title.render(Lg6/Pose;I)V")),
             "a @Local of a local both releases have follows the new signature; captured locals that moved stay reported: " + textMembers.keySet() + " " + textUnlinked);
+        List<String> textSugar = new ArrayList<>();
+        new ClassReader(textJar.get("m6/ByText.class")).accept(new org.objectweb.asm.ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
+                        textSugar.add(name + desc + " " + parameter + " " + d);
+                        return null;
+                    }
+                };
+            }
+        }, 0);
+        JarPortTest.expect(textSugar.equals(List.of("onText(" + GFX + "I" + CI + "Ljava/lang/String;)V 3 Lcom/llamalad7/mixinextras/sugar/Local;")),
+            "the @Local stays on the handler Mixin reads, at the String's place: " + textSugar);
 
         // Mixins into two game lambdas, string-building callbacks alike but for their text: 2.0 has only the wipe one, renumbered.
         // Neither mixin requires its place, so the save one is told as finding none, not a break.

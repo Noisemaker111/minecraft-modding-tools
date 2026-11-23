@@ -6453,6 +6453,19 @@ public final class JarPort {
         }
 
         @Override
+        public void visitAnnotableParameterCount(int parameterCount, boolean visible) {
+        }
+
+        @Override
+        public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
+            // What the handler takes after the arguments it re-declares (the CallbackInfo, sugar such as @Local) keeps its
+            // annotations on the handler, where Mixin reads them; the body behind it is a plain method.
+            int rest = Type.getArgumentTypes(desc).length - adapter.captured();
+            int now = Type.getArgumentTypes(oldDesc(adapter.desc())).length;
+            return parameter >= adapter.captured() ? handler.visitParameterAnnotation(now - rest + parameter - adapter.captured(), d, visible) : null;
+        }
+
+        @Override
         public void visitEnd() {
             super.visitEnd();
             boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
@@ -7095,7 +7108,10 @@ public final class JarPort {
 
         @Override
         public AnnotationVisitor visitParameterAnnotation(int parameter, String descriptor, boolean visible) {
-            return null;
+            // A parameter that passes through as it is keeps its annotations (MixinExtras' @Local, @Share...) at its new place.
+            int f = parameter < br.from().length ? br.from()[parameter] : -1;
+            return f >= 0 && (br.via() == null || parameter >= br.via().length || br.via()[parameter] == null) && now[f].equals(was[parameter])
+                ? super.visitParameterAnnotation(f, descriptor, visible) : null;
         }
 
         @Override
