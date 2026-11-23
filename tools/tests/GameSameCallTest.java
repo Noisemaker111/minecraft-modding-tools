@@ -11,8 +11,8 @@ import org.objectweb.asm.*;
  * learned, since the override may read it. Lst(wide, screen, top, bottom) became Lst(wide, height, y) over a new
  * superclass Pane whose getBottom() is getY() + height: the game reads top as getY() and bottom as getBottom(), so the old
  * call is Lst($1, $4 - $3, $3), the screen height nothing reads any more dropped. Pt(a) became Pt(a, c), c a value the
- * old object never held, and Fol(r, spread) became Fol(r) while size(), which the update kept, still read spread: nothing
- * is learned for either. The learned lines are applied by JarPort to a mod that then runs on this
+ * old object never held, and Fol(r, spread) became Fol(r) where the old size() read spread: nothing is learned for
+ * either, since dropping spread would change what a mod's Fol does. The learned lines are applied by JarPort to a mod that then runs on this
  * JVM, its own list subclass's super(...) call included.
  *
  *   java -cp asm.jar:CLASSES GameSameCallTest SCRATCH   (in the jar-port check of bench/run_tests.py)
@@ -49,7 +49,7 @@ final class GameSameCallTest {
         check(learned, s + "Lst.<init>(IIII)V", "new net.minecraft.s5.Lst($1, $4 - $3, $3)",
             "a constructor's new parameters are solved so every field the new release reads holds what the old one stored");
         check(learned, s + "Pt.<init>(I)V", null, "a parameter for a value the old object never held is not made up");
-        check(learned, s + "Fol.<init>(II)V", null, "an argument is not dropped while a method the update kept still used what it set");
+        check(learned, s + "Fol.<init>(II)V", null, "an argument is not dropped when the old game used what it set");
 
         Path map = scratch.resolve("route-samecall.json");
         Files.writeString(map, "{\"learned\": [" + String.join(",\n", lines) + "]}");

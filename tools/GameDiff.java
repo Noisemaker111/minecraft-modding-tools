@@ -7551,8 +7551,9 @@ public final class GameDiff {
          * one set is read in the new release as the learner learned the game reads it ($0.y1 -> $0.getBottom()) or, kept in
          * the same class, as itself; that reading, worked out over the new object's fields (getBottom() is getY() +
          * getHeight()), must equal what the old constructor stored, and each new parameter is solved from those equations
-         * (height = y1 - y0). A field nothing in the new release reads (the old list's height: the screen's, which the
-         * game's own code stopped passing) constrains nothing; every new parameter must be solved, and every equation
+         * (height = y1 - y0). A field the update moved up into another class under its name (the list's height, the
+         * screen's before and the widget's now) only settles what those leave open. A field with no reading may be left
+         * out only when nothing in the old release used it; every new parameter must be solved, and every sure equation
          * without one must hold, else nothing is learned.
          */
         final class Built {
@@ -7593,12 +7594,14 @@ public final class GameDiff {
                         weak = read != null;
                     }
                     if (read == null) {
-                        Meth still = stillReads(e.getKey());
-                        if (still != null && (e.getValue() != null || opaque.contains(e.getKey()))) {
-                            why("field " + e.getKey() + " has no reading, yet " + still.sig() + ", which the new release kept, uses it");
+                        Meth user = user(e.getKey());
+                        if (user != null && (e.getValue() != null || opaque.contains(e.getKey()))) {
+                            // What was passed for it did something (1.21.2's food effects, now a consumable's), and the new
+                            // release says nothing about where that went: dropping it would change what the mod does.
+                            why("field " + e.getKey() + " has no reading, yet " + user.sig() + " used it");
                             return null;
                         }
-                        continue; // nothing the new release kept uses it: what was passed for it is not needed
+                        continue; // only ever stored: what was passed for it did nothing
                     }
                     if (opaque.contains(e.getKey())) {
                         why("field " + e.getKey() + " holds what no sum says, and is read as " + read);
@@ -7704,8 +7707,8 @@ public final class GameDiff {
                 return fy != null && (fy.owner.name + "." + fy.name).equals(fieldKey(h.b, y.owner.name, fy.name)) ? fy.name : null;
             }
 
-            /** A method of the old release, other than a constructor, that uses a's field key and that the new release kept. */
-            Meth stillReads(String key) {
+            /** A method of the old release, other than a constructor, that uses a's field key. */
+            Meth user(String key) {
                 if (users == null) {
                     users = new HashMap<>();
                     for (Cls k : h.a.classes.values()) {
@@ -7718,12 +7721,8 @@ public final class GameDiff {
                         }
                     }
                 }
-                for (Meth m : users.getOrDefault(key, List.of())) {
-                    if (h.mAB.get(m) != null) {
-                        return m;
-                    }
-                }
-                return null;
+                List<Meth> all = users.getOrDefault(key, List.of());
+                return all.isEmpty() ? null : all.get(0);
             }
 
             void why(String s) {
