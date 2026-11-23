@@ -24,6 +24,7 @@ final class JavaTools {
             build.harness.resolve("tools/FixExpr.java"),
             build.harness.resolve("tools/SourceAnswers.java"),
             build.harness.resolve("tools/JarPort.java"),
+            build.harness.resolve("tools/DataIds.java"),
             build.harness.resolve("tools/PortChains.java"),
             build.harness.resolve("tools/cli/Json.java"),
             build.harness.resolve("tools/cli/Versions.java"),
