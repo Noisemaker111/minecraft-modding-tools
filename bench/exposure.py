@@ -1,10 +1,12 @@
 """What real mods reference of the game, ported as jars and linked against the next release: the porter's scoreboard and its to-do list.
 
-    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE] [--save] [--out FILE]
+    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE | --mods SLUG,...] [--save] [--out FILE]
     python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--out FILE] [--verify]
     python bench/exposure.py all --at origin/main --out BASE.json    (any command, on another commit's porter)
     python bench/exposure.py join DIR [--out FILE]
     python bench/exposure.py compare BEFORE.json AFTER.json
+    python bench/exposure.py check-plan --changed FILES.txt [--body PR.md]    (a pull request's port check: what it runs)
+    python bench/exposure.py gate SUMMARY.json [--freed FILE]                 (and its verdict against main's row)
     python bench/exposure.py fetch --loader neoforge|fabric --version 1.21.1 [--repin]
     python bench/exposure.py pin [--loader neoforge|fabric] [--version 1.21.1] [--repin]
     python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--mods SLUG,...] [--save] [--out FILE]
@@ -27,18 +29,20 @@ all runs jars for every update a loader's jars can be read across (Fabric from 1
 hold the most mods back across every update. join does the joining for summaries made elsewhere (the cloud run,
 tools/cloud-run exposure). --out writes the table to a file.
 
-Main's table is kept on the generated branch as scoreboard/all.json, never on main (bench/generated.py): every push to
-main runs the cloud sweep (.github/workflows/cloud-exposure.yml, which reuses a whole sweep of the same tree), and the
-record job of generated.yml saves the table there when it ends, with the commit it ran, and adds its totals to the port.jar-links points in scoreboard/points.json. A commit to main for each would
-put every open pull request behind. `python bench/generated.py show scoreboard/all.json` prints the newest; compare
-prints what a branch's table changes against main's (tools/cloud-run exposure finds main's for the branch's base).
+Main's table is kept on the generated branch as scoreboard/all.json, never on main (bench/generated.py): the whole cloud
+sweep (.github/workflows/cloud-exposure.yml) runs on main by hand and with each release, and the record job of
+generated.yml saves the table there when it ends, with the commit it ran, and adds its totals to the port.jar-links
+points in scoreboard/points.json. A commit to main for each would put every open pull request behind. `python
+bench/generated.py show scoreboard/all.json` prints the newest; compare prints what a branch's table changes against it.
+A pull request runs the port check instead (.github/workflows/port-check.yml): check-plan picks the ports its change
+can move, jars runs each, and gate fails when a mod that links in main's row stops linking.
 
 Every stage is kept in ~/.mmt/exposure/ under the content of everything it reads (the porter's classes, the route map,
 the rules, the loaders' release lists, the JVM, each mod's jar), shared by every worktree and run on the machine, so a
 run computes only what an edit can change: an edit to JarPort ports every mod again (each one runs the code it touched),
 but reuses the downloads, the names, the map, the data check and most of Exposure's answers; an edit to anything else
-reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before, and the
-load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
+reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before and
+against main's row, and the load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
 
 --save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
 requests proving the same update keep two receipts instead of conflicting on one.
@@ -1025,7 +1029,7 @@ def receipt(kind, loader, frm, to):
     return ROOT / "bench" / "exposure" / f"{kind}-{loader}-{frm}-{to}-{commit}.json"
 
 
-def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
+def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=None):
     """The jar scoreboard: what every top mod's classes and mixins reference, ported from frm to each release of tos and
     linked against it as the JVM and Mixin do; a summary for each.
 
@@ -1034,13 +1038,14 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
     before with the same inputs is read from the cache, so a run after an edit ports only what the edit can change. Each
     run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the porter's inputs differ from the last
     run's, that one becomes before.json, and the run prints which mods newly link, stopped linking or changed their port
-    against it. kind: port only the mods the last run held back with a type of break (its text, or part of it), the answer
-    for those mods in seconds; the summary is then partial and is not kept. out: the summary's file, or a folder (one that
-    is there, or any with several targets) that gets LOADER-FROM-TO.json for each."""
+    against it, and against main's row of the same port (main's table, on the generated branch). kind: port only the mods
+    the last run held back with a type of break (its text, or part of it), the answer for those mods in seconds; only:
+    port only these mods (Modrinth slugs); either way the summary is partial and is not kept. out: the summary's file, or
+    a folder (one that is there, or any with several targets) that gets LOADER-FROM-TO.json for each."""
     seconds = {}
     timed = timer(seconds)
-    if kind and len(tos) > 1:
-        raise SystemExit("--type answers one update at a time: give one --to")
+    if (kind or only) and len(tos) > 1:
+        raise SystemExit("--type and --mods answer one update at a time: give one --to")
     pinned = timed("download", fetch, loader, frm)
     works = {to: ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" for to in tos}
     if kind:
@@ -1051,6 +1056,13 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
         pinned = [p for p in pinned if p.name in held]
         if not pinned:
             raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
+    if only:
+        unknown = sorted(set(only) - {p.name.split("--", 1)[0] for p in pinned})
+        if unknown:
+            raise SystemExit(f"{loader} {frm} pins no {', '.join(unknown)} (bench/exposure/mods/{loader}-{frm}.json)")
+        pinned = [p for p in pinned if p.name.split("--", 1)[0] in only]
+    partial = (f"only the {len(pinned)} mods the last run held back with '{kind}'" if kind
+               else f"only {', '.join(sorted(only))}" if only else None)
     compile_tools()  # once, before the threads below that run it
     # Every step of every target, so one GameDiff process builds the maps that are missing.
     segments = list(dict.fromkeys((x, y) for to in tos for x, y in zip(stops(loader, frm, to), stops(loader, frm, to)[1:])))
@@ -1061,8 +1073,8 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
         checked = pool.submit(timed, "data", lambda: {to: data_check(frm, to, pinned) for to in tos})
         (mods, unread), datas = named.result(), checked.result()
         mapped.result()
-    # A run of some mods only (kind) keeps its report apart: load reads the whole update's.
-    written = {to: works[to] / ("report.json" if not kind else "report-type.json") for to in tos}
+    # A run of some mods only keeps its report apart, so a whole run's report is not replaced by part of it.
+    written = {to: works[to] / ("report.json" if not partial else "report-part.json") for to in tos}
     for work in works.values():
         work.mkdir(parents=True, exist_ok=True)
     empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
@@ -1074,7 +1086,7 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
         # What the targets shared, and each one's own questions to the game after it.
         own = dict(seconds)
         target = out if out is None or (len(tos) == 1 and not Path(out).is_dir()) else Path(out) / f"{loader}-{frm}-{to}.json"
-        summaries[to] = summarize(loader, frm, to, mods, unread, datas[to], reports[to], written[to], works[to], kind, save, target, quiet, timer(own), own)
+        summaries[to] = summarize(loader, frm, to, mods, unread, datas[to], reports[to], written[to], works[to], partial, save, target, quiet, timer(own), own)
     return summaries
 
 
@@ -1089,7 +1101,7 @@ def timer(seconds):
     return timed
 
 
-def summarize(loader, frm, to, mods, unread, data, report, written, work, kind, save, out, quiet, timed, seconds):
+def summarize(loader, frm, to, mods, unread, data, report, written, work, partial, save, out, quiet, timed, seconds):
     """One target's summary from its port's report: what still breaks, by type and by the mods nearest to done, printed
     unless quiet and written to out."""
     last = work / "last.json"
@@ -1131,18 +1143,23 @@ def summarize(loader, frm, to, mods, unread, data, report, written, work, kind, 
     # Each mod's verdict: the references it still needs, the types of break they are, and what its port wrote. Two runs
     # agree on a mod when these are equal; a mod whose port wrote the same jar needs no new proof in game.
     summary["links"] = sorted(m["mod"] for m in rows if not left(m, data))
+    # What holds back each mod that does not link, by type: kept in main's table, so a check of one type of break ports
+    # only the mods main says it holds (check_plan).
+    summary["heldBy"] = {m["mod"]: sorted({kind_of(r, said) for r in left(m, data)}) for m in rows if left(m, data)}
     summary["verdicts"] = {m["mod"]: {"left": sorted(left(m, data)), "types": sorted({kind_of(r, said) for r in left(m, data)}), "ported": m.get("ported")}
                            for m in rows}
     summary["porter"] = port_key(loader, frm, to) + " " + content_key(*(p.read_bytes() for p in mods))
-    if kind:
-        summary["partial"] = f"only the {len(mods)} mods the last run held back with '{kind}'"
+    if partial:
+        summary["partial"] = partial
     before = work / "before.json"
-    if not kind and last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
+    if not partial and last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
         os.replace(last, before)
-    against = before if not kind else last
+    against = before if not partial else last
     moved = verdicts_moved(json.loads(against.read_text(encoding="utf-8")), summary) if against.is_file() else None
     summary["moved"] = moved
-    if not kind:
+    row = main_row(loader, frm, to)
+    summary["againstMain"] = against_main(row, summary) if row else None
+    if not partial:
         work.mkdir(parents=True, exist_ok=True)
         last.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     if not quiet:
@@ -1153,10 +1170,14 @@ def summarize(loader, frm, to, mods, unread, data, report, written, work, kind, 
             print(f"prove in game only those: python bench/exposure.py load --loader {loader} --from {frm} --to {to} --mods {','.join(slugs)}"
                   f" (or tools/cloud-run load -f updates={loader}:{frm}:{to} -f mods={','.join(slugs)})")
         if moved is not None:
-            print(f"against {'the run before' if not kind else 'the last whole run'} ({against}): "
+            print(f"against {'the run before' if not partial else 'the last whole run'} ({against}): "
                   + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
-        if kind:
-            print(summary["partial"])
+        if summary["againstMain"] is not None:
+            m = summary["againstMain"]
+            print(f"against main's table at {(row.get('commit') or '?')[:10]}: newly link {', '.join(m['newly link']) or 'none'}; "
+                  f"no longer link {', '.join(m['no longer link']) or 'none'}; {m['same']} mods the same")
+        if partial:
+            print(partial)
         print(f"{summary['modsThatLink']}/{summary['modsRead']} {loader} mods link against {to} after the port "
               f"({summary['brokenUses']} broken uses; {summary['silentOnly']} keep an override the game no longer calls)"
               + ("" if data is None else f"; {summary['modsThatLinkAndData']} of them also name nothing in their data that {to} dropped")
@@ -1193,6 +1214,132 @@ def verdicts_moved(before, after):
              "link, port changed": [m for m in both if not old[m]["left"] and not new[m]["left"] and old[m].get("ported") != new[m].get("ported")]}
     moved["same"] = len(both) - sum(len(v) for v in moved.values())
     return moved
+
+
+MAIN = {}  # main's table, read once per run
+
+
+def main_table():
+    """Main's jar scoreboard (scoreboard/all.json on the generated branch), fetched once per run; None when there is none
+    (offline, or a clone with no generated branch)."""
+    if "table" not in MAIN:
+        sys.path.insert(0, str(ROOT / "bench"))
+        import generated
+        generated.fetch()
+        text = generated.read(generated.TABLE)
+        MAIN["table"] = json.loads(text) if text else None
+    return MAIN["table"]
+
+
+def main_row(loader, frm, to, table=None):
+    """Main's row of one port (an update or a jump) that names its mods, with the commit the table is of; None when main's
+    table has none."""
+    table = main_table() if table is None else table
+    for r in (table or {}).get("updates", []) + (table or {}).get("jumps", []):
+        if (r["loader"], r["from"], r["to"]) == (loader, frm, to) and r.get("links") is not None:
+            return {**r, "commit": table.get("commit"), "run": table.get("run")}
+    return None
+
+
+def against_main(row, summary):
+    """Over the mods a run read: those that link now and not in main's row, those main's row has linking that do not now."""
+    read = set(summary["verdicts"])
+    was, now = set(row["links"]) & read, set(summary["links"])
+    return {"newly link": sorted(now - was), "no longer link": sorted(was - now), "same": len(read) - len(now ^ was)}
+
+
+# What every port reads: the porter's sources, the port rules and this file. A change to one can move any mod of any port.
+SHARED = {"knowledge/fixes.json", "bench/exposure.py"} | {f"tools/{n}" for n in (*JAR_SOURCES, *MAP_SOURCES, *NAME_SOURCES)}
+NAMED = re.compile(r"^[ \t*_>-]*port check:?[*_]*\s*(.+)$", re.I | re.M)
+PAIR = re.compile(r"\b(fabric|neoforge):(\d[\w.]*)(?::(\d[\w.]*))?\b")
+
+
+def check_plan(changed, body="", table=None):
+    """What a pull request's port check runs: a list of jobs {loader, from, to, mods, why} (mods: Modrinth slugs, empty
+    for all the release pins) and the lines that say why, from the files it changed, the ports its description names and
+    main's table. Each job ports one pair and compares it with main's row, so the check takes about one port's time.
+
+    - A line "Port check: LOADER:FROM:TO [...] [mods=SLUG,...] [type=TEXT]" in the description: those ports (LOADER:FROM
+      for the next release); with mods, only those; with a type, only the mods main's row says that type holds back.
+    - A changed stand-in folder (knowledge/standins/FROM-TO/, or FROM-TO.LOADER/): that update, for each loader it is for.
+    - A changed pin list (bench/exposure/mods/LOADER-FROM.json): the update from that release.
+    - A change to what every port reads (SHARED): a sample, not every port, and the lines say so: per loader the big
+      update and the small update with the most mods linking on main, and the jump from the most-used release to the
+      newest, every mod of each.
+    Anything else changes nothing the scoreboard reads, and runs nothing."""
+    jobs, why = {}, []
+
+    def add(loader, frm, to, mods, reason):
+        job = jobs.setdefault((loader, frm, to), {"loader": loader, "from": frm, "to": to, "mods": set(), "all": False, "why": []})
+        job["all"] |= not mods
+        job["mods"] |= set(mods or ())
+        job["why"].append(reason)
+
+    table = main_table() if table is None else table
+    for line in NAMED.findall(body or ""):
+        typed = re.search(r"\btype=[\"']?(.+?)[\"'`]*\s*$", line)
+        kind = typed.group(1).strip() if typed else None
+        head = line[:typed.start()] if typed else line
+        named = re.search(r"\bmods=([\w.,+-]+)", head)
+        for lo, frm, to in PAIR.findall(head):
+            to = to or dict(updates(lo)).get(frm)
+            if not to or not (PINS / f"{lo}-{frm}.json").is_file():
+                raise SystemExit(f"Port check: {lo}:{frm}{':' + to if to else ''} is not a port the scoreboard reads (no next release or no bench/exposure/mods/{lo}-{frm}.json)")
+            mods = [m for m in named.group(1).split(",") if m] if named else []
+            if kind:
+                row = main_row(lo, frm, to, table)
+                if row and row.get("heldBy") is not None:
+                    held = sorted({m.split("--", 1)[0] for m, types in row["heldBy"].items() if any(kind in t for t in types)})
+                    if not held:
+                        raise SystemExit(f"Port check: main's {lo} {frm} -> {to} has no mod held back by a type with '{kind}' in it")
+                    mods += held
+                else:
+                    why.append(f"{lo} {frm} -> {to}: main's table lists no types for it yet, so every mod is ported, not only '{kind}'")
+            add(lo, frm, to, mods, "named in the description" + (f", type '{kind}'" if kind else ""))
+    shared = sorted(f for f in changed if f in SHARED)
+    for f in changed:
+        stand = re.match(r"knowledge/standins/([\w.]+)-([\w.]+?)(?:\.(fabric|neoforge))?/", f)
+        if stand:
+            frm, to, only = stand.groups()
+            for lo in [only] if only else sorted(FIRST):
+                if (frm, to) in updates(lo):
+                    add(lo, frm, to, [], f"its stand-ins changed ({f})")
+        pins = re.fullmatch(r"bench/exposure/mods/(fabric|neoforge)-([\w.]+)\.json", f)
+        if pins and dict(updates(pins.group(1))).get(pins.group(2)):
+            add(pins.group(1), pins.group(2), dict(updates(pins.group(1)))[pins.group(2)], [], f"its pinned mods changed ({f})")
+    if shared:
+        for lo in sorted(FIRST):
+            rows = [r for r in (table or {}).get("updates", []) if r["loader"] == lo]
+            for size in (True, False):
+                some = [r for r in rows if r.get("big") == size]
+                if some:
+                    r = max(some, key=lambda r: r["modsThatLink"])
+                    add(lo, r["from"], r["to"], [], f"sample: the {'big' if size else 'small'} update with the most mods linking on main ({r['modsThatLink']})")
+            newest = updates(lo)[-1][1]
+            add(lo, most_used(lo), newest, [], "sample: the most-used release's mods on the newest game")
+        why.append(f"{', '.join(shared)} changed, which every port reads: this checks a sample of {len(FIRST) * 3} ports, not every one. "
+                   "The whole scoreboard runs by hand (tools/cloud-run exposure) and with each release.")
+    out = [{"loader": j["loader"], "from": j["from"], "to": j["to"], "mods": "" if j["all"] else ",".join(sorted(j["mods"])),
+            "why": "; ".join(dict.fromkeys(j["why"]))} for j in jobs.values()]
+    for j in out:
+        why.append(f"{j['loader']} {j['from']} -> {j['to']}{' (' + j['mods'] + ')' if j['mods'] else ''}: {j['why']}")
+    if not out:
+        why.append("nothing the scoreboard reads changed: no port to check")
+    return out, why
+
+
+def gate(summary):
+    """A port check's verdict on one summary: its lines, the mods it freed (slugs, for the game proof) and whether it
+    passes, which it does unless a mod that links in main's row stops linking."""
+    m = summary.get("againstMain")
+    pair = f"{summary['loader']} {summary['from']} -> {summary['to']}"
+    if m is None:
+        return [f"{pair}: main's table has no row for it, so nothing to compare; {summary['modsThatLink']}/{summary['modsRead']} link"], [], True
+    lines = [f"{pair}: {summary['modsThatLink']}/{summary['modsRead']} link" + (f" ({summary['partial']})" if summary.get("partial") else ""),
+             f"  newly link: {', '.join(m['newly link']) or 'none'}", f"  no longer link: {', '.join(m['no longer link']) or 'none'}"]
+    if m["no longer link"]:
+        lines.append(f"FAIL: {len(m['no longer link'])} mods that link on main stop linking")
+    return lines, sorted({n.split("--", 1)[0] for n in m["newly link"]}), not m["no longer link"]
 
 
 def every_update(loaders, only, jobs, out_file=None):
@@ -1327,7 +1474,7 @@ def join(folder, out=None):
     missing = [f"{lo} {a} -> {b}" for lo, a, b in dict.fromkeys(list(single) + list(wanted) + sorted(targets))
                if not any(pair(s) == (lo, a, b) for s in found)]
     anyv = any_version_table({pair(s): s for s in found if pair(s) in targets})
-    keep = ("loader", "from", "to", "modsRead", "modsThatLink", "modsThatLinkAndData", "brokenUses", "loaderUses", "modsHeldOnlyByLoader", "links")
+    keep = ("loader", "from", "to", "modsRead", "modsThatLink", "modsThatLinkAndData", "brokenUses", "loaderUses", "modsHeldOnlyByLoader", "links", "heldBy")
     table = {
         "date": date.today().isoformat(), "total": total, "loaders": loaders, "missing": missing, "anyVersion": anyv,
         "updates": [{**{k: s.get(k) for k in keep}, "big": big(s["from"], s["to"])} for s in rows],
@@ -1569,7 +1716,7 @@ def record_main(table_path, commit, run, folder, day=None):
         points = kept.setdefault(mid, [])
         last = points[-1] if points else None
         note = (f"{link - last['value']:+,} on {last['value']:,}" if last and last["value"] != link else "the same") + (": " + "; ".join(moved) if moved else "")
-        points.append({"date": day or date.today().isoformat(), "value": link, "n": mods, "note": note[:600], "source": f"tools/cloud-run exposure {run} on {at}"})
+        points.append({"date": day or date.today().isoformat(), "value": link, "n": mods, "note": note[:600], "source": f"the jar scoreboard {run} on {at}"})
     points_path.write_text(M.dump(kept), encoding="utf-8", newline="\n")
     main_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
     (folder / ANY_VERSION_PAGE).write_text(any_version_page(table), encoding="utf-8", newline="\n")
@@ -2306,7 +2453,9 @@ def load(loader, frm, to, save, mods=None, out=None):
 
     One start holds them all; a start that fails drops the jar its log names and starts again, until a start opens a world,
     places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only."""
-    report = ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" / "report.json"
+    work = ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}"
+    # The newer of the whole update's report and a report of some of its mods (jars --mods, as a port check runs it).
+    report = max((r for r in (work / "report.json", work / "report-part.json") if r.is_file()), key=lambda r: r.stat().st_mtime, default=work / "report.json")
     if not report.is_file():
         jars(loader, frm, [to])
     linked = [m["mod"] for m in json.loads(report.read_text(encoding="utf-8"))["mods"] if "error" not in m and not m["unlinked"]]
@@ -2621,8 +2770,15 @@ def main():
         if name == "jars":
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
             j.add_argument("--type", dest="kind", help="port only the mods the last whole run held back with this type of break (or part of its text)")
+            j.add_argument("--mods", help="port only these mods (Modrinth slugs, comma-separated)")
         if name == "load":
             j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated), with the libraries they need")
+    cp = sub.add_parser("check-plan", help="what a pull request's port check runs, as JSON {jobs, why} (port-check.yml's matrix)")
+    cp.add_argument("--changed", type=Path, required=True, help="a file listing the files the pull request changed, one a line")
+    cp.add_argument("--body", type=Path, help="a file with the pull request's description")
+    ga = sub.add_parser("gate", help="a port check's verdict on a jars summary against main's row: fails when a mod stops linking")
+    ga.add_argument("summary", type=Path)
+    ga.add_argument("--freed", type=Path, help="write the slugs of the mods that newly link here, comma-separated")
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     lp.add_argument("--mods", default="", help="the slugs the proof asks of every update; one that no update pins stops the plan")
@@ -2654,7 +2810,18 @@ def main():
     if a.command == "steps":
         steps(a.frm, a.to)
     elif a.command == "jars":
-        jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind)
+        jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind,
+             only=[m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None)
+    elif a.command == "check-plan":
+        jobs, why = check_plan([f for f in a.changed.read_text(encoding="utf-8").splitlines() if f.strip()],
+                               a.body.read_text(encoding="utf-8") if a.body and a.body.is_file() else "")
+        print(json.dumps({"jobs": jobs, "why": why}))
+    elif a.command == "gate":
+        lines, freed, ok = gate(json.loads(a.summary.read_text(encoding="utf-8")))
+        print("\n".join(lines))
+        if a.freed:
+            a.freed.write_text(",".join(freed), encoding="utf-8")
+        sys.exit(0 if ok else 1)
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
         loaders = [a.loader] if a.loader else sorted(FIRST)

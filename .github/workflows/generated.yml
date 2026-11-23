@@ -4,9 +4,8 @@ name: Generated files
 # and main's jar scoreboard after every push to main, and committed to the generated branch, never to main
 # (bench/generated.py). main requires a pull request to be up to date before it merges, so a bot commit on main put every
 # open pull request behind; on their own branch they cost a pull request nothing. The record job publishes main's jar
-# scoreboard the same way when the sweep of a push to main (cloud-exposure.yml) ends: started by that event, it runs
-# main's workflow on main's code, where a step inside the sweep ran the pushed commit's steps on main's newer code and
-# failed when the command it called was renamed (run 45123319240).
+# scoreboard the same way when a whole sweep of main (cloud-exposure.yml, started by hand or by a release) ends: started
+# by that event, it runs main's newest workflow and code, so the site it builds is main's as it is now.
 # The push uses the DOCS_DEPLOY_KEY deploy key, so GitHub Pages builds the branch (a push by GITHUB_TOKEN may not start it).
 
 on:
@@ -52,11 +51,13 @@ jobs:
       - name: Write the site and ROADMAP.md to the generated branch
         run: python bench/generated.py publish --dir .runs/generated
   record:
-    # Only a whole sweep of a push to main is main's table; one with a failed job is not recorded. Never replaced by a newer
-    # run as regenerate is: publish takes another run's push and builds again on top, so no sweep's point is lost.
+    # Only a whole sweep (no only=) of main is main's table; one with a failed job is recorded once its re-run succeeds.
+    # Never replaced by a newer run as regenerate is: publish takes another run's push and builds again on top, so no
+    # sweep's point is lost.
     if: >-
-      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push'
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch'
       && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success'
+      && startsWith(github.event.workflow_run.display_title, 'Cloud jar scoreboard: every update')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

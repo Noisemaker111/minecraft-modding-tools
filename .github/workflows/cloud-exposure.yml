@@ -1,49 +1,29 @@
 name: Cloud jar scoreboard
-# The jar scoreboard (python bench/exposure.py all) on GitHub's runners: one ubuntu-latest job per group of ports the plan
-# makes (python bench/exposure.py updates): each update and jump, and the most-used release's mods to every release, where
-# the ports from one release in one direction share a job and one JarPort ports the steps they share once. Each job
+# The whole jar scoreboard (python bench/exposure.py all) on GitHub's runners: one ubuntu-latest job per group of ports the
+# plan makes (python bench/exposure.py updates): each update and jump, and the most-used release's mods to every release,
+# where the ports from one release in one direction share a job and one JarPort ports the steps they share once. Each job
 # downloads its release's pinned mods (bench/exposure/mods/), ports them with JarPort and links them against each target;
 # the summary job joins them into the all-updates table (python bench/exposure.py join). A job downloads about 1 GB (the
 # game, its loader, 150 mods) in under a minute, so only small kept answers are cached: each release's registry report
 # (its data generator), and the ports and Exposure answers of the sweep before, each under the content of everything it
-# reads. A pull request's sweep reuses those answers; main's push sweep ports every mod and asks Exposure everything again
-# (--verify) and fails where a kept answer with the same key differs: the check that the cache is exact.
+# reads. A sweep of main ports every mod and asks Exposure everything again (--verify) and fails where a kept answer with
+# the same key differs: the check that the cache is exact.
 #
-# The table is a function of the tree: a sweep whose tree (git rev-parse HEAD^{tree}, in the run name) already has a
-# successful whole sweep reuses that table and runs no job. main requires a pull request to be up to date and merges by
-# squash, so the push of a pull request whose last sweep ran on its head reuses the pull request's table; GitHub's 20
-# runners are shared by every sweep, so a sweep not run is one every other waits less for.
+# It runs only when started: by hand (tools/cloud-run exposure, or Actions > Run workflow) and by each release
+# (release.yml). It is 72 jobs and hundreds of runner-minutes, and ran about 3 times per merged pull request when every PR
+# and every push to main started one, so the 20 runners fell hours behind. A pull request gets port-check.yml instead: the
+# ports its change can move, against main's table, in about one port's time. A whole sweep of main is main's table:
+# generated.yml's record job saves it to the generated branch (scoreboard/all.json) with the headline points.
 #
-# Main's table is kept on the generated branch as scoreboard/all.json, never on main: generated.yml's record job saves
-# it when a push's sweep finishes, from main's own workflow and code (a record step here ran this commit's steps on main's
-# newer code, and failed when #202 renamed the command it called). A pull request runs only its own branch: tools/cloud-run
-# exposure finds the table of the branch's base tree, or dispatches one for that commit (-f commit=SHA) when none ran.
-# paths-ignore lists what cannot change the table; tools/cloud-run reads it to treat a commit that only changed those
-# files as the same table as its parent.
-run-name: "Cloud jar scoreboard: ${{ inputs.only || 'every update' }}${{ inputs.commit && format(' at {0}', inputs.commit) || '' }} tree ${{ inputs.tree || github.event.head_commit.tree_id }} ${{ inputs.request }}"
+# One failed job of 72 is not a new sweep: the summary job names the ports with no row, and whoever started the run
+# re-runs only those (gh run rerun RUN --failed); the summary job runs again with them and joins every attempt's rows. A
+# job that fails on the re-run too is a real failure, not a runner's.
+run-name: "Cloud jar scoreboard: ${{ inputs.only || 'every update' }} ${{ inputs.request }}"
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "bench/exposure/jars-*.json"
-      - "bench/exposure/load-*.json"
-      - "coverage/measures.json"
-      - "coverage/roadmap.json"
-      - "coverage/roadmap/**"
-      - "coverage/ledger.json"
-      - "app/**"
   workflow_dispatch:
     inputs:
       only:
         description: LOADER:FROM updates, comma-separated (empty for every update of both loaders)
-        default: ''
-      commit:
-        description: The commit to run (default the branch's head); tools/cloud-run sets it to a branch's base on main
-        default: ''
-      tree:
-        description: The tree of the commit run (set by tools/cloud-run; names the run so a sweep of the same tree reuses it)
         default: ''
       request:
         description: Set by tools/cloud-run to find the run it started
@@ -51,41 +31,20 @@ on:
 permissions:
   contents: read
   actions: read
-# Every push to main gets its own sweep, none cancelled: a pull request on any commit of main finds its table. (One group
-# for main's pushes let GitHub cancel each waiting push when a newer one came, and pull requests on those commits had none.)
-# They may finish out of order; exposure.record_main keeps the newest commit's table.
 jobs:
   plan:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       updates: ${{ steps.plan.outputs.updates }}
-      reuse: ${{ steps.plan.outputs.reuse }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.commit || github.sha }}
       - id: plan
         env:
           ONLY: ${{ inputs.only }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TREE=$(git rev-parse "HEAD^{tree}")
-          REUSE=""
-          if [ -z "$ONLY" ]; then
-            REUSE=$(gh run list -R "$GITHUB_REPOSITORY" --workflow cloud-exposure.yml --status success --limit 200 --json databaseId,displayTitle \
-              --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID and (.displayTitle | contains(\"every update\")) and (.displayTitle | contains(\"tree $TREE \")))][0].databaseId // empty")
-          fi
-          if [ -n "$REUSE" ]; then
-            echo "tree $TREE was swept whole by run $REUSE: its table is this commit's" | tee -a "$GITHUB_STEP_SUMMARY"
-            echo "updates=[]" >> "$GITHUB_OUTPUT"
-          else
-            echo "updates=$(python3 bench/exposure.py updates ${ONLY:+--only "$ONLY"})" >> "$GITHUB_OUTPUT"
-          fi
-          echo "reuse=$REUSE" >> "$GITHUB_OUTPUT"
+        run: echo "updates=$(python3 bench/exposure.py updates ${ONLY:+--only "$ONLY"})" >> "$GITHUB_OUTPUT"
   update:
     needs: plan
-    if: needs.plan.outputs.updates != '[]'
     name: ${{ matrix.update }}
     strategy:
       fail-fast: false
@@ -96,11 +55,9 @@ jobs:
     timeout-minutes: 40
     env:
       UPDATE: ${{ matrix.update }}
-      VERIFY: ${{ github.event_name == 'push' && '--verify' || '' }}
+      VERIFY: ${{ github.ref == 'refs/heads/main' && '--verify' || '' }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.commit || github.sha }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -146,44 +103,33 @@ jobs:
             ~/.mmt/exposure/game
             ~/.mmt/exposure/maps
           key: ${{ steps.release.outputs.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+      # overwrite: a re-run of a failed job replaces the part its first attempt left.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: exposure-${{ strategy.job-index }}
           path: summary/
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 14
   summary:
     needs: [plan, update]
-    if: always() && needs.plan.result == 'success' && (needs.update.result != 'skipped' || needs.plan.outputs.reuse != '')
+    if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.commit || github.sha }}
+      # By run id: every artifact of the run, whichever attempt uploaded it, so a re-run's rows join the first attempt's.
       - uses: actions/download-artifact@v4
-        if: needs.plan.outputs.reuse == ''
         with:
           pattern: exposure-*
           path: artifacts
-      - name: Join every update into one table
-        if: needs.plan.outputs.reuse == ''
-        run: python3 bench/exposure.py join artifacts --out all.json | tee summary.md >> "$GITHUB_STEP_SUMMARY"
-      # The same tree's table, made by the run the plan found: kept under this run too, so whatever finds this commit's
-      # run (tools/cloud-run, generated.yml's record) reads its summary as if it had swept.
-      - uses: actions/download-artifact@v4
-        if: needs.plan.outputs.reuse != ''
-        with:
-          name: summary
-          run-id: ${{ needs.plan.outputs.reuse }}
+          run-id: ${{ github.run_id }}
           github-token: ${{ github.token }}
-      - name: Name this run's commit
-        env:
-          COMMIT: ${{ inputs.commit || github.sha }}
+      - name: Join every update into one table
         run: |
-          [ -z "${{ needs.plan.outputs.reuse }}" ] || cat summary.md >> "$GITHUB_STEP_SUMMARY"
-          echo "$COMMIT" > commit.txt
+          python3 bench/exposure.py join artifacts --out all.json | tee summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "$GITHUB_SHA" > commit.txt
       - uses: actions/upload-artifact@v4
         with:
           name: summary
@@ -191,4 +137,20 @@ jobs:
             summary.md
             all.json
             commit.txt
+          overwrite: true
           retention-days: 90
+      - name: Ports with no row
+        if: needs.update.result != 'success'
+        env:
+          ATTEMPT: ${{ github.run_attempt }}
+          RUN: ${{ github.run_id }}
+        run: |
+          missing=$(python3 -c "import json; print(', '.join(json.load(open('all.json'))['missing']) or 'none')")
+          if [ "$ATTEMPT" = 1 ]; then
+            msg="Jobs failed; ports with no row: $missing. Re-run only those: gh run rerun $RUN --failed"
+          else
+            msg="Jobs failed again on attempt $ATTEMPT; ports with no row: $missing. A job that fails twice is a real failure: read its log, don't re-run it."
+          fi
+          echo "::error title=Scoreboard incomplete::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          exit 1

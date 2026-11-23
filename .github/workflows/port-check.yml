@@ -1,0 +1,111 @@
+name: Port check
+# A pull request's check of the ports its change can move, in about one port's time: python bench/exposure.py
+# check-plan reads the files the PR changed (against main), the "Port check:" line of its description and main's jar
+# scoreboard (the generated branch), and picks the ports: the ones the description names (only its mods, or the mods a
+# type of break holds back on main), the update whose stand-ins or pinned mods changed, and, when the porter or its rules
+# changed, which every port reads, a sample per loader (the big and the small update with the most mods linking on main,
+# and the most-used release to the newest), never every port; its output says which and why. One job per port, side by
+# side: it ports and links those mods (jars --mods) and fails when a mod that links in main's row stops linking (gate),
+# then starts the mods that newly link on a real server and in a real client of the new release (load --mods), the game
+# proof at its smallest scope. The whole scoreboard (cloud-exposure.yml) runs only by hand and with each release.
+#
+# Started by the PR's own events: marked ready, or a push to a ready PR; a draft starts nothing, and a newer push
+# replaces the run of the older head. A pull_request run from a fork runs the fork's copy of this file with a read-only
+# token, so it uses no secret. It restores main's kept ports and maps (a PR's cache could only be read by that PR, and
+# would push main's out of the 10 GB), so it saves none.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, ready_for_review, synchronize]
+concurrency:
+  group: port-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  plan:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
+    steps:
+      # The merge with main and its first parent, main: what the PR changes against main as it is now.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: plan
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
+          python3 bench/exposure.py check-plan --changed "$RUNNER_TEMP/changed.txt" --body "$RUNNER_TEMP/body.md" > "$RUNNER_TEMP/plan.json"
+          python3 -c "import json,sys; print('\n'.join(json.load(open(sys.argv[1]))['why']))" "$RUNNER_TEMP/plan.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "jobs=$(python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['jobs']))" "$RUNNER_TEMP/plan.json")" >> "$GITHUB_OUTPUT"
+  port:
+    needs: plan
+    if: needs.plan.outputs.jobs != '[]'
+    name: ${{ matrix.loader }} ${{ matrix.from }} -> ${{ matrix.to }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    runs-on: ubuntu-latest
+    env:
+      LOADER: ${{ matrix.loader }}
+      FROM: ${{ matrix.from }}
+      TO: ${{ matrix.to }}
+      MODS: ${{ matrix.mods }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.mmt/exposure/registries
+            ~/.mmt/exposure/ports
+            ~/.mmt/exposure/game
+            ~/.mmt/exposure/maps
+          key: exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-
+          restore-keys: exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:
+      - name: Port and link against main's row
+        shell: bash
+        run: |
+          mkdir -p summary
+          python bench/exposure.py jars --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} --out summary/port.json > jars.txt
+          python bench/exposure.py gate summary/port.json --freed freed.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Mods that newly link
+        id: freed
+        if: always()
+        run: echo "mods=$(cat freed.txt 2>/dev/null)" >> "$GITHUB_OUTPUT"
+      - if: steps.freed.outputs.mods != ''
+        uses: ./.github/actions/game
+      - if: steps.freed.outputs.mods != ''
+        name: Start them on a server and in a client
+        env:
+          FREED: ${{ steps.freed.outputs.mods }}
+        run: |
+          set -o pipefail
+          status=0
+          PYTHONUNBUFFERED=1 python bench/exposure.py load --loader "$LOADER" --from "$FROM" --to "$TO" --mods "$FREED" \
+            --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" 2>&1 | tee load.txt || status=$?
+          { echo '```'; grep -A 1000 '^mod  ' load.txt || tail -n 5 load.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: port-${{ strategy.job-index }}
+          path: |
+            summary/
+            jars.txt
+            load.txt
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14

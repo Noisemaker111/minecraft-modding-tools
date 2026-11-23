@@ -12,8 +12,8 @@ it, in every update. One changed part of the game as a rule comes second, for wh
 - A mod comes in as source or as a `.jar`. `mmt port --jar MOD.jar --to 1.21.2` (tools/JarPort.java) moves a compiled
   NeoForge or Fabric mod with no source and no build, and names every reference that does not link instead of guessing.
   A Fabric jar is read in Mojang's names and handed back in the target release's intermediary (`ModNames.Back`).
-- **The number to move:** `tools/cloud-run exposure` (`python bench/exposure.py all` runs the same here) ports the
-  150 most-downloaded mods of each release and links them against the target release and its loader (NeoForge with FML
+- **The number to move:** the jar scoreboard (`tools/cloud-run exposure`, run by hand and with each release, never
+  per PR; `python bench/exposure.py all` runs the same here) ports the 150 most-downloaded mods of each release and links them against the target release and its loader (NeoForge with FML
   and its event bus; Fabric Loader and Fabric API). The headline is **any mod, any version**
   (`port.jar-links.any-version`): the most-used release's mods ported to every other release, forward and back, and
   counted when they link on every one. What holds each mod back, and which types of break and releases would free the
@@ -24,16 +24,17 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   `port.jar-links.newest`), which is what people ask for; the **35 big updates**, each into a new family of releases
   (**1,861 of 5,149**, `port.jar-links.big-updates`); the 21 jumps from each family's most-used release to the next
   family's; and the 29 small updates, across which 93% link untouched. All updates together was the old headline (62%,
-  `port.jar-links.every-update`) and flattered the porter. Run `tools/cloud-run exposure` on your PR's last commit
-  and put what it prints against main in the PR. It runs only your branch: main's table for your base was made when
-  that commit reached main, and is found (or made once, for every PR on that base) without you running main. Never
-  add the `port.jar-links` points: main's sweep writes them and its table to the `generated` branch after the merge.
+  `port.jar-links.every-update`) and flattered the porter. Never add the `port.jar-links` points: the whole sweep
+  writes them and main's table to the `generated` branch.
 - One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (a
   minute or two the first time, seconds when nothing it reads changed; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
   read in Mojang's names through intermediary first (tools/ModNames.java).
-- `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2` is the proof (`python bench/exposure.py load` on GitHub's
-  runners, one job per update; `-f mods=SLUG,...` for a few mods): the mods `jars` says link, with the libraries they
+- The PR's Port check is the proof: marked ready, it ports what your change can move (the ports a `Port check:
+  LOADER:FROM:TO [mods=SLUG,...] [type=TEXT]` line in the description names, the update whose stand-ins changed, or a
+  sample when the porter itself changed), fails if a mod that links on main stops, and starts the mods that newly link
+  (`python bench/exposure.py load`). By hand, `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2 [-f mods=SLUG,...]`
+  runs the same proof for a whole update: the mods `jars` says link, with the libraries they
   require, are ported and started on a real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side
   client`), each mod's two verdicts side by side, in `.runs/cloud/load-RUNID/`, with what moved against the receipt main
   keeps for the update in `compare.md`. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads
@@ -115,16 +116,15 @@ the first row above.
    `redesigned` or `unused` reference unless you can say what replaces it. A wrong answer is worse than none.
 3. For a rule: write it in `knowledge/fixes.json` with `members` naming that game part, then
    `python bench/rule_test.py --only ID --write`. Copy the nearest rule that has `members`; never name a mod.
-4. Run step 1 again, or with `--type "TYPE"` to port only the mods that type held back (seconds). It prints which mods
-   newly link, stopped linking or changed their port against the run before your edit: the type's mods must have moved
-   and none may stop linking. If nothing moved, the change does not do what you think: fix it or take it out. For a learner change, also run
+4. Run step 1 again, or with `--type "TYPE"` or `--mods SLUG,...` to port only those mods (seconds). It prints which
+   mods newly link or stopped linking against main's row of the same update (main's table, on the `generated` branch),
+   and against the run before your edit: the type's mods must have moved and none may stop linking. If nothing moved, the change does not do what you think: fix it or take it out. For a learner change, also run
    `python bench/learn_diff.py --loader neoforge|fabric` and read every reading that is new, gone or changed against
    main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()).
-5. Push, then `tools/cloud-run load -f updates=LOADER:A:B -f mods=...`, with the mods step 4 printed as moved, starts
-   them on a real server and in a real client, with the library mods they require (each one's release for B from Modrinth, or its A release ported with
-   them); no mod that links may fail, and `compare.md` must show no mod that loaded on main failing now. To keep the
-   receipt, copy its `load-LOADER-A-B-COMMIT.json` into `bench/exposure/`. `python bench/port_board.py --changed` builds
-   the pinned source ports your rule crosses. Commit.
+5. Commit, write `Port check: LOADER:A:B type=TYPE` (or `mods=...`) in the PR description, push, mark the PR ready and
+   end the turn. Its Port check ports those mods against main's row and starts the ones that newly link on a real
+   server and in a real client, with the library mods they require; no mod that links may stop or fail.
+   `python bench/port_board.py --changed` builds the pinned source ports your rule crosses.
 
 Stop and tell Jon when: three parts in a row each freed no mod (the list has reached parts that need the game class
 read in both versions; say which); a rule needs to name a mod; or the count of mods with nothing left drops.
@@ -137,7 +137,7 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
   ported. Mod jars are only counted.
 - No AI call inside the tool. What you work out is saved as a rule with a test.
 - Prove in game before the PR ends, on GitHub's runners and never by starting Minecraft here: many agents share one PC.
-  `tools/cloud-run load` for the updates you changed (step 5); the whole corpus once, on the PR's final commit:
+  The Port check does it when the PR is ready (step 5); the whole corpus once, on the PR's final commit:
   `tools/cloud-run ports`; then hand back, never watching CI. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
 - Each type of break is a commit on the step's open PR, not a new step or PR (`CONTRIBUTING.md`, "How the work
   runs"). End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`):

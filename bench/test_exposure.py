@@ -925,5 +925,51 @@ skipped = E.not_loaded({"findings": [
     {"kind": "java", "severity": "warning", "suspects": [{"jar": "b.jar", "why": ["Java 21"]}]}]})
 check(list(skipped) == ["a.jar"] and "another loader" in skipped["a.jar"], f"a jar the loader skips is named, a Java warning is not: {skipped}")
 
+# A pull request's port check runs only the ports its change can move, compared with main's row of each, and fails when
+# a mod that links on main stops linking. Main's table is a made-up one with one row per loader, so the picks are its.
+repo = Path(__file__).resolve().parent.parent
+E.ROOT, E.INDEX, E.PINS, E.FIRST = repo, repo / "coverage" / "changes" / "index.json", repo / "bench" / "exposure" / "mods", {"fabric": "1.14.4", "neoforge": "1.20.2"}
+lo_f, lo_n = E.updates("fabric"), E.updates("neoforge")
+small_f = next(u for u in lo_f if not E.big(*u))
+big_f = next(u for u in lo_f if E.big(*u))
+table = {"commit": "c" * 40, "run": "r", "jumps": [], "updates": [
+    {"loader": "fabric", "from": big_f[0], "to": big_f[1], "big": True, "modsThatLink": 3, "links": ["a--1.jar"], "heldBy": {"b--1.jar": ["call, game: linked"], "c--1.jar": ["mixin, game: split"]}},
+    {"loader": "fabric", "from": lo_f[-1][0], "to": lo_f[-1][1], "big": True, "modsThatLink": 9, "links": ["a--2.jar"]},
+    {"loader": "fabric", "from": small_f[0], "to": small_f[1], "big": False, "modsThatLink": 5, "links": []}]}
+plan = lambda changed, body="": E.check_plan(changed, body, table)  # noqa: E731
+jobs, why = plan(["docs/index.html", "README.md", "app/src/main.rs", "tools/cli/PackCheck.java"])
+check(jobs == [] and "nothing the scoreboard reads" in why[-1], f"a change to nothing the scoreboard reads runs no port: {jobs}")
+jobs, why = plan(["tools/JarPort.java"])
+pairs = {(j["loader"], j["from"], j["to"]) for j in jobs}
+check(("fabric", *lo_f[-1]) in pairs and ("fabric", *small_f) in pairs and ("fabric", big_f[0], big_f[1]) not in pairs
+      and ("fabric", E.most_used("fabric"), lo_f[-1][1]) in pairs and ("neoforge", E.most_used("neoforge"), lo_n[-1][1]) in pairs
+      and all(j["mods"] == "" for j in jobs) and any("sample" in w and "not every one" in w for w in why),
+      f"a porter change runs a sample: per size the update with the most mods linking on main, and the newest jump, and says so: {jobs} {why}")
+jobs, _ = plan(["bench/exposure/mods/fabric-" + small_f[0] + ".json", f"knowledge/standins/{lo_n[0][0]}-{lo_n[0][1]}.neoforge/x/Y.java"])
+check({(j["loader"], j["from"], j["to"]) for j in jobs} == {("fabric", *small_f), ("neoforge", *lo_n[0])},
+      f"changed pins or stand-ins run the update they are for, and only for its loader's: {jobs}")
+jobs, _ = plan([f"knowledge/standins/{lo_n[0][0]}-{lo_n[0][1]}/x/Y.java"])
+check({j["loader"] for j in jobs} == {"fabric", "neoforge"}, f"stand-ins for both loaders run the update for both: {jobs}")
+jobs, _ = plan(["docs/a.md"], f"Step 80.\n**Port check:** fabric:{big_f[0]} type=call, game: linked\nfabric:{small_f[0]}:{small_f[1]} is not named")
+check(jobs == [{"loader": "fabric", "from": big_f[0], "to": big_f[1], "mods": "b", "why": "named in the description, type 'call, game: linked'"}],
+      f"a named port with a type checks only the mods main says that type holds back: {jobs}")
+jobs, _ = plan([], f"Port check: fabric:{small_f[0]}:{small_f[1]} mods=chunky,clumps")
+check(jobs[0]["mods"] == "chunky,clumps", f"named mods are the only ones ported: {jobs}")
+try:
+    plan([], "Port check: fabric:0.1:0.2")
+    check(False, "a port the scoreboard does not read stops the plan")
+except SystemExit as no:
+    check("not a port the scoreboard reads" in str(no), str(no))
+row = E.main_row("fabric", big_f[0], big_f[1], table)
+run = {"loader": "fabric", "from": big_f[0], "to": big_f[1], "modsRead": 3, "modsThatLink": 2, "links": ["b--1.jar", "c--1.jar"],
+       "verdicts": {"a--1.jar": {}, "b--1.jar": {}, "c--1.jar": {}}}
+run["againstMain"] = E.against_main(row, run)
+lines, freed, ok = E.gate(run)
+check(not ok and freed == ["b", "c"] and "a--1.jar" in lines[2], f"a mod that links on main and not now fails the check; the newly linked are its game proof: {lines}")
+run["links"] = ["a--1.jar", "b--1.jar"]
+run["againstMain"] = E.against_main(row, {**run, "verdicts": {"a--1.jar": {}, "b--1.jar": {}}})
+check(E.gate(run)[2] and E.gate(run)[1] == ["b"], "a check of some mods compares only those, and passes when none stops linking")
+check(E.gate({**run, "againstMain": None})[2], "a port main has no row for passes, and says there was nothing to compare")
+
 
 print(f"exposure: {checks} checks passed")
