@@ -1,0 +1,16 @@
+{
+  "id": "69b",
+  "title": "Mixins into game methods that changed signature: locals, static targets and other injectors follow",
+  "part": "Port by type of break",
+  "status": "doing",
+  "start": "2026-11-23",
+  "target": "2026-11-23",
+  "text": "The rest of the type `mixin target changed signature, game: linked`, read from -Djarport.why's reasons on the updates its nearest mods are in. A handler's @Local of the target's own locals (MixinExtras, LocalRef included) and its captured locals (LocalCapture) follow where the game's own code shows Mixin would hand it the same local in the new method: Mojang's local variable table where the jar keeps one, else its frames (GameCode.localsAt). What a re-declared handler takes after the target's arguments (CallbackInfo, sugar, locals) passes through with its annotations. A handler into a target the update made static is made static when its body never reads its own object. @Redirect, @WrapWithCondition, @ModifyReceiver, @ModifyArg and @ModifyExpressionValue at a call that only took other arguments follow it where the handler can take the new ones. Mixins into a game's anonymous class get the intermediary name of a method it inherits.",
+  "finish": "the type's finishes and mods counts fall on every update measured, none lower, and a mod this frees loads in a real client of the new release",
+  "wrongIf": "a mod this frees fails in a real game on a mixin this moved",
+  "measures": [
+    "port.jar-links.every-update",
+    "port.jar-links.big-updates",
+    "port.jar-links.newest"
+  ]
+}
