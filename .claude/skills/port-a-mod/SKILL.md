@@ -17,8 +17,9 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   and its event bus; Fabric Loader and Fabric API). The headline is **any mod, any version**
   (`port.jar-links.any-version`): the most-used release's mods ported to every other release, forward and back, and
   counted when they link on every one. What holds each mod back, and which types of break and releases would free the
-  most mods for every release, is `bench/exposure/any-version.md` (main writes it after each merge; your branch's run
-  prints the same under "Any version"): work from its top. In `bench/exposure/all.json` it also counts, apart: the **jump to the
+  most mods for every release, is main's `scoreboard/any-version.md` (`python bench/generated.py show
+  scoreboard/any-version.md`; your branch's run prints the same under "Any version"): work from its top. In main's
+  table (`python bench/generated.py show scoreboard/all.json`) it also counts, apart: the **jump to the
   newest game** from the most-used release (Fabric 1.20.1, NeoForge 1.21.1 to 26.3: **11 of 294 link**,
   `port.jar-links.newest`), which is what people ask for; the **35 big updates**, each into a new family of releases
   (**1,861 of 5,149**, `port.jar-links.big-updates`); the 21 jumps from each family's most-used release to the next
@@ -26,7 +27,7 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   `port.jar-links.every-update`) and flattered the porter. Run `tools/cloud-run exposure` on your PR's last commit
   and put what it prints against main in the PR. It runs only your branch: main's table for your base was made when
   that commit reached main, and is found (or made once, for every PR on that base) without you running main. Never
-  commit `bench/exposure/all.json` or `any-version.md` or add the `port.jar-links` points: main's sweep writes them after the merge.
+  add the `port.jar-links` points: main's sweep writes them and its table to the `generated` branch after the merge.
 - One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (a
   minute or two the first time, seconds when nothing it reads changed; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
@@ -102,7 +103,7 @@ the first row above.
    the first time and prints two lists: the **types of break** (what a reference is, and what the game's own code did
    about it: `call, game: linked` is a call whose method is still there with other parameters), each with the mods it
    alone holds back; and the mods nearest to done with what each still needs. Over every update the same two lists
-   are `types` and `nearest` in `bench/exposure/all.json`.
+   are `types` and `nearest` in main's table (`python bench/generated.py show scoreboard/all.json`).
 2. Take the type that finishes the most mods, and design the way the porter handles that type: in the learner
    (tools/GameDiff.java) when the game's own code shows the answer, in tools/JarPort.java when the answer is in how the
    mod's class is written. Use the nearest-to-done mods that have the type as your cases: the fix is right when it
@@ -140,5 +141,5 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
   `tools/cloud-run ports`; then hand back, never watching CI. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
 - Each type of break is a commit on the step's open PR, not a new step or PR (`CONTRIBUTING.md`, "How the work
   runs"). End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`):
-  its result says what the method freed and what it left, which is the table above from step 79 on (ROADMAP.md shows
-  every step). This file changes only when the method does; the table above takes no new rows.
+  its result says what the method freed and what it left, which is the table above from step 79 on (`ROADMAP.md` on the
+  `generated` branch shows every step). This file changes only when the method does; the table above takes no new rows.

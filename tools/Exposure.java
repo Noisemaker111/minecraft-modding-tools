@@ -45,7 +45,26 @@ public final class Exposure {
         Map<String, Object> said = new LinkedHashMap<>();
         for (Object o : Json.array(Json.read(Path.of(report)).get("unlinkedByMods"))) {
             String member = Json.text(Json.object(o), "member", "");
+            if (member.startsWith(POINT_GONE)) {
+                String[] read = pointSays(a, b, member.substring(POINT_GONE.length()).replaceAll(" \\(in [^)]*\\)$", ""));
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("game", read[0]);
+                row.put("gameDetail", read[1]);
+                row.put("portable", false);
+                row.put("part", read[2]);
+                said.put(member, row);
+                continue;
+            }
             String key = key(a, member);
+            String[] added = key == null && member.startsWith("abstract method not written: ") ? added(a, b, member) : null;
+            if (added != null) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("game", added[0]);
+                row.put("gameDetail", added[1]);
+                row.put("portable", false);
+                row.put("part", part(b, added[2]));
+                said.put(member, row);
+            }
             if (key == null) {
                 continue;
             }
@@ -60,6 +79,66 @@ public final class Exposure {
         Files.writeString(Path.of(out), Json.write(said), StandardCharsets.UTF_8);
         System.out.printf("%s -> %s: what the game's own code did, for %d references%n", from, to, said.size());
     }
+
+    static final String POINT_GONE = "mixin injection point gone: ";
+
+    /**
+     * What the game's new code has where a mixin's injection point was (JarPort's "POINT in METHOD", the method in new
+     * names): {game, detail, part}. game is JarPort.GameCode.slot's reading of the old and new method ("dropped",
+     * "helper", "overload", "accessor", "renamed", "ordinal"), "fewer" where the instruction is still there fewer times
+     * than the injector's ordinal needs, "local" for a @ModifyVariable's local, or "not read".
+     */
+    static String[] pointSays(GameDiff.Snap a, GameDiff.Snap b, String line) {
+        int in = line.lastIndexOf(" in ");
+        Matcher method = in < 0 ? null : METHOD.matcher(line.substring(in + 4));
+        if (method == null || !method.matches()) {
+            return new String[] { "not read", null, "game" };
+        }
+        String owner = method.group(1).replace('.', '/'), name = method.group(2), desc = method.group(3), point = line.substring(0, in);
+        if (point.startsWith("LOAD ") || point.startsWith("STORE ")) {
+            return new String[] { "local", null, "game" };
+        }
+        // The point: a call (owner.name(desc)) or a field (owner.nameDESC, its name read from the old class's fields).
+        Matcher call = METHOD.matcher(point);
+        String[] p = null;
+        if (call.matches()) {
+            p = new String[] { "m", call.group(1).replace('.', '/'), call.group(2), call.group(3) };
+        } else if (point.lastIndexOf('.') > 0) {
+            String pOwner = point.substring(0, point.lastIndexOf('.')).replace('.', '/'), rest = point.substring(point.lastIndexOf('.') + 1);
+            GameDiff.Cls c = a.classes.get(pOwner);
+            for (String f : c == null ? Set.<String>of() : c.fields.keySet()) {
+                if (rest.startsWith(f) && rest.length() > f.length() && c.fields.get(f).desc.equals(rest.substring(f.length()))) {
+                    p = new String[] { "f", pOwner, f, rest.substring(f.length()) };
+                }
+            }
+        }
+        String part = p == null ? "game" : part(a, dotted(p[1]));
+        GameDiff.Cls was = a.classes.get(owner);
+        List<GameDiff.Meth> named = was == null ? List.of() : was.methods.values().stream().filter(x -> x.name.equals(name)).toList();
+        String oldDesc = was != null && was.methods.containsKey(name + desc) ? desc : named.size() == 1 ? named.get(0).desc : null;
+        if (p == null || oldDesc == null) {
+            return new String[] { "not read", null, part };
+        }
+        JarPort.GameCode before, after;
+        try {
+            before = JarPort.GameCode.of(a.version);
+            after = JarPort.GameCode.of(b.version);
+        } catch (Exception unreadable) {
+            return new String[] { "not read", null, part };
+        }
+        List<String[]> now = after.steps(owner, name, desc), then = before.steps(owner, name, oldDesc);
+        String[] q = p;
+        java.util.function.Predicate<String[]> same = x -> (q[0].equals("m") ? x[0].equals("m") : x[0].equals("f") || x[0].equals("p")) && x[2].equals(q[2]) && x[3].equals(q[3]);
+        long has = now == null ? -1 : now.stream().filter(same).count(), had = then == null ? -1 : then.stream().filter(same).count();
+        if (has > 0) {
+            return new String[] { "fewer", "the method makes it " + has + " times, the old one " + had, part };
+        }
+        JarPort.GameCode.Slot slot = JarPort.GameCode.slot(before, after, x -> x, new String[] { owner, name, oldDesc }, new String[] { owner, name, desc },
+            p[0].charAt(0), p[1], p[2], p[3], -1);
+        return new String[] { slot.game(), slot.detail(), part };
+    }
+
+    static final Pattern METHOD = Pattern.compile("^([\\w.$]+)\\.([\\w$<>]+)(\\(.*)$");
 
     /** What a key (a class, or owner.member) names: the game's, the loader's API, or one of the libraries the release ships (DataFixerUpper, Brigadier...). */
     static String part(GameDiff.Snap a, String key) {
@@ -107,7 +186,7 @@ public final class Exposure {
      * references to the game, so a loader API change is porting work, not a surprise at load time.
      */
     static GameDiff.Snap snap(String version, String loader) throws Exception {
-        Platform p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of());
+        Platform p = platform(loader, version);
         String vj = GameDiff.versionJson(version);
         Path client = GameDiff.verified(GameDiff.download(vj, "client"), "client-" + version + ".jar");
         String[] m = GameDiff.download(vj, "client_mappings");
@@ -132,6 +211,29 @@ public final class Exposure {
      * its classes in Mojang names, its access transformer, and interfaces it adds to game classes (Mojang names).
      */
     record Platform(String version, List<byte[]> classes, String access, Map<String, List<String>> injected) {}
+
+    /**
+     * A release's platform, read once per process: a long port reads each release at two of its steps (as the new release
+     * of one and the old of the next), and reading Fabric API into Mojang names was half of reading a release.
+     */
+    static Platform platform(String loader, String version) throws Exception {
+        String key = loader + " " + version;
+        Platform p = PLATFORMS.get(key);
+        if (p == null) {
+            p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of());
+            Platform first = PLATFORMS.putIfAbsent(key, p);
+            p = first == null ? p : first;
+        }
+        return p;
+    }
+
+    static final Map<String, Platform> PLATFORMS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Lets go of what was read once for a release a long port has gone past. */
+    static void forget(String version) {
+        PLATFORMS.keySet().removeIf(k -> k.endsWith(" " + version));
+        Intermediary.FABRIC.remove(version);
+    }
 
     static final String NEOFORGED = "https://maven.neoforged.net/releases/";
 
@@ -250,7 +352,7 @@ public final class Exposure {
         Map<String, List<String>> injected = new HashMap<>();
         if (api != null) {
             byte[] bytes = Files.readAllBytes(api);
-            Intermediary names = compare(version, "26.1") < 0 ? new Intermediary(version) : null;
+            Intermediary names = compare(version, "26.1") < 0 ? Intermediary.of(version) : null;
             // Fabric API's modules open game members to every mod with "transitive-" widener lines (BlockEntityRenderers.
             // register, MenuScreens.register), as NeoForge does with its access transformer.
             for (String text : wideners(bytes)) {
@@ -541,6 +643,18 @@ public final class Exposure {
             }
         }
 
+        /** Fabric's intermediary names of a release, read once per process: every step of a long port before 26.1 asks again. */
+        static Intermediary of(String version) throws Exception {
+            Intermediary cached = FABRIC.get(version);
+            if (cached == null) {
+                FABRIC.putIfAbsent(version, new Intermediary(version));
+                cached = FABRIC.get(version);
+            }
+            return cached;
+        }
+
+        static final Map<String, Intermediary> FABRIC = new java.util.concurrent.ConcurrentHashMap<>();
+
         /**
          * NeoForge's SRG names of one release in Mojang's. NeoForge's pom names the NeoForm build it was made from; NeoForm's
          * joined mappings name each obfuscated class (in Mojang's name already) and member with an SRG id, unique in the
@@ -574,7 +688,8 @@ public final class Exposure {
 
         /**
          * SRG id -> Mojang name from NeoForm's tsrg2 ("tsrg2 obf srg id"; a class line "obf name", a method line
-         * "\tobf (desc) m_N_ N", a field line "\tobf f_N_ N"; deeper lines are parameters) and Mojang's mappings.
+         * "\tobf (desc) m_N_ N", a field line "\tobf f_N_ N", from 1.20.2 "\tobf (desc) obf N" and "\tobf obf N"; deeper
+         * lines are parameters) and Mojang's mappings.
          */
         static Map<String, String> srg(String tsrg, VersionMap.Proguard pg) {
             Map<String, String> members = new HashMap<>();
@@ -593,6 +708,12 @@ public final class Exposure {
                 }
                 boolean method = p.length >= 3 && p[1].startsWith("(");
                 String id = method ? p[2] : p[1];
+                // From 1.20.2 NeoForm's srg column is the obfuscated name again, and the SRG id is only its number (a field
+                // "\tP P 99767" is f_99767_), which mods' access transformers still name.
+                int number = method ? 3 : 2;
+                if (!id.matches("[mf]_\\d+_") && p.length > number && p[number].matches("\\d+")) {
+                    id = (method ? "m_" : "f_") + p[number] + "_";
+                }
                 String named = method ? pg.methods.get(owner + "." + p[0] + p[1]) : pg.fields.get(owner + "." + p[0]);
                 if (named != null && id.matches("[mf]_\\d+_")) {
                     members.putIfAbsent(id, named);
@@ -644,6 +765,9 @@ public final class Exposure {
             }
             if (kind == 'f' ? c.fields.containsKey(name) : c.methods.containsKey(name + desc)) {
                 return c;
+            }
+            if (kind == 'm' && name.startsWith("<")) {
+                return null; // a constructor is the class's own: a super's with the same parameters does not make it
             }
             if (c.sup != null) {
                 queue.add(c.sup);
@@ -709,9 +833,92 @@ public final class Exposure {
         return new String[] {"replaced", e.best() + " at " + e.votes() + " of " + e.aligned() + " aligned uses (" + e.sites() + " uses)"};
     }
 
+    /**
+     * What the game's own code shows of an abstract method a mod class does not write that the old release did not have,
+     * which key() gives no GameDiff key: "retyped" where the old class declared a method of that name and as many
+     * parameters with other types; "moved" where the game's own subclasses that write it stopped writing one old method,
+     * most of them the same (the porter moves a mod's override of that one into it); else "added", a method the game
+     * asks of its subclasses beside what they wrote before (the porter writes it as most of them do, or empty where it
+     * gives nothing back and takes over no work). {game, detail, the declaring class}; null for a line of another kind.
+     */
+    static String[] added(GameDiff.Snap a, GameDiff.Snap b, String line) {
+        Matcher m = REFERENCE.matcher(line.replaceAll(" \\(in [^)]*\\)$", ""));
+        if (!m.matches() || m.group(2) == null || m.group(3) == null) {
+            return null;
+        }
+        String k = m.group(1).replace('.', '/'), name = m.group(2), desc = m.group(3);
+        GameDiff.Cls now = b.classes.get(k), before = a.classes.get(k);
+        if (now == null || now.methods.get(name + desc) == null) {
+            return null;
+        }
+        int params = org.objectweb.asm.Type.getArgumentTypes(desc).length;
+        for (GameDiff.Meth om : before == null ? List.<GameDiff.Meth>of() : before.methods.values()) {
+            if (om.name.equals(name) && !now.methods.containsKey(om.name + om.desc) && org.objectweb.asm.Type.getArgumentTypes(om.desc).length == params) {
+                return new String[] {"retyped", "the old release's " + name + om.desc + " has other types", dotted(k)};
+            }
+        }
+        int had = 0;
+        Map<String, Integer> dropped = new HashMap<>();
+        for (GameDiff.Cls c : b.classes.values()) {
+            GameDiff.Meth w = c.methods.get(name + desc);
+            GameDiff.Cls old = a.classes.get(c.name);
+            if (w == null || (w.flags & 0x0400) != 0 || c.name.equals(k) || old == null || !JarPort.subtype(b, c.name, k)) {
+                continue;
+            }
+            had++;
+            for (GameDiff.Meth om : old.methods.values()) {
+                if (!om.name.startsWith("<") && !om.isStatic() && (om.flags & 0x0002) == 0 && !c.methods.containsKey(om.name + om.desc)) {
+                    dropped.merge(om.name + om.desc, 1, Integer::sum);
+                }
+            }
+        }
+        int writers = had;
+        Map.Entry<String, Integer> most = dropped.entrySet().stream().max(Map.Entry.<String, Integer>comparingByValue().thenComparing(Map.Entry.comparingByKey())).orElse(null);
+        if (most != null && most.getValue() >= 2 && most.getValue() * 10 >= writers * 8) {
+            return new String[] {"moved", most.getKey() + " at " + most.getValue() + " of " + writers + " game subclasses that write it", dotted(k)};
+        }
+        return new String[] {"added", writers == 0 ? "no game class of the old release writes it" : writers + " game subclasses write it beside what they wrote before", dotted(k)};
+    }
+
     static String dotted(String internal) {
         return internal.replace('/', '.');
     }
+
+    /**
+     * What the JVM's verifier says of one class when it loads it, with no game running: the JDK's own copy of HotSpot's
+     * verifier (java.lang.classfile), given the class hierarchy a release and a mod's classes make. It checks what a link
+     * check cannot: that each value on the stack is of a type the instruction using it accepts (a mod's TranslatableComponent
+     * passed where 1.19 wants a MutableComponent, after the route moved the class to TranslatableContents, which is none),
+     * and that no class declares a method twice. A class that names a type neither knows (another mod's) is taken to accept
+     * it, as a check that cannot load that class cannot say otherwise. Each line is "reason in Class::method(...) ...".
+     */
+    static List<String> verify(byte[] bytes, java.util.function.Function<String, GameDiff.Cls> known) {
+        java.lang.classfile.ClassHierarchyResolver resolver = desc -> {
+            String name = desc.descriptorString().substring(1, desc.descriptorString().length() - 1);
+            GameDiff.Cls c = known.apply(name);
+            if (c != null) {
+                return (c.flags & 0x0200) != 0 ? java.lang.classfile.ClassHierarchyResolver.ClassHierarchyInfo.ofInterface()
+                    : java.lang.classfile.ClassHierarchyResolver.ClassHierarchyInfo.ofClass(c.sup == null ? null : java.lang.constant.ClassDesc.ofInternalName(c.sup));
+            }
+            return null;
+        };
+        var all = resolver.orElse(JDK_CLASSES).orElse(desc -> java.lang.classfile.ClassHierarchyResolver.ClassHierarchyInfo.ofClass(null));
+        List<String> out = new ArrayList<>();
+        try {
+            for (VerifyError e : java.lang.classfile.ClassFile.of(java.lang.classfile.ClassFile.ClassHierarchyResolverOption.of(all)).verify(bytes)) {
+                out.add(String.valueOf(e.getMessage()));
+            }
+        } catch (RuntimeException unreadable) {
+            out.add("unreadable by the verifier: " + unreadable.getMessage());
+        }
+        return out;
+    }
+
+    // The JDK's own cache is a plain HashMap, and JarPort verifies on several threads at once.
+    static final java.lang.classfile.ClassHierarchyResolver JDK_CLASSES =
+        java.lang.classfile.ClassHierarchyResolver.ofResourceParsing(ClassLoader.getPlatformClassLoader()).cached(() -> Collections.synchronizedMap(new HashMap<>()));
+
+    static final Pattern VERIFIED_METHOD = Pattern.compile(" in ([\\w/$]+)::([^(\\s]+)\\(");
 
     /** A GameDiff route map read for lookups: classes, members (by old owner, name, descriptor) and rewrites. */
     static final class Route {

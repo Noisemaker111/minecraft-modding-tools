@@ -1,0 +1,15 @@
+{
+ "id": "86",
+ "title": "One count for any mod, any version",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "The end goal is any mod to any version, forward or back (Jon, 2026-11-21: 'any version <-> any version, not necessarily the newest version or a small jump'), but the scoreboard counted one update at a time, a few jumps forward, and the most-used release to the newest; ports to older releases were not measured at all. The every-update run now also ports the 150 most-downloaded mods of each loader's most-used release (Fabric 1.20.1, NeoForge 1.21.1) to every other release the loader has, 43 and 21, back to 1.14.4 and 1.20.2, and counts the mods whose port links on every one: port.jar-links.any-version, the porting goal's headline. For each mod that misses it lists the releases and the types of break holding it there, ranked by what would free the most mods (scoreboard/any-version.md on the generated branch, written by main's run after each merge).",
+ "start": "2026-11-22",
+ "target": "2026-11-23",
+ "finish": "port.jar-links.any-version is computed by tools/cloud-run exposure and main's per-merge run, first on ROADMAP.md, with its what's-not list; a first number from a cloud run of this branch, per loader, with the top blockers",
+ "wrongIf": "a mod counted as going to any version misses a release in its own per-update summary, or a release whose job did not run is left out of the count instead of counted as not reached",
+ "measures": [
+  "port.jar-links.any-version",
+  "port.jar-links.newest"
+ ]
+}

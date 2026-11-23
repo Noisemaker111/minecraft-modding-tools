@@ -8,11 +8,12 @@ name: Cloud jar scoreboard
 # and fails where a kept answer with the same key differs: the check that the cache agents use locally is exact.
 #
 # Main's table is made once per commit: every push to main runs this, and the record job saves the table as
-# bench/exposure/all.json on main with the port.jar-links measures (python bench/exposure.py record-main), pushed with the
-# DOCS_DEPLOY_KEY deploy key as generated.yml does. A pull request runs only its own branch: tools/cloud-run exposure
+# scoreboard/all.json on the generated branch, never on main, with the port.jar-links points and the site rebuilt in the
+# same commit (python bench/generated.py publish, pushed with the DOCS_DEPLOY_KEY deploy key as generated.yml does).
+# A commit to main would put every open pull request behind. A pull request runs only its own branch: tools/cloud-run exposure
 # finds this run's table for the branch's base, or dispatches one for that commit (-f commit=SHA) when none ran.
 # paths-ignore lists what cannot change the table; tools/cloud-run reads it to treat a commit that only changed those
-# files as the same table as its parent. A push that changes only them (the record job's own) starts no sweep.
+# files as the same table as its parent.
 run-name: "Cloud jar scoreboard: ${{ inputs.only || 'every update' }}${{ inputs.commit && format(' at {0}', inputs.commit) || '' }} ${{ inputs.request }}"
 on:
   push:
@@ -20,7 +21,6 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
-      - "bench/exposure/all.json"
       - "bench/exposure/jars-*.json"
       - "bench/exposure/load-*.json"
       - "coverage/measures.json"
@@ -43,7 +43,7 @@ permissions:
   contents: read
 # Every push to main gets its own sweep, none cancelled: a pull request on any commit of main finds its table. (One group
 # for main's pushes let GitHub cancel each waiting push when a newer one came, and pull requests on those commits had none.)
-# They may finish out of order; record-main keeps the newest commit's table.
+# They may finish out of order; exposure.record_main keeps the newest commit's table.
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -87,23 +87,29 @@ jobs:
             ~/.mmt/exposure/registries
             ~/.mmt/exposure/ports
             ~/.mmt/exposure/game
-          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}
+            ~/.mmt/exposure/maps
+          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: exposure-kept-${{ matrix.update }}-
       - name: Port and link this update's mods
+        # Under the job's 40 so the save below still runs when the port runs out of time.
+        timeout-minutes: 36
         # bash by name runs with pipefail: without it the tee below hid a failed port, and the job passed with no summary.
         shell: bash
         run: |
           IFS=: read -r LOADER FROM TO <<< "$UPDATE"
           mkdir -p summary
           python bench/exposure.py jars --verify --loader "$LOADER" --from "$FROM" --to "$TO" --out "summary/$LOADER-$FROM-$TO.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Saved when the port fails or runs out of time too: the route maps and finished ports are right either way, and a
+      # long port that never finished never kept them, so every run after it started cold and ran out of time again.
       - uses: actions/cache/save@v4
-        if: success()
+        if: always()
         with:
           path: |
             ~/.mmt/exposure/registries
             ~/.mmt/exposure/ports
             ~/.mmt/exposure/game
-          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}
+            ~/.mmt/exposure/maps
+          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -145,10 +151,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # main as it is now builds the site; its history tells whether the table there is of a newer commit than this one.
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: generated
+          path: .runs/generated
           ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
       - uses: actions/setup-python@v5
         with:
@@ -157,22 +168,8 @@ jobs:
         with:
           name: summary
           path: ${{ runner.temp }}/summary
-      - name: Save main's table and measures
+      - name: Save main's table and points to the generated branch
         env:
           TABLE: ${{ runner.temp }}/summary/all.json
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Another merge may land while this runs: take it and record again on top.
-          for attempt in 1 2 3 4 5; do
-            python bench/exposure.py record-main "$TABLE" --commit "$GITHUB_SHA" --run "$RUN"
-            if git diff --quiet -- bench/exposure/all.json bench/exposure/any-version.md coverage/measures.json; then exit 0; fi
-            git add bench/exposure/all.json bench/exposure/any-version.md coverage/measures.json
-            git commit -m "Main's jar scoreboard at ${GITHUB_SHA::10}"
-            if git push; then exit 0; fi
-            git fetch origin main
-            git reset --hard origin/main
-          done
-          echo "::error::Could not push main's table. Check that DOCS_DEPLOY_KEY holds a write deploy key the main ruleset lets bypass it."
-          exit 1
+        run: python bench/generated.py publish --dir .runs/generated --table "$TABLE" --commit "$GITHUB_SHA" --run "$RUN"

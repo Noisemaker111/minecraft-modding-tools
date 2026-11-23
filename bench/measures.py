@@ -3,7 +3,8 @@ step its own file in coverage/roadmap/GOAL/).
 
 A measure is one thing measured the same way each time (same work, same cache condition), with all
 its points and the target it is heading for. The roadmap page, ROADMAP.md and PR tables all read
-measures through this module, so a number looks the same and means the same everywhere.
+measures through this module, so a number looks the same and means the same everywhere. The points of a measure marked
+recordedBy are on the generated branch (bench/generated.py); run `git fetch origin generated` to see the newest.
 
     python bench/measures.py table [ID ...] [--area AREA] [--step STEP]   Markdown table for a PR or report
     python bench/measures.py add ID VALUE --source S [--date D] [--n N] [--note T]
@@ -18,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ledger_rule  # noqa: E402
+import generated  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MEASURES = ROOT / "coverage" / "measures.json"
@@ -82,8 +84,11 @@ def dump(data):
 class Book:
     """Measures and roadmap loaded together, with computed points filled in."""
 
-    def __init__(self, measures=None, roadmap=None, ledger=None, index=None):
+    def __init__(self, measures=None, roadmap=None, ledger=None, index=None, scoreboard=None):
         self.data = measures if measures is not None else load(MEASURES)
+        # A measure marked recordedBy is recorded on main after each merge, so its points live on the generated branch
+        # (bench/generated.py), not in this file: a commit to main for each one would put every open pull request behind.
+        self.scoreboard = scoreboard if scoreboard is not None else generated.points()
         self.roadmap = roadmap if roadmap is not None else load_roadmap()
         self.ledger = ledger if ledger is not None else load(LEDGER)
         self.index = index if index is not None else (load(INDEX) if INDEX.is_file() else None)
@@ -92,6 +97,8 @@ class Book:
 
     # ---- points ------------------------------------------------------------------------------
     def points(self, m):
+        if m.get("recordedBy"):
+            return list(self.scoreboard.get(m["id"], []))
         how = m.get("computed")
         if not how:
             return list(m.get("points", []))
@@ -279,6 +286,8 @@ def problems(book):
             out.append(f"{i}: condition must be warm or cold")
         if m.get("computed") and m.get("points"):
             out.append(f"{i}: computed measures take no points")
+        if m.get("recordedBy") and m.get("points"):
+            out.append(f"{i}: recorded on main by {m['recordedBy']}, so its points live on the generated branch, not here")
         last = ""
         for p in m.get("points", []):
             if not ISO.match(str(p.get("date", ""))):
@@ -393,7 +402,7 @@ def main(argv=None):
         m.setdefault("points", []).append(p)
         m["points"].sort(key=lambda x: x["date"])
         MEASURES.write_text(dump(book.data), encoding="utf-8", newline="\n")
-        fresh = Book()   # ROADMAP.md and the page follow on main, after the merge
+        fresh = Book()   # ROADMAP.md and the page follow on the generated branch, after the merge
         print(table(fresh, [fresh.by_id[args.id]]))
         return 0
     found = problems(book)

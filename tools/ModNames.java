@@ -279,6 +279,7 @@ public final class ModNames {
     /** One class in Mojang names; its new internal name goes in renamed[0]. */
     byte[] cls(byte[] bytes, Map<String, Map<String, String>> refmap, Counts n, String[] renamed) {
         ClassReader reader = new ClassReader(bytes);
+        Set<String> delegates = delegates(reader);
         ClassWriter writer = new ClassWriter(0);
         ClassVisitor remap = new ClassRemapper(writer, remapper) {
             @Override
@@ -286,9 +287,66 @@ public final class ModNames {
                 renamed[0] = remapper.map(name);
                 super.visit(version, access, name, signature, superName, interfaces);
             }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return delegates.contains(name + desc) ? null : super.visitMethod(access, name, desc, signature, exceptions);
+            }
         };
         reader.accept(new Strings(remap, refmap.getOrDefault(reader.getClassName(), Map.of()), n), 0);
         return writer.toByteArray();
+    }
+
+    /**
+     * A class's game overrides that, in Mojang's names, are the very method they call: a mod written in another set of
+     * names overrides the game's method under that set's name and passes the call on to its own method, which Mojang
+     * names alike (GeckoLib's method_3931, Yarn's getTexture, returning its own getTextureLocation, Mojang's name for
+     * method_3931). Renamed, the two are one method declared twice, which the JVM refuses; the class as its authors would
+     * have written it in Mojang's names has only the own method, which then overrides the game's. Each as name+desc.
+     */
+    Set<String> delegates(ClassReader reader) {
+        String self = reader.getClassName();
+        Map<String, String> kept = new HashMap<>(); // mapped name+desc of a method that keeps its name -> its name+desc
+        Map<String, String[]> calls = new HashMap<>(); // renamed method's name+desc -> the one own call it makes, or null
+        reader.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                String to = name.startsWith("<") ? name : remapper.mapMethodName(self, name, desc);
+                String mapped = to + remapper.mapMethodDesc(desc);
+                if (to.equals(name)) {
+                    kept.putIfAbsent(mapped, name + desc);
+                    return null;
+                }
+                String key = name + desc;
+                calls.put(key, null);
+                return new MethodVisitor(Opcodes.ASM9) {
+                    int others;
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String called, String d, boolean itf) {
+                        if (others == 0 && owner.equals(self) && d.equals(desc) && calls.get(key) == null) {
+                            calls.put(key, new String[] { called, mapped });
+                        } else {
+                            others++;
+                            calls.put(key, new String[] { "", "" });
+                        }
+                    }
+
+                    @Override
+                    public void visitFieldInsn(int opcode, String owner, String field, String d) {
+                        others++;
+                        calls.put(key, new String[] { "", "" });
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        Set<String> out = new HashSet<>();
+        calls.forEach((method, call) -> {
+            if (call != null && !call[0].isEmpty() && (call[0] + method.substring(method.indexOf('('))).equals(kept.get(call[1]))) {
+                out.add(method);
+            }
+        });
+        return out;
     }
 
     /**
@@ -490,9 +548,34 @@ public final class ModNames {
                         queue.add(k.sup);
                     }
                     queue.addAll(k.ifaces);
+                } else if (GameDiff.anonymous(c)) {
+                    queue.addAll(anonymousSupers(c));
                 }
             }
             return null;
+        }
+
+        /**
+         * What a game's anonymous class (SimpleReloadInstance$1) extends and implements, which the snapshot leaves out: read
+         * from the release's own class file, so a mixin into one finds the intermediary name of a method it inherits
+         * (PreparationBarrier.wait). Empty when the release's jar cannot be read.
+         */
+        List<String> anonymousSupers(String owner) {
+            try {
+                JarPort.GameCode code = JarPort.GameCode.of(game.version);
+                GameDiff.RawCls raw = code.raw(code.toJar.getOrDefault(owner, owner));
+                if (raw == null) {
+                    return List.of();
+                }
+                List<String> out = new ArrayList<>();
+                if (raw.sup != null) {
+                    out.add(code.names.cls(raw.sup));
+                }
+                raw.ifaces.forEach(i -> out.add(code.names.cls(i)));
+                return out;
+            } catch (Exception unreadable) {
+                return List.of();
+            }
         }
 
         /** One mod class as the hand-back needs it. */
@@ -734,7 +817,8 @@ public final class ModNames {
                     }
                     queue.addAll(o.ifaces);
                 }
-                return name;
+                String called = kind == 'm' && own.containsKey(owner) ? original(owner, name, desc) : null;
+                return called != null ? called : name;
             }
         }
 
@@ -758,7 +842,12 @@ public final class ModNames {
             return byMojang;
         }
 
-        /** Each class's method names in a jar (its nested jars' included), as it came: in intermediary for a Fabric jar. */
+        /**
+         * Each class's method names in a jar (its nested jars' included), as it came: in intermediary for a Fabric jar. The
+         * names the jar's code calls on a class count as that class's too: a call to a game method a mod class inherits
+         * through another mod's class (Waystones' WarpPlateBlockEntity.getBlockState(), through Balm's BalmBlockEntity)
+         * goes back to the id the jar called it by.
+         */
         static Map<String, Set<String>> methodNames(byte[] jar) throws IOException {
             Map<String, Set<String>> out = new HashMap<>();
             for (byte[] bytes : classesIn(jar)) {
@@ -768,9 +857,14 @@ public final class ModNames {
                     @Override
                     public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
                         names.add(name);
-                        return null;
+                        return new MethodVisitor(Opcodes.ASM9) {
+                            @Override
+                            public void visitMethodInsn(int opcode, String owner, String called, String d, boolean itf) {
+                                out.computeIfAbsent(owner, k -> new HashSet<>()).add(called);
+                            }
+                        };
                     }
-                }, ClassReader.SKIP_CODE);
+                }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
             }
             return out;
         }

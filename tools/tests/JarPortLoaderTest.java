@@ -8,7 +8,8 @@ import org.objectweb.asm.*;
  * - a mod's call to a loader method the new release dropped (NeoForge's FML, Fabric API) is reported, and one it kept links;
  * - an interface Fabric API adds to a game class ("loom:injected_interfaces") makes the mod's call through the game class link;
  * - NeoForge's own pom names the libraries its loader is made of (classifier jars too), and NeoForm's mappings the SRG names its mods use;
- * - a NeoForge mod in SRG names (classes, access transformer, nested jars) is read in Mojang's names.
+ * - a NeoForge mod in SRG names (classes, access transformer, nested jars) is read in Mojang's names, the SRG ids from NeoForm
+ * as it writes them before 1.20.2 and as numbers after.
  */
 final class JarPortLoaderTest {
 
@@ -18,6 +19,7 @@ final class JarPortLoaderTest {
         Path scratch = Files.createDirectories(Path.of(args[0]));
         loaderLinks(scratch);
         pom();
+        languageVersion(scratch);
         srg();
         if (failures > 0) {
             System.out.println(failures + " loader checks failed");
@@ -118,6 +120,29 @@ final class JarPortLoaderTest {
             "a zip type, and the groups an exclusion names, are not libraries a mod links against: " + found);
     }
 
+    /**
+     * A Forge jar asks javafml for Forge's version ([47,)), which no NeoForge release answers to: ported, it asks for the
+     * FancyModLoader version the new release's pom names. Another language loader's range is its own and stays.
+     */
+    static void languageVersion(Path scratch) throws Exception {
+        String pom = "<project><dependencies><dependency><groupId>net.neoforged.fancymodloader</groupId><artifactId>loader</artifactId>"
+            + "<version>1.0.16</version></dependency></dependencies></project>";
+        expect("[1,)".equals(JarPort.languageRange(pom)), "NeoForge's pom gives the language version its loader answers: " + JarPort.languageRange(pom));
+        expect("".equals(JarPort.languageRange("<project></project>")), "a pom naming no FancyModLoader gives none");
+        Path map = scratch.resolve("route-language.json");
+        Files.writeString(map, "{}");
+        JarPort port = new JarPort(new GameDiff.Snap("1.0"), new GameDiff.Snap("2.0"), map);
+        port.languageRange = "[1,)";
+        String forge = "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n[[mods]]\nmodId=\"m\"\n";
+        String ported = port.metadata(forge);
+        expect(ported.contains("loaderVersion=\"[1,)\"") && ported.contains("license=\"MIT\"") && !ported.contains("[47,)"),
+            "a javafml jar asks for the new release's language version: " + ported);
+        String kotlin = "modLoader=\"kotlinforforge\"\nloaderVersion=\"[4,)\"\n";
+        expect(port.metadata(kotlin).equals(kotlin), "another language loader keeps its own range: " + port.metadata(kotlin));
+        port.languageRange = "";
+        expect(port.metadata(forge).equals(forge), "with no version known the file is left as it was");
+    }
+
     static void srg() throws Exception {
         VersionMap.Proguard pg = VersionMap.Proguard.parse("""
             net.minecraft.Thing -> a:
@@ -129,6 +154,10 @@ final class JarPortLoaderTest {
         Map<String, String> members = Exposure.Intermediary.srg(tsrg, pg);
         expect("count".equals(members.get("f_100_")) && "tick".equals(members.get("m_200_")) && "tick".equals(members.get("m_300_")) && !members.containsKey("p_300_0_"),
             "NeoForm's SRG ids join Mojang's names through the obfuscated game: " + members);
+        // From 1.20.2 NeoForm writes the obfuscated name in its srg column and keeps the SRG id only as its number.
+        Map<String, String> numbered = Exposure.Intermediary.srg("tsrg2 obf srg id\na a 7\n\tb b 100\n\tc ()V c 200\n\t\tstatic\n\td (I)V d 300\n\t\t0 o o 1\n", pg);
+        expect(numbered.equals(Map.of("f_100_", "count", "m_200_", "tick", "m_300_", "tick")),
+            "NeoForm's numbered ids (1.20.2 on) are the SRG ids mods still write, joined to Mojang's names: " + numbered);
         ModNames names = new ModNames(new Exposure.Intermediary(Map.of(), members));
         Map<String, byte[]> files = new LinkedHashMap<>();
         files.put("META-INF/mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"m7\"\n".getBytes(StandardCharsets.UTF_8));

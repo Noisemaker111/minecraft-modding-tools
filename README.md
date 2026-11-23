@@ -59,7 +59,7 @@ Point mmt at a mod and, almost at once, get three things:
 2. **How to make it faster** — the fix that already worked on the same kind of slowness elsewhere. *Started: 14 known fixes, from speedups proven on 4 mods.*
 3. **The fix made for you** — mmt changes the mod itself and keeps the change only when the real game shows the same behaviour and a real speedup. *Not built yet; today `mmt perf-optimize` proves a change you wrote.*
 
-Roadmap goal 5 in [`ROADMAP.md`](ROADMAP.md) has the steps and finish lines.
+Roadmap goal 5 in [`ROADMAP.md`](https://github.com/Noisemaker111/minecraft-modding-tools/blob/generated/ROADMAP.md) has the steps and finish lines.
 
 ## Using the command line
 
@@ -85,6 +85,6 @@ Run `mmt help` for every command and `mmt help <command>` for options.
 ## More
 
 - [`SCOPE.md`](SCOPE.md) — exact compatibility matrix and verified numbers
-- [`ROADMAP.md`](ROADMAP.md) — where the project is going next
+- [`ROADMAP.md`](https://github.com/Noisemaker111/minecraft-modding-tools/blob/generated/ROADMAP.md) — where the project is going next
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute and build from source
 - [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) — common setup traps

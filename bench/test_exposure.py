@@ -29,6 +29,26 @@ def check(ok, label):
     checks += 1
 
 
+# The sweep's plan: an --only naming a whole update picks it, and one that names nothing stops the sweep, where it ran no
+# job and printed "0 of 0" as if that were a result.
+def plan(only):
+    out, argv = io.StringIO(), sys.argv
+    sys.argv, sys.stdout = ["exposure.py", "updates", "--only", only], out
+    try:
+        E.main()
+        return json.loads(out.getvalue())
+    except SystemExit as stop:
+        return str(stop)
+    finally:
+        sys.argv, sys.stdout = argv, sys.__stdout__
+
+
+newest = E.updates("fabric")[-1]
+check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1]}"], "--only LOADER:FROM:TO picks that update")
+check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
+check("names no update: fabric:1.20.1:99.9" in plan("fabric:1.20.1:99.9"), f"--only naming no update stops: {plan('fabric:1.20.1:99.9')}")
+
+
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     # Two worktrees: the same tools, then one with an edited GameDiff.
@@ -221,6 +241,10 @@ with tempfile.TemporaryDirectory() as tmp:
     listed = {"v-ipn": ["P-libipn"], "v-libipn": ["P-lang"], "v-lone": []}
     files = {("P-libipn", "2.0"): (lib, "v-libipn"), ("P-lang", "1.0"): (lang, "v-lang")}
     real = E.required_projects, E.library
+    real_api, real_home = E.api, E.HOME
+    searched = []
+    E.api = lambda path, params=None: searched.append(params["query"]) or {"hits": []}  # noqa: E731
+    E.HOME = Path(tmp) / "home"
     E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
     try:
         chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["ipn--ktmod.jar", "lone--lone.jar"], folder, pins, set())
@@ -296,6 +320,43 @@ with tempfile.TemporaryDirectory() as tmp:
         E.required_projects, E.library = real
     check(not ready and list(to_port) == ["libipn-1.jar"],
           f"a library two mods need fits every range they ask for: {ready} {to_port}")
+    check(searched == ["nowhere"], f"an id no listed library gives is looked for once, by its words: {searched}")
+    # A library the mod's metadata requires that its Modrinth version does not list (Sounds requires YACL's
+    # yet_another_config_lib_v3 and lists nothing): the project is found for the id, among the old release's pinned mods
+    # or by Modrinth's search for its words, and taken only when the file it would install declares the id. A search hit
+    # whose file does not (a mod that only names the library) is not added.
+    def fabric_mod(mod_id, depends=(), provides=()):
+        return jar({"fabric.mod.json": json.dumps({"id": mod_id, "depends": {d: "*" for d in depends}, "provides": list(provides)})})
+    (folder / "sound--sound.jar").write_bytes(fabric_mod("sounds", ["fabric-api", "yet_another_config_lib_v3"]))
+    (folder / "ui--ui.jar").write_bytes(fabric_mod("ui", ["owo"]))
+    (folder / "chat--chat.jar").write_bytes(fabric_mod("chat", ["nolib_v2"]))
+    pinned_old = E.HOME / "jars" / "fabric-1.0"
+    pinned_old.mkdir(parents=True)
+    (pinned_old / "yacl--yacl-old.jar").write_bytes(fabric_mod("yet_another_config_lib_v3"))
+    yacl_new, owo_new, decoy = Path(tmp) / "yacl-new.jar", Path(tmp) / "owo-new.jar", Path(tmp) / "decoy.jar"
+    yacl_new.write_bytes(fabric_mod("yet_another_config_lib_v3", ["owo"]))
+    owo_new.write_bytes(fabric_mod("owo-lib", provides=["owo"]))
+    decoy.write_bytes(fabric_mod("owo-addon", ["owo"]))
+    pins = [{"slug": "sound", "file": "sound.jar", "project": "P-sound", "version": "v-sound"},
+            {"slug": "ui", "file": "ui.jar", "project": "P-ui", "version": "v-ui"},
+            {"slug": "chat", "file": "chat.jar", "project": "P-chat", "version": "v-chat"},
+            {"slug": "yacl", "file": "yacl-old.jar", "project": "P-yacl", "version": "v-yacl-old"}]
+    files = {("P-yacl", "2.0"): (yacl_new, "v-yacl"), ("P-owo", "2.0"): (owo_new, "v-owo"), ("P-decoy", "2.0"): (decoy, "v-decoy")}
+    hits = {"owo": ["P-decoy", "P-owo"], "nolib": ["P-decoy"]}
+    searched.clear()
+    E.api = lambda path, params=None: searched.append(params["query"]) or {"hits": [{"project_id": h} for h in hits.get(params["query"], [])]}  # noqa: E731
+    E.required_projects, E.library = (lambda v: []), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["sound--sound.jar", "ui--ui.jar", "chat--chat.jar"], folder, pins, {"fabric-api"})
+    finally:
+        E.required_projects, E.library = real
+        E.api, E.HOME = real_api, real_home
+    check(sorted(j.name for j in chosen) == ["sound--sound.jar", "ui--ui.jar"] and sorted(ready) == ["owo-new.jar", "yacl-new.jar"] and not to_port,
+          f"a library is found for the id a mod's metadata requires, and the library's own in turn: {chosen} {ready} {to_port}")
+    check(left == {"chat--chat.jar": ["nolib_v2"]} and "decoy.jar" not in ready,
+          f"a found project whose file does not declare the id is not taken: {left} {ready}")
+    check("yet another config lib" not in searched and sorted(searched) == ["nolib", "owo"],
+          f"an id a pinned mod of the old release declares is not searched for; a trailing version is not searched: {searched}")
 
 # A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
 # server lacks, from another mod, does not.
@@ -347,14 +408,33 @@ finally:
     sys.stdout = sys.__stdout__
 check(picked == ["chunky--Chunky.jar"] and list(skipped) == ["clumps--Clumps.jar"] and "Clumps.jar: does not link" in said,
       f"--mods starts the asked mods that link and names the rest: {picked} {skipped} {said!r}")
+# One proof of several updates asks each for the same slugs: a slug this release does not pin is not started here, with
+# why, and the other asked mods still start (fabric 1.20.4 pins fastquit and not sound, and stopped before any game).
+sys.stdout = io.StringIO()
 try:
-    E.only_mods([], pinned, ["nonesuch"])
-    check(False, "a slug that is not pinned stops the run")
-except SystemExit:
-    pass
+    picked, skipped = E.only_mods(["chunky--Chunky.jar"], pinned, ["chunky", "sound"])
+finally:
+    sys.stdout = sys.__stdout__
+check(picked == ["chunky--Chunky.jar"] and skipped == {"sound": ["it is not among this release's pinned mods (bench/exposure/mods/)"]},
+      f"a slug another update pins is not started on this one, and the rest start: {picked} {skipped}")
+with tempfile.TemporaryDirectory() as tmp:
+    real_pins = E.PINS
+    E.PINS = Path(tmp)
+    for release, slugs in (("1.0", ["fastquit"]), ("2.0", ["fastquit", "sound"])):
+        (E.PINS / f"fabric-{release}.json").write_text(json.dumps({"mods": [{"slug": x} for x in slugs]}), encoding="utf-8")
+    try:
+        check(E.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "sound"]) == ["fabric:1.0:2.0", "fabric:2.0:3.0"],
+              "a slug one update of a proof pins is asked of each")
+        try:
+            E.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "nonesuch"])
+            check(False, "a slug no update pins stops the plan")
+        except SystemExit as stop:
+            check("nonesuch" in str(stop), f"the plan names the slug no update pins: {stop}")
+    finally:
+        E.PINS = real_pins
 
-# --mods where no asked mod links is a finished proof: a receipt with no game verdicts and why each mod was not started,
-# not a port of zero jars that fails with none.
+# --mods where no asked mod links keeps a receipt with no game verdicts and why each mod was not started, and fails with
+# that why: a proof that started no game never passes as one.
 with tempfile.TemporaryDirectory() as tmp:
     real = E.ROOT, E.PINS, E.HOME
     E.ROOT, E.PINS, E.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
@@ -364,13 +444,17 @@ with tempfile.TemporaryDirectory() as tmp:
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps({"mods": [{"mod": "chunky--Chunky.jar", "unlinked": []}, {"mod": "clumps--Clumps.jar", "unlinked": ["x"]}]}), encoding="utf-8")
     sys.stdout = io.StringIO()
+    stopped = None
     try:
-        empty = E.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
+        E.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
+    except SystemExit as stop:
+        stopped = str(stop)
     finally:
         sys.stdout = sys.__stdout__
         E.ROOT, E.PINS, E.HOME = real
     kept = json.loads((Path(tmp) / "out" / "load.json").read_text(encoding="utf-8"))
-check(kept == empty and kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"] == {} and kept["scope"] == ["clumps"]
+check(stopped == "no mod to start: clumps--Clumps.jar: it does not link after the port", f"a proof that starts no game fails with why: {stopped}")
+check(kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"] == {} and kept["scope"] == ["clumps"]
       and kept["notStarted"] == {"clumps--Clumps.jar": ["it does not link after the port"]},
       f"a proof with nothing to start keeps a receipt saying why: {kept}")
 
@@ -500,23 +584,25 @@ with tempfile.TemporaryDirectory() as tmp:
     check(lines[0] == "every update: 14 -> 16 of 20 (+2)" and lines[1] == "big updates: 4 -> 6 of 10 (+2)" and "updates higher: fabric 1.1 -> 2.0 4 -> 6" in lines,
           f"compare names the counts and the update that moved: {lines}")
     check(same[E.HEADS:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
-    measures = Path(tmp) / "measures.json"
-    measures.write_text(json.dumps({"measures": [{"id": m, "points": [{"date": "2026-01-01", "value": 14 if m.endswith("every-update") else 4 if m.endswith("big-updates") else 1, "source": "x"}]}
-                                                 for m in E.MAIN_MEASURES]}), encoding="utf-8")
-    main_table = Path(tmp) / "all.json"
+    board = Path(tmp) / "scoreboard"
+    board.mkdir()
+    measures = board / "points.json"
+    measures.write_text(json.dumps({m: [{"date": "2026-01-01", "value": 14 if m.endswith("every-update") else 4 if m.endswith("big-updates") else 1, "source": "x"}]
+                                    for m in E.MAIN_MEASURES}), encoding="utf-8")
+    main_table = board / "all.json"
     main_table.write_text(json.dumps(before), encoding="utf-8")
     (Path(tmp) / "sweep.json").write_text(json.dumps(after), encoding="utf-8")
     repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
     head = os.popen(f'git -C "{E.ROOT}" rev-parse HEAD').read().strip()
     sys.stdout = io.StringIO()
     try:
-        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/1", measures, main_table, "2026-02-01")
-        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/2", measures, main_table, "2026-02-02")
+        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/1", board, "2026-02-01")
+        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/2", board, "2026-02-02")
     finally:
         sys.stdout = sys.__stdout__
         E.ROOT = repo
     saved = json.loads(main_table.read_text(encoding="utf-8"))
-    points = {m["id"]: m["points"] for m in json.loads(measures.read_text(encoding="utf-8"))["measures"]}
+    points = json.loads(measures.read_text(encoding="utf-8"))
     every = points["port.jar-links.every-update"]
     check(saved["commit"] == head and saved["run"].endswith("/runs/2") and saved["total"]["link"] == 16, "main's table says the commit and run it came from")
     check([p["value"] for p in every] == [14, 16, 16] and every[1]["n"] == 20 and every[1]["note"].startswith("+2 on 14: ") and "fabric 1.1 -> 2.0 4 -> 6" in every[1]["note"]
@@ -528,13 +614,13 @@ with tempfile.TemporaryDirectory() as tmp:
     repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
     sys.stdout = io.StringIO()
     try:
-        late = E.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", measures, main_table, "2026-02-03")
+        late = E.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", board, "2026-02-03")
     finally:
         sys.stdout = sys.__stdout__
         E.ROOT = repo
     check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
-          and len(json.loads(measures.read_text(encoding="utf-8"))["measures"][0]["points"]) == 3, "a sweep of an older commit that finishes later is not recorded")
-    check((Path(tmp) / "any-version.md").read_text(encoding="utf-8").startswith("# Any mod, any version") and len(points["port.jar-links.any-version"]) == 3,
+          and len(json.loads(measures.read_text(encoding="utf-8"))["port.jar-links.every-update"]) == 3, "a sweep of an older commit that finishes later is not recorded")
+    check((board / "any-version.md").read_text(encoding="utf-8").startswith("# Any mod, any version") and len(points["port.jar-links.any-version"]) == 3,
           "main's sweep also writes the any-version page and its measure")
 
 # Any mod, any version: the most-used release's mods to every other release, back as well as forward. A mod counts only
@@ -619,7 +705,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # scoreboard after every edit, and porting every mod again is most of a run.
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
-    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
+    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
     E.ROOT, E.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     fixes = root / "knowledge" / "fixes.json"
@@ -635,7 +721,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     commands = []
 
-    def fake_side_by_side(command, given, report):
+    def fake_side_by_side(command, given, report, one=False):
         ported.append([j.name for j in given])
         commands.append(command)
         return [{"mod": j.name, "out": str(report.parent / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]), "silent": []} for j in given]
@@ -644,7 +730,7 @@ with tempfile.TemporaryDirectory() as tmp:
     step_routes = {("1.0", "1.1"): route, ("1.1", "1.2"): root / "route-1.1-1.2.json"}
     step_routes[("1.1", "1.2")].write_text("{}", encoding="utf-8")
     E.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
-    E.side_by_side, E.route_map, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda frm, to, *a: step_routes[(frm, to)]), (lambda: "classes"), (lambda: "classes")
+    E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
     E.tools_classes_key, E.platform_key, E.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
 
     def port():
@@ -695,7 +781,7 @@ with tempfile.TemporaryDirectory() as tmp:
     except SystemExit as failed:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
-    (E.ROOT, E.HOME, E.side_by_side, E.route_map, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
+    (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}

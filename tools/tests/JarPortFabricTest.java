@@ -237,6 +237,42 @@ final class JarPortFabricTest {
             }
         }, 0);
         JarPortTest.expect(superCalls.equals(List.of("method_100")), "a restored override's super call to the other mod's method takes the same intermediary name: " + superCalls);
+
+        // A call to the game method a class inherits through another mod's class (Waystones' getBlockState() through Balm)
+        // goes back to the id the jar as it came called it by, read from its call sites as well as its declarations.
+        byte[] inherits = JarPortTest.jar(Map.of("m6x/User.class", JarPortTest.real("m6x/User", "other/Base", 0, new String[0], w -> {
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "use", "()Lnet/minecraft/world/Item;", null, null);
+            m.visitCode();
+            m.visitVarInsn(Opcodes.ALOAD, 0);
+            m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "m6x/User", "make", "()Lnet/minecraft/world/Item;", false);
+            m.visitInsn(Opcodes.ARETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        })));
+        byte[] asCame = JarPortTest.jar(Map.of("m6x/User.class", JarPortTest.real("m6x/User", "other/Base", 0, new String[0], w -> {
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "use", "()Lnet/minecraft/class_9;", null, null);
+            m.visitCode();
+            m.visitVarInsn(Opcodes.ALOAD, 0);
+            m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "m6x/User", "method_100", "()Lnet/minecraft/class_9;", false);
+            m.visitInsn(Opcodes.ARETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        })));
+        List<String> inheritedCalls = new ArrayList<>();
+        new ClassReader(JarPortTest.entries(back.jar(inherits, ModNames.Back.methodNames(asCame))).get("m6x/User.class")).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String n, String d, boolean itf) {
+                        if (!n.startsWith("<")) {
+                            inheritedCalls.add(n);
+                        }
+                    }
+                };
+            }
+        }, 0);
+        JarPortTest.expect(inheritedCalls.equals(List.of("method_100")), "a call to a game method inherited through another mod's class goes back to the id the jar called it by: " + inheritedCalls);
     }
 
     static Set<String> methods(byte[] bytes) {

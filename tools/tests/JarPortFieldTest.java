@@ -81,6 +81,32 @@ final class JarPortFieldTest {
         names.platform(was, now);
         JarPortTest.expect(names.platformIds.equals(Set.of("api", "api-part")) && names.platformAliases.equals(Map.of("oldname", "api")),
             "the platform's modules and the old names it dropped are read from its two jars: " + names.platformIds + " " + names.platformAliases);
+        // A module renamed (its classes now in a module of another id) is asked of the module holding them, in the new names
+        // as the map gives them; one whose classes no module holds was removed, and its dependency goes.
+        Path renamedMap = scratch.resolve("route-modules.json");
+        Files.writeString(renamedMap, "{\"classes\": [{\"from\": \"k9.keys.Helper\", \"to\": \"k9.keymaps.Helper\"}]}");
+        JarPortTest.snap(a, "k9/keys/Helper", 0, null);
+        JarPortTest.snap(b, "k9/keymaps/Helper", 0, null);
+        JarPort modules = new JarPort(a, b, renamedMap);
+        Path wasMods = scratch.resolve("api-old-mods.jar"), nowMods = scratch.resolve("api-new-mods.jar");
+        byte[] empty = new byte[0];
+        Files.write(wasMods, JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"api\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            "META-INF/jars/keys.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"keys-v1\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                "k9/keys/Helper.class", empty, "k9/keys/mixin/Hook.class", empty)),
+            "META-INF/jars/gone.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"gone-v1\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                "k9/gone/Old.class", empty)))));
+        Files.write(nowMods, JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"api\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            "META-INF/jars/keymaps.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"keymaps-v1\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                "k9/keymaps/Helper.class", empty)))));
+        modules.platform(wasMods, nowMods);
+        JarPortTest.expect(modules.platformAliases.equals(Map.of("keys-v1", "keymaps-v1", "gone-v1", "")),
+            "a renamed module is the one now holding its classes, a removed one is no one: " + modules.platformAliases);
+        Map<String, Object> asked = Json.object(Json.parse(new String(modules.fabricMetadata(
+            "{\"id\": \"m9\", \"depends\": {\"keys-v1\": \">=1.0\", \"gone-v1\": \"*\", \"api\": \">=0.1\"}}".getBytes(java.nio.charset.StandardCharsets.UTF_8), null, Set.of()),
+            java.nio.charset.StandardCharsets.UTF_8)));
+        JarPortTest.expect(Json.object(asked.get("depends")).keySet().equals(Set.of("keymaps-v1", "api")),
+            "a mod's dependency on a renamed module asks the module holding its classes, one on a removed module goes: " + asked.get("depends"));
+
         List<Map<String, Object>> keyRuns = new ArrayList<>();
         port.port(JarPortTest.jar(Map.of("n9/Keyed.class", keyed())), "keyed.jar", keyRuns);
         List<String> keyUnlinked = Json.array(keyRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();

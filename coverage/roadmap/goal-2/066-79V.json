@@ -1,0 +1,11 @@
+{
+ "id": "79V",
+ "title": "The link check runs the JVM's verifier, and class routes it refuses are left out",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "The jar porter moves some removed game classes to the class the game put in their place (a route: GuiComponent -> GuiGraphics in 1.20, TranslatableComponent -> TranslatableContents in 1.19, learned from the types the game's own members switched to). The link check then counted the mod as linking, but the new class is not a drop-in: a mod that passes the old class where its supertype goes, or extends it, throws VerifyError in a real game (Trinkets on Fabric 1.18.2 -> 1.19 and 1.19.4 -> 1.20, seen by the stand-in agents in PR #179). GeckoLib on 1.19 declared one method twice once read in Mojang's names, and Waystones on 1.19.4 called getBlockState() under a name Fabric does not run. The link check now runs the JDK's copy of HotSpot's verifier over every ported class against the new release (offline, the class hierarchy from the release snapshot and the jar), and a jar whose classes fail it does not link. A route the verifier refuses for a jar is left out for that jar: the old class is then a stand-in's where one is written for the update, and otherwise is reported gone.",
+ "start": "2026-11-22",
+ "target": "2026-11-23",
+ "finish": "No mod the scoreboard counts as linking fails the JVM verifier on the new release; the false links removed and the mods freed by stand-ins for refused routes are counted over every update and the big updates; Trinkets is no longer counted as linking on Fabric 1.18.2 -> 1.19 unless it verifies",
+ "wrongIf": "a mod the verifier passes throws VerifyError or ClassFormatError in a real game, or the verifier refuses a class the game loads"
+}
