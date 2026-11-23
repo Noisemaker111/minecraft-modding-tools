@@ -9,6 +9,7 @@ Run: python bench/test_exposure.py"""
 import io
 import json
 import os
+import shutil
 import zipfile
 import sys
 import tempfile
@@ -907,29 +908,66 @@ with tempfile.TemporaryDirectory() as tmp:
               f"on NeoForge 1.21 (Java 21) a @Mod class built for Java 25 is named, and a Java 25 class nothing loads at start is not: {found}")
     finally:
         E.HOME = real_home
-# The link check reads the same classes, on both sides: a mod with one the release's JVM refuses does not link there
-# (ports back meet it). A nested mod counts; a multi-release jar's newer copies, module-info and another loader's
-# classes in a jar for several do not.
+# The link check reads the same classes, on both sides, of the jar the port wrote: the port lowers a mod's classes to the
+# release's Java (Downgrade), so a mod built for a newer Java links once lowered, and does not when a class the JVM loads
+# of the ported jar still needs the newer Java. A nested mod counts; a multi-release jar's newer copies, module-info and
+# another loader's classes in a jar for several do not. The jars as they came all need Java 21, so a check that read them
+# instead would fail every mod.
 with tempfile.TemporaryDirectory() as tmp:
-    nested, plain, multi = Path(tmp) / "nested.jar", Path(tmp) / "plain.jar", Path(tmp) / "multi.jar"
-    nested.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "n", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
-                            "META-INF/jars/lib.jar": jar({"fabric.mod.json": json.dumps({"id": "l", "entrypoints": {"client": ["lib.L"]}}), "lib/L.class": class_file(65)})}))
-    plain.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "p", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
-                           "META-INF/versions/21/a/A.class": class_file(65), "module-info.class": class_file(65)}))
-    multi.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "m", "entrypoints": {"main": ["m.fabric.Init"]}}), "m/fabric/Init.class": class_file(61),
-                           "m/neoforge/Init.class": class_file(65)}))
-    asked, E.release_java = E.release_java, lambda v: {"old": 17, "new": 21}[v]
+    root = Path(tmp)
+    came = {}
+    for n in ("lowered.jar", "nested.jar", "plain.jar", "multi.jar"):
+        came[n] = root / "in" / n
+        came[n].parent.mkdir(exist_ok=True)
+        came[n].write_bytes(jar({"fabric.mod.json": json.dumps({"id": n[:-4], "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(65)}))
+    wrote = {
+        "lowered.jar": jar({"fabric.mod.json": json.dumps({"id": "lowered", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61)}),
+        "nested.jar": jar({"fabric.mod.json": json.dumps({"id": "n", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
+                           "META-INF/jars/lib.jar": jar({"fabric.mod.json": json.dumps({"id": "l", "entrypoints": {"client": ["lib.L"]}}), "lib/L.class": class_file(65)})}),
+        "plain.jar": jar({"fabric.mod.json": json.dumps({"id": "p", "entrypoints": {"main": ["a.A"]}}), "a/A.class": class_file(61),
+                          "META-INF/versions/21/a/A.class": class_file(65), "module-info.class": class_file(65)}),
+        "multi.jar": jar({"fabric.mod.json": json.dumps({"id": "m", "entrypoints": {"main": ["m.fabric.Init"]}}), "m/fabric/Init.class": class_file(61),
+                          "m/neoforge/Init.class": class_file(65)})}
+    ported_now = []
+
+    def fake_port(command, given, report, one=False):
+        out = Path(command[command.index("--out") + 1])
+        rows = []
+        for j in given:
+            (out / j.name).write_bytes(wrote[j.name])
+            ported_now.append(j.name)
+            rows.append({"mod": j.name, "out": str(out / j.name), "unlinked": [], "silent": []})
+        return rows
+
+    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java,
+             E.registry_reports)
+    E.ROOT, E.HOME = root, root / "home"
+    (root / "knowledge").mkdir()
+    (root / "knowledge" / "fixes.json").write_text("[]", encoding="utf-8")
+    (root / "route.json").write_text("{}", encoding="utf-8")
+    E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools = fake_port, (lambda updates, *a: [root / "route.json"]), (lambda: "classes"), (lambda: "classes")
+    E.tools_classes_key, E.platform_key, E.java_version, E.stops = (lambda: "tools"), (lambda loader, r: b"platform"), (lambda: "java 25"), (lambda loader, frm, to: [frm, to])
+    E.release_java = lambda v: {"old": 17, "new": 21}[v]
+    E.registry_reports = lambda versions: None  # these mods carry no data
     try:
-        def report():
-            return {"mods": [{"mod": n, "unlinked": []} for n in ("nested.jar", "plain.jar", "multi.jar")], "linked": 3, "unlinkedByMods": []}
-        jars = {"nested.jar": nested, "plain.jar": plain, "multi.jar": multi}
-        back, forward = E.with_target_java(report(), jars, "fabric", "old"), E.with_target_java(report(), jars, "fabric", "new")
+        def port(to, cache=False):
+            return E.jar_port("fabric", "1.0", to, list(came.values()), root / f"out-{to}", root / f"report-{to}.json", cache=cache)
+
+        back, forward = port("old"), port("new")
+        ported_now.clear()
+        first = port("old", cache=True)
+        shutil.rmtree(root / "out-old")
+        kept = first, port("old", cache=True)
     finally:
-        E.release_java = asked
-    check(back["linked"] == 2 and E.left(back["mods"][0]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
+        (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java,
+         E.registry_reports) = saved
+    check([m["mod"] for m in back["mods"] if m["unlinked"]] == ["nested.jar"] and back["linked"] == 3
+          and E.left(back["mods"][1]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
           and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
-          f"a mod whose nested mod needs a newer Java than the release's does not link on it; one whose too-new classes never load does: {back}")
-    check(forward["linked"] == 3 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
+          f"a ported mod whose nested mod still needs a newer Java than the release's does not link; lowered ones and ones whose too-new classes never load do: {back}")
+    check(forward["linked"] == 4 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
+    check(ported_now == list(came) and kept[1]["mods"] == [{k: v for k, v in m.items() if k != "out"} for m in kept[0]["mods"]] and kept[1]["linked"] == 3,
+          f"a kept port keeps the Java check of the jar it wrote, which is gone when it is read again: {ported_now}, {kept[1]}")
 
 # A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
 # PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.

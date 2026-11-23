@@ -185,7 +185,7 @@ def jar_port():
     asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
     tests = jar_port_tests()
     home = jdk(25)
-    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
+    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Downgrade.java", "tools/Exposure.java",
            "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/cli/Versions.java", "tools/SourceAnswers.java", *tests]
     yield Together([str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem)] for test in tests)
 
@@ -249,7 +249,7 @@ CHECKS = {
 
 
 def jar_port_sources():
-    return ["tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java", "tools/GameDiff.java",
+    return ["tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Downgrade.java", "tools/Exposure.java", "tools/GameDiff.java",
             "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java"]
 
 
@@ -258,7 +258,7 @@ ASM_JARS = ["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"]
 READS = {
     "port-preflight": ["tools/VersionMap.java", "tools/cli/Route.java", "tools/cli/Json.java", "tools/cli/Versions.java",
                        "tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"],
-    "jar-port": lambda: jar_port_sources() + jar_port_tests() + ASM_JARS,
+    "jar-port": lambda: jar_port_sources() + jar_port_tests() + ASM_JARS + [f for f in git_files() if f.startswith("knowledge/standins/jdk/")],
     "console-accessor": ["tools/agent/Console.java", "tools/tests/ConsoleAccessorTest.java"],
     # Compiled with tools/agent, tools/cli and tools on its source path: any of them may be compiled in.
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
