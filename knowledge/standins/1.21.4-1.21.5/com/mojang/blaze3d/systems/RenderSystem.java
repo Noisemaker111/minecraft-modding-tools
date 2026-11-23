@@ -12,14 +12,23 @@ import net.minecraft.resources.ResourceLocation;
  * function, which GlCommandEncoder.applyPipelineState applies before the draw (the GUI's translucent pipelines use
  * SRC_ALPHA, ONE_MINUS_SRC_ALPHA), so the blend the old call asked for is the one the following draws already get.
  * Slot i now holds a GpuTexture (RenderSystem.setShaderTexture(int, GpuTexture)), which a texture gives with getTexture().
+ * 1.21.4's blendFunc(src, dst) set GL's blend function through GlStateManager._blendFunc (glBlendFunc, which sets the
+ * colour and alpha factors alike, skipped when the cached state already matched); 1.21.5's GlStateManager (now in
+ * com.mojang.blaze3d.opengl) keeps only _blendFuncSeparate(srcRgb, dstRgb, srcAlpha, dstAlpha) on the same cached state,
+ * which GlCommandEncoder uses for a pipeline's blend. The old call is it with the same factors for colour and alpha, so
+ * GL draws a mod makes itself blend as before, and the game's pipelines set their own blend before each draw as they do.
  *
- * Agrees with NeoForge's 1.21.4 -> 1.21.5 primer (https://github.com/neoforged/.github/blob/main/primers/1.21.5/index.md, CC BY 4.0): "defaultBlendFunc is removed", "setShaderTexture now takes in a GpuTexture instead of a bind address", and the Render Pipeline Rework section: blending is set on the pipeline.
+ * Agrees with NeoForge's 1.21.4 -> 1.21.5 primer (https://github.com/neoforged/.github/blob/main/primers/1.21.5/index.md, CC BY 4.0): "defaultBlendFunc is removed", "blendFunc, blendFuncSeparate, blendEquation is removed", "_blendFunc, _blendEquation is removed", "setShaderTexture now takes in a GpuTexture instead of a bind address", and the Render Pipeline Rework section: blending is set on the pipeline.
  */
 public final class RenderSystem {
 
     private RenderSystem() {}
 
     public static void defaultBlendFunc() {
+    }
+
+    public static void blendFunc(int src, int dst) {
+        com.mojang.blaze3d.opengl.GlStateManager._blendFuncSeparate(src, dst, src, dst);
     }
 
     public static void setShaderTexture(int slot, ResourceLocation location) {
