@@ -7265,6 +7265,7 @@ public final class JarPort {
         static final String CONFLICT = "!";
         final Map<String, String> followed = new HashMap<>(); // "owner.name+desc#i" -> a reading, CONFLICT, or "" for nothing shown
         final Set<String> following = new HashSet<>();
+        final Map<String, String> asked = new HashMap<>();
         // The bodies read last, few enough that a port of many jars does not keep every game method it ever read.
         final Map<String, Optional<GameDiff.Body>> bodies = new LinkedHashMap<>(256, 0.75f, true) {
             @Override
@@ -7296,7 +7297,10 @@ public final class JarPort {
 
         String followed(String owner, String name, String desc, int i, int depth) {
             String key = owner + "." + name + desc + "#" + i;
-            String known = followed.get(key);
+            if (depth == 0) {
+                asked.clear();
+            }
+            String known = followed.containsKey(key) ? followed.get(key) : asked.get(key);
             if (known != null) {
                 return known;
             }
@@ -7316,6 +7320,8 @@ public final class JarPort {
             }
             if (!cut) {
                 followed.put(key, out);
+            } else {
+                asked.put(key, out); // cut short by a loop: kept for this question only, which would cut it the same way
             }
             cut |= outer;
             if (!LOG.isEmpty()) {
@@ -7569,9 +7575,11 @@ public final class JarPort {
         void place(GameDiff.Node co, GameDiff.Node cn, int k, Map<Integer, Integer> newParam, String want, int depth, Map<String, Integer> votes) {
             int on = receiver(cn);
             if (desc(co.ref.desc()).equals(cn.ref.desc())) {
+                // The new value passed on whole where the old one was (stored, or handed to a call taking any object) says
+                // nothing of how the old one is read from it.
                 GameDiff.Node there = cn.kids[on + k];
                 String r = reading(there, newParam, want);
-                vote(votes, r != null && !r.startsWith(THIS + " ") ? r : uses(there, newParam) ? CONFLICT : "");
+                vote(votes, r != null && !r.startsWith(THIS + " ") ? r : there.op != 'p' && uses(there, newParam) ? CONFLICT : "");
                 return;
             }
             // The call's own parameter changed with it: what the callee's new code reads from it.

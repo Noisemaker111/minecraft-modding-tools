@@ -1,0 +1,16 @@
+{
+ "id": "69d",
+ "title": "Mixin handlers get a changed value as the game's own code read it",
+ "part": "Port by type of break",
+ "status": "doing",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "text": "The rest of `mixin target changed signature, game: linked` where the target method is the same and only a value it takes changed type: 1.21's float partial tick became a DeltaTracker, read as getGameTimeDeltaPartialTick(true) in some places and (false) in others, and 1.21.2's glyphs take one packed colour where they took red, green, blue and alpha. Each old value is read from every place the game's own code used it as it was, compared with what the new code has there (Retype.follow): an argument of a call in the target's body (the same call, taken in order, reads the new value through steps, or passes it on to a parameter of its own that is followed in turn, into overrides and the lambdas and method references the game makes for an interface method); a statement lined up as Retype.learn lines them; and each caller that passed its own parameter as it was, or worked the old value out of something it now passes as it is (shifts, masks, static helpers and division by a constant, written again as steps). Only where every place agrees: a value the game now reads two ways in places that used it as it was is not converted, and a mod helper moved for one reading is not reused for another. @Inject arguments and @Redirect, @WrapWithCondition and @ModifyReceiver arguments take the reading; a @ModifyVariable found by type follows a target whose other parameters changed size.",
+ "finish": "the type's finishes and mods counts fall on every update measured, none lower, and a mod this frees loads in a real client of the new release with the converted value",
+ "wrongIf": "a mod this frees fails in a real game on a handler this moved, or a converted value is not the one the game passes where the old value was used",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates",
+  "port.jar-links.newest"
+ ]
+}
