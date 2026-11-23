@@ -800,55 +800,6 @@ def nested_ids(data):
     return out
 
 
-def hidden_code(data):
-    """The name of a jar inside a mod that holds game code and no loader metadata lists as nested (fabric.mod.json "jars",
-    NeoForge's jarjar list): code the mod's own loader unpacks at start (Essential), which the port never reads. None if none."""
-    import io
-    import zipfile
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        names = z.namelist()
-        listed = set()
-        if "fabric.mod.json" in names:
-            try:
-                listed |= {j.get("file") for j in json.loads(z.read("fabric.mod.json").decode("utf-8", "replace"), strict=False).get("jars") or [] if isinstance(j, dict)}
-            except ValueError:
-                pass
-        if "META-INF/jarjar/metadata.json" in names:
-            try:
-                listed |= {j.get("path") for j in json.loads(z.read("META-INF/jarjar/metadata.json")).get("jars") or [] if isinstance(j, dict)}
-            except ValueError:
-                pass
-        for entry in names:
-            if not entry.endswith(".jar"):
-                continue
-            inner = z.read(entry)
-            if entry not in listed:
-                with zipfile.ZipFile(io.BytesIO(inner)) as i:
-                    if any(n.endswith(".class") and b"net/minecraft/" in i.read(n) for n in i.namelist()):
-                        return entry
-            else:
-                deeper = hidden_code(inner)
-                if deeper:
-                    return entry + "!" + deeper
-    return None
-
-
-def with_hidden_code_unread(report, jars):
-    """A mod whose game code is in a jar its own loader unpacks is reported as not read, not as linking: the port never
-    saw that code (Essential links with none of its code read, and fails on 1.21.2 on a removed class)."""
-    for m in report["mods"]:
-        if "error" in m or m["mod"] not in jars:
-            continue
-        try:
-            inner = hidden_code(jars[m["mod"]].read_bytes())
-        except Exception:  # a jar zipfile cannot open: JarPort judged it already
-            continue
-        if inner:
-            m["error"] = f"its game code is in {inner}, a jar no loader metadata lists (its own loader unpacks it at start), which the port does not read"
-    report["linked"] = sum(1 for m in report["mods"] if "error" not in m and not m["unlinked"])
-    return report
-
-
 def class_java(data):
     """The newest Java a jar's classes, and those of the jars nested in it, are compiled for (a class file's major version
     less 44), or 0. A multi-release jar's META-INF/versions/ copies and module-info only load on the Java that reads them."""
@@ -1048,7 +999,6 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
     if mods:
         report = without_platform_copies(report, platform_ids(loader, to), {m.name: m for m in mods})
-        report = with_hidden_code_unread(report, {m.name: m for m in mods})
         report = with_target_java(report, {m.name: m for m in mods}, to)
         written.write_text(json.dumps(report, indent=1), encoding="utf-8")
     said = timed("game", game_says, loader, frm, to, written) if report["unlinkedByMods"] else {}
@@ -1328,7 +1278,7 @@ def any_version_table(by_pair):
                     if s["verdicts"][jar]["left"]:
                         missing[t] = s["verdicts"][jar]["types"]
                 else:
-                    missing[t] = ["unreadable" if jar in s.get("unreadable", {}) else "not read"]
+                    missing[t] = [not_read(s.get("unreadable", {}).get(jar))]
             mod = jar.split("--", 1)[0]
             reached[mod] = len(targets) - len(missing)
             if missing:
@@ -1364,6 +1314,16 @@ def any_version_table(by_pair):
             "types": sorted(kinds.values(), key=lambda t: (-t["finishes"], -t["mods"], t["type"])),
             "releases": sorted(releases.values(), key=lambda t: (-t["finishes"], -t["mods"], t["loader"], vkey(t["release"]))),
             "held": held}
+
+
+def not_read(error):
+    """A mod the port could not read, as a type of break: why, as the porter said it (its exception's message), so the list
+    ranks each reason by the mods it holds back instead of one "unreadable"."""
+    if error is None:
+        return "not read"
+    why = error if isinstance(error, str) else "; ".join(map(str, error))
+    why = re.sub(r"^[\w.$]+(?:Exception|Error): ", "", why.strip()).splitlines()[0] if why.strip() else "no reason given"
+    return "not read: " + (why if len(why) <= 100 else why[:97] + "...")
 
 
 def any_version_lines(a, top=10):

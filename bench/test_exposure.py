@@ -155,21 +155,6 @@ with tempfile.TemporaryDirectory() as tmp:
     check(E.nested_ids(mod.read_bytes()) == {"m": "", "fabric-api-base": "api-base-1.jar", "fabric-gone-v1": "old-module-1.jar"},
           "every id in a jar and its nested jars is read with the nested jar's name")
 
-game_class = b"\xca\xfe\xba\xbe....net/minecraft/world/item/ElytraItem"
-payload = jar({"gg/x/Mixin.class": game_class})
-check(E.hidden_code(jar({"fabric.mod.json": json.dumps({"id": "e"}), "payload-1.jar": payload})) == "payload-1.jar",
-      "game code in a jar no loader metadata lists is found: the port never reads it")
-check(E.hidden_code(jar({"fabric.mod.json": json.dumps({"id": "e", "jars": [{"file": "META-INF/jars/payload.jar"}]}), "META-INF/jars/payload.jar": payload})) is None
-      and E.hidden_code(jar({"META-INF/jarjar/metadata.json": json.dumps({"jars": [{"path": "META-INF/jarjar/p.jar"}]}), "META-INF/jarjar/p.jar": payload})) is None,
-      "a jar fabric.mod.json or NeoForge's jarjar list nests is read by the port, so it is not hidden")
-check(E.hidden_code(jar({"fabric.mod.json": "{}", "lib.jar": jar({"org/lib/A.class": b"\xca\xfe\xba\xbe org/lib"})})) is None,
-      "a library jar with no game code is not the mod's hidden code")
-rep = {"linked": 1, "mods": [{"mod": "e.jar", "unlinked": [], "silent": []}], "unlinkedByMods": []}
-with tempfile.TemporaryDirectory() as tmp:
-    e = Path(tmp) / "e.jar"
-    e.write_bytes(jar({"fabric.mod.json": "{}", "payload-1.jar": payload}))
-    out = E.with_hidden_code_unread(rep, {"e.jar": e})
-check(out["linked"] == 0 and "payload-1.jar" in out["mods"][0].get("error", ""), "such a mod is reported as not read instead of linking")
 
 with tempfile.TemporaryDirectory() as tmp:
     capes = Path(tmp) / "capes.jar"
@@ -640,7 +625,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     def ported(frm, to, verdicts, unreadable=()):
         return {"loader": "fabric", "from": frm, "to": to, "modsRead": len(verdicts), "modsThatLink": 0, "top": [],
-                "unreadable": {m: "bad" for m in unreadable},
+                "unreadable": {m: f"java.io.IOException: {m} has an entry that points outside the jar: ../x" for m in unreadable},
                 "verdicts": {f"{m}--{m}.jar": {"left": ["x"] * len(t), "types": t} for m, t in verdicts.items()}}
 
     split, linked, field = "call, game: split", "call, game: linked", "field, game: split"
@@ -662,9 +647,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(fab["reached"] == {"a": 3, "b": 2, "c": 1, "d": 2} and (fab["everyNewer"], fab["everyOlder"]) == (2, 3),
           f"each mod's releases reached, a mod unreadable on one release missing it: {fab}")
     check(neo["notRun"] == ["2.1"] and all(m["missing"] == ["2.1"] for m in a["held"] if m["loader"] == "neoforge"), f"a release that did not run is named and not reached: {neo}")
-    check([(t["type"], t["finishes"], t["mods"]) for t in a["types"]][:3] == [("not run", 2, 2), (split, 1, 1), ("unreadable", 1, 1)]
+    check([(t["type"], t["finishes"], t["mods"]) for t in a["types"]][:3] == [("not run", 2, 2), (split, 1, 1), ("not read: d--d.jar has an entry that points outside the jar: ../x", 1, 1)]
           and next(t for t in a["types"] if t["type"] == linked)["finishes"] == 0,
-          f"a type frees the mods it alone keeps from every release; a mod held by two types is freed by neither: {a['types']}")
+          f"a type frees the mods it alone keeps from every release; a mod held by two types is freed by neither; a mod not read is held by why: {a['types']}")
     check([(t["loader"], t["release"], t["finishes"], t["mods"]) for t in a["releases"]][:3] == [("neoforge", "2.1", 2, 2), ("fabric", "2.1", 1, 2), ("fabric", "1.0", 1, 1)],
           f"a release frees the mods that miss only it: {a['releases']}")
 
