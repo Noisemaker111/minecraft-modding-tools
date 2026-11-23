@@ -989,19 +989,8 @@ final class Downgrade {
             Path kept = Path.of(System.getProperty("user.home"), ".mmt", "jar-port", "jdk-standins", key);
             if (!Files.isDirectory(kept)) {
                 Path work = Files.createTempDirectory("mmt-jdk-standins");
-                javax.tools.JavaCompiler javac = javax.tools.ToolProvider.getSystemJavaCompiler();
-                if (javac == null) {
-                    throw new IOException("JDK stand-ins need a JDK's compiler (javax.tools), and this Java has none");
-                }
-                List<String> command = new ArrayList<>(List.of("--release", "8", "-proc:none", "-nowarn", "-encoding", "UTF-8", "-d", work.toString()));
-                sources.forEach(f -> command.add(f.toString()));
-                StringWriter errors = new StringWriter();
-                int exit = javac.run(null, new PrintStream(OutputStream.nullOutputStream()), new PrintStream(new OutputStream() {
-                    public void write(int x) {
-                        errors.write(x);
-                    }
-                }, true), command.toArray(String[]::new));
-                if (exit != 0) {
+                String errors = StandinClasses.compile("JDK stand-ins", List.of("--release", "8", "-proc:none", "-nowarn", "-encoding", "UTF-8", "-d", work.toString()), sources);
+                if (errors != null) {
                     throw new IOException("JDK stand-ins in " + dir + " do not compile for Java 8:\n" + errors);
                 }
                 Files.createDirectories(kept.getParent());

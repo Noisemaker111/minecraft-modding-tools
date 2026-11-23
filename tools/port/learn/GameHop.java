@@ -205,6 +205,28 @@ final class GameHop {
         }
     }
 
+    /** A method's references as hashed tokens, in order: what two versions of a body are lined up by. */
+    long[] hashed(GameDiff.Meth m, boolean sideA) {
+        long[] out = new long[m.refs.length];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = GameDiff.fnv(token(m.refs[i], sideA));
+        }
+        return out;
+    }
+
+    /** The longest-common-subsequence table of two token lists: l[i][j] is its length from i and j on. */
+    static int[][] lcs(long[] ta, long[] tb) {
+        int n = ta.length;
+        int m = tb.length;
+        int[][] l = new int[n + 1][m + 1];
+        for (int i = n - 1; i >= 0; i--) {
+            for (int j = m - 1; j >= 0; j--) {
+                l[i][j] = ta[i] == tb[j] ? l[i + 1][j + 1] + 1 : Math.max(l[i + 1][j], l[i][j + 1]);
+            }
+        }
+        return l;
+    }
+
     void tokens(GameDiff.Meth m, boolean sideA) {
         long[] t = new long[m.refs.length];
         long h = GameDiff.fnv(m.ops);
@@ -246,12 +268,7 @@ final class GameHop {
         if ((long) n * m > 250_000) {
             return out;
         }
-        int[][] l = new int[n + 1][m + 1];
-        for (int i = n - 1; i >= 0; i--) {
-            for (int j = m - 1; j >= 0; j--) {
-                l[i][j] = ta[i] == tb[j] ? l[i + 1][j + 1] + 1 : Math.max(l[i + 1][j], l[i][j + 1]);
-            }
-        }
+        int[][] l = lcs(ta, tb);
         int i = 0;
         int j = 0;
         int gi = 0;
@@ -281,12 +298,7 @@ final class GameHop {
         if ((long) n * m > 250_000) {
             return out;
         }
-        int[][] l = new int[n + 1][m + 1];
-        for (int i = n - 1; i >= 0; i--) {
-            for (int j = m - 1; j >= 0; j--) {
-                l[i][j] = ta[i] == tb[j] ? l[i + 1][j + 1] + 1 : Math.max(l[i + 1][j], l[i][j + 1]);
-            }
-        }
+        int[][] l = lcs(ta, tb);
         int i = 0;
         int j = 0;
         int gi = 0;

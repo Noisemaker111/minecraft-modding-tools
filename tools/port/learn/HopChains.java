@@ -195,16 +195,10 @@ final class HopChains {
         for (GameDiff.Cls c : hop.a.classes.values()) {
             for (GameDiff.Meth x : c.methods.values()) {
                 GameDiff.Meth y = hop.mAB.get(x);
-                long[] ta = new long[x.refs.length];
-                for (int i = 0; i < ta.length; i++) {
-                    ta[i] = GameDiff.fnv(hop.token(x.refs[i], true));
-                }
+                long[] ta = hop.hashed(x, true);
                 Map<Integer, GameDiff.Ref> opposite = new HashMap<>();
                 if (y != null && y.refs.length > 0) {
-                    long[] tb = new long[y.refs.length];
-                    for (int j = 0; j < tb.length; j++) {
-                        tb[j] = GameDiff.fnv(hop.token(y.refs[j], false));
-                    }
+                    long[] tb = hop.hashed(y, false);
                     for (int[] p : GameHop.align(ta, tb, x.ops.equals(y.ops))) {
                         opposite.put(p[0], y.refs[p[1]]);
                     }
