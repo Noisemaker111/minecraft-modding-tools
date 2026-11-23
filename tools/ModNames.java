@@ -817,7 +817,7 @@ public final class ModNames {
         }
 
         byte[] jar(byte[] bytes, Map<String, Set<String>> originals) throws IOException {
-            return jar(bytes, new Jar(classesIn(bytes), originals));
+            return jar(bytes, new Jar(classesIn(bytes, game.version), originals));
         }
 
         Set<String> gameNames; // name + desc (Mojang) of every game method whose intermediary name is another
@@ -874,7 +874,7 @@ public final class ModNames {
                     }
                 });
             }
-            Jar jar = new Jar(classesIn(bytes), originals);
+            Jar jar = new Jar(classesIn(bytes, game.version), originals);
             List<String> out = new ArrayList<>();
             for (var e : jar.own.entrySet()) {
                 Own o = e.getValue();
@@ -934,6 +934,11 @@ public final class ModNames {
          * reads them all as one, and gives the outer jar and every nested one the same names.
          */
         static List<byte[]> classesIn(byte[] bytes) throws IOException {
+            return classesIn(bytes, null);
+        }
+
+        /** The classes of a jar and of the nested jars Fabric loads on release (null: on any release). */
+        static List<byte[]> classesIn(byte[] bytes, String release) throws IOException {
             List<byte[]> out = new ArrayList<>();
             Map<String, byte[]> jars = new LinkedHashMap<>();
             try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
@@ -945,9 +950,12 @@ public final class ModNames {
                     }
                 }
             }
-            // Only the nested jars that run (JarPort.nested), after the jar's own classes, which win a name both have.
+            // Only the nested jars that run (JarPort.nested) and that Fabric loads on release (JarPort.fabricLoads), after the
+            // jar's own classes, which win a name both have.
             for (String n : new TreeSet<>(JarPort.nested(jars))) {
-                out.addAll(classesIn(jars.get(n)));
+                if (release == null || JarPort.fabricLoads(jars.get(n), release)) {
+                    out.addAll(classesIn(jars.get(n), release));
+                }
             }
             return out;
         }
