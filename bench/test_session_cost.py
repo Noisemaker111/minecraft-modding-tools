@@ -25,24 +25,25 @@ def check(ok, label):
     checks += 1
 
 
-def busy_java(seconds):
-    """A Java process that allocates and spins until it has used seconds of CPU, so it has memory and CPU to read. It
-    prints "busy" once it has used one second, so a reader waits for that rather than guessing how long a loaded machine takes."""
+def busy_java(seconds=None):
+    """A Java process that allocates and spins until it has used seconds of CPU (None: until it is killed), so it has
+    memory and CPU to read. It prints "busy" once it has used one second, so a reader waits for that rather than guessing
+    how long a loaded machine takes."""
     src = Path(tempfile.mkdtemp()) / "Busy.java"
-    src.write_text("public class Busy { public static void main(String[] a) { long need = %d_000_000_000L; "
+    src.write_text("public class Busy { public static void main(String[] a) { long need = %dL * 1_000_000_000L; "
                    "java.lang.management.ThreadMXBean cpu = java.lang.management.ManagementFactory.getThreadMXBean(); "
                    "java.util.List<byte[]> keep = new java.util.ArrayList<>(); long x = 0; boolean told = false; "
                    "for (long used = 0; used < need; used = cpu.getCurrentThreadCpuTime()) { x += keep.size(); "
                    "if (keep.size() < 64) keep.add(new byte[1 << 20]); "
                    "if (!told && used > 1_000_000_000L) { System.out.println(\"busy\"); System.out.flush(); told = true; } } "
-                   "System.out.println(x); } }" % seconds)
+                   "System.out.println(x); } }" % (seconds or 2**31))
     # a JRE first on PATH cannot run a source file, so JAVA_HOME (a JDK, as on CI) wins when it is set
     java = str(Path(os.environ["JAVA_HOME"]) / "bin" / "java") if os.environ.get("JAVA_HOME") else "java"
     return subprocess.Popen([java, str(src)], stdout=subprocess.PIPE, text=True)
 
 
-# a Java process that was already running is not counted
-before = busy_java(5)
+# a Java process that was already running is not counted; it runs until killed, so it is still running when its threads are read
+before = busy_java()
 check(before.stdout.readline().strip() == "busy", "the process running before sampling began has used a second of CPU")
 with C.Sampler() as s:
     time.sleep(0.6)
