@@ -148,7 +148,7 @@ with tempfile.TemporaryDirectory() as tmp:
             if not polls:
                 raise AssertionError("waited on after the failed job")
             return json.dumps({"status": "in_progress", "conclusion": "", "url": "https://x/run/5", "headSha": "a" * 40, "jobs": polls.pop(0)})
-        if a[0] == "api" and a[1].endswith("/logs"):
+        if a[0] == "api" and a[-1].endswith("/logs"):
             return "2026-11-23T10:03:59.1Z \x1b[31mException in thread main\x1b[0m\n2026-11-23T10:04:00.0Z ##[error]Process completed with exit code 1.\n2026-11-23T10:04:01.0Z Post job cleanup."
         if a[0] == "api":
             return json.dumps([{"name": "exposure-0", "id": 1}])
