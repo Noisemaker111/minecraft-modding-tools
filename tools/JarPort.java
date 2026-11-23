@@ -55,6 +55,7 @@ public final class JarPort {
         final Set<String> unlinked = new TreeSet<>();
         final Set<String> silent = new TreeSet<>(); // overrides the new release no longer calls: the mod loads, a hook is quiet
         final Set<String> refused = new TreeSet<>(); // why a mixin handler did not follow its target (why), for the scoreboard
+        final Set<String> data = new TreeSet<>(); // game ids the mod's data names that the release lacks (DataIds), when judged
         final Map<String, Integer> changed = new TreeMap<>();
         String self; // the class being rewritten, and what a method added to it must respect
         boolean selfInterface;
@@ -440,6 +441,7 @@ public final class JarPort {
                 port.runtimeNames = runtime && last;
                 port.between = !last;
                 port.originalsDir = originalsDir;
+                port.origin = from;
                 if ("fabric".equals(loader)) {
                     port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
                 }
@@ -499,7 +501,8 @@ public final class JarPort {
                 Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
                 Files.write(dest, ported);
                 // Every step's results: a reference one step could not link stays as it was, in that step's names, and breaks there.
-                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>();
+                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>(), data = new TreeSet<>();
+                boolean judged = false;
                 Map<String, Integer> changed = new TreeMap<>();
                 for (Map<String, Object> n : nested.getOrDefault(jar, List.of())) {
                     for (Object u : Json.array(n.get("unlinked"))) {
@@ -509,6 +512,12 @@ public final class JarPort {
                     }
                     for (Object u : Json.array(n.get("silent"))) {
                         silent.add(n.get("jar") + ": " + u);
+                    }
+                    if (n.get("data") != null) {
+                        judged = true;
+                        for (Object u : Json.array(n.get("data"))) {
+                            data.add(n.get("jar") + ": " + u);
+                        }
                     }
                     for (Object u : n.get("refused") == null ? List.of() : Json.array(n.get("refused"))) {
                         refused.add(u.toString());
@@ -524,6 +533,10 @@ public final class JarPort {
                 row.put("unlinked", new ArrayList<>(unlinked));
                 row.put("silent", new ArrayList<>(silent));
                 row.put("refused", new ArrayList<>(refused));
+                if (judged) {
+                    // What the mod's data names that the release lacks: the server stops on it, which linking cannot show.
+                    row.put("data", new ArrayList<>(data));
+                }
                 linked += unlinked.isEmpty() ? 1 : 0;
             } catch (IOException | RuntimeException failed) {
                 row.put("error", String.valueOf(failed));
@@ -1022,6 +1035,7 @@ public final class JarPort {
             mod.change("metadata renamed to neoforge.mods.toml");
         }
         mod.widened.addAll(grants);
+        boolean judged = data(mod, entries);
         // NeoForge's loader (FML 4 to 11) reads the access transformers neoforge.mods.toml lists, or else
         // META-INF/accesstransformer.cfg, for every mod file, nested ones included.
         // Fabric's reads the access widener fabric.mod.json names, for every mod file too.
@@ -1213,8 +1227,30 @@ public final class JarPort {
         result.put("unlinked", new ArrayList<>(mod.unlinked));
         result.put("silent", new ArrayList<>(mod.silent));
         result.put("refused", new ArrayList<>(mod.refused));
+        if (judged) {
+            result.put("data", new ArrayList<>(mod.data));
+        }
         results.add(result);
         return buffer.toByteArray();
+    }
+
+    /** The data pass (DataIds) on a jar's own entries; whether it judged the ids against the release ported to. */
+    boolean data(Mod mod, Map<String, byte[]> entries) {
+        if (dataStep == null && origin == null) {
+            return false; // a porter made in code (tests) has no releases to read reports of unless it is given a step
+        }
+        if (dataStep == null) {
+            dataStep = DataIds.Step.of(origin == null ? a.version : origin, a.version, b.version, !between);
+        }
+        if (dataStep.idle()) {
+            return false;
+        }
+        DataIds pass = new DataIds(dataStep);
+        pass.apply(entries);
+        pass.changed.forEach((kind, n) -> mod.changed.merge(kind, n, Integer::sum));
+        mod.silent.addAll(pass.silent);
+        mod.data.addAll(pass.left);
+        return dataStep.target() != null;
     }
 
     /** A jar's files by name (directories left out); times gets each file's time. An entry pointing outside the jar refuses it. */
@@ -6222,6 +6258,9 @@ public final class JarPort {
     }
 
     GameCode newCode, oldCode; // read when an injection point is first checked; tests set them
+
+    String origin; // the release the whole port started from, which the data pass judges the mod's data ids against
+    DataIds.Step dataStep; // the data pass of this step: made on first use; tests set it
     boolean codeTried;
 
     GameCode code(GameDiff.Snap s) {
