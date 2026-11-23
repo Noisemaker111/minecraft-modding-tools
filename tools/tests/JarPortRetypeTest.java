@@ -185,13 +185,43 @@ final class JarPortRetypeTest {
             && sugarUnlinked.equals(List.of("mixin target changed signature: g6.Screen.render(Lg6/Pose;I)V")),
             "a handler with a @Local of an argument still there follows the new signature; one of an argument gone stays reported: " + sugarStrings + " " + sugarUnlinked);
 
-        // The same @Local int into Title.render, whose 2.0 body stores an int of its own: the capture could be either.
+        // The same @Local int into Title.render at RETURN, where 2.0's body has an int local of its own: the capture could be either.
         List<Map<String, Object>> localRuns = new ArrayList<>();
         port.port(JarPortTest.jar(Map.of("m6/ByLocal.class", byLocal(),
             "m6.mixins.json", "{\"package\": \"m6\", \"mixins\": [\"ByLocal\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "local.jar", localRuns);
         List<String> localUnlinked = Json.array(localRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(localUnlinked.equals(List.of("mixin target changed signature: g6.Title.render(Lg6/Pose;I)V")),
             "a @Local of a type the new method also stores a local of stays reported: " + localUnlinked);
+
+        // Handlers into Title.render at RETURN taking its arguments, its CallbackInfo and its String local: by a @Local of the
+        // String, the one String local in both releases, it follows render's new signature with the local passed through; by
+        // its place among the locals (LocalCapture), where 2.0 has an int local first, it stays reported.
+        List<Map<String, Object>> textRuns = new ArrayList<>();
+        Map<String, byte[]> textJar = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m6/ByText.class", byText(),
+            "m6.mixins.json", "{\"package\": \"m6\", \"mixins\": [\"ByText\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "text.jar", textRuns));
+        List<String> textUnlinked = Json.array(textRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        Map<String, String> textMembers = JarPortTest.members(textJar.get("m6/ByText.class"));
+        JarPortTest.expect(textMembers.containsKey("method onText(" + GFX + "I" + CI + "Ljava/lang/String;)V")
+            && !textMembers.containsKey("method onText(" + POSE + "I" + CI + "Ljava/lang/String;)V")
+            && textMembers.containsKey("method onCaptured(" + POSE + "I" + CI + "Ljava/lang/String;)V")
+            && textUnlinked.equals(List.of("mixin target changed signature: g6.Title.render(Lg6/Pose;I)V")),
+            "a @Local of a local both releases have follows the new signature; captured locals that moved stay reported: " + textMembers.keySet() + " " + textUnlinked);
+        List<String> textSugar = new ArrayList<>();
+        new ClassReader(textJar.get("m6/ByText.class")).accept(new org.objectweb.asm.ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
+                        textSugar.add(name + desc + " " + parameter + " " + d);
+                        return null;
+                    }
+                };
+            }
+        }, 0);
+        JarPortTest.expect(textSugar.equals(List.of("onText(" + GFX + "I" + CI + "Ljava/lang/String;)V 3 Lcom/llamalad7/mixinextras/sugar/Local;",
+                "onRef(" + GFX + "I" + CI + "Lcom/llamalad7/mixinextras/sugar/ref/LocalRef;)V 3 Lcom/llamalad7/mixinextras/sugar/Local;")),
+            "the @Local stays on the handler Mixin reads, at the String's place, a LocalRef<String> as a String: " + textSugar);
 
         // Mixins into two game lambdas, string-building callbacks alike but for their text: 2.0 has only the wipe one, renumbered.
         // Neither mixin requires its place, so the save one is told as finding none, not a break.
@@ -854,7 +884,44 @@ final class JarPortRetypeTest {
         return w.toByteArray();
     }
 
-    /** m6.ByLocal: an @Inject into Title.render at HEAD: onInt(ci, @Local int). */
+    /** m6.ByText: @Inject handlers into Title.render at RETURN: onText(pose, int, ci, @Local String) and onCaptured(pose, int, ci, String). */
+    static byte[] byText() {
+        ClassWriter w = writer("m6/ByText", "java/lang/Object");
+        AnnotationVisitor target = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor value = target.visitArray("value");
+        value.visit(null, Type.getObjectType("g6/Title"));
+        value.visitEnd();
+        target.visitEnd();
+        String ref = "Lcom/llamalad7/mixinextras/sugar/ref/LocalRef;";
+        for (String name : new String[] { "onText", "onCaptured", "onRef" }) {
+            boolean byRef = name.equals("onRef");
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, name, "(" + POSE + "I" + CI + (byRef ? ref : "Ljava/lang/String;") + ")V",
+                byRef ? "(" + POSE + "I" + CI + "Lcom/llamalad7/mixinextras/sugar/ref/LocalRef<Ljava/lang/String;>;)V" : null, null);
+            AnnotationVisitor av = m.visitAnnotation(JarPortFixesTest.INJECT, false);
+            AnnotationVisitor methods = av.visitArray("method");
+            methods.visit(null, "render(" + POSE + "I)V");
+            methods.visitEnd();
+            AnnotationVisitor ats = av.visitArray("at");
+            AnnotationVisitor point = ats.visitAnnotation(null, "Lorg/spongepowered/asm/mixin/injection/At;");
+            point.visit("value", "RETURN");
+            point.visitEnd();
+            ats.visitEnd();
+            av.visitEnd();
+            if (!name.equals("onCaptured")) {
+                m.visitParameterAnnotation(3, "Lcom/llamalad7/mixinextras/sugar/Local;", false).visitEnd();
+            }
+            m.visitCode();
+            m.visitVarInsn(Opcodes.ALOAD, 1);
+            m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "g6/Pose", "push", "()V", false);
+            m.visitInsn(Opcodes.RETURN);
+            m.visitMaxs(0, 0);
+            m.visitEnd();
+        }
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** m6.ByLocal: an @Inject into Title.render at RETURN: onInt(ci, @Local int). */
     static byte[] byLocal() {
         ClassWriter w = writer("m6/ByLocal", "java/lang/Object");
         AnnotationVisitor target = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
@@ -862,7 +929,7 @@ final class JarPortRetypeTest {
         value.visit(null, Type.getObjectType("g6/Title"));
         value.visitEnd();
         target.visitEnd();
-        JarPortFixesTest.handler(w, JarPortFixesTest.INJECT, "onInt", "(" + CI + "I)V", "render(" + POSE + "I)V", "HEAD", null, null);
+        JarPortFixesTest.handler(w, JarPortFixesTest.INJECT, "onInt", "(" + CI + "I)V", "render(" + POSE + "I)V", "RETURN", null, null);
         byte[] plain = w.toByteArray();
         // handler() writes no parameter annotation; add the @Local to the int.
         ClassWriter out = new ClassWriter(0);
@@ -978,6 +1045,9 @@ final class JarPortRetypeTest {
             m.visitInsn(Opcodes.ICONST_0);
             m.visitVarInsn(Opcodes.ISTORE, 3);
         }
+        // A String local of its own in both releases, past the int 2.0 adds.
+        m.visitLdcInsn("t");
+        m.visitVarInsn(Opcodes.ASTORE, old ? 3 : 4);
         // Gui.fill(pose, 3), which 2.0 writes graphics.fill(3).
         m.visitVarInsn(Opcodes.ALOAD, 1);
         m.visitInsn(Opcodes.ICONST_3);
