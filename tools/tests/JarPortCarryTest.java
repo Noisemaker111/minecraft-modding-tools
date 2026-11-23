@@ -30,18 +30,18 @@ final class JarPortCarryTest {
         GameDiff.Snap s2 = GameDiff.read("2.0", List.copyOf(two.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("3.0", List.copyOf(three.values()), null, List.of());
 
-        GameDiff.Hop hop = new GameDiff.Hop(s2, b);
+        GameHop hop = new GameHop(s2, b);
         hop.run();
-        GameDiff.Learner learner = new GameDiff.Learner(hop);
-        GameDiff.Carry carry = new GameDiff.Carry(hop, learner, learner.learn(), hop.rewrites());
-        GameDiff.Learner.Learned mul = new GameDiff.Learner.Learned("net.minecraft.c4.Pose", "mul", "(" + STR + ")V", false, false, "$0.turn($1)", 3, 3);
-        GameDiff.Driver.Carried line = new GameDiff.Driver.Carried("1.0 -> 2.0", mul, null, new String[] { "L" + P + "Pose;", STR });
+        GameLearner learner = new GameLearner(hop);
+        LearnedCarry carry = new LearnedCarry(hop, learner, learner.learn(), hop.hopRewrites.rewrites());
+        GameLearner.Learned mul = new GameLearner.Learned("net.minecraft.c4.Pose", "mul", "(" + STR + ")V", false, false, "$0.turn($1)", 3, 3);
+        GameDriver.Carried line = new GameDriver.Carried("1.0 -> 2.0", mul, null, new String[] { "L" + P + "Pose;", STR });
         line.carry(carry);
         String learned = line.json();
         JarPortTest.expect(learned.contains("\"expr\": \"$0.rotate($1)\"") && learned.contains("\"learnedAs\": \"$0.turn($1)\""),
             "a replacement learned at 2.0 names what 3.0 renamed its call to: " + learned);
         GameDiff.Meth turn = s2.method(P + "Pose", "turn", "(" + STR + ")V");
-        GameDiff.Driver.Switched switched = new GameDiff.Driver.Switched("1.0 -> 2.0", new GameDiff.Hop.Rewrite(turn, turn, 3, 3));
+        GameDriver.Switched switched = new GameDriver.Switched("1.0 -> 2.0", new HopRewrites.Rewrite(turn, turn, 3, 3));
         switched.carry(carry);
         JarPortTest.expect(switched.json().contains("\"to\": \"rotate\""), "a call the game switched to at 2.0 is followed to its 3.0 name: " + switched.json());
 
@@ -53,8 +53,8 @@ final class JarPortCarryTest {
         Files.writeString(map, "{\"signatures\": [" + signature + "], \"learned\": [" + learned + ",\n" + current + "]}");
         List<Map<String, Object>> results = new ArrayList<>();
         JarPort port = new JarPort(a, b, map);
-        port.oldCode = new JarPort.GameCode(one::get, null);
-        port.newCode = new JarPort.GameCode(three::get, null);
+        port.oldCode = new GameCode(one::get, null);
+        port.newCode = new GameCode(three::get, null);
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(mod()), "carry.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         String trace = run(three, ported);
@@ -74,23 +74,23 @@ final class JarPortCarryTest {
         List<String> left = Json.array(plain.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(left.contains("call: net.minecraft.c4.L.list()" + STR), "a static call to what is now an instance method is not linked: " + left);
         // The chain's first release called turn mul: what 2.0 -> 3.0 learned for turn is filed under mul.
-        GameDiff.Driver driver = new GameDiff.Driver(List.of("1.0", "2.0", "3.0"), null, null);
+        GameDriver driver = new GameDriver(List.of("1.0", "2.0", "3.0"), null, null);
         GameDiff.Snap r1 = GameDiff.read("1.0", List.copyOf(one.values()), null, List.of()), r2 = GameDiff.read("2.0", List.copyOf(two.values()), null, List.of());
         driver.next(r1, null, null);
         driver.next(r2, null, null);
-        GameDiff.Hop later = new GameDiff.Hop(r2, GameDiff.read("3.0", List.copyOf(three.values()), null, List.of()));
+        GameHop later = new GameHop(r2, GameDiff.read("3.0", List.copyOf(three.values()), null, List.of()));
         later.run();
-        String[] first = driver.first(later, new GameDiff.Learner.Learned("net.minecraft.c4.Pose", "turn", "(" + STR + ")V", false, true, "$0.rotate($1)", 2, 2));
+        String[] first = driver.first(later, new GameLearner.Learned("net.minecraft.c4.Pose", "turn", "(" + STR + ")V", false, true, "$0.rotate($1)", 2, 2));
         JarPortTest.expect(first != null && first[1].equals("mul") && first[2].equals("(" + STR + ")V"),
             "a fix learned for a member the first release named otherwise is filed under that name: " + (first == null ? null : Arrays.toString(first)));
         // Four uses read getInt(key) as getIntOr(key, 0); two chose their own default there (200, 5).
-        char o = GameDiff.Learner.OPEN, or = GameDiff.Learner.OR, c = GameDiff.Learner.CLOSE;
+        char o = GameLearner.OPEN, or = GameLearner.OR, c = GameLearner.CLOSE;
         List<Set<String>> uses = new ArrayList<>();
         for (String k : List.of("0", "0", "0", "0", "200", "5")) {
             uses.add(Set.of(o + "$0" + c + ".getIntOr(" + o + "$1" + or + "\"k\"" + c + ", " + o + k + c + ")"));
         }
         int[] tally = new int[2];
-        String best = GameDiff.Learner.vote(uses, tally);
+        String best = LearnVotes.vote(uses, tally);
         JarPortTest.expect("$0.getIntOr($1, 0)".equals(best) && tally[0] == 4 && tally[1] == 4,
             "a use that passes its own fixed default where most pass one abstains: " + best + " " + Arrays.toString(tally));
         if (JarPortTest.failures > 0) {

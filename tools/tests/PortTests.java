@@ -148,7 +148,7 @@ public final class PortTests {
                 )
             )
         );
-        List<Object> named = port.namedErrors(log, history);
+        List<Object> named = port.explainer.namedErrors(log, history);
         var first = Json.object(named.get(0));
         var placed = Json.object(Json.array(first.get("changedIn")).get(0));
         check(
@@ -175,19 +175,19 @@ public final class PortTests {
             "    ^/home/me/mod/src/A.java:10: error: cannot find symbol\n"
         );
         check(
-            port.namedErrors(glued, null).size() == 1,
+            port.explainer.namedErrors(glued, null).size() == 1,
             "a javac note Gradle glued onto a repeated error is not read as a file path"
         );
         String exhaustion =
             "C:\\mod\\src\\H.java:67: error: cannot find symbol\n\t\tfloat e = player.getHungerManager().getExhaustion();\n\t\t                                   ^\n  symbol:   method getExhaustion()\n  location: class HungerManager\n";
-        var offered = Port.repairGuides(home, "1.20.1", "1.21.6", exhaustion)
+        var offered = PortRules.repairGuides(home, "1.20.1", "1.21.6", exhaustion)
             .stream()
             .map(guide -> guide.get("id"))
             .toList();
         check(
             offered.equals(List.of("hunger-exhaustion-accessor")) &&
-            Port.repairGuides(home, "1.20.1", "1.21.1", exhaustion).isEmpty() &&
-            Port.repairGuides(
+            PortRules.repairGuides(home, "1.20.1", "1.21.1", exhaustion).isEmpty() &&
+            PortRules.repairGuides(
                 home,
                 "1.20.1",
                 "1.21.6",
@@ -305,18 +305,18 @@ public final class PortTests {
     /** Converted subscribers leave their mixin config: entries die, and the file when nothing remains. */
     static void mixinConfigChecks() {
         String config = "{\n\t\"required\": true,\n\t\"package\": \"de.smallinger.cinematiczoom.mixin\",\n\t\"client\": [\n\t\t\"GameRendererMixin\",\n\t\t\"MouseMixin\",\n\t\t\"InGameHudMixin\"\n\t]\n}";
-        String stripped = Port.stripConvertedMixins(
+        String stripped = NeoEntryMigration.stripConvertedMixins(
             config,
             "de.smallinger.cinematiczoom.mixin",
             List.of("GameRendererMixin", "MouseMixin", "InGameHudMixin")
         );
         check(
-            !Port.mixinsRemain(stripped) && !stripped.contains("Mixin"),
+            !NeoEntryMigration.mixinsRemain(stripped) && !stripped.contains("Mixin"),
             "converting every listed mixin empties its config: " + stripped.replace('\n', ' ')
         );
-        String partial = Port.stripConvertedMixins(config, "de.smallinger.cinematiczoom.mixin", List.of("MouseMixin"));
+        String partial = NeoEntryMigration.stripConvertedMixins(config, "de.smallinger.cinematiczoom.mixin", List.of("MouseMixin"));
         check(
-            Port.mixinsRemain(partial) &&
+            NeoEntryMigration.mixinsRemain(partial) &&
             partial.contains("\"GameRendererMixin\"") &&
             partial.contains("\"InGameHudMixin\"") &&
             !partial.contains("MouseMixin") &&
@@ -325,13 +325,13 @@ public final class PortTests {
             "a partial conversion keeps the remaining mixins in valid JSON"
         );
         check(
-            Port.stripConvertedMixins(config, "other.mixin", List.of("GameRendererMixin")).equals(config),
+            NeoEntryMigration.stripConvertedMixins(config, "other.mixin", List.of("GameRendererMixin")).equals(config),
             "a config for another package passes through untouched"
         );
         String single = "{ \"package\": \"example.mixin\", \"client\": [\"OnlyMixin\"] }";
-        String emptied = Port.stripConvertedMixins(single, "example.mixin", List.of("OnlyMixin"));
+        String emptied = NeoEntryMigration.stripConvertedMixins(single, "example.mixin", List.of("OnlyMixin"));
         check(
-            !Port.mixinsRemain(emptied) && emptied.contains("\"client\": []"),
+            !NeoEntryMigration.mixinsRemain(emptied) && emptied.contains("\"client\": []"),
             "a single-entry inline array empties cleanly: " + emptied
         );
     }
@@ -354,7 +354,7 @@ public final class PortTests {
             "mod_id=cinematiczoom\nmod_version=1.0.0\nmod_name=CinematicZoom\n"
                 + "mod_description=Smooth zoom.\nmod_authors=Mel1x (Ported by smallinger)\n"
         );
-        Map<String, Object> info = Port.legacyModInfo(root, "1.7.10");
+        Map<String, Object> info = PortMetadata.legacyModInfo(root, "1.7.10");
         check(
             info != null &&
             info.get("modid").equals("cinematiczoom") &&
@@ -366,7 +366,7 @@ public final class PortTests {
             "the template becomes a resolved mcmod.info entry: " + info
         );
         check(
-            Port.legacyModInfo(root, "1.21.1") == null,
+            PortMetadata.legacyModInfo(root, "1.21.1") == null,
             "a modern target gets no mcmod.info: its TOML stays the metadata"
         );
         Path fabricRoot = scratch.resolve("legacy-fabric");
@@ -375,7 +375,7 @@ public final class PortTests {
             fabricRoot.resolve("src/main/resources/fabric.mod.json"),
             "{\"id\":\"zoom\",\"version\":\"2.0\",\"name\":\"Zoom\",\"authors\":[\"One\",\"Two\"],\"contact\":{\"homepage\":\"https://example.invalid\"}}"
         );
-        Map<String, Object> fabricInfo = Port.legacyModInfo(fabricRoot, "1.7.10");
+        Map<String, Object> fabricInfo = PortMetadata.legacyModInfo(fabricRoot, "1.7.10");
         check(
             fabricInfo != null &&
             fabricInfo.get("modid").equals("zoom") &&
@@ -411,7 +411,7 @@ public final class PortTests {
         for (String list : List.of("classesRemoved", "methods", "methodsMoved", "signatures", "methodsRemoved", "fields", "fieldsRemoved")) route.put(list, List.of());
         names = new LinkedHashMap<>(names);
         names.put("fields", List.of());
-        List<Object> composed = Json.array(Port.composeMaps(names, route).get("rewrites"));
+        List<Object> composed = Json.array(PortMaps.composeMaps(names, route).get("rewrites"));
         check(composed.size() == 2, "the rewrite is kept as it is and keyed by its yarn name: " + composed);
         var yarn = Json.object(composed.get(1));
         check("entryOf".equals(yarn.get("from")) && "net.minecraft.registry.Registry".equals(yarn.get("owner")) && "getOrThrow".equals(yarn.get("to")), "yarn key, game replacement");
@@ -430,7 +430,7 @@ public final class PortTests {
         Map<String, Object> target = Json.map(
             "classes", List.of(Json.map("from", "net.minecraft.network.encoding.VarInts", "to", "net.minecraft.network.VarInt")),
             "methods", List.of(Json.map("owner", "net.minecraft.network.encoding.VarInts", "from", "getSizeInBytes", "desc", "(I)I", "to", "getByteSize", "newDesc", "(I)I")));
-        List<Object> yarn = Port.yarnRewrites(List.of(rewrite, unnamed), source, target);
+        List<Object> yarn = PortMaps.yarnRewrites(List.of(rewrite, unnamed), source, target);
         check(yarn.size() == 1, "a rewrite whose replacement yarn cannot name is left out: " + yarn);
         var r = Json.object(yarn.get(0));
         check(
@@ -442,7 +442,7 @@ public final class PortTests {
 
     /** A mixin's never-run constructor calls its super constructor with typed placeholders for whatever it now takes. */
     static void mixinPlaceholders() {
-        List<String> args = Port.placeholders("(Lnet/minecraft/world/level/storage/WritableLevelData;Lnet/minecraft/core/Holder$Reference;ZJF[I[Ljava/lang/String;CI)V");
+        List<String> args = PortMixins.placeholders("(Lnet/minecraft/world/level/storage/WritableLevelData;Lnet/minecraft/core/Holder$Reference;ZJF[I[Ljava/lang/String;CI)V");
         check(
             args.equals(List.of("(net.minecraft.world.level.storage.WritableLevelData) null", "(net.minecraft.core.Holder.Reference) null", "false", "0L", "0.0F", "(int[]) null", "(java.lang.String[]) null", "(char) 0", "0")),
             "typed placeholders for every kind of parameter: " + args
@@ -453,10 +453,10 @@ public final class PortTests {
     static void foodUses() {
         String items = "class ModItems {\n    static Item.Properties foodItem(FoodProperties food) {\n        return new Item.Properties().food(food);\n    }\n"
             + "    static Item.Properties bowl() {\n        return new Item.Properties().stacksTo(16).food(FoodValues.STEW).food(a, b);\n    }\n}\n";
-        String used = Port.foodUses(items, "mod.FoodValues");
+        String used = FoodMigration.foodUses(items, "mod.FoodValues");
         check(used.contains("new Item.Properties().food(food).component(net.minecraft.core.component.DataComponents.CONSUMABLE, mod.FoodValues.mmtConsumable(food));"), "a helper's food sets its consumable: " + used);
         check(used.contains(".food(FoodValues.STEW).component(net.minecraft.core.component.DataComponents.CONSUMABLE, mod.FoodValues.mmtConsumable(FoodValues.STEW)).food(a, b);"), "one food each, and food(food, consumable) is left as it is");
-        check(used.split("\n", -1).length == items.split("\n", -1).length && Port.foodUses(used, "mod.FoodValues").equals(used), "lines kept, and a second round adds nothing");
+        check(used.split("\n", -1).length == items.split("\n", -1).length && FoodMigration.foodUses(used, "mod.FoodValues").equals(used), "lines kept, and a second round adds nothing");
     }
 
     public static void main(String[] args) throws Exception {
@@ -726,11 +726,11 @@ public final class PortTests {
             "class Food { int n = 1; }\r\n// original 🧱".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Files.write(backup, original);
         Map<String, Object> before = Json.map("src/custom/Food.java", Fingerprints.bytes(original));
-        port.finishTransaction(transaction, before);
+        port.journal.finishTransaction(transaction, before);
         String repaired = Files.readString(source);
         Files.writeString(source, repaired + "// later user edit\n");
         try {
-            port.undo(transaction.toString());
+            port.journal.undo(transaction.toString());
             throw new AssertionError("overwrote later edit");
         } catch (IOException expected) {
             check(
@@ -739,7 +739,7 @@ public final class PortTests {
             );
         }
         Files.writeString(source, repaired);
-        port.undo(transaction.toString());
+        port.journal.undo(transaction.toString());
         check(
             Arrays.equals(original, Files.readAllBytes(source)),
             "undo restores exact original bytes, Unicode, CRLF and missing final newline"
@@ -809,7 +809,7 @@ public final class PortTests {
             zip.write(String.format(toml, "[1.21.1,1.21.1]").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             zip.closeEntry();
         }
-        Map<String, Object> staleMetadata = Port.verifyModMetadata(metadataRoot, neoModel, "1.21.4");
+        Map<String, Object> staleMetadata = PortMetadata.verifyModMetadata(metadataRoot, neoModel, "1.21.4");
         check(
             Boolean.FALSE.equals(staleMetadata.get("ok")) && staleMetadata.get("details").toString().contains("0 mods"),
             "a packaged mod that still declares the old Minecraft range is refused instead of looking like a passing port"
@@ -820,7 +820,7 @@ public final class PortTests {
             zip.closeEntry();
         }
         check(
-            Boolean.TRUE.equals(Port.verifyModMetadata(metadataRoot, neoModel, "1.21.4").get("ok")),
+            Boolean.TRUE.equals(PortMetadata.verifyModMetadata(metadataRoot, neoModel, "1.21.4").get("ok")),
             "packaged metadata that accepts the target version passes the loader check"
         );
         jarInJar(scratch);

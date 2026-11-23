@@ -53,8 +53,8 @@ final class JarPortSuperTest {
                             {"owner": "s7.Reg", "from": "make", "desc": "(Ls7/Disp;)Ls7/Rend;", "to": "make", "newDesc": "(Ls7/Ctx;)Ls7/Rend;"}]}
             """);
         JarPort port = new JarPort(a, b, map);
-        port.oldCode = new JarPort.GameCode(Map.of("s7/Rend", rend(true), "s7/Reg", reg(true), "s7/Lone", lone(true))::get, null);
-        port.newCode = new JarPort.GameCode(Map.of("s7/Rend", rend(false), "s7/Reg", reg(false), "s7/Lone", lone(false))::get, null);
+        port.oldCode = new GameCode(Map.of("s7/Rend", rend(true), "s7/Reg", reg(true), "s7/Lone", lone(true))::get, null);
+        port.newCode = new GameCode(Map.of("s7/Rend", rend(false), "s7/Reg", reg(false), "s7/Lone", lone(false))::get, null);
 
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m7/MyR.class", myR(), "m7/Init.class", init())), "super.jar", results));

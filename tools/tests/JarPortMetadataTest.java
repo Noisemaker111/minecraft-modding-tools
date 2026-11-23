@@ -45,7 +45,7 @@ final class JarPortMetadataTest {
         Files.writeString(map, "{}");
         JarPort port = new JarPort(new GameDiff.Snap("1.0"), new GameDiff.Snap(to), map);
         port.loader = loader;
-        port.languageRange = language;
+        port.modMetadata.languageRange = language;
         return port;
     }
 

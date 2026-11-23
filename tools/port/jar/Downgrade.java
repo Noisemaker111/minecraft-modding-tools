@@ -1011,7 +1011,7 @@ final class Downgrade {
                     // another process kept the same classes first
                 }
             }
-            Map<String, byte[]> classes = JarPort.readClasses(kept);
+            Map<String, byte[]> classes = StandinClasses.readClasses(kept);
             for (String name : classes.keySet()) {
                 if (!name.startsWith(PREFIX + "java/")) {
                     throw new IOException("JDK stand-in " + name + " is not in a package under mmt.standin.java");
@@ -1074,7 +1074,7 @@ final class Downgrade {
             Map<String, byte[]> out = new TreeMap<>();
             for (String n : all) {
                 if (classes.containsKey(n)) {
-                    out.put(move.map(n) + ".class", JarPort.relocate(classes.get(n), move));
+                    out.put(move.map(n) + ".class", StandinClasses.relocate(classes.get(n), move));
                 }
             }
             return out;

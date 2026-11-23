@@ -121,8 +121,8 @@ final class JarPortBackTest {
         Path map = scratch.resolve("route.json");
         Files.writeString(map, "{}");
         JarPort port = new JarPort(a, b, map);
-        port.oldCode = new JarPort.GameCode(newer::get, null, newer);
-        port.newCode = new JarPort.GameCode(older::get, null, older);
+        port.oldCode = new GameCode(newer::get, null, newer);
+        port.newCode = new GameCode(older::get, null, older);
 
         Map<String, byte[]> files = new HashMap<>();
         mod.forEach((name, bytes) -> files.put(name + ".class", bytes));
@@ -134,7 +134,7 @@ final class JarPortBackTest {
         JarPortTest.expect(unlinked.equals(List.of("call: net.minecraft.c5.Loc.fresh()I", "call: net.minecraft.c5.Loc.third()I")),
             "what 2.0 added whose code uses only 1.0 links; fresh(), which reads a field 1.0 lacks, and third(), which the jar overrides, stay breaks: " + unlinked);
         List<String> carried = ported.keySet().stream().filter(n -> n.startsWith("mmt/standin/")).sorted().toList();
-        JarPortTest.expect(carried.equals(List.of(port.copiedHome("back.jar") + "net/minecraft/c5/Loc.class")),
+        JarPortTest.expect(carried.equals(List.of(port.newerCode.copiedHome("back.jar") + "net/minecraft/c5/Loc.class")),
             "the copies are carried in one class under the jar's own package: " + carried);
 
         Map<String, byte[]> classes = new HashMap<>(older);
@@ -167,7 +167,7 @@ final class JarPortBackTest {
 
         // A port forward copies nothing: a method the newer release dropped is the old API, which stand-ins answer.
         JarPort forward = new JarPort(b, a, map);
-        JarPortTest.expect(forward.copyNewer(new HashMap<>(files), "forward.jar").isEmpty(), "a port forward copies nothing");
+        JarPortTest.expect(forward.newerCode.copyNewer(new HashMap<>(files), "forward.jar").isEmpty(), "a port forward copies nothing");
         JarPortTest.finish("JarPortBackTest");
     }
 
@@ -193,6 +193,6 @@ final class JarPortBackTest {
         if (exit != 0) {
             throw new IOException("does not compile: " + errors);
         }
-        return JarPort.readClasses(out);
+        return StandinClasses.readClasses(out);
     }
 }

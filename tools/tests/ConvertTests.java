@@ -54,10 +54,10 @@ public final class ConvertTests {
             "    static class B extends C {\n        @Override\n        void run() { Gone.h(); }\n    }\n    int f(int x) { return x; }\n}\n";
         String bet = "import net.minecraft.world.level.block.entity.BlockEntityType;\nimport net.minecraft.commands.synchronization.ArgumentTypeInfos;\nclass R { Object a = new BlockEntityType<>(X::new, A, B); Object b = new BlockEntityType<T>(X::new, s) { }; String c = \"new BlockEntityType<>(\"; Object d = ArgumentTypeInfos.registerByClass(C.class, i); }\n";
         String statics = "net.minecraft.commands.synchronization.ArgumentTypeInfos#registerByClass";
-        String factored = Convert.staticsToBridge(Convert.constructorsToFactories(bet, "net.minecraft.world.level.block.entity.BlockEntityType", "BlockEntityTypes", "p.loaderbridge"), statics, "ArgumentTypeInfosExtension", "p.loaderbridge");
+        String factored = NeoForgeBridge.staticsToBridge(NeoForgeBridge.constructorsToFactories(bet, "net.minecraft.world.level.block.entity.BlockEntityType", "BlockEntityTypes", "p.loaderbridge"), statics, "ArgumentTypeInfosExtension", "p.loaderbridge");
         check(
             factored.contains("a = BlockEntityTypes.of(X::new, A, B)") && factored.contains("b = new BlockEntityType<T>(X::new, s) { }") && factored.contains("\"new BlockEntityType<>(\"") && factored.contains("import p.loaderbridge.BlockEntityTypes;") && factored.contains("d = ArgumentTypeInfosExtension.registerByClass(C.class, i)") &&
-                Convert.bridgeToStatics(Convert.factoriesToConstructors(factored, "net.minecraft.world.level.block.entity.BlockEntityType", "BlockEntityTypes", "p.loaderbridge"), statics, "ArgumentTypeInfosExtension", "p.loaderbridge").equals(bet),
+                ToNeoForge.bridgeToStatics(ToNeoForge.factoriesToConstructors(factored, "net.minecraft.world.level.block.entity.BlockEntityType", "BlockEntityTypes", "p.loaderbridge"), statics, "ArgumentTypeInfosExtension", "p.loaderbridge").equals(bet),
             "a constructor or static method NeoForge adds to a game class becomes the bridge's and back, never an anonymous subclass or a string: " + factored
         );
         List<String> around = new ArrayList<>();
@@ -75,17 +75,17 @@ public final class ConvertTests {
             "a rule never matches inside a string or a comment"
         );
         check(
-            Convert.mavenRange("~26.3").equals("[26.3,26.4)") &&
-            Convert.mavenRange(">=1.2 <2").equals("[1.2,2)") &&
-            Convert.mavenRange("*").equals("[0,)") &&
-            Convert.mavenRange("26.1.2").equals("[26.1.2]") &&
-            Convert.fabricPredicate("[26.3,26.4)").equals("~26.3") &&
-            Convert.fabricPredicate("[1.2,)").equals(">=1.2"),
+            ToNeoForge.mavenRange("~26.3").equals("[26.3,26.4)") &&
+            ToNeoForge.mavenRange(">=1.2 <2").equals("[1.2,2)") &&
+            ToNeoForge.mavenRange("*").equals("[0,)") &&
+            ToNeoForge.mavenRange("26.1.2").equals("[26.1.2]") &&
+            ToFabric.fabricPredicate("[26.3,26.4)").equals("~26.3") &&
+            ToFabric.fabricPredicate("[1.2,)").equals(">=1.2"),
             "Fabric version predicates and Maven ranges convert both ways"
         );
         check(
-            Convert.neoforgeModId("pointless-piglins").equals("pointless_piglins") && Convert.neoforgeModId("demo").equals("demo") &&
-            Convert.neoforgeModId("2fast").equals("mod_2fast"),
+            ToNeoForge.neoforgeModId("pointless-piglins").equals("pointless_piglins") && ToNeoForge.neoforgeModId("demo").equals("demo") &&
+            ToNeoForge.neoforgeModId("2fast").equals("mod_2fast"),
             "a Fabric mod id with a hyphen becomes one NeoForge accepts"
         );
         // Found by an independent check: mmt package copied whatever desktop app build was in app/target/release.
@@ -106,10 +106,10 @@ public final class ConvertTests {
         );
         // Found by an independent check on Krypton: NeoForge 26.1+ logs an ERROR for every @OnlyIn class (OnlyInWarningsHandler).
         String sided = "import net.fabricmc.api.EnvType;\nimport net.fabricmc.api.Environment;\n\n@Environment(EnvType.CLIENT)\nclass A {\n\t// @Environment(EnvType.SERVER)\n\t@Environment(EnvType.CLIENT) void draw() {}\n}\n";
-        String unsided = Convert.withoutSideOnly(sided);
+        String unsided = ToNeoForge.withoutSideOnly(sided);
         check(
             unsided.equals("import net.fabricmc.api.EnvType;\n\nclass A {\n\t// @Environment(EnvType.SERVER)\n\tvoid draw() {}\n}\n") &&
-            Convert.ONLY_IN_ERROR.equals("26.1"),
+            ToNeoForge.ONLY_IN_ERROR.equals("26.1"),
             "converted to NeoForge 26.1 or later, Fabric's @Environment marks go instead of becoming @OnlyIn:\n" + unsided
         );
         // Found by the convert sweep on MoreRed (26.1.2): its gradle.properties names only neo_version.
@@ -125,10 +125,10 @@ public final class ConvertTests {
         // Found by the convert sweep on Client Commands and SeedMapper: Loom configured in two loom blocks and in
         // top-level loom. statements; all of it goes with the plugin.
         String loomTwice = "loom {\n\taccessWidenerPath = file('a')\n}\n\nloom.runs.configureEach {\n\tvmArg '-Dx'\n}\ndelete loom.runs.client.runDirectory\n\nloom {\n\tmixin { useLegacyMixinAp = false }\n}\n";
-        int[] firstLoom = Convert.block(loomTwice, "loom");
-        int[] secondLoom = Convert.nextBlock(loomTwice, "loom", firstLoom[1]);
+        int[] firstLoom = BuildScript.block(loomTwice, "loom");
+        int[] secondLoom = BuildScript.nextBlock(loomTwice, "loom", firstLoom[1]);
         List<String> loomDropped = new ArrayList<>();
-        String loomLeft = Convert.dropStatements(loomTwice, Convert::loomStatement, loomDropped);
+        String loomLeft = BuildScript.dropStatements(loomTwice, NeoForgeBuild::loomStatement, loomDropped);
         check(
             secondLoom != null && loomTwice.substring(secondLoom[0]).startsWith("loom {\n\tmixin") &&
             loomDropped.size() == 2 && !loomLeft.contains("loom.") && loomLeft.contains("mixin {"),
@@ -136,13 +136,13 @@ public final class ConvertTests {
         );
         // Found by the convert sweep on Client Commands: a configuration of its own, includedLibrary, became jarJardLibrary.
         check(
-            Convert.loomConfigurationsToNeoForge("\tincludedLibrary \"a:b:1\"\n").equals("\tincludedLibrary \"a:b:1\"\n") &&
-            Convert.loomConfigurationsToNeoForge("\tinclude implementation(\"a:b:1\")\n").equals("\tjarJar implementation(\"a:b:1\")\n") &&
-            Convert.loomConfigurationsToNeoForge("\tmodImplementation include(\"a:b:1\")\n").equals("\timplementation jarJar(\"a:b:1\")\n"),
+            NeoForgeBuild.loomConfigurationsToNeoForge("\tincludedLibrary \"a:b:1\"\n").equals("\tincludedLibrary \"a:b:1\"\n") &&
+            NeoForgeBuild.loomConfigurationsToNeoForge("\tinclude implementation(\"a:b:1\")\n").equals("\tjarJar implementation(\"a:b:1\")\n") &&
+            NeoForgeBuild.loomConfigurationsToNeoForge("\tmodImplementation include(\"a:b:1\")\n").equals("\timplementation jarJar(\"a:b:1\")\n"),
             "Loom's configurations become ModDevGradle's, and only whole configuration names"
         );
         List<String> unconverted = new ArrayList<>();
-        List<String> transformers = Convert.widenerToTransformer(
+        List<String> transformers = ConvertAccess.widenerToTransformer(
             "classTweaker v1 official\n# comment\naccessible class net/minecraft/A$B\nextendable class net/minecraft/C\n" +
             "accessible method net/minecraft/D run (I)V\nextendable method net/minecraft/D run (I)V\n" +
             "accessible field net/minecraft/E size I\nmutable field net/minecraft/E size I\n" +
@@ -168,18 +168,18 @@ public final class ConvertTests {
         );
         List<String> yarnLeft = new ArrayList<>();
         check(
-            Convert.widenerToTransformer("accessWidener v2 named\naccessible class net/minecraft/a\n", false, yarnLeft).isEmpty() &&
+            ConvertAccess.widenerToTransformer("accessWidener v2 named\naccessible class net/minecraft/a\n", false, yarnLeft).isEmpty() &&
             yarnLeft.size() == 1,
             "an access widener in yarn's names is named, not converted"
         );
         // Found in real mods: Jade (an opened member's owner), The One Probe back from Fabric (never an anonymous class).
-        List<String> owned = Convert.withOwners(List.of("public-f net.minecraft.E size", "public net.minecraft.core.HolderSet$1 contents()Ljava/util/List;", "public net.minecraft.F", "public net.minecraft.F <init>()V"));
+        List<String> owned = ConvertAccess.withOwners(List.of("public-f net.minecraft.E size", "public net.minecraft.core.HolderSet$1 contents()Ljava/util/List;", "public net.minecraft.F", "public net.minecraft.F <init>()V"));
         check(
             owned.equals(List.of("public-f net.minecraft.E size", "public net.minecraft.core.HolderSet$1 contents()Ljava/util/List;", "public net.minecraft.F", "public net.minecraft.F <init>()V", "public net.minecraft.E")),
             "an opened member's owner gets its own transformer line, once, and an anonymous class none: " + owned
         );
         // Jade: Fabric API widens ItemDisplay.getItemStack for every mod; NeoForge's transformer opens what the code names.
-        String transitive = Convert.transitiveEntries(
+        String transitive = ConvertAccess.transitiveEntries(
             "classTweaker v1 official\ntransitive-accessible method net/minecraft/world/entity/Display$ItemDisplay getItemStack ()V\ntransitive-accessible method net/minecraft/world/entity/Display$ItemDisplay setItemStack ()V\ntransitive-accessible method net/minecraft/Other getItemStack ()V\n",
             Set.of("ItemDisplay", "getItemStack")
         );
@@ -190,21 +190,21 @@ public final class ConvertTests {
         // SeedMapper: a removed Fabric property left in processResources' map; Zombie Apocalypse: the NeoForge exclusion
         // the way to Fabric adds removed NeoForge (and the game) from the ModDevGradle build on the way back.
         List<String> dropped = new ArrayList<>();
-        String expand = Convert.dropPropertyEntries("def p = [version: project.mod_version, loader_version: project.fabric_loader_version]\n", Convert.FABRIC_PROPERTIES, dropped);
-        String excluded = "dependencies {\n}\n" + Convert.NEOFORGE_EXCLUSION + "\texclude group: 'net.neoforged', module: 'neoforge'\n}\n";
+        String expand = NeoForgeBuild.dropPropertyEntries("def p = [version: project.mod_version, loader_version: project.fabric_loader_version]\n", NeoForgeBuild.FABRIC_PROPERTIES, dropped);
+        String excluded = "dependencies {\n}\n" + BuildScript.NEOFORGE_EXCLUSION + "\texclude group: 'net.neoforged', module: 'neoforge'\n}\n";
         check(
-            expand.equals("def p = [version: project.mod_version]\n") && dropped.size() == 1 && Convert.dropNeoForgeExclusion(excluded).equals("dependencies {\n}\n"),
-            "build fixes found on real mods: " + expand + Convert.dropNeoForgeExclusion(excluded)
+            expand.equals("def p = [version: project.mod_version]\n") && dropped.size() == 1 && NeoForgeBuild.dropNeoForgeExclusion(excluded).equals("dependencies {\n}\n"),
+            "build fixes found on real mods: " + expand + NeoForgeBuild.dropNeoForgeExclusion(excluded)
         );
         // The NeoForge MDK on Fabric registered an attachment type its NeoForge build does not: feature lines are kept only
         // for mods that use the feature.
         String marked = "\tA.register(); // bridge: when IEntityExtension\n\tB.hook();\n";
         check(
-            Convert.whenUsed(marked, "class X {}").equals("\tB.hook();\n") && Convert.whenUsed(marked, "IEntityExtension.getPersistentData(e)").equals("\tA.register();\n\tB.hook();\n"),
-            "a bridge's feature lines are kept only for mods that use the feature: " + Convert.whenUsed(marked, "class X {}")
+            ConvertBridges.whenUsed(marked, "class X {}").equals("\tB.hook();\n") && ConvertBridges.whenUsed(marked, "IEntityExtension.getPersistentData(e)").equals("\tA.register();\n\tB.hook();\n"),
+            "a bridge's feature lines are kept only for mods that use the feature: " + ConvertBridges.whenUsed(marked, "class X {}")
         );
         List<String> widenerLeft = new ArrayList<>();
-        String widener = Convert.transformerToWidener(
+        String widener = ConvertAccess.transformerToWidener(
             "# opens\npublic net.minecraft.A$B\npublic-f net.minecraft.C\nprotected-f net.minecraft.D run(I)V\npublic net.minecraft.E size\npublic net.minecraft.H *()\n",
             true,
             widenerLeft
@@ -217,7 +217,7 @@ public final class ConvertTests {
             widenerLeft.size() == 2 &&
             widenerLeft.get(0).startsWith("public net.minecraft.E size") &&
             widenerLeft.get(1).equals("public net.minecraft.H *()") &&
-            Convert.transformerToWidener("public net.minecraft.A\n", false, new ArrayList<>()).startsWith("accessWidener v2 named\n"),
+            ConvertAccess.transformerToWidener("public net.minecraft.A\n", false, new ArrayList<>()).startsWith("accessWidener v2 named\n"),
             "NeoForge access transformer lines become a Fabric access widener; a field (no type) and a wildcard are named:\n" +
             widener +
             widenerLeft
@@ -225,10 +225,10 @@ public final class ConvertTests {
         String mappings = "# {\"fileName\":\"client.txt\"}\nnet.minecraft.client.renderer.block.ModelBlockRenderer -> fxx:\n" +
             "    net.minecraft.client.color.block.BlockColors blockColors -> b\n    int[][] grid -> c\n" +
             "    15:20:void <init>(net.minecraft.client.color.block.BlockColors) -> <init>\n";
-        Map<String, String> fieldTypes = Convert.mappingFieldTypes(mappings);
-        String members = Convert.mappingMembers(mappings).get("net/minecraft/client/renderer/block/ModelBlockRenderer");
+        Map<String, String> fieldTypes = ConvertAccess.mappingFieldTypes(mappings);
+        String members = ConvertAccess.mappingMembers(mappings).get("net/minecraft/client/renderer/block/ModelBlockRenderer");
         List<String> typedLeft = new ArrayList<>();
-        String typed = Convert.transformerToWidener(
+        String typed = ConvertAccess.transformerToWidener(
             "public-f net.minecraft.client.renderer.block.ModelBlockRenderer blockColors\npublic net.minecraft.client.renderer.block.ModelBlockRenderer missing\npublic net.minecraft.A shut()V\npublic net.minecraft.A open()V\npublic net.minecraft.A gone\npublic net.minecraft.A *()\npublic net.minecraft.Gone *\n",
             false,
             typedLeft,
@@ -249,7 +249,7 @@ public final class ConvertTests {
             "an access transformer field line becomes an access widener field with its type from Mojang's mappings, a wildcard every member the game lists, a private method stays overridable, and a field or class the game lacks is dropped:\n" + typed + typedLeft + members
         );
         ConvertNamesTests.run();
-        String renamed = Convert.layerRewrites(
+        String renamed = ConvertBridges.layerRewrites(
             "import net.minecraft.resources.Identifier;\nimport org.jspecify.annotations.Nullable;\nIdentifier id = Identifier.parse(s); IdentifierCache c; my.Identifier x;",
             Json.object(Json.parse("{\"org.jspecify.annotations.Nullable\":\"org.jetbrains.annotations.Nullable\",\"Identifier\":\"ResourceLocation\"}"))
         );
@@ -257,7 +257,7 @@ public final class ConvertTests {
             renamed.equals("import net.minecraft.resources.ResourceLocation;\nimport org.jetbrains.annotations.Nullable;\nResourceLocation id = ResourceLocation.parse(s); IdentifierCache c; my.ResourceLocation x;"),
             "a version layer's rewrites rename whole words only, dotted names included: " + renamed
         );
-        String wildcard = Convert.wildcardBridgeImports(
+        String wildcard = NeoForgeBridge.wildcardBridgeImports(
             "import net.neoforged.neoforge.client.event.*;\nimport net.neoforged.neoforge.client.event.ScreenEvent.*;\nimport java.util.*;\nclass A { void a(RegisterMenuScreensEvent e, EntityRenderersEvent.RegisterRenderers r) {} }",
             Json.object(Json.parse("{\"net.neoforged.neoforge.client.event.RegisterMenuScreensEvent\":\"RegisterMenuScreensEvent\",\"net.neoforged.neoforge.client.event.EntityRenderersEvent\":\"EntityRenderersEvent\",\"net.neoforged.neoforge.client.event.ScreenEvent\":\"ScreenEvent\",\"net.neoforged.neoforge.client.event.RenderGuiEvent\":\"RenderGuiEvent\"}")),
             List.of("RenderGuiEvent.java"),
@@ -267,7 +267,7 @@ public final class ConvertTests {
             wildcard.startsWith("import demo.bridge.RegisterMenuScreensEvent;\nimport demo.bridge.EntityRenderersEvent;\nimport demo.bridge.ScreenEvent.*;\nimport java.util.*;\n") && !wildcard.contains("ScreenEvent;"),
             "a wildcard import of a NeoForge package imports each mirrored class of it the file names, and no other; of a mirrored class, its nested types: " + wildcard
         );
-        String variables = Convert.remapVariableDependencies(
+        String variables = FabricBuild.remapVariableDependencies(
             "    def ctDep = \"com.blamejared:CraftTweaker-fabric-1.21.1:1\"\n    compileOnly ctDep\n    runtimeOnly(ctDep)\n    def lib = \"a:b:1\"\n    implementation lib\n"
         );
         check(
@@ -275,7 +275,7 @@ public final class ConvertTests {
             "a Fabric mod held in a variable is named in Loom's remapping configurations, another library is not: " + variables
         );
         ConvertDataTests.run();
-        List<String> sets = Convert.declaredSourceSets(
+        List<String> sets = NeoForgeBuild.declaredSourceSets(
             "sourceSets {\n\tmain {\n\t\tjava.srcDirs = ['src/common/java']\n\t}\n\tclient {\n\t\tjava.srcDirs = ['src/main/java']\n\t}\n\tcodeGen\n\t// gone {\n\toldServerGametest {\n\t\tcompileClasspath += main.output\n\t}\n}\n" +
             "sourceSets.create('extra')\n"
         );
@@ -287,17 +287,17 @@ public final class ConvertTests {
         String wrapper = "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.7.1-bin.zip\n";
         Map<String, String> loomFiles = Map.of("build.gradle", loomGradle, "gradle/wrapper/gradle-wrapper.properties", wrapper);
         Convert loomConvert = new Convert(new Build(fixture(loomOnly, loomFiles, Map.of()), home, "", new Mmt.Report(loomOnly, "convert")));
-        loomConvert.dryRun = true;
+        loomConvert.projectFiles.dryRun = true;
         String loomRoot = loomOnly.toAbsolutePath().normalize().toString();
-        boolean task = loomConvert.disableLoomOnlyStatement("* Where:\r\nBuild file '" + loomRoot + "/build.gradle' line: 6\r\n\r\n* What went wrong:\r\nA problem occurred evaluating root project 'x'.\r\n> Task with name 'runOldServerClientGameTest' not found.\r\n");
-        boolean plugin = loomConvert.disableLoomOnlyStatement("* Where:\nBuild file '" + loomRoot + "/build.gradle' line: 3\n\n* What went wrong:\nAn exception occurred applying plugin request [id: 'io.github.ladysnake.chenille']\n");
-        boolean remote = loomConvert.disableLoomOnlyStatement("* Where:\nScript 'https://example.org/scripts/3.2/fabric-mod.gradle' line: 20\n\n* What went wrong:\nA problem occurred evaluating script.\n> Plugin with id 'net.fabricmc.fabric-loom' not found.\n");
-        boolean again = loomConvert.disableLoomOnlyStatement("* Where:\nBuild file '" + loomRoot + "/build.gradle' line: 3\n");
-        String loomOut = loomConvert.current("build.gradle");
+        boolean task = loomConvert.compiler.disableLoomOnlyStatement("* Where:\r\nBuild file '" + loomRoot + "/build.gradle' line: 6\r\n\r\n* What went wrong:\r\nA problem occurred evaluating root project 'x'.\r\n> Task with name 'runOldServerClientGameTest' not found.\r\n");
+        boolean plugin = loomConvert.compiler.disableLoomOnlyStatement("* Where:\nBuild file '" + loomRoot + "/build.gradle' line: 3\n\n* What went wrong:\nAn exception occurred applying plugin request [id: 'io.github.ladysnake.chenille']\n");
+        boolean remote = loomConvert.compiler.disableLoomOnlyStatement("* Where:\nScript 'https://example.org/scripts/3.2/fabric-mod.gradle' line: 20\n\n* What went wrong:\nA problem occurred evaluating script.\n> Plugin with id 'net.fabricmc.fabric-loom' not found.\n");
+        boolean again = loomConvert.compiler.disableLoomOnlyStatement("* Where:\nBuild file '" + loomRoot + "/build.gradle' line: 3\n");
+        String loomOut = loomConvert.projectFiles.current("build.gradle");
         check(
             task && plugin && remote && !again && loomOut.contains("    // id 'io.github.ladysnake.chenille'") && loomOut.contains("    id 'net.neoforged.moddev'") &&
             loomOut.contains("// apply from: 'https://example.org/scripts/3.2/ferry.gradle'") && loomOut.contains("// tasks.named('runOldServerClientGameTest') {\n    // dependsOn clean\n// }") &&
-            loomOut.contains("Loom, which a NeoForge build does not have: Task with name 'runOldServerClientGameTest' not found.") && loomOut.contains("\nversion = '1.0'") && loomConvert.left.size() == 3,
+            loomOut.contains("Loom, which a NeoForge build does not have: Task with name 'runOldServerClientGameTest' not found.") && loomOut.contains("\nversion = '1.0'") && loomConvert.projectFiles.left.size() == 3,
             "build logic that needs Fabric's Loom is commented out where Gradle stopped (a plugin line alone, a block whole, the apply of a shared script that applies Loom), noted and listed:\n" + loomOut
         );
         String cleaned = Convert.dropUnusedImports(
@@ -309,27 +309,27 @@ public final class ConvertTests {
             "an import of the old loader that no code uses is dropped, not reported:\n" + cleaned
         );
         check(
-            "jei-26.1.2-fabric".equals(Convert.swapLoaderWord("jei-26.1.2-neoforge", "neoforge", "fabric")) &&
-            "Ponder-Fabric-26.1".equals(Convert.swapLoaderWord("Ponder-NeoForge-26.1", "neoforge", "fabric")) &&
-            "curios-neoforge".equals(Convert.swapLoaderWord("curios-fabric", "fabric", "neoforge")) &&
-            Convert.swapLoaderWord("fabricator", "fabric", "neoforge") == null &&
-            Convert.loaderNeutral("jei-26.1.2-common-api") &&
-            !Convert.loaderNeutral("betterconfig-fabric") &&
-            Convert.remapConfiguration("\tcompileOnly \"a:b-fabric:1\"").equals("\tmodCompileOnly \"a:b-fabric:1\"") &&
-            Convert.repositories("repositories {\n\tmaven { url = 'https://maven.blamejared.com/' }\n\tmaven { url \"https://maven.example.org/releases\" }\n}\n").equals(
+            "jei-26.1.2-fabric".equals(BuildScript.swapLoaderWord("jei-26.1.2-neoforge", "neoforge", "fabric")) &&
+            "Ponder-Fabric-26.1".equals(BuildScript.swapLoaderWord("Ponder-NeoForge-26.1", "neoforge", "fabric")) &&
+            "curios-neoforge".equals(BuildScript.swapLoaderWord("curios-fabric", "fabric", "neoforge")) &&
+            BuildScript.swapLoaderWord("fabricator", "fabric", "neoforge") == null &&
+            BuildScript.loaderNeutral("jei-26.1.2-common-api") &&
+            !BuildScript.loaderNeutral("betterconfig-fabric") &&
+            BuildScript.remapConfiguration("\tcompileOnly \"a:b-fabric:1\"").equals("\tmodCompileOnly \"a:b-fabric:1\"") &&
+            BuildScript.repositories("repositories {\n\tmaven { url = 'https://maven.blamejared.com/' }\n\tmaven { url \"https://maven.example.org/releases\" }\n}\n").equals(
                 List.of("https://maven.blamejared.com", "https://maven.example.org/releases", "https://repo.maven.apache.org/maven2")
             ),
             "a dependency's loader word changes only as a whole part of its artifact name; loader-neutral artifacts are told apart"
         );
         check(
-            Convert.dropCalls(
+            ToFabric.dropCalls(
                 "CreativeModeTab.builder()\n\t.title(t)\n\t.withTabsBefore(CreativeModeTabs.COMBAT)\n\t.icon(() -> f(\".withTabsAfter(\"))\n\t.build()",
                 List.of("withTabsBefore", "withTabsAfter")
             ).equals("CreativeModeTab.builder()\n\t.title(t)\n\t.icon(() -> f(\".withTabsAfter(\"))\n\t.build()"),
             "NeoForge's tab order calls leave a builder chain whole, and a string that names one is kept"
         );
         List<String> removed = new ArrayList<>();
-        String script = Convert.dropLoomTypes(
+        String script = NeoForgeBuild.dropLoomTypes(
             "import net.fabricmc.loom.task.prod.ClientProductionRunTask\nimport java.util.List\n\nplugins {\n\tid 'java'\n}\n\n" +
             "// a ClientProductionRunTask comment stays\ntasks.register('prod', ClientProductionRunTask) {\n\tjvmArgs.add('-Xmx2G')\n}\n\nversion = '1'\n",
             removed
@@ -655,8 +655,8 @@ public final class ConvertTests {
             "converted back to Fabric, every Java file is byte for byte the original (Loom: newest stable on this Gradle): " +
             back.get("details")
         );
-        Port.undo(project, String.valueOf(back.get("undoConvert")), Convert.FOLDER);
-        Port.undo(project, String.valueOf(toNeo.get("undoConvert")), Convert.FOLDER);
+        PortJournal.undo(project, String.valueOf(back.get("undoConvert")), Convert.FOLDER);
+        PortJournal.undo(project, String.valueOf(toNeo.get("undoConvert")), Convert.FOLDER);
         boolean restored = true;
         for (var file : original.entrySet()) if (
             !Arrays.equals(file.getValue(), Files.readAllBytes(root.resolve(file.getKey())))
@@ -698,7 +698,7 @@ public final class ConvertTests {
         Convert quitConvert = new Convert(new Build(quitProject, home, "", new Mmt.Report(quit, "convert")));
         quitConvert.run(new Mmt.Options(new String[] { "convert", "--to", "neoforge", "--dry-run" }));
         // A dry run writes nothing; the converted text is what it staged.
-        String quitGradle = quitConvert.current("build.gradle");
+        String quitGradle = quitConvert.projectFiles.current("build.gradle");
         check(
             quitGradle.chars().filter(c -> c == '{').count() == quitGradle.chars().filter(c -> c == '}').count() &&
             !quitGradle.contains("modmenu") &&
@@ -731,14 +731,14 @@ public final class ConvertTests {
         Convert neoConvert = new Convert(new Build(neoProject, home, "", new Mmt.Report(neo, "convert")));
         // Written, not a dry run: the way back and undo below start from the converted mod.
         Map<String, Object> bridged = neoConvert.run(new Mmt.Options(new String[] { "convert", "--to", "fabric" }), false);
-        String bridgedEntry = neoConvert.current("src/main/java/demo/Demo.java");
-        String fabricJson = neoConvert.current("src/main/resources/fabric.mod.json");
-        String bridgedRegister = neoConvert.current("src/main/java/demo/loaderbridge/DeferredRegister.java");
+        String bridgedEntry = neoConvert.projectFiles.current("src/main/java/demo/Demo.java");
+        String fabricJson = neoConvert.projectFiles.current("src/main/resources/fabric.mod.json");
+        String bridgedRegister = neoConvert.projectFiles.current("src/main/java/demo/loaderbridge/DeferredRegister.java");
         check(
             bridgedEntry.equals(Json.text(bridgeTest, "fabric", "")) &&
             bridgedRegister != null &&
             bridgedRegister.startsWith("package demo.loaderbridge;") &&
-            neoConvert.current("src/main/java/demo/loaderbridge/ClientEntrypoint.java") != null &&
+            neoConvert.projectFiles.current("src/main/java/demo/loaderbridge/ClientEntrypoint.java") != null &&
             fabricJson.contains("\"demo.Demo\"") &&
             fabricJson.contains("\"demo.loaderbridge.ClientEntrypoint\"") &&
             Json.array(bridged.get("left")).isEmpty(),
@@ -748,12 +748,12 @@ public final class ConvertTests {
         );
         // Found by an independent check on EndNetwork: the bridge, which both sides use, went into a client package.
         check(
-            "net.x.core.loaderbridge".equals(Convert.bridgePackage(List.of(
+            "net.x.core.loaderbridge".equals(NeoForgeBridge.bridgePackage(List.of(
                 "package net.x.client;\n@Mod(value = X.ID, dist = Dist.CLIENT)\nclass XClient {}\n",
                 "package net.x.core;\n@Mod(X.ID)\nclass X {}\n"
             ))) &&
-            "net.x.loaderbridge".equals(Convert.bridgePackage(List.of("package net.x.client;\n@Mod(value = X.ID, dist = Dist.CLIENT)\nclass XClient {}\n"))) &&
-            Convert.bridgePackage(List.of("package net.x;\nclass X {}\n")) == null,
+            "net.x.loaderbridge".equals(NeoForgeBridge.bridgePackage(List.of("package net.x.client;\n@Mod(value = X.ID, dist = Dist.CLIENT)\nclass XClient {}\n"))) &&
+            NeoForgeBridge.bridgePackage(List.of("package net.x;\nclass X {}\n")) == null,
             "the NeoForge bridge goes beside the common @Mod class, never in a client package"
         );
         // Found by the convert sweep: the NeoForge MDK converted to Fabric did not convert back. The way back takes the bridge out.
@@ -775,8 +775,8 @@ public final class ConvertTests {
             unbridged.get("details")
         );
         // Found by an independent check on EndNetwork: undo left the bridge's emptied folder behind.
-        Port.undo(neoProject, String.valueOf(unbridged.get("undoConvert")), Convert.FOLDER);
-        Port.undo(neoProject, String.valueOf(bridged.get("undoConvert")), Convert.FOLDER);
+        PortJournal.undo(neoProject, String.valueOf(unbridged.get("undoConvert")), Convert.FOLDER);
+        PortJournal.undo(neoProject, String.valueOf(bridged.get("undoConvert")), Convert.FOLDER);
         check(
             !Files.exists(neo.resolve("src/main/java/demo/loaderbridge")) &&
             !Files.exists(neo.resolve("src/main/resources/fabric.mod.json")) &&
