@@ -113,6 +113,7 @@ def tree_at(ref):
     (tree / "bench").mkdir(exist_ok=True)
     for name in ("exposure.py", "port_tools.py"):
         shutil.copyfile(Path(__file__).parent / name, tree / "bench" / name)
+    shutil.copytree(Path(__file__).parent / "portboard", tree / "bench" / "portboard", dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
     return sha, tree
 
 

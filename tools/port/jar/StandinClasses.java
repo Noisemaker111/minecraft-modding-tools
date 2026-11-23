@@ -238,6 +238,26 @@ final class StandinClasses {
         return c;
     }
 
+    /**
+     * Stand-in sources compiled by this JDK's own compiler, with the options that say for which Java and against what:
+     * null when they compiled, else what the compiler said. what names them in the message a Java with no compiler gets.
+     */
+    static String compile(String what, List<String> options, List<Path> sources) throws IOException {
+        javax.tools.JavaCompiler javac = javax.tools.ToolProvider.getSystemJavaCompiler();
+        if (javac == null) {
+            throw new IOException(what + " need a JDK's compiler (javax.tools), and this Java has none");
+        }
+        List<String> command = new ArrayList<>(options);
+        sources.forEach(f -> command.add(f.toString()));
+        StringWriter errors = new StringWriter();
+        int exit = javac.run(null, new PrintStream(OutputStream.nullOutputStream()), new PrintStream(new OutputStream() {
+            public void write(int x) {
+                errors.write(x);
+            }
+        }, true), command.toArray(String[]::new));
+        return exit == 0 ? null : errors.toString();
+    }
+
     /** The stand-in sources under dir compiled against stubs of the release (its classes' declarations, no code). */
     static Map<String, byte[]> compileStandins(List<Path> dirs, GameDiff.Snap release) throws IOException {
         List<Path> sources = new ArrayList<>();
@@ -267,19 +287,8 @@ final class StandinClasses {
         try {
             Path stubs = work.resolve("stubs.jar"), out = Files.createDirectories(work.resolve("classes"));
             writeStubs(release, stubs);
-            javax.tools.JavaCompiler javac = javax.tools.ToolProvider.getSystemJavaCompiler();
-            if (javac == null) {
-                throw new IOException("stand-ins need a JDK's compiler (javax.tools), and this Java has none");
-            }
-            List<String> command = new ArrayList<>(List.of("--release", String.valueOf(standinJava(release.version)), "-proc:none", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", out.toString()));
-            sources.forEach(f -> command.add(f.toString()));
-            StringWriter errors = new StringWriter();
-            int exit = javac.run(null, new PrintStream(OutputStream.nullOutputStream()), new PrintStream(new OutputStream() {
-                public void write(int x) {
-                    errors.write(x);
-                }
-            }, true), command.toArray(String[]::new));
-            if (exit != 0) {
+            String errors = compile("stand-ins", List.of("--release", String.valueOf(standinJava(release.version)), "-proc:none", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", out.toString()), sources);
+            if (errors != null) {
                 throw new IOException("stand-ins in " + dir + " do not compile against " + release.version + ":\n" + errors);
             }
             Map<String, byte[]> classes = readClasses(out);

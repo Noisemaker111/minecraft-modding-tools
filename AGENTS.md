@@ -30,9 +30,9 @@ Use mmt for builds and game launches, never raw Gradle or `--no-daemon`: launche
 
 ## Where things are
 
-- CLI: `tools/cli/Mmt.java` (entry and help), one class per command. Self-test suites: `tools/tests/`, listed in `tools/cli/Installation.java` (`SUITES`); what the jar ships is `Installation.RESOURCES`.
+- Where each kind of thing goes, and what a new one needs: `ARCHITECTURE.md`. One file per kind of thing; a file is found by its folder, so no list is edited to add one. CLI: `tools/cli/Mmt.java` (entry and help), one class per command.
 - Game probes: `tools/{agent,datacheck,mixincheck,packcheck,plugincheck,servercheck}/`. Modpacks: `tools/cli/Pack*.java` (`tools/packcheck/CONTRIBUTING.md`).
-- Porter: `tools/cli/Port.java`; rules `knowledge/fixes.json`, each with a `test {error,before,after}` (`python3 bench/rule_test.py --help`); the game's change map `coverage/changes/`.
+- Port rules: `knowledge/fixes.json`, each with a `test {error,before,after}` (`python3 bench/rule_test.py --help`); the game's change map `coverage/changes/`.
 - Perf: `perf`, `perf-optimize` (`PERFORMANCE.md`); kept runs `coverage/perf-runs.json`, patterns `knowledge/perf-patterns.json`, each citing a kept run.
 - Receipts: `coverage/{ledger,measures}.json` (`bench/README.md`). Desktop app: `app/` (Rust on Rune, `cargo test`). The website, `ROADMAP.md` and main's jar scoreboard are on the `generated` branch, never main (`bench/generated.py`).
 - CI: `.github/workflows/portable.yml` (required: linux, windows), `integration.yml`, `app.yml`, and `cloud-*.yml` (started by `tools/cloud-run`).

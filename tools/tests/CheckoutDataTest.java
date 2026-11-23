@@ -24,7 +24,21 @@ public final class CheckoutDataTest {
         List<String> found = PerfPatterns.validate(Json.read(PerfPatterns.file(root)), PerfPatterns.acceptedRecords(root));
         check(found.isEmpty(), "knowledge/perf-patterns.json: " + String.join("; ", found));
         int experiments = committedExperiments(root);
+        porterShips(root);
         System.out.println(runs.size() + " kept perf runs, the pattern library and " + experiments + " bench experiments check out: PASS");
+    }
+
+    /**
+     * Every source the porter is compiled from is one the package carries: mmt compiles the porter from its shipped
+     * sources (JavaTools.portSources lists tools/port and the files compiled with it), so one the package's
+     * resources leave out compiles in a checkout and fails for everyone else.
+     */
+    static void porterShips(Path root) throws Exception {
+        Set<String> shipped = new HashSet<>(Installation.resources(root));
+        for (Path source : JavaTools.portSources(root)) {
+            String name = root.relativize(source).toString().replace('\\', '/');
+            check(shipped.contains(name), name + " is a porter source the package does not carry: tools/port ships whole, a file beside it needs a line in Installation.RESOURCES");
+        }
     }
 
     /**

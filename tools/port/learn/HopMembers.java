@@ -401,14 +401,8 @@ final class HopMembers {
             if (x.refs.length == 0 || y.refs.length == 0 || !unlinkedRef(x, true) || !unlinkedRef(y, false)) {
                 continue;
             }
-            long[] ta = new long[x.refs.length];
-            long[] tb = new long[y.refs.length];
-            for (int i = 0; i < ta.length; i++) {
-                ta[i] = GameDiff.fnv(hop.token(x.refs[i], true));
-            }
-            for (int j = 0; j < tb.length; j++) {
-                tb[j] = GameDiff.fnv(hop.token(y.refs[j], false));
-            }
+            long[] ta = hop.hashed(x, true);
+            long[] tb = hop.hashed(y, false);
             List<int[]> pairs = GameHop.align(ta, tb, x.ops.equals(y.ops));
             for (int[] p : pairs) {
                 vote(x.refs[p[0]], y.refs[p[1]], votes, totals);

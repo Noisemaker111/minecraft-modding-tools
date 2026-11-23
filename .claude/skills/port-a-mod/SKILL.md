@@ -87,7 +87,7 @@ work only after it predicts the result:** the mods it clears build, and the ones
 
 Step 50 is done: a `.jar` is ported by changing its classes. Step 44 is done: one scoreboard, read from jars, for every
 update and both loaders. What remains on the tool (`coverage/roadmap/goal-2/`) needs someone who can change
-`tools/port/jar/JarPort.java` safely. If that is not you, say so to Jon and stop; adding text rules instead is the mistake in
+the jar porter (`tools/port/jar/`) safely. If that is not you, say so to Jon and stop; adding text rules instead is the mistake in
 the first row above.
 
 1. **Step 47 (doing): a fix names a game part and is applied in the class.** What the game's own change map knows
@@ -105,8 +105,9 @@ the first row above.
    alone holds back; and the mods nearest to done with what each still needs. Over every update the same two lists
    are `types` and `nearest` in main's table (`python bench/generated.py show scoreboard/all.json`).
 2. Take the type that finishes the most mods, and design the way the porter handles that type: in the learner
-   (tools/port/learn/GameDiff.java) when the game's own code shows the answer, in tools/port/jar/JarPort.java when the answer is in how the
-   mod's class is written. Use the nearest-to-done mods that have the type as your cases: the fix is right when it
+   (`tools/port/learn/`) when the game's own code shows the answer, in the jar porter (`tools/port/jar/`) when the answer is in how the
+   mod's class is written. A type of break has a file of its own in those folders, and a new type gets a new file
+   (`ARCHITECTURE.md` says which). Use the nearest-to-done mods that have the type as your cases: the fix is right when it
    finishes them and the other mods with that type, in this update and the others. Before designing, see why the
    porter gave no answer for three of the type's references: run GameDiff with `-Dgamediff.learnlog=PREFIX` and read
    each member's line (game uses lined up, uses read, votes, readings).

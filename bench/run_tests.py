@@ -242,6 +242,7 @@ CHECKS = {
     "runtime-natives": (True, ("posix",), [java("tools/tests/RuntimeNativesTest.java", ".", JAR)]),
     "hidden-window": (True, None, on_fixture("hidden-window", *java("tools/tests/BackgroundWindowsTest.java", "{root}", JAR))),
     "python": (False, None, [Together([sys.executable, p] for p in PYTHON)]),
+    "copies": (False, None, [[sys.executable, "bench/copies.py"]]),
     "port-preflight": (False, None, port_preflight),
     "console-accessor": (False, None, console_accessor),
     "agent-world-open": (False, None, agent_world_open),
@@ -254,6 +255,8 @@ CHECKS = {
 ASM_JARS = list(port_tools.ASM)
 # The files each check that compiles its own sources reads; a check not named here uses the packaged jar.
 READS = {
+    # What jscpd reads (.jscpd.json): the tools' and the bench's own code.
+    "copies": lambda: [f for f in git_files() if f.endswith((".java", ".py")) and f.startswith(("tools/", "bench/"))] + [".jscpd.json", "bench/copies.json"],
     "port-preflight": lambda: port_tools.sources() + PREFLIGHT_TESTS + ASM_JARS,
     "jar-port": lambda: port_tools.sources() + jar_port_tests() + ASM_JARS + [f for f in git_files() if f.startswith("knowledge/standins/jdk/")],
     "console-accessor": ["tools/agent/Console.java", "tools/tests/ConsoleAccessorTest.java"],
