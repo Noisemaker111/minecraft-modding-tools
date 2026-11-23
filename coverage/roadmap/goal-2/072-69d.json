@@ -2,7 +2,7 @@
  "id": "69d",
  "title": "Mixin handlers get a changed value as the game's own code read it",
  "part": "Port by type of break",
- "status": "doing",
+ "status": "done",
  "start": "2026-11-23",
  "target": "2026-11-24",
  "text": "The rest of `mixin target changed signature, game: linked` where the target method is the same and only a value it takes changed type: 1.21's float partial tick became a DeltaTracker, read as getGameTimeDeltaPartialTick(true) in some places and (false) in others, and 1.21.2's glyphs take one packed colour where they took red, green, blue and alpha. Each old value is read from every place the game's own code used it as it was, compared with what the new code has there (Retype.follow): an argument of a call in the target's body (the same call, taken in order, reads the new value through steps, or passes it on to a parameter of its own that is followed in turn, into overrides and the lambdas and method references the game makes for an interface method); a statement lined up as Retype.learn lines them; and each caller that passed its own parameter as it was, or worked the old value out of something it now passes as it is (shifts, masks, static helpers and division by a constant, written again as steps). Only where every place agrees: a value the game now reads two ways in places that used it as it was is not converted, and a mod helper moved for one reading is not reused for another. @Inject arguments and @Redirect, @WrapWithCondition and @ModifyReceiver arguments take the reading; a @ModifyVariable found by type follows a target whose other parameters changed size.",
@@ -12,5 +12,7 @@
   "port.jar-links.every-update",
   "port.jar-links.big-updates",
   "port.jar-links.newest"
- ]
+ ],
+ "done": "2026-11-23",
+ "result": "Against main at 0750c6ec23 (cloud-exposure 45141100491): every update 6,658 -> 6,665 of 9,423, big updates 2,499 -> 2,506, newest game 23, no update or jump lower; 'mixin target changed signature, game: linked' finishes 67 -> 65, mods 800 -> 770; 'call, game: linked' (moved overrides use the same readings) finishes 86 -> 82, mods 1,507 -> 1,492. Freed: chatanimation on Fabric and NeoForge 1.20.6 -> 1.21 (Gui.render's float read as getGameTimeDeltaPartialTick(false)), and on Fabric 1.20.1 -> 1.20.2 chatanimation, Cloth Config, Controlling, Reese's Sodium Options and Sodium Extra. In game (cloud-load 45141095507): chatanimation loads in real 1.21 clients of both loaders and on the NeoForge server; chatanimation, Cloth Config and Controlling load in a real Fabric 1.20.2 client; Reese's and Sodium Extra need Sodium, which the proof does not start. First sweeps caught three wrong answers, each fixed and tested: a place using the new value in another form counted as a second reading (1.21.9's mouse events lost 7 mods per loader), event.button() was not seen to be buttonInfo().button(), and readings for a method were applied to the method a handler follows into (three Fabric 1.21 ports did not verify). Left: the forward colour direction (1.21's ModelPart.render(..., r, g, b, a) -> (..., color), where callers pack with colorFromFloat and no game code shows which channel is which), captured locals whose type changed, @ModifyArg of a retyped argument (both directions), and 1.21.2's render-state redesign (setupAnim(entity, ...) -> setupAnim(state)), where the entity is not in the state."
 }
