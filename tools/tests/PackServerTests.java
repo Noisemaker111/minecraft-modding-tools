@@ -31,7 +31,7 @@ public final class PackServerTests extends PackCheckFixtures {
                 " the client launch built from a loader's version file over the game's (one version of a library, this system's rules, the agent built on the launch's ASM)," +
                 " the client agent's ready and failed signals whatever the game does to its output, a fatal loading line ends the wait," +
                 " snippets open screens wherever the game keeps them, the game's assets fetched into one shared store and checked," +
-                " two installs of one loader at once each keep their own files and leave one whole install,"
+                " two installs of one loader at once each keep their own files and leave one whole install," +
                 " the server agent cuts a pre-1.20.5 spawn wait to the spawn chunk and leaves any other shape alone"
             );
         } finally {
