@@ -207,6 +207,7 @@ public final class Exposure {
         }
         GameDiff.Snap s = GameDiff.read(version, game, pg, p.classes());
         s.loaderVersion = p.version();
+        s.java = GameDiff.javaOf(vj);
         loaderAccess(s, p.access());
         // The game's own libraries (JOML, DataFixerUpper, Brigadier, fastutil...) are linked against too: a mod's use of one
         // that changed or moved breaks at run time like a game member does (1.19.3 moved the game's math to JOML).
