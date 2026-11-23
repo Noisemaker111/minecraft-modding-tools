@@ -35,5 +35,10 @@ nest it.
   with. Never another mod's port.
 - **Compile against:** stubs the port makes from its snapshot of the new release (declarations, no generic signatures),
   so write raw types where the game uses generics (`for (Object o : self.slots)`).
+- **Ports back:** a port to an older release crosses each update in reverse, so `FROM-TO/` with FROM the newer release
+  (`1.21-1.20.6/`) holds the newer API written on the older one, for what the older game does not have yet; it chains
+  like the rest. Before reaching for one, the port copies the newer game's own code for a method the older game lacks
+  where that code uses only what the older game has (`JarPort.copyNewer`), so a stand-in is only needed where it does not
+  (a new class, field or state); a member with no honest older form stays a break.
 - **Check:** `python bench/exposure.py jars --loader neoforge --from FROM --to TO` (the mods it frees link), then
   `python bench/exposure.py load ...` (they start on a real server).
