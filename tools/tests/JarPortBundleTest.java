@@ -58,6 +58,30 @@ final class JarPortBundleTest {
             "the module that gives way is reported with the one that runs instead: " + skipped);
         JarPortTest.expect(jars(results).contains("covered.jar!mc1202.jar"), "the new release's module is carried with the port: " + jars(results));
 
+        // A port of two steps chooses for the whole port: the last release's module goes from the first step, and the
+        // first release's module, which no step after the first would load, is never carried.
+        GameDiff.Snap c = new GameDiff.Snap("1.20.3");
+        JarPortTest.snap(c, "g7/Api", 0, null, "kept()V");
+        Map<String, byte[]> steps = new LinkedHashMap<>();
+        steps.put("fabric.mod.json", meta("bundle", "*", "META-INF/jars/mc1201.jar", "META-INF/jars/mc1203.jar"));
+        steps.put("META-INF/jars/mc1201.jar", module("bundle-mc1201", "1.20.1", "b7/mc1201/Hook", "gone"));
+        steps.put("META-INF/jars/mc1203.jar", module("bundle-mc1203", "1.20.3", "b7/mc1203/Hook", "kept"));
+        Map<String, Map<String, String>> decided = new HashMap<>();
+        byte[] step = JarPortTest.jar(steps);
+        results.clear();
+        for (GameDiff.Snap[] hop : new GameDiff.Snap[][] { { a, b }, { b, c } }) {
+            JarPort port = new JarPort(hop[0], hop[1], map);
+            port.portFrom = "1.20.1";
+            port.portTo = "1.20.3";
+            port.decided = decided;
+            step = port.port(step, "steps.jar", results);
+        }
+        out = JarPortTest.entries(step);
+        JarPortTest.expect(unlinked(results).isEmpty() && minecraft(out.get("META-INF/jars/mc1201.jar")).equals("1.20.1")
+            && minecraft(out.get("META-INF/jars/mc1203.jar")).equals("1.20.3") && jars(results).stream().filter("steps.jar!mc1203.jar"::equals).count() == 2,
+            "every step of a port carries the last release's module and none carries the first's: " + jars(results) + " " + unlinked(results)
+                + " " + minecraft(out.get("META-INF/jars/mc1201.jar")) + " " + minecraft(out.get("META-INF/jars/mc1203.jar")));
+
         // NeoForge's loader picks no module by its "minecraft": every nested jar is ported, as before.
         GameDiff.Snap na = new GameDiff.Snap("1.20.1"), nb = new GameDiff.Snap("1.20.2");
         nb.loaderVersion = "20.2.1";

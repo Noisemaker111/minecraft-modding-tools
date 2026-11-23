@@ -849,16 +849,29 @@ def with_hidden_code_unread(report, jars):
     return report
 
 
-def class_java(data):
+def skipped_jars(row):
+    """The nested jars JarPort left out of a mod's port as not loaded on the release (a bundle's modules for other
+    releases, a platform module whose platform copy runs), as (the jar holding it as JarPort names it, its path)."""
+    out = set()
+    for note in row.get("skipped") or []:
+        parts = note.split(": ", 2)
+        if len(parts) == 3 and parts[1].endswith(".jar"):
+            out.add((parts[0], parts[1]))
+    return out
+
+
+def class_java(data, name="", skipped=frozenset()):
     """The newest Java a jar's classes, and those of the jars nested in it, are compiled for (a class file's major version
-    less 44), or 0. A multi-release jar's META-INF/versions/ copies and module-info only load on the Java that reads them."""
+    less 44), or 0. A multi-release jar's META-INF/versions/ copies and module-info only load on the Java that reads them,
+    and a nested jar the loader does not load (skipped, by the jar holding it named as JarPort names it) never runs."""
     import io
     import zipfile
     newest = 0
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         for entry in z.namelist():
             if entry.endswith(".jar"):
-                newest = max(newest, class_java(z.read(entry)))
+                if (name, entry) not in skipped:
+                    newest = max(newest, class_java(z.read(entry), name + "!" + entry.rsplit("/", 1)[-1], skipped))
             elif entry.endswith(".class") and not entry.startswith("META-INF/versions/") and not entry.endswith("module-info.class"):
                 head = z.open(entry).read(8)
                 if head[:4] == b"\xca\xfe\xba\xbe":
@@ -887,7 +900,7 @@ def with_target_java(report, jars, to):
         if "error" in m or m["mod"] not in jars:
             continue
         try:
-            needs = class_java(jars[m["mod"]].read_bytes())
+            needs = class_java(jars[m["mod"]].read_bytes(), m["mod"], skipped_jars(m))
         except Exception:  # a jar zipfile cannot open: JarPort judged it already
             continue
         if needs > runs_on:

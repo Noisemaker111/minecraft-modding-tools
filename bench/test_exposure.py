@@ -878,6 +878,15 @@ with tempfile.TemporaryDirectory() as tmp:
           and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
           f"a mod built for a newer Java than the release's does not link on it: {back}")
     check(forward["linked"] == 2 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
+    # A bundle's module for a newer release, which JarPort left out as not loaded on this one, never runs on its Java.
+    E.release_java = lambda v: 17
+    try:
+        bundle = E.with_target_java({"mods": [{"mod": "nested.jar", "unlinked": [],
+                                               "skipped": ["nested.jar: META-INF/jars/lib.jar: not loaded on 1.0 or 2.0 (minecraft \"3.0\")"]}],
+                                     "linked": 1, "unlinkedByMods": []}, {"nested.jar": nested}, "old")
+    finally:
+        E.release_java = asked
+    check(bundle["linked"] == 1, f"a nested module the loader does not load on the release asks nothing of its Java: {bundle}")
 
 # A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
 # PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.

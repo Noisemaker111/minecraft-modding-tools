@@ -402,6 +402,7 @@ public final class JarPort {
         Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<String, Map<String, String>> decided = new java.util.concurrent.ConcurrentHashMap<>();
         // Biggest first, so no big jar starts when the others are done.
         List<Path> order = new ArrayList<>(jars);
         order.sort(Comparator.comparingLong((Path j) -> j.toFile().length()).reversed().thenComparing(Path::toString));
@@ -441,6 +442,9 @@ public final class JarPort {
                 port.runtimeNames = runtime && last;
                 port.between = !last;
                 port.originalsDir = originalsDir;
+                port.portFrom = from;
+                port.portTo = to;
+                port.decided = decided;
                 if ("fabric".equals(loader)) {
                     port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
                 }
@@ -1010,14 +1014,14 @@ public final class JarPort {
             times.put("META-INF/neoforge.mods.toml", times.getOrDefault("META-INF/mods.toml", 0L));
             renamed = true;
         }
-        Map<String, String> notLoaded = notLoaded(entries);
+        Map<String, String> notLoaded = notLoaded(entries, name);
         Set<String> nested = nested(entries);
         nested.removeAll(notLoaded.keySet());
         boolean outermost = grants == null;
         if (outermost) {
             typesUsed = false;
             Map<String, List<byte[]>> all = new HashMap<>();
-            carried(entries, all);
+            carried(entries, name, all);
             tree = new Carried(all);
             grants = new HashSet<>();
             for (String text : accessTransformers(entries, name)) {
@@ -1276,12 +1280,19 @@ public final class JarPort {
         return nested;
     }
 
-    /** The jars nested in a jar that the loader loads on the release ported to. */
-    Set<String> loadedNested(Map<String, byte[]> entries) {
+    /** The jars nested in a jar (named as port names it) that the loader loads on the release ported to. */
+    Set<String> loadedNested(Map<String, byte[]> entries, String name) {
         Set<String> out = nested(entries);
-        out.removeAll(notLoaded(entries).keySet());
+        out.removeAll(notLoaded(entries, name).keySet());
         return out;
     }
+
+    // The first and last release of the whole port, which decide the nested jars it carries (notLoaded): a step between
+    // them would retarget a module it carries to a release its bundle has no module for. Null: this step's own releases.
+    String portFrom, portTo;
+    // A port of several steps: each jar's choice of nested jars by its name as port names it (outer.jar!inner.jar), made
+    // at the first step and kept for every step after, where a module a step ported asks for that step's release. Null: chosen each time.
+    Map<String, Map<String, String>> decided;
 
     /**
      * The nested jars the loader passes over on the release ported to, each with why. They are left as they are, neither
@@ -1297,11 +1308,17 @@ public final class JarPort {
      * range fails instead of passing it over, so no jar's metadata picks a module per release there: every nested jar is
      * ported, as before. A bundle that picks its module in its own code reads to the porter as modules loaded together.
      */
-    Map<String, String> notLoaded(Map<String, byte[]> entries) {
+    Map<String, String> notLoaded(Map<String, byte[]> entries, String name) {
+        Map<String, String> kept = decided == null ? null : decided.get(name);
+        if (kept != null) {
+            return kept;
+        }
         Map<String, String> out = new TreeMap<>();
         if (!loader.equals("fabric")) {
             return out;
         }
+        String from = portFrom != null ? portFrom : a.version;
+        String until = portTo != null ? portTo : to;
         Map<String, Object> ranges = new TreeMap<>();
         for (String n : nested(entries)) {
             Object range = fabricMinecraft(entries.get(n));
@@ -1311,19 +1328,22 @@ public final class JarPort {
         }
         String forNew = null;
         for (var e : ranges.entrySet()) {
-            if (forNew == null && fabricAccepts(e.getValue(), to) && !fabricAccepts(e.getValue(), a.version)) {
+            if (forNew == null && fabricAccepts(e.getValue(), until) && !fabricAccepts(e.getValue(), from)) {
                 forNew = e.getKey();
             }
         }
         for (var e : ranges.entrySet()) {
-            boolean old = fabricAccepts(e.getValue(), a.version);
-            boolean now = fabricAccepts(e.getValue(), to);
+            boolean old = fabricAccepts(e.getValue(), from);
+            boolean now = fabricAccepts(e.getValue(), until);
             String range = "minecraft " + Json.write(e.getValue());
             if (!old && !now) {
-                out.put(e.getKey(), "not loaded on " + a.version + " or " + to + " (" + range + ")");
+                out.put(e.getKey(), "not loaded on " + from + " or " + until + " (" + range + ")");
             } else if (old && !now && forNew != null) {
-                out.put(e.getKey(), "for " + a.version + " (" + range + "); the loader runs " + forNew.substring(forNew.lastIndexOf('/') + 1) + " on " + to + " instead");
+                out.put(e.getKey(), "for " + from + " (" + range + "); the loader runs " + forNew.substring(forNew.lastIndexOf('/') + 1) + " on " + until + " instead");
             }
+        }
+        if (decided != null) {
+            decided.put(name, out);
         }
         return out;
     }
@@ -1386,8 +1406,9 @@ public final class JarPort {
                 out.add(new String(at, StandardCharsets.UTF_8));
             }
         }
-        for (String n : loadedNested(entries)) {
-            out.addAll(accessTransformers(entries(entries.get(n), name + "!" + n, new HashMap<>()), name + "!" + n));
+        for (String n : loadedNested(entries, name)) {
+            String inner = name + "!" + n.substring(n.lastIndexOf('/') + 1);
+            out.addAll(accessTransformers(entries(entries.get(n), inner, new HashMap<>()), inner));
         }
         return out;
     }
@@ -2090,7 +2111,7 @@ public final class JarPort {
     }
 
     /** Every class in a jar and its nested jars, by name. */
-    void carried(Map<String, byte[]> entries, Map<String, List<byte[]>> out) throws IOException {
+    void carried(Map<String, byte[]> entries, String name, Map<String, List<byte[]>> out) throws IOException {
         for (var e : entries.entrySet()) {
             if (e.getKey().endsWith(".class") && !e.getKey().startsWith("META-INF/versions/")) {
                 try {
@@ -2100,8 +2121,9 @@ public final class JarPort {
                 }
             }
         }
-        for (String n : loadedNested(entries)) {
-            carried(entries(entries.get(n), n, new HashMap<>()), out);
+        for (String n : loadedNested(entries, name)) {
+            String inner = name + "!" + n.substring(n.lastIndexOf('/') + 1);
+            carried(entries(entries.get(n), inner, new HashMap<>()), inner, out);
         }
     }
 
