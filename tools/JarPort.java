@@ -8914,6 +8914,16 @@ public final class JarPort {
                         return;
                     }
                 }
+                if (opcode == Opcodes.INVOKESPECIAL && !name.equals("<init>") && Sites.this.moved == null) {
+                    // Not in a body moved to a game method's new parameters: a stand-in that draws through the new method
+                    // (Renderable.render(pose) calls render(graphics)) would call that body back.
+                    String[] added = fix(superFixes, List.of(owner, decl.owner()), name, desc, "(L" + owner + ";" + desc.substring(1), true);
+                    if (added != null) {
+                        invokeAdded(added);
+                        mod.change("super call answered by a stand-in");
+                        return;
+                    }
+                }
                 String unlinked = "call: " + Exposure.dotted(decl.owner()) + "." + name + desc + (WHERE ? " @ " + where + (Sites.this.moved != null ? " (moved)" : "") : "");
                 if (converted(opcode, owner, decl.owner(), name, desc)) {
                     return;
@@ -9981,13 +9991,18 @@ public final class JarPort {
             GameDiff.Cls c = standinCls(e.getValue());
             b.classes.put(c.name, c);
         }
-        for (String name : compiled.keySet()) {
+        for (var e : compiled.entrySet()) {
+            String name = e.getKey();
             String old = name.substring(STANDIN.length());
             if (a.classes.containsKey(old) && !b.classes.containsKey(classMap.getOrDefault(old, old))) {
-                // The class is gone with nothing the route moves it to: the stand-in is the class. Settled before any
-                // member is matched, so a stand-in method taking another gone class matches in any order.
-                classMap.put(old, name);
-                inverse.put(name, old);
+                // The class is gone with nothing the route moves it to. A stand-in written as static methods on one
+                // new type, which the game's own classes that were the old one now are, says the class became that
+                // type (1.21.11's PermissionSource, on PermissionSetSupplier); otherwise the stand-in is the class.
+                // Settled before any member is matched, so a stand-in method taking another gone class matches in any order.
+                String became = becameType(old, e.getValue());
+                String to = became != null ? became : name;
+                classMap.put(old, to);
+                inverse.putIfAbsent(to, old);
             }
         }
         for (var e : compiled.entrySet()) {
@@ -10058,10 +10073,65 @@ public final class JarPort {
                 for (int i = receiver ? 0 : 1; i < (receiver ? params.length : params.length + 1); i++) {
                     args.append(args.isEmpty() ? "" : ", ").append('$').append(i);
                 }
-                fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, new Fix("standin " + Exposure.dotted(old) + "." + member, Pattern.compile(Pattern.quote(member)),
-                    matched, target + "(" + args + ")"));
+                Fix answer = new Fix("standin " + Exposure.dotted(old) + "." + member, Pattern.compile(Pattern.quote(member)), matched, target + "(" + args + ")");
+                fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
+                if (receiver && matched != null && !member.equals("<init>")) {
+                    superFixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
+                }
             }
         }
+    }
+
+    /**
+     * The new type a gone class's stand-in says the class became, or null: the stand-in is a holder (final, no constructor
+     * a mod can call, no public instance method) whose every public static method but isInstance takes that type first,
+     * and every game class that was the old class in the old release and is still there is that type in the new one (at
+     * least one). A holder on a type the game's classes did not move to answers no reference to the class itself.
+     */
+    String becameType(String old, byte[] bytes) {
+        ClassModel cm = ClassFile.of().parse(bytes);
+        if ((cm.flags().flagsMask() & Opcodes.ACC_FINAL) == 0) {
+            return null;
+        }
+        String type = null;
+        for (MethodModel mm : cm.methods()) {
+            int flags = mm.flags().flagsMask();
+            String n = mm.methodName().stringValue();
+            if ((flags & Opcodes.ACC_PUBLIC) == 0 && !n.equals("<init>") || (flags & Opcodes.ACC_SYNTHETIC) != 0 || n.equals("<clinit>")) {
+                continue;
+            }
+            if (n.equals("<init>")) {
+                if ((flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED)) != 0) {
+                    return null;
+                }
+                continue;
+            }
+            if ((flags & Opcodes.ACC_STATIC) == 0) {
+                return null;
+            }
+            if (n.equals("isInstance")) {
+                continue;
+            }
+            Type[] params = Type.getArgumentTypes(mm.methodType().stringValue());
+            if (params.length == 0 || params[0].getSort() != Type.OBJECT || type != null && !type.equals(params[0].getInternalName())) {
+                return null;
+            }
+            type = params[0].getInternalName();
+        }
+        if (type == null || type.startsWith(STANDIN) || !b.classes.containsKey(type)) {
+            return null;
+        }
+        boolean moved = false;
+        for (GameDiff.Cls c : a.classes.values()) {
+            if (c.library || c.name.equals(old) || !b.classes.containsKey(c.name) || !isA(a, c.name, old)) {
+                continue;
+            }
+            if (!isA(b, c.name, type)) {
+                return null;
+            }
+            moved = true;
+        }
+        return moved ? type : null;
     }
 
     /**
@@ -10503,6 +10573,12 @@ public final class JarPort {
     }
 
     final Map<String, List<Fix>> fixes = new HashMap<>(); // old owner (internal) -> replacements its rules give
+    /**
+     * The stand-ins for old instance methods, which also answer a mod's super call to one (super.handleComponentClicked(
+     * style) in a screen): the old method is gone from every class above the mod's, and the stand-in is that old game
+     * code written on the new release, which is what the super call ran.
+     */
+    final Map<String, List<Fix>> superFixes = new HashMap<>();
 
     static final Pattern DESCRIBED = Pattern.compile("([\\w$<>]+)(\\((?:\\[*(?:[ZBCSIJFD]|L[\\w/$]+;))*\\)\\S*)");
 

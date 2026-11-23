@@ -584,23 +584,25 @@ with tempfile.TemporaryDirectory() as tmp:
     check(lines[0] == "every update: 14 -> 16 of 20 (+2)" and lines[1] == "big updates: 4 -> 6 of 10 (+2)" and "updates higher: fabric 1.1 -> 2.0 4 -> 6" in lines,
           f"compare names the counts and the update that moved: {lines}")
     check(same[3:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
-    measures = Path(tmp) / "measures.json"
-    measures.write_text(json.dumps({"measures": [{"id": m, "points": [{"date": "2026-01-01", "value": 14 if m.endswith("every-update") else 4 if m.endswith("big-updates") else 1, "source": "x"}]}
-                                                 for m in E.MAIN_MEASURES]}), encoding="utf-8")
-    main_table = Path(tmp) / "all.json"
+    board = Path(tmp) / "scoreboard"
+    board.mkdir()
+    measures = board / "points.json"
+    measures.write_text(json.dumps({m: [{"date": "2026-01-01", "value": 14 if m.endswith("every-update") else 4 if m.endswith("big-updates") else 1, "source": "x"}]
+                                    for m in E.MAIN_MEASURES}), encoding="utf-8")
+    main_table = board / "all.json"
     main_table.write_text(json.dumps(before), encoding="utf-8")
     (Path(tmp) / "sweep.json").write_text(json.dumps(after), encoding="utf-8")
     repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
     head = os.popen(f'git -C "{E.ROOT}" rev-parse HEAD').read().strip()
     sys.stdout = io.StringIO()
     try:
-        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/1", measures, main_table, "2026-02-01")
-        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/2", measures, main_table, "2026-02-02")
+        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/1", board, "2026-02-01")
+        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/2", board, "2026-02-02")
     finally:
         sys.stdout = sys.__stdout__
         E.ROOT = repo
     saved = json.loads(main_table.read_text(encoding="utf-8"))
-    points = {m["id"]: m["points"] for m in json.loads(measures.read_text(encoding="utf-8"))["measures"]}
+    points = json.loads(measures.read_text(encoding="utf-8"))
     every = points["port.jar-links.every-update"]
     check(saved["commit"] == head and saved["run"].endswith("/runs/2") and saved["total"]["link"] == 16, "main's table says the commit and run it came from")
     check([p["value"] for p in every] == [14, 16, 16] and every[1]["n"] == 20 and every[1]["note"].startswith("+2 on 14: ") and "fabric 1.1 -> 2.0 4 -> 6" in every[1]["note"]
@@ -612,12 +614,12 @@ with tempfile.TemporaryDirectory() as tmp:
     repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
     sys.stdout = io.StringIO()
     try:
-        late = E.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", measures, main_table, "2026-02-03")
+        late = E.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", board, "2026-02-03")
     finally:
         sys.stdout = sys.__stdout__
         E.ROOT = repo
     check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
-          and len(json.loads(measures.read_text(encoding="utf-8"))["measures"][0]["points"]) == 3, "a sweep of an older commit that finishes later is not recorded")
+          and len(json.loads(measures.read_text(encoding="utf-8"))["port.jar-links.every-update"]) == 3, "a sweep of an older commit that finishes later is not recorded")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:

@@ -17,7 +17,7 @@
         date. A new --target keeps the old date in the step's "moved" list.
 
 Numbers that are not a port's error count: python bench/measures.py add ID VALUE --source WHERE.
-ROADMAP.md and docs/ are not touched here; main rewrites them after every merge.
+ROADMAP.md and the website are not touched here; they are rewritten on the generated branch after every merge.
 """
 import argparse
 import datetime

@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ledger_rule  # noqa: E402
+import measures  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CHANGES = ROOT / "coverage" / "changes"
@@ -347,14 +348,17 @@ def main():
     fam_out = sorted(est + fam_out, key=lambda f: min(order[v] for v in f["versions"]))
 
     # ---- hop colours from evidence ---------------------------------------------------------
-    roadmap = (ROOT / "ROADMAP.md").read_text(encoding="utf-8")
+    # The roadmap's doing steps that name an update (1.18.2 -> 1.19), read from coverage/roadmap/, the roadmap itself.
+    # This parsed ROADMAP.md, a page generated from it, and matched nothing once that page's layout changed.
     doing = []
-    for m in re.finditer(r"(?ms)^(\d+[a-z]?)\. (.*?)(?=^\d+[a-z]?\. |^## |\Z)", roadmap):
-        if "**doing**" in m.group(2):
-            for a, b in re.findall(r"(\d+\.\d+(?:\.\d+)?)\s*(?:→|->)\s*(\d+\.\d+(?:\.\d+)?)", m.group(2)):
+    for g in measures.load_roadmap()["goals"]:
+        for s in g["steps"]:
+            if s["status"] != "doing":
+                continue
+            full = " ".join(f"{s['title']}. {s['text']}".split())
+            for a, b in re.findall(r"(\d+\.\d+(?:\.\d+)?)\s*(?:→|->)\s*(\d+\.\d+(?:\.\d+)?)", full):
                 if a in order and b in order:
-                    full = " ".join(m.group(2).split())
-                    item = {"step": m.group(1), "from": a, "to": b, "text": full}
+                    item = {"step": s["id"], "from": a, "to": b, "text": full}
                     doing.append({**item, "text": full[:160], "loaders": sorted(ledger_rule.doing_loader(item, ledger["hops"]))})
     every = [v["id"] for v in meta["versions"]]
     step_status = ledger_rule.all_statuses(every, set(early), ledger["hops"], doing)

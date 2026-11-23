@@ -1,0 +1,17 @@
+{
+ "id": "79R",
+ "title": "Calls into rewritten game code answered by stand-ins",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "On main's jar scoreboard 'call, game: redesigned' (a call to a game method whose class the update rewrote, so the game's own code shows no one-to-one replacement) alone held back 30 nearly-done mods and appeared in 1,293. Grouped by game class, the mods it alone held back were spread over about 35 methods, one or two mods each, so the method is stand-ins (knowledge/standins/FROM-TO/): for each method whose new release has a clear answer, the old method written on the new release, read in both releases' bytecode and checked against the loaders' published migration notes, for every mod that calls it. Methods whose answer is a guess (an item's baked model in 1.21.4, a shader's source in 26.3, a tooltip context's player on NeoForge 26.1.1) are left reported.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "The mods 'call, game: redesigned' alone held back on the touched updates link, no update loses a mod that linked, and a freed mod loads in a real game of the new release",
+ "wrongIf": "a freed mod fails in game on a stand-in's code, or an update's count drops",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates",
+  "port.jar-links.newest"
+ ],
+ "result": "Stand-ins for 31 old methods over 13 updates, and one porter reading: a gone class whose stand-in is written as static methods on one new type, which every game class that was the old class now is, goes to that type (1.21.11's PermissionSource on PermissionSetSupplier). Cloud-exposure 45117613487 against main 9166166: every update 6,605 -> 6,622 of 9,423, big updates 2,447 -> 2,460 of 5,149, newest game 22 -> 22, none lower; 'call, game: redesigned' finishes 30 -> 15, mods 1,293 -> 1,217. In game (cloud-load 45106092496, 45114127586, 45114127644, 45114127628, 45114127609, 45114127915): Spark, Veinminer Enchantment, JEI, Better Stats (1.19.1), AzureLib and Not Enough Crashes load on server and client, Visuality in the client (client-only); Puzzle (NeoForge 26.3, no MidnightLib in the pack), Visual Workbench (its Puzzles Lib lacks a class) and Better Stats 1.20.5 (its metadata asks for 1.20.4) fail outside the stand-ins. Left: methods with no honest answer (1.15 disableLight, 1.19.1 ChatSender, 1.21.4 item models, 26.3 shader sources, NeoForge 26.1.1's tooltip player, TickableBlockEntity) and super(...) calls."
+}
