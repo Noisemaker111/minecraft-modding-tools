@@ -7699,11 +7699,19 @@ public final class GameDiff {
                 return true;
             }
 
-            /** a's field key as the new release has it under its name in a class above the new object's ("height"), or null. */
+            /**
+             * a's field key as the new object has it in a class above its own ("height", the widget's now): where the route
+             * map takes it, else the field of its name and type the new object resolves, as a mod's own read of it links.
+             */
             String movedUp(String key) {
                 int dot = key.lastIndexOf('.');
                 Fld f = h.a.field(key.substring(0, dot), key.substring(dot + 1));
                 Fld fy = f == null ? null : h.fAB.get(f);
+                if (fy == null && f != null) {
+                    String at = fieldKey(h.b, y.owner.name, f.name);
+                    Fld same = at == null ? null : h.b.field(at.substring(0, at.lastIndexOf('.')), f.name);
+                    fy = same != null && same.desc.equals(Carry.descAB(h, f.desc)) ? same : null;
+                }
                 return fy != null && (fy.owner.name + "." + fy.name).equals(fieldKey(h.b, y.owner.name, fy.name)) ? fy.name : null;
             }
 
