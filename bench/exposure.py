@@ -819,7 +819,7 @@ def admits_java(spec, java):
     return True
 
 
-def newest_loaded_class(z, loader, sides, runs, inside=""):
+def newest_loaded_class(z, loader, sides, runs, inside="", skipped=frozenset()):
     """(java, class, what it is) for the class needing the newest Java of those the JVM is asked to load of a jar on the
     sides given, (0, "", "") if none. The JVM refuses a class compiled for a newer Java when it is loaded, not when the jar
     is, so only these count:
@@ -830,7 +830,8 @@ def newest_loaded_class(z, loader, sides, runs, inside=""):
     - For a jar the loader starts nothing of (a library, another mod's add-on): every class, as what loads it calls them.
     - The same for each nested jar with the loader's own metadata (jar-in-jar, JarJar): the loader loads it as a mod. One
       whose "java" dependency refuses the release's Java (runs(), asked only then) is not loaded (C2ME's Java 22 native
-      math module on Java 21).
+      math module on Java 21). Nor is one in skipped, (the jars holding it as inside names them, its path): the modules
+      of a bundle for other releases, and the like, that the port left out as not loaded on the release.
     A multi-release jar's META-INF/versions/ copies and module-info only load on a Java that reads them."""
     import io
     import zipfile
@@ -850,7 +851,7 @@ def newest_loaded_class(z, loader, sides, runs, inside=""):
         if java > best[0]:
             best = (java, inside + path[:-6].replace("/", "."), what)
     for entry in names:
-        if not entry.endswith(".jar") or not entry.startswith(("META-INF/jars/", "META-INF/jarjar/")):
+        if not entry.endswith(".jar") or not entry.startswith(("META-INF/jars/", "META-INF/jarjar/")) or (inside, entry) in skipped:
             continue
         try:
             with zipfile.ZipFile(io.BytesIO(z.read(entry))) as nested:
@@ -858,7 +859,7 @@ def newest_loaded_class(z, loader, sides, runs, inside=""):
                 asks = (meta or {}).get("depends") or {} if loader == "fabric" else {}
                 if meta is None or "java" in asks and not admits_java(asks["java"], runs()):
                     continue
-                found = newest_loaded_class(nested, loader, sides, runs, inside + entry.rsplit("/", 1)[-1] + "!")
+                found = newest_loaded_class(nested, loader, sides, runs, inside + entry.rsplit("/", 1)[-1] + "!", skipped)
         except zipfile.BadZipFile:
             continue
         if found[0] > best[0]:
@@ -880,20 +881,21 @@ def newer_java(folder, names, loader, version, side):
     return out
 
 
-def too_new_class(jar, loader, sides, runs):
+def too_new_class(jar, loader, sides, runs, skipped=frozenset()):
     """(java, class, what it is) for the class needing the newest Java of those the JVM loads of a jar on the sides given
     (newest_loaded_class), when that Java is newer than the release's (runs()); None when the release's Java loads them.
     The one Java check: the game proof (newer_java) and the link check (jar_port) both ask it, of the jar the game is
-    given, so a port that lowers a mod's classes (JarPort's lowerJava) is judged by what it wrote."""
+    given, so a port that lowers a mod's classes (JarPort's lowerJava) is judged by what it wrote. Nested jars in
+    skipped (skipped_jars: the port left them out as not loaded on the release) ask nothing of its Java."""
     import zipfile
     with zipfile.ZipFile(jar) as z:
-        found = newest_loaded_class(z, loader, sides, runs)
+        found = newest_loaded_class(z, loader, sides, runs, skipped=skipped)
     # Every release runs on Java 8 or newer, so the release's version.json is read only for a newer class.
     return found if found[0] > 8 and found[0] > runs() else None
 
 
 # The Python that judges a ported jar's Java (too_new_class and what it reads): part of every kept port's key.
-JAVA_CHECK = ("too_new_class", "newest_loaded_class", "start_classes", "admits_java", "metadata")
+JAVA_CHECK = ("too_new_class", "newest_loaded_class", "start_classes", "admits_java", "metadata", "skipped_jars")
 
 
 def with_java_checked(row, loader, to, runs):
@@ -907,7 +909,7 @@ def with_java_checked(row, loader, to, runs):
     if "error" in row or not out.is_file():
         return row
     try:
-        found = too_new_class(out, loader, ("server", "client"), runs)
+        found = too_new_class(out, loader, ("server", "client"), runs, skipped_jars(row))
     except zipfile.BadZipFile:  # JarPort wrote it, so it reads; one it could not is an error row
         return row
     if found:
@@ -942,6 +944,19 @@ def nested_ids(data):
             elif entry.startswith("META-INF/jars/") and entry.endswith(".jar"):
                 for i in nested_ids(z.read(entry)):
                     out[i] = entry.rsplit("/", 1)[1]
+    return out
+
+
+def skipped_jars(row):
+    """The nested jars JarPort left out of a mod's port as not loaded on the release (a bundle's modules for other
+    releases, a platform module whose platform copy runs), as (the jars holding it inside the mod, as newest_loaded_class
+    names them, its path)."""
+    out = set()
+    for note in row.get("skipped") or []:
+        parts = note.split(": ", 2)
+        if len(parts) == 3 and parts[1].endswith(".jar"):
+            holder = parts[0].split("!", 1)
+            out.add((holder[1] + "!" if len(holder) == 2 else "", parts[1]))
     return out
 
 
