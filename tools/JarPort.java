@@ -7285,8 +7285,8 @@ public final class JarPort {
          * - in a caller, the caller's own old parameter passed as it was, where its new code passes its new one: what
          *   that parameter of the caller is followed to;
          * - for an interface or abstract method, each lambda and method reference the game makes for it.
-         * Only where every place agrees: one that has the new parameter in another form, or a second reading, answers
-         * nothing. 1.21's DeltaTracker is read as getGameTimeDeltaPartialTick(true) and as (false); the float a method
+         * Only where every reading agrees: a place with the new parameter in another form says nothing either way, and
+         * a second reading answers nothing. 1.21's DeltaTracker is read as getGameTimeDeltaPartialTick(true) and as (false); the float a method
          * took before matches the reading the game's code has wherever that float was used as it was (GameRenderer
          * .renderLevel's: true; the HUD's: false), and a method whose float reached both is not converted.
          */
@@ -7311,10 +7311,10 @@ public final class JarPort {
             boolean outer = cut;
             cut = false;
             String out;
+            Map<String, Integer> votes = new HashMap<>();
             try {
-                Map<String, Integer> votes = new HashMap<>();
                 gather(owner, name, desc, i, depth, votes);
-                out = votes.containsKey(CONFLICT) || votes.size() > 1 ? CONFLICT : votes.isEmpty() ? "" : votes.keySet().iterator().next();
+                out = agree(votes);
             } finally {
                 following.remove(key);
             }
@@ -7325,8 +7325,67 @@ public final class JarPort {
             }
             cut |= outer;
             if (!LOG.isEmpty()) {
-                log("  ".repeat(depth) + key + " followed: " + out + "\n");
+                log("  ".repeat(depth) + key + " followed: " + out + (out.equals(CONFLICT) ? " " + votes : "") + "\n");
             }
+            return out;
+        }
+
+        /**
+         * The one reading every vote means, or CONFLICT: readings that differ only by a getter whose new body hands back
+         * another reading of its object (MouseButtonEvent.button() is buttonInfo().button()) mean the same, and the one
+         * most places use is kept.
+         */
+        String agree(Map<String, Integer> votes) {
+            if (votes.containsKey(CONFLICT)) {
+                return CONFLICT;
+            }
+            Map<String, String> meant = new HashMap<>();
+            for (String r : votes.keySet()) {
+                String c = canonical(r);
+                String had = meant.get(c);
+                if (had == null || votes.get(r) > votes.get(had)) {
+                    meant.put(c, r);
+                }
+            }
+            return meant.isEmpty() ? "" : meant.size() > 1 ? CONFLICT : meant.values().iterator().next();
+        }
+
+        final Map<String, String> canonicalSteps = new HashMap<>();
+
+        /** A reading with each getter written out as what its new body reads from its object, as far as that goes. */
+        String canonical(String reading) {
+            String[] parts = reading.split(" ");
+            StringBuilder out = new StringBuilder(parts[0]);
+            for (int s = 1; s < parts.length; s++) {
+                out.append(' ').append(canonicalStep(parts[s], 0));
+            }
+            return out.toString();
+        }
+
+        String canonicalStep(String step, int depth) {
+            if (!step.startsWith("m:") || !step.contains("()") || depth > 4) {
+                return step;
+            }
+            String known = canonicalSteps.get(step);
+            if (known != null) {
+                return known;
+            }
+            String[] st = step(step);
+            String out = step;
+            GameCode newCode = code(b);
+            GameDiff.Meth m = b.method(st[1], st[2], st[3]);
+            GameDiff.Body body = newCode == null || m == null || m.isStatic() || (m.flags & Opcodes.ACC_ABSTRACT) != 0 ? null : body(newCode, st[1], st[2] + st[3], false);
+            if (body != null && body.statements.size() == 1 && "return".equals(body.statements.get(0).value) && body.statements.get(0).kids.length == 1) {
+                String r = reading(body.statements.get(0).kids[0], Map.of(0, 0), Type.getReturnType(st[3]).getDescriptor());
+                if (r != null && r.startsWith("0 ")) {
+                    StringBuilder b2 = new StringBuilder();
+                    for (String inner : r.substring(2).split(" ")) {
+                        b2.append(b2.isEmpty() ? "" : " ").append(canonicalStep(inner, depth + 1));
+                    }
+                    out = b2.toString();
+                }
+            }
+            canonicalSteps.put(step, out);
             return out;
         }
 
@@ -7380,7 +7439,7 @@ public final class JarPort {
                     new Lining(Map.of(hole, i), same).pair(x, y, (s, there) -> {
                         // The new parameter passed on as it is goes to a call that changed with it, which along follows.
                         String r = reading(there, newParam, want);
-                        vote(votes, r != null && !r.startsWith(THIS + " ") ? r : there.op != 'p' && uses(there, newParam) ? CONFLICT : "");
+                        vote(votes, r != null && !r.startsWith(THIS + " ") ? r : "");
                     });
                 }
             }
@@ -7575,11 +7634,11 @@ public final class JarPort {
         void place(GameDiff.Node co, GameDiff.Node cn, int k, Map<Integer, Integer> newParam, String want, int depth, Map<String, Integer> votes) {
             int on = receiver(cn);
             if (desc(co.ref.desc()).equals(cn.ref.desc())) {
-                // The new value passed on whole where the old one was (stored, or handed to a call taking any object) says
-                // nothing of how the old one is read from it.
+                // Only a reading counts: the new value passed on whole, or worked into something else there, says nothing
+                // of which reading the old one was.
                 GameDiff.Node there = cn.kids[on + k];
                 String r = reading(there, newParam, want);
-                vote(votes, r != null && !r.startsWith(THIS + " ") ? r : there.op != 'p' && uses(there, newParam) ? CONFLICT : "");
+                vote(votes, r != null && !r.startsWith(THIS + " ") ? r : "");
                 return;
             }
             // The call's own parameter changed with it: what the callee's new code reads from it.
@@ -7601,7 +7660,6 @@ public final class JarPort {
             GameDiff.Node there = cn.kids[on + k2];
             String r = reading(there, newParam, params[k2].getDescriptor());
             if (r == null || r.startsWith(THIS + " ")) {
-                vote(votes, uses(there, newParam) ? CONFLICT : "");
                 return;
             }
             vote(votes, r + (parts.length > 1 ? " " + parts[1] : ""));
@@ -7636,11 +7694,7 @@ public final class JarPort {
                         .findFirst().orElse(null);
                 }
                 if (n == null) {
-                    if (!LOG.isEmpty()) {
-                        log("  ".repeat(depth) + "unpaired " + o + "\n");
-                    }
-                    vote(votes, CONFLICT);
-                    continue;
+                    continue; // a lambda the new release makes nowhere the same says nothing either way
                 }
                 String sub = followed(o.owner(), o.name(), o.desc(), p, depth + 1);
                 if (sub.isEmpty() || sub.equals(CONFLICT)) {

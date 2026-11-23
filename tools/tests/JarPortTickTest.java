@@ -11,6 +11,8 @@ import org.objectweb.asm.*;
  * drew its float (now read as false) and lerped by it (now read as true), stays reported, though its lerp alone would say
  * true. A @Redirect of the bar call gets partial(false) too. Each ported handler is
  * run on this JVM with a real 2.0 Tick (partial(true) = 0.25, partial(false) = 0.75) and must see the right one.
+ * Hud.render also draws its float, which 2.0 reads as tick.paused(): the game's own paused() is partial(false), so
+ * the two places agree.
  * Level.draw(float, long, boolean) became draw(Tick, boolean): a @ModifyVariable of its boolean, found by type, follows;
  * one of its float, which the update took from the parameters, stays reported. Glyph.draw(r, g, b, a) became draw(color),
  * and Font, which worked the four out of its colour, now passes the colour: a handler of draw gets them out of it the same
@@ -46,7 +48,7 @@ final class JarPortTickTest {
             GameDiff.Cls argb = JarPortTest.snap(s, "g9/Argb", 0, null);
             argb.methods.put("red(I)I", new GameDiff.Meth(argb, "red", "(I)I", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
         }
-        JarPortTest.snap(b, "g9/Tick", 0, null, "partial(Z)F");
+        JarPortTest.snap(b, "g9/Tick", 0, null, "partial(Z)F", "paused()F");
         Path map = scratch.resolve("route-follow.json");
         Files.writeString(map, """
             {"signatures": [{"owner": "g9.Hud", "from": "render", "desc": "(Lg9/Gfx;F)V", "to": "render", "newDesc": "(Lg9/Gfx;Lg9/Tick;)V"},
@@ -128,10 +130,21 @@ final class JarPortTickTest {
         String f = old ? "F" : TICK;
         Map<String, byte[]> out = new HashMap<>();
         out.put("g9/Level", JarPortTest.real("g9/Level", "java/lang/Object", 0, new String[0], w -> body(w, "draw", "(" + (old ? "FJZ" : TICK + "Z") + ")V", m -> { })));
+        if (!old) {
+            out.put("g9/Tick", tick());
+        }
         out.put("g9/Gfx", JarPortTest.real("g9/Gfx", "java/lang/Object", 0, new String[0], w -> body(w, "draw", "(F)V", m -> { })));
         out.put("g9/Hud", JarPortTest.real("g9/Hud", "java/lang/Object", 0, new String[0], w -> {
-            // render passes its value on to bar as it is.
+            // render passes its value on to bar as it is, and draws it: 2.0 draws tick.paused(), which is partial(false).
             body(w, "render", "(" + GFX + f + ")V", m -> {
+                m.visitVarInsn(Opcodes.ALOAD, 1);
+                if (old) {
+                    m.visitVarInsn(Opcodes.FLOAD, 2);
+                } else {
+                    m.visitVarInsn(Opcodes.ALOAD, 2);
+                    m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "g9/Tick", "paused", "()F", false);
+                }
+                m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "g9/Gfx", "draw", "(F)V", false);
                 m.visitVarInsn(Opcodes.ALOAD, 0);
                 m.visitVarInsn(Opcodes.ALOAD, 1);
                 m.visitVarInsn(old ? Opcodes.FLOAD : Opcodes.ALOAD, 2);
@@ -274,9 +287,17 @@ final class JarPortTickTest {
         m.visitEnd();
     }
 
-    /** 2.0's Tick: partial(true) is 0.25, partial(false) 0.75. */
+    /** 2.0's Tick: partial(true) is 0.25, partial(false) 0.75, and paused() hands back partial(false). */
     static byte[] tick() {
         return JarPortTest.real("g9/Tick", "java/lang/Object", 0, new String[0], w -> {
+            MethodVisitor p = w.visitMethod(Opcodes.ACC_PUBLIC, "paused", "()F", null, null);
+            p.visitCode();
+            p.visitVarInsn(Opcodes.ALOAD, 0);
+            p.visitInsn(Opcodes.ICONST_0);
+            p.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "g9/Tick", "partial", "(Z)F", false);
+            p.visitInsn(Opcodes.FRETURN);
+            p.visitMaxs(0, 0);
+            p.visitEnd();
             MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "partial", "(Z)F", null, null);
             m.visitCode();
             Label no = new Label();
