@@ -55,8 +55,8 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     # Two worktrees: the same tools, then one with an edited GameDiff.
     for tree in ("a", "b"):
-        (root / tree / "tools" / "cli").mkdir(parents=True)
-        for name in E.MAP_SOURCES:
+        for name in ("port/learn/GameDiff.java", "port/names/VersionMap.java", "port/jar/JarPort.java", "cli/Json.java", "cli/Route.java", "cli/Versions.java"):
+            (root / tree / "tools" / name).parent.mkdir(parents=True, exist_ok=True)
             (root / tree / "tools" / name).write_text(f"// {name}\n", encoding="utf-8")
     E.HOME = root / "home"
 
@@ -66,10 +66,15 @@ with tempfile.TemporaryDirectory() as tmp:
 
     check(key_in("a") == key_in("b"), "worktrees with the same tools share entries")
     time.sleep(0.01)
-    os.utime(root / "a" / "tools" / "GameDiff.java")  # a newer file time alone changes nothing
+    os.utime(root / "a" / "tools" / "port" / "learn" / "GameDiff.java")  # a newer file time alone changes nothing
     check(key_in("a") == key_in("b"), "a file touched without a change keeps its entries")
-    (root / "b" / "tools" / "GameDiff.java").write_text("// GameDiff, edited\n", encoding="utf-8")
+    (root / "b" / "tools" / "port" / "jar" / "JarPort.java").write_text("// JarPort, edited\n", encoding="utf-8")
+    check(key_in("a") == key_in("b"), "a route map's entries do not change with the jar porter")
+    (root / "b" / "tools" / "port" / "learn" / "GameDiff.java").write_text("// GameDiff, edited\n", encoding="utf-8")
     check(key_in("a") != key_in("b"), "worktrees with other tools get entries of their own")
+    edited = key_in("b")
+    (root / "b" / "tools" / "port" / "learn" / "LearnNew.java").write_text("// a learner file nothing lists\n", encoding="utf-8")
+    check(key_in("b") != edited, "a file added under tools/port/learn is one of the learner's sources by being there")
 
     E.ROOT = root / "a"
     first = E.keyed("maps", *E.MAP_SOURCES)
@@ -80,7 +85,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # A key no run has used for over a day is removed when a new one is made; a fresh one is kept.
     stale = first / "used"
     os.utime(stale, (time.time() - 2 * 86400, time.time() - 2 * 86400))
-    (root / "b" / "tools" / "VersionMap.java").write_text("// VersionMap, edited\n", encoding="utf-8")
+    (root / "b" / "tools" / "port" / "names" / "VersionMap.java").write_text("// VersionMap, edited\n", encoding="utf-8")
     third = E.keyed("maps", *E.MAP_SOURCES)
     check(not first.exists() and second.exists() and third.exists(), "only a key unused for a day is cleared")
 

@@ -18,17 +18,17 @@ import javax.tools.*;
  * class, method or field in every release. Joining each version's readable names (Mojang's
  * official mappings, or yarn) through intermediary gives every rename and every signature change.
  *
- *   java tools/VersionMap.java <from> <to> [--names mojmap|yarn|mcp[:channel]] [--out map.json] [--cache dir]
- *   java tools/VersionMap.java --chain <v1,v2,...> [--names mojmap|yarn|mcp[:channel]] [--to-names ...] --out map.json
+ *   java tools/port/names/VersionMap.java <from> <to> [--names mojmap|yarn|mcp[:channel]] [--out map.json] [--cache dir]
+ *   java tools/port/names/VersionMap.java --chain <v1,v2,...> [--names mojmap|yarn|mcp[:channel]] [--to-names ...] --out map.json
  *     (one map across every update, with history; a chain crossing 1.14.4 reads MCP names up to the
  *     seam through SRG ids, translates keys through the obfuscated names both lanes share, and reads
  *     the target namespace past it -- Mojang's by default for an MCP source, or --to-names)
  *
  * Releases before 1.14.4 have no intermediary and no Mojang mappings; Forge's SRG ids are their
  * stable identity instead, with MCP's published names as the readable side (see Srg).
- *   java tools/VersionMap.java --map map.json --explain <build log>
- *   java tools/VersionMap.java --map map.json --fix <build log> --repo <dir> [--rules learned.json] [--dry-run]
- *   java tools/VersionMap.java --map map.json --learn <a.diff> [--learn <b.diff>...] --out learned.json
+ *   java tools/port/names/VersionMap.java --map map.json --explain <build log>
+ *   java tools/port/names/VersionMap.java --map map.json --fix <build log> --repo <dir> [--rules learned.json] [--dry-run]
+ *   java tools/port/names/VersionMap.java --map map.json --learn <a.diff> [--learn <b.diff>...] --out learned.json
  *
  * Mappings download once into the cache (default ~/.mmt/mappings). Versions from 26.1 ship
  * unobfuscated and have no intermediary yet; they are reported, not guessed.
@@ -94,7 +94,7 @@ public final class VersionMap {
         if (chain != null) {
             if (!knownNames(names) || out == null) {
                 System.err.println(
-                    "usage: java tools/VersionMap.java --chain <v1,v2,...> [--names mojmap|yarn|mcp[:channel]] --out map.json"
+                    "usage: java tools/port/names/VersionMap.java --chain <v1,v2,...> [--names mojmap|yarn|mcp[:channel]] --out map.json"
                 );
                 System.exit(2);
             }
@@ -156,7 +156,7 @@ public final class VersionMap {
             (toNames != null && !knownNames(toNames))
         ) {
             System.err.println(
-                "usage: java tools/VersionMap.java <from> <to> [--names mojmap|yarn|mcp[:channel]] [--from-names] [--to-names] [--out map.json]"
+                "usage: java tools/port/names/VersionMap.java <from> <to> [--names mojmap|yarn|mcp[:channel]] [--from-names] [--to-names] [--out map.json]"
             );
             System.exit(2);
         }

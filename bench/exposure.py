@@ -16,11 +16,11 @@ listed once in bench/exposure/mods/LOADER-VERSION.json so every run reads the sa
 lists them for every release a loader is read for, without downloading; --repin lists them again). They are downloaded into ~/.mmt/exposure/jars/ and only read, never built or shipped: rules still come only from the game and
 the loaders.
 
-jars ports one release's mods to the next with tools/JarPort.java (what mmt port --jar runs) and links every reference
+jars ports one release's mods to the next with tools/port/jar/JarPort.java (what mmt port --jar runs) and links every reference
 their classes, mixins and access transformers make to the game against the new release, as the JVM and Mixin will. It
 prints the mods that link and the references that hold the most back, each with what the game's own code did about it
-(tools/Exposure.java: replaced, template, split, linked, redesigned, unused). Fabric mods ship in intermediary names
-before 26.1; tools/ModNames.java reads them in Mojang's names first, through the game's own mappings.
+(tools/port/Exposure.java: replaced, template, split, linked, redesigned, unused). Fabric mods ship in intermediary names
+before 26.1; tools/port/names/ModNames.java reads them in Mojang's names first, through the game's own mappings.
 
 all runs jars for every update a loader's jars can be read across (Fabric from 1.14.4, NeoForge from its first release,
 1.20.2; its mods before 1.20.5 are read through NeoForm's SRG names) and joins them: per update the share of mods that link, in total, and the references that
@@ -56,7 +56,7 @@ twice, is a VerifyError or ClassFormatError in game though every reference links
 route (a removed class moved to the class the game put in its place) the verifier refuses for a mod is left out for that
 mod, and the old class is then a stand-in's (knowledge/standins) or reported gone.
 
-The port also carries each mod's data files to the new release (tools/DataIds.java): ids the game's own data fixers
+The port also carries each mod's data files to the new release (tools/port/jar/DataIds.java): ids the game's own data fixers
 rename, files the game would skip, tag entries made optional; what is left is each mod's "data" in the report, a
 built-in game id (an enchantment effect type, a feature, a data component) the old release registers and the new one
 does not, read from each release's own data generator report. The server refuses such a file, which the link check
@@ -84,6 +84,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import port_tools  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 # Gigabytes of heap for the Java tools; lower it when other work shares the machine.
@@ -291,26 +294,27 @@ def compile_tools():
     return jar_tools()
 
 
-# What a route map is built from: it changes with GameDiff or VersionMap, not with Exposure itself.
-MAP_SOURCES = ("GameDiff.java", "VersionMap.java", "Exposure.java", "ModNames.java", "FixExpr.java", "cli/Json.java", "cli/Versions.java")
+# What a route map is built from: the learner and the name tables (tools/port/learn, tools/port/names), not the jar porter.
+MAP_SOURCES = ("learn", "names")
 
 
-def tools_key(*names):
-    """The content of the tools that build a cache entry, hashed. Several worktrees share ~/.mmt/exposure and run at once;
-    keyed by file times, one worktree's newer tools wiped what another was reading (#126). Keyed by content, worktrees
-    with the same tools share entries and worktrees with other tools never touch each other's."""
+def tools_key(*folders):
+    """The content of the tools that build a cache entry, hashed: all of the porter, or the tools/port folders named.
+    Several worktrees share ~/.mmt/exposure and run at once; keyed by file times, one worktree's newer tools wiped what
+    another was reading (#126). Keyed by content, worktrees with the same tools share entries and worktrees with other
+    tools never touch each other's."""
     h = hashlib.sha256()
-    for name in names:
-        h.update(name.encode() + b"\0" + (ROOT / "tools" / name).read_bytes() + b"\0")
+    for name in port_tools.sources(*folders, root=ROOT):
+        h.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     return h.hexdigest()[:16]
 
 
 KEY = re.compile(r"^[0-9a-f]{16}$")
 
 
-def keyed(kind, *names):
-    """~/.mmt/exposure/KIND/KEY/ for the tools named."""
-    return keyed_at(kind, tools_key(*names))
+def keyed(kind, *folders):
+    """~/.mmt/exposure/KIND/KEY/ for the tools/port folders named."""
+    return keyed_at(kind, tools_key(*folders))
 
 
 def keyed_at(kind, key):
@@ -421,15 +425,13 @@ def route_maps(updates, loader, classes):
     return targets
 
 
-ASM = [ROOT / "tools" / "perf" / "lib" / "asm-9.9.jar", ROOT / "tools" / "perf" / "lib" / "asm-commons-9.9.jar"]
-JAR_SOURCES = ("JarPort.java", "DataIds.java", "FixExpr.java", "PortChains.java", "Downgrade.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
-               "cli/Versions.java")
+ASM = [ROOT / a for a in port_tools.ASM]
 
 
 def tools_classes_key():
     """The porter's sources and the ASM it is built with, hashed: what its classes, and so every port, are made of."""
     if "key" not in CLASSES:
-        CLASSES["key"] = content_key(tools_key(*JAR_SOURCES), *(a.read_bytes() for a in ASM))
+        CLASSES["key"] = content_key(tools_key(), *(a.read_bytes() for a in ASM))
     return CLASSES["key"]
 
 
@@ -443,7 +445,7 @@ def jar_tools():
         return CLASSES["path"]
     out = keyed_at("classes", tools_classes_key()) / "classes"
     if not (out / "JarPort.class").is_file():
-        sources = [ROOT / "tools" / n for n in JAR_SOURCES]
+        sources = [ROOT / n for n in port_tools.sources(root=ROOT)]
         javac = java().replace("java.exe", "javac.exe") if java().endswith("java.exe") else java() + "c"
         part = part_of(out)
         subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", os.pathsep.join(map(str, ASM)), "-d", str(part)] + [str(s) for s in sources],
@@ -501,7 +503,7 @@ def side_by_side(command, jars, report, one=False):
 
 
 def mojang_names(loader, version, jars):
-    """The jars in Mojang's names: Fabric's before 26.1 read through intermediary by tools/ModNames.java (kept in
+    """The jars in Mojang's names: Fabric's before 26.1 read through intermediary by tools/port/names/ModNames.java (kept in
     ~/.mmt/exposure/mojang/ until ModNames or VersionMap changes), every other one as it is. A jar it cannot read is
     left out, with why."""
     if not shipped_obfuscated(loader, version):
@@ -519,8 +521,8 @@ def mojang_names(loader, version, jars):
     return [out / j.name for j in jars if (out / j.name).is_file()], failed
 
 
-# What reading a jar in Mojang's names is built from.
-NAME_SOURCES = ("ModNames.java", "Exposure.java", "VersionMap.java", "cli/Json.java", "cli/Versions.java")
+# What reading a jar in Mojang's names is built from: the name tables (tools/port/names).
+NAME_SOURCES = ("names",)
 
 
 def shipped_obfuscated(loader, version):
@@ -530,7 +532,7 @@ def shipped_obfuscated(loader, version):
 
 
 def stops(loader, frm, to):
-    """The releases a port from frm to to stops at (tools/JarPort.java, hops): each update with stand-ins is a step of its
+    """The releases a port from frm to to stops at (tools/port/jar/JarPort.java, hops): each update with stand-ins is a step of its
     own, so its stand-ins run and the steps after it port them; the updates between are one step on their composed map."""
     key = (loader, frm, to)
     if key not in STOPS:
@@ -594,7 +596,7 @@ def standins_key(loader, frm, to):
 
 
 def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False):
-    """Ports jars with tools/JarPort.java into out_dir and returns its report. runtime: in the names the loader runs
+    """Ports jars with tools/port/jar/JarPort.java into out_dir and returns its report. runtime: in the names the loader runs
     (a Fabric jar handed back in the target release's intermediary), for a game to start them. cache: only the report is
     wanted, so a mod whose port (port_key and its jar's content) was made before, by any run on this machine, is read from
     ~/.mmt/exposure/ports/ instead of ported again; only the rest go to JarPort."""
@@ -662,7 +664,7 @@ LOADED = re.compile(r"\[class,load\] (\S+) source: (?:file:)?(.*)$")
 
 
 def game_says(loader, frm, to, report):
-    """What the game's own code did about each reference JarPort's report ranks (tools/Exposure.java). Exposure answers each
+    """What the game's own code did about each reference JarPort's report ranks (tools/port/Exposure.java). Exposure answers each
     reference on its own, from the two releases alone, and runs only some of the porter's classes (not JarPort's port), so
     every answer is kept in ~/.mmt/exposure/game/ under the bytes of the classes it loaded the last time and the loaders'
     release lists: an edit to the port leaves it, and it runs again only for a reference it never answered. A class it
@@ -2607,7 +2609,7 @@ def tree_at(ref):
     if not sha:
         raise SystemExit(f"no commit {ref}")
     tree = ROOT / ".runs" / "exposure" / "at" / sha
-    if not (tree / "tools" / "JarPort.java").is_file():
+    if not (tree / "tools").is_dir():
         import io
         import tarfile
         packed = subprocess.run(["git", "archive", sha, "tools", "knowledge", "bench/exposure/mods", "coverage/changes/index.json"],
@@ -2620,7 +2622,8 @@ def tree_at(ref):
         except OSError:
             shutil.rmtree(part, ignore_errors=True)
     (tree / "bench").mkdir(exist_ok=True)
-    shutil.copyfile(Path(__file__), tree / "bench" / "exposure.py")
+    for name in ("exposure.py", "port_tools.py"):
+        shutil.copyfile(Path(__file__).parent / name, tree / "bench" / name)
     return sha, tree
 
 

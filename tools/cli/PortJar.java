@@ -6,7 +6,7 @@ import java.util.regex.*;
 import java.util.zip.*;
 
 /**
- * mmt port --jar: a compiled mod moved to another release with tools/JarPort.java, for everyone who has only the .jar.
+ * mmt port --jar: a compiled mod moved to another release with tools/port/jar/JarPort.java, for everyone who has only the .jar.
  * No source and no build: the mod's classes are relinked against the new release (GameDiff's route map from the game's
  * own jars), its metadata asks for the new release, and what does not link is named rather than guessed.
  */
@@ -73,8 +73,7 @@ final class PortJar {
             throw new IOException("The steps of the port from " + from + " to " + to + " could not be planned. " + Run.tail(planned.log()));
         }
         // The map reads the loader's own classes too (Exposure, ModNames) and carries learned expressions (FixExpr).
-        String differ = Fingerprints.files(List.of(home.resolve("tools/GameDiff.java"), home.resolve("tools/VersionMap.java"), home.resolve("tools/Exposure.java"),
-            home.resolve("tools/ModNames.java"), home.resolve("tools/FixExpr.java")));
+        String differ = Fingerprints.files(JavaTools.portSources(home, "learn", "names"));
         List<String> command = new ArrayList<>(List.of(jdk.java().toString(), "-Xmx6g", "-cp", cp, "JarPort", "--from", from, "--to", to, "--loader", loader, "--runtime-names"));
         if (stops.size() > 2) {
             command.addAll(List.of("--via", String.join(",", stops.subList(1, stops.size() - 1))));
@@ -232,12 +231,7 @@ final class PortJar {
 
     /** JarPort and what it reads, compiled once per version of their sources. */
     static Path compile(Path home, Runtimes.Jdk jdk, Mmt.Report report) throws Exception {
-        List<Path> sources = new ArrayList<>();
-        List<String> files = List.of("tools/JarPort.java", "tools/DataIds.java", "tools/ModNames.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Downgrade.java", "tools/Exposure.java",
-            "tools/GameDiff.java", "tools/VersionMap.java", "tools/cli/Json.java", "tools/cli/Versions.java");
-        for (String s : files) {
-            sources.add(home.resolve(s));
-        }
+        List<Path> sources = JavaTools.portSources(home);
         Path classes = Path.of(System.getProperty("user.home"), ".mmt", "jar-port", "classes", Fingerprints.files(sources));
         if (Files.isRegularFile(classes.resolve("ready"))) {
             return classes;

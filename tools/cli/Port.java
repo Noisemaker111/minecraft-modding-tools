@@ -27,7 +27,7 @@ final class Port {
      * What JarPort writes into a class, written into the source first, while the mod still builds on its own release: javac
      * resolves every game use against the mod's own compile (PortPlan.ownCompile), and each use of a member the route map
      * says the update broke gets the same answer a jar port gets (the map's learned replacements, the rules' inClass),
-     * from the same files (tools/SourceAnswers.java). The sources are already backed up, so undo covers it. A mod whose
+     * from the same files (tools/port/source/SourceAnswers.java). The sources are already backed up, so undo covers it. A mod whose
      * own compile cannot be recorded goes on as before, with the typed fixer and rules alone.
      */
     PortPlan.Compiled ownCompile(Map<String, Object> model) throws Exception {
@@ -1329,7 +1329,7 @@ final class Port {
         // names and each removal keeps the update that removed it. Only releases before 26.1 share
         // intermediary ids; the rest of a route into 26.x is left to the compiler and the rules. Yarn has no
         // names past 1.21.11, so a yarn source bound for 26.x keeps the identity map (a name bridge is step 14).
-        // A Mojang-named source gets a map derived from the game itself (tools/GameDiff.java): Mojang's client jars and
+        // A Mojang-named source gets a map derived from the game itself (tools/port/learn/GameDiff.java): Mojang's client jars and
         // mappings for every release on the route, 26.x included, linked release to release from their own bytecode, plus
         // NeoForge's own published classes; no intermediary. A yarn source's names are Fabric's, keyed by intermediary,
         // so it keeps the intermediary map; so does --intermediary.
