@@ -444,6 +444,13 @@ public final class MmtPackProbe {
                 BlockPos at = new BlockPos(row.get("x").getAsInt(), row.get("y").getAsInt(), row.get("z").getAsInt());
                 try { if (level.getBlockTicks().hasScheduledTick(at, now.getBlock())) row.addProperty("ticking", true); }
                 catch (Throwable unknown) { /* this game's tick list cannot say; the block is compared as it is */ }
+                // So does a block whose neighbour is waiting for one: the sand under a cactus or kelp falls when its tick runs
+                // after the reload (1.15 saved the world before that tick on some starts), and the plant breaks with it.
+                for (Direction side : Direction.values()) {
+                    BlockPos next = at.relative(side);
+                    try { if (level.getBlockTicks().hasScheduledTick(next, level.getBlockState(next).getBlock())) row.addProperty("ticking", true); }
+                    catch (Throwable unknown) { /* as above */ }
+                }
                 // A block that cannot survive where it stands (a shrub a mod lets you place on stone) breaks at its next block
                 // update, whenever that comes: the game's survival rule, not the save, changes it.
                 try { if (!now.canSurvive(level, at)) row.addProperty("ticking", true); }
