@@ -104,7 +104,9 @@ the first row above.
    about it: `call, game: linked` is a call whose method is still there with other parameters), each with the mods it
    alone holds back; and the mods nearest to done with what each still needs. Over every update the same two lists
    are `types` and `nearest` in main's table (`python bench/generated.py show scoreboard/all.json`).
-2. Take the type that finishes the most mods, and design the way the porter handles that type: in the learner
+2. Take the type that is the most breaks left (`Mods` in `scoreboard/any-version.md` on the `generated` branch: the mods
+   it holds on some release), and design the way the porter handles that type on every update, so it leaves every mod it
+   held: a fix that works for one update or one mod barely moves breaks left. Design it: in the learner
    (`tools/port/learn/`) when the game's own code shows the answer, in the jar porter (`tools/port/jar/`) when the answer is in how the
    mod's class is written. A type of break has a file of its own in those folders, and a new type gets a new file
    (`ARCHITECTURE.md` says which). Use the nearest-to-done mods that have the type as your cases: the fix is right when it

@@ -10,7 +10,7 @@ def any_version_table(by_pair):
     it is read for, and the mods whose port links (classes, mixins, access transformers and data) on every one. A target
     whose job did not run, or where a mod could not be read, counts as not reached. For each mod that misses: the releases
     it misses and the types of break holding it there. Then what would free the most mods for every release: each type
-    of break and each release, by the mods it alone holds back (handled, they reach every release) and the mods it holds."""
+    of break and each release, by the mods it holds and the mods it alone holds back (handled, they reach every release)."""
     loaders, held, everywhere = {}, [], {}
     for lo in settings.FIRST:
         frm, targets = gamereleases.most_used(lo), [b for _, b in gamereleases.any_version(lo)]
@@ -62,9 +62,23 @@ def any_version_table(by_pair):
     held.sort(key=lambda m: (len(m["missing"]), len(m["types"]), m["loader"], m["mod"]))
     return {"mods": sum(t["mods"] for t in loaders.values()), "every": sum(t["every"] for t in loaders.values()),
             "loaders": loaders, "everywhere": everywhere,
-            "types": sorted(kinds.values(), key=lambda t: (-t["finishes"], -t["mods"], t["type"])),
+            "types": by_breaks(kinds.values()),
             "releases": sorted(releases.values(), key=lambda t: (-t["finishes"], -t["mods"], t["loader"], gamereleases.vkey(t["release"]))),
             "held": held}
+
+
+def by_breaks(types):
+    """Types of break, the most breaks left first: the mods each holds on some release, then the mods it alone holds back."""
+    return sorted(types, key=lambda t: (-t["mods"], -t["finishes"], t["type"]))
+
+
+def breaks_left(a):
+    """The breaks left of an any-version table: one per mod and type of break holding it on some release. It falls only
+    when a type is handled for a mod on every release it held it on, so a fix for one update or one mod barely moves it
+    and a way to handle a whole type moves it by every mod the type held; it is 0 exactly when every mod goes to any
+    version. The count of mods that go to any version moves only when a mod's last type is handled, which most types
+    never are alone."""
+    return sum(t["mods"] for t in a.get("types", []))
 
 
 def not_read(error):
@@ -82,12 +96,13 @@ def any_version_lines(a, top=10):
     lo = a.get("loaders", {})
     split = "; ".join(f"{k.capitalize()} {t['every']} of {t['mods']} from {t['from']} to all {t['targets']} other releases "
                       f"({t['everyNewer']} reach every newer one, {t['everyOlder']} every older one)" for k, t in lo.items())
-    lines = [f"{a.get('every', 0)} of {a.get('mods', 0)} mods go to any version (their ported jar links on every release): {split}"]
+    lines = [f"{a.get('every', 0)} of {a.get('mods', 0)} mods go to any version (their ported jar links on every release): {split}",
+             f"{breaks_left(a):,} breaks left: each type of break holding a mod on some release, one per mod; a type handled on every release removes one per mod it held"]
     not_run = [f"{k} {r}" for k, t in lo.items() for r in t["notRun"]]
     if not_run:
         lines.append(f"not run, so counted as not reached: {', '.join(not_run)}")
-    lines.append("types of break, by the mods each one alone keeps from every release (and the mods and mod-releases it holds):")
-    lines += [f"  frees {t['finishes']:>3}, in {t['mods']:>3} mods, {t['releases']:>5} mod-releases  {t['type']}" for t in a.get("types", [])[:top]]
+    lines.append("types of break, by the breaks left each one is (the mods it holds on some release), and the mods it alone keeps from every release:")
+    lines += [f"  in {t['mods']:>3} mods, {t['releases']:>5} mod-releases, frees {t['finishes']:>3}  {t['type']}" for t in by_breaks(a.get("types", []))[:top]]
     lines.append("releases, by the mods each one alone keeps from going to any version (and the mods missing it):")
     lines += [f"  frees {t['finishes']:>3}, {t['mods']:>3} mods miss it  {t['loader']} {t['release']}" for t in a.get("releases", [])[:top]]
     lines.append("nearest to any version:")
@@ -109,11 +124,11 @@ def any_version_page(table):
            "The 150 most-downloaded mods of each loader's most-used release, each ported as a jar to every other release "
            "the loader has, forward and back, and linked against it (classes, mixins, access transformers, data). It says "
            "the port links, not that it runs: the game proof is `tools/cloud-run load`.", "",
-           "**" + any_version_lines(a)[0] + "**", ""]
-    out += ["## What would free the most mods", "", "Types of break. *Frees* counts the mods it alone keeps from every release: "
-            "handle it and they go to any version. *Mods* counts every mod it holds somewhere.", "",
-            "| Frees | Mods | Mod-releases | Type of break |", "|---|---|---|---|"]
-    out += [f"| {t['finishes']} | {t['mods']} | {t['releases']} | {t['type']} |" for t in a.get("types", [])[:30]]
+           "**" + any_version_lines(a)[0] + "**", "", "**" + any_version_lines(a)[1] + "**", ""]
+    out += ["## What removes the most breaks", "", "Types of break, by the mods each holds on some release: a way to handle the "
+            "type on every release removes that many breaks left. *Frees* counts the mods it alone keeps from every release.", "",
+            "| Mods | Mod-releases | Frees | Type of break |", "|---|---|---|---|"]
+    out += [f"| {t['mods']} | {t['releases']} | {t['finishes']} | {t['type']} |" for t in by_breaks(a.get("types", []))[:30]]
     out += ["", "Releases. *Frees* counts the mods that miss only this release.", "", "| Frees | Mods missing it | Loader | Release |", "|---|---|---|---|"]
     out += [f"| {t['finishes']} | {t['mods']} | {t['loader']} | {t['release']} |" for t in a.get("releases", [])[:30]]
     out += ["", "## Every mod that misses a release, nearest first", "", "| Loader | Mod | Reaches | Misses | Held by |", "|---|---|---|---|---|"]

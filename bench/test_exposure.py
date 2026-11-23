@@ -669,6 +669,37 @@ with tempfile.TemporaryDirectory() as tmp:
           f"a type frees the mods it alone keeps from every release; a mod held by two types is freed by neither; a mod not read is held by why: {a['types']}")
     check([(t["loader"], t["release"], t["finishes"], t["mods"]) for t in a["releases"]][:3] == [("neoforge", "2.1", 2, 2), ("fabric", "2.1", 1, 2), ("fabric", "1.0", 1, 1)],
           f"a release frees the mods that miss only it: {a['releases']}")
+    # Breaks left counts one per mod and type holding it on some release, so a fix for one update must not lower it and a
+    # type handled on every release must lower it by each mod it held, even before any mod reaches every release.
+    pairs = sum(len(m["types"]) for m in a["held"])
+    check(portboard.anyversion.breaks_left(a) == pairs, f"breaks left counts each type once per mod it holds: {portboard.anyversion.breaks_left(a)} vs {pairs}")
+
+    def breaks(edit):
+        runs2 = Path(tmp) / f"runs-{edit}"
+        runs2.mkdir()
+        made = {"1.0": {"a": [], "b": [split], "c": [], "d": []}, "2.0": {"a": [], "b": [], "c": [linked], "d": []},
+                "2.1": {"a": [], "b": [], "c": [linked, field]}}
+        if edit == "linked on one release":
+            made["2.0"]["c"] = []
+        if edit == "linked on every release":
+            made["2.0"]["c"], made["2.1"]["c"] = [], [field]
+        for to, v in made.items():
+            s2 = ported("1.1", to, v, ["d--d.jar"] if to == "2.1" else ())
+            (runs2 / f"fabric-1.1-{to}.json").write_text(json.dumps(s2), encoding="utf-8")
+        sys.stdout = io.StringIO()
+        try:
+            portboard.settings.PINS = Path(tmp) / "pins"
+            return portboard.board.join(runs2)["anyVersion"]
+        finally:
+            sys.stdout = sys.__stdout__
+            portboard.settings.PINS = pins
+
+    before, narrow, whole = (breaks(e) for e in ("none", "linked on one release", "linked on every release"))
+    left = portboard.anyversion.breaks_left
+    check(left(narrow) == left(before) and left(whole) == left(before) - 1 and before["every"] == narrow["every"] == whole["every"],
+          f"a type handled on one release leaves the break; handled on every release it is gone, though no mod goes to any version yet: "
+          f"{left(before)} -> {left(narrow)} (one release), {left(whole)} (every release)")
+    check(any("breaks left" in line for line in portboard.anyversion.any_version_lines(a)[:2]), "the count's lines say the breaks left under the headline")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:
