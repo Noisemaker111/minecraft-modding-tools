@@ -7,7 +7,6 @@
     python tools/cloud-run.py exposure [-f only=fabric:1.21.1,neoforge:1.21.1]
     python tools/cloud-run.py load -f updates=neoforge:1.21.1:1.21.2,fabric:1.21.1 [-f mods=chunky,clumps]
     python tools/cloud-run.py source [-f cases=jei,create] [-f cases=prove:neoforge:jei:1.21.4]
-    python tools/cloud-run.py main-table [--commit SHA]   main's jar scoreboard for a commit (default this branch's base)
     python tools/cloud-run.py --run RUN_ID        wait for and download a run already started
     tools/cloud-run ... (POSIX) and tools\\cloud-run.cmd ... (Windows) are the same
 
@@ -21,15 +20,15 @@ generated branch); any other
 name is taken as a workflow file. The workflow runs the commit the branch (--ref, default the current one) has on
 GitHub, so push first: a branch whose local commit is not on origin is refused (--allow-unpushed runs origin's).
 
-It dispatches with a request id the workflow puts in its run name, finds that run, waits with a hard --timeout
-(minutes, default 120; the run is cancelled then, unless --keep-running), prints each job's result and time, and
+It dispatches with a request id the workflow puts in its run name, finds that run, waits up to --timeout minutes
+(default 120; the run is never cancelled, and --run RUN_ID picks it up again), prints each job's result and time, and
 downloads every artifact to .runs/cloud/WORKFLOW-RUNID/ (--out). A summary artifact's summary.md is printed.
-Exit 0 when the run succeeded, 1 when it failed, 124 on the timeout. Needs the GitHub CLI (gh), logged in.
+Exit 0 when the run succeeded, 1 when it failed, 124 when the wait ended first. Needs the GitHub CLI (gh), logged in.
 
-exposure on a branch runs only the branch. Main's table for the branch's base is made once, by the sweep every push to
-main starts (cloud-exposure.yml); main_table finds that run, or one for a commit that changed nothing the table reads
-(the workflow's paths-ignore), waits for it if it is still going, and dispatches one for the base only when none ran.
-When both are in, python bench/exposure.py compare prints what the branch changes. main-table does the finding alone.
+exposure is the whole jar scoreboard, for a person or the coordinator to start: a pull request gets port-check.yml, the
+ports its change can move, on its own events. Run on main it is main's table (generated.yml records it, as it does for
+each release's); run on a branch it is compared with main's recorded table (python bench/exposure.py compare). One
+failed job is re-run alone (gh run rerun RUN --failed), not with a new sweep.
 
 load is cloud-load.yml, the game proof of a port (python bench/exposure.py load), one job per update: the update's mods
 that link (or only mods=), ported and started on a real server and in a real client of the new release. Each update's
@@ -128,8 +127,9 @@ def duration(s):
     return "—" if s is None else f"{s // 60}m{s % 60:02d}s"
 
 
-def wait(run_id, timeout_minutes, keep_running):
-    """Polls until the run completes or the hard timeout; prints each job once it finishes."""
+def wait(run_id, timeout_minutes):
+    """Polls until the run completes or the wait ends; prints each job once it finishes. A run still going then is left
+    going: one cancelled after waiting for runners is one started again at the back of the line."""
     deadline = time.monotonic() + timeout_minutes * 60
     seen = set()
     while True:
@@ -141,116 +141,27 @@ def wait(run_id, timeout_minutes, keep_running):
         if view.get("status") == "completed":
             return view
         if time.monotonic() > deadline:
-            if not keep_running:
-                gh("run", "cancel", str(run_id), check=False)
-            print(f"timed out after {timeout_minutes} min" + ("" if keep_running else "; the run was cancelled"), flush=True)
+            print(f"stopped waiting after {timeout_minutes} min; the run goes on: tools/cloud-run --run {run_id} picks it up", flush=True)
             view["conclusion"] = "timed out"
             return view
         time.sleep(30)
 
 
-# ---- main's table, made once per commit -----------------------------------------------------------------------------
-EXPOSURE = "cloud-exposure.yml"
-
-
-def ignored_paths(workflow=ROOT / ".github" / "workflows" / EXPOSURE):
-    """The globs under the workflow's push paths-ignore: files that cannot change the table."""
-    out, inside = [], False
-    for line in workflow.read_text(encoding="utf-8").splitlines():
-        if line.strip() == "paths-ignore:":
-            inside = True
-        elif inside and line.strip().startswith("- "):
-            out.append(line.strip()[2:].strip().strip("'\""))
-        elif inside and line.strip():
-            break
-    return out
-
-
-def glob_matches(pattern, path):
-    """GitHub's path filter: ** crosses folders, * stays in one."""
-    regex = "".join(".*" if part == "**" else "[^/]*" if part == "*" else re.escape(part) for part in re.split(r"(\*\*|\*)", pattern))
-    return re.fullmatch(regex, path) is not None
-
-
-def same_table(commit, globs=None, git=git):
-    """The commit and those of its first parents whose table is the same: each step back changed only ignored files."""
-    globs = ignored_paths() if globs is None else globs
-    out = [commit]
-    for _ in range(100):
-        parent = git("rev-parse", "--verify", "--quiet", f"{out[-1]}^")
-        if not parent:
-            break
-        changed = [f for f in git("diff", "--name-only", parent, out[-1]).splitlines() if f]
-        if not all(any(glob_matches(g, f) for g in globs) for f in changed):
-            break
-        out.append(parent)
-    return out
-
-
-def full_runs_of(runs, commits):
-    """The listed whole sweeps (no only=) that ran one of the commits, finished and successful ones first, then running
-    ones; a run dispatched for a commit names it in its title (... at SHA), any other ran its head."""
-    def ran(r):
-        named = re.search(r" at ([0-9a-f]{40})\b", r.get("displayTitle", ""))
-        return named.group(1) if named else r.get("headSha")
-    whole = [r for r in runs if "every update" in r.get("displayTitle", "") and ran(r) in commits]
-    done = [r for r in whole if r.get("status") == "completed" and r.get("conclusion") == "success"]
-    going = [r for r in whole if r.get("status") != "completed"]
-    rank = lambda r: commits.index(ran(r))  # noqa: E731
-    return sorted(done, key=rank) + sorted(going, key=rank)
-
-
-def main_table(commit, gh=None, git=git, dispatch=True):
-    """The run that holds main's table for a commit: a finished or running sweep of it or of an equal commit, else a new one
-    dispatched on main for the commit. Returns (run id, how it was found)."""
-    gh = gh or globals()["gh"]
-    commits = same_table(commit, git=git)
-    runs = json.loads(gh("run", "list", "--workflow", EXPOSURE, "--limit", "200",
-                         "--json", "databaseId,headSha,displayTitle,status,conclusion,url"))
-    found = full_runs_of(runs, commits)
-    if found:
-        r = found[0]
-        return r["databaseId"], ("saved" if r.get("status") == "completed" else "running") + f": {r.get('url', r['databaseId'])}"
-    if not dispatch:
-        return None, "none"
-    request = "req-" + uuid.uuid4().hex[:12]
-    gh("workflow", "run", EXPOSURE, "--ref", "main", "-f", f"commit={commit}", "-f", f"request={request}")
-    run = find_run(EXPOSURE, request, time.strftime("%H:%M:%S"))
-    return run["databaseId"], f"dispatched for {commit[:10]}, none had run: {run['url']}"
-
-
-def fetch_main_table(commit, timeout_minutes):
-    """main's all.json for the commit, in .runs/cloud/exposure-main-SHA/, waiting for its run if it is still going."""
-    run_id, how = main_table(commit)
-    print(f"main's table for {commit[:10]}: {how}", flush=True)
-    out = ROOT / ".runs" / "cloud" / f"exposure-main-{commit[:10]}"
-    if not (out / "all.json").is_file():
-        start = time.monotonic()
-        view = wait(run_id, timeout_minutes, True)
-        if view.get("conclusion") == "cancelled":
-            # A newer push can cancel the sweep found: look again, and make one for the commit if none is left,
-            # within what is left of the one timeout.
-            run_id, how = main_table(commit)
-            print(f"main's sweep was cancelled; now {how}", flush=True)
-            view = wait(run_id, max(timeout_minutes - (time.monotonic() - start) / 60, 0), True)
-        if view.get("conclusion") != "success":
-            raise SystemExit(f"main's sweep {run_id} ended {view.get('conclusion')}")
-        out.mkdir(parents=True, exist_ok=True)
-        gh("run", "download", str(run_id), "-n", "summary", "--dir", str(out))
-    return out / "all.json"
-
-
-def branch_base(head):
-    git("fetch", "--quiet", "origin", "main")
-    return git("merge-base", "origin/main", head)
-
-
-def compare_with_main(branch_table, head, timeout_minutes):
-    base = branch_base(head)
-    main = fetch_main_table(base, timeout_minutes)
+# ---- main's table ---------------------------------------------------------------------------------------------------
+def compare_with_main(branch_table):
+    """What a branch's whole sweep changes against main's table, the one its last whole sweep (by hand or a release)
+    recorded on the generated branch."""
+    main = ROOT / ".runs" / "cloud" / "main-all.json"
+    done = subprocess.run([sys.executable, str(ROOT / "bench" / "generated.py"), "show", "scoreboard/all.json"],
+                          cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+    if done.returncode:
+        print(f"\nno main table to compare with: {done.stderr.strip()}", flush=True)
+        return
+    main.write_text(done.stdout, encoding="utf-8")
+    at = (json.loads(done.stdout).get("commit") or "?")[:10]
     done = subprocess.run([sys.executable, str(ROOT / "bench" / "exposure.py"), "compare", str(main), str(branch_table)],
                           cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
-    print(f"\nAgainst main at {base[:10]} ({main}):\n{done.stdout}{done.stderr}", flush=True)
+    print(f"\nAgainst main's table at {at}:\n{done.stdout}{done.stderr}", flush=True)
 
 
 # ---- a game proof against main's receipt ------------------------------------------------------------------------------
@@ -296,30 +207,21 @@ def main(argv=None):
     ap.add_argument("-f", "--field", action="append", default=[], metavar="KEY=VALUE", help="a workflow input; repeat for more")
     ap.add_argument("--ref", help="the branch to run (default: the current one)")
     ap.add_argument("--run", type=int, help="wait for and download this run instead of starting one")
-    ap.add_argument("--timeout", type=float, default=120, help="minutes to wait before cancelling (default 120)")
-    ap.add_argument("--keep-running", action="store_true", help="on the timeout, leave the run going")
+    ap.add_argument("--timeout", type=float, default=120, help="minutes to wait (default 120); the run is never cancelled")
     ap.add_argument("--no-wait", action="store_true", help="dispatch, print the run and return")
     ap.add_argument("--allow-unpushed", action="store_true", help="run origin's commit of the branch even when this one differs")
     ap.add_argument("--out", type=Path, help="where artifacts go (default .runs/cloud/WORKFLOW-RUNID)")
-    ap.add_argument("--commit", help="main-table: the commit (default the base this branch has on main)")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     if not args.run and not args.workflow:
         ap.error("name a workflow (packs, ports, perf) or --run RUN_ID")
-    if args.workflow == "main-table":
-        commit = git("rev-parse", args.commit) if args.commit else branch_base("HEAD")
-        print(fetch_main_table(commit, args.timeout))
-        return 0
     started = time.monotonic()
     if args.run:
         run_id = args.run
         workflow = json.loads(gh("run", "view", str(run_id), "--json", "workflowName"))["workflowName"]
     else:
-        if args.workflow == "exposure" and not any(f.startswith("only=") for f in args.field):
-            # main's sweep for the base is started (or found) before the branch's, so the two run side by side.
-            main_table(branch_base(ref_on_origin(args.ref or git("rev-parse", "--abbrev-ref", "HEAD"), args.allow_unpushed)))
         workflow = WORKFLOWS.get(args.workflow, args.workflow)
         ref = args.ref or git("rev-parse", "--abbrev-ref", "HEAD")
         commit = ref_on_origin(ref, args.allow_unpushed)
@@ -331,7 +233,7 @@ def main(argv=None):
         print(f"{workflow} on {ref} ({commit[:10]}): {run['url']}", flush=True)
         if args.no_wait:
             return 0
-    view = wait(run_id, args.timeout, args.keep_running)
+    view = wait(run_id, args.timeout)
     name = Path(str(args.workflow or view.get("workflowName") or workflow)).stem.replace(" ", "-").lower()
     out = args.out or ROOT / ".runs" / "cloud" / f"{name}-{run_id}"
     out.mkdir(parents=True, exist_ok=True)
@@ -341,8 +243,8 @@ def main(argv=None):
     if summary:
         print(summary.read_text(encoding="utf-8"))
     table = out / "summary" / "all.json"
-    if table.is_file() and view.get("headBranch") != "main" and "every update" in view.get("displayTitle", "") and " at " not in view.get("displayTitle", ""):
-        compare_with_main(table, view["headSha"], args.timeout)
+    if table.is_file() and view.get("headBranch") != "main" and "every update" in view.get("displayTitle", ""):
+        compare_with_main(table)
     compare_loads_with_main(out)
     wall = seconds(view.get("createdAt"), view.get("updatedAt"))
     print(f"{view.get('conclusion')}: {view.get('url')} in {duration(wall)} (waited {duration(round(time.monotonic() - started))}); artifacts in {out}")

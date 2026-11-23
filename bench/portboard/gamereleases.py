@@ -5,8 +5,9 @@ import re
 from portboard import settings
 
 
-def releases():
-    data = json.loads(settings.INDEX.read_text(encoding="utf-8"))
+def releases(data=None):
+    """The indexed releases of the change index (coverage/changes/index.json), or of data, another copy of it."""
+    data = json.loads(settings.INDEX.read_text(encoding="utf-8")) if data is None else data
     return [v["id"] for v in data["allVersions"] if v.get("status") == "indexed"]
 
 
@@ -22,9 +23,10 @@ def chain(frm, to):
     return span if vkey(frm) <= vkey(to) else list(reversed(span))
 
 
-def updates(loader):
-    """Every update from one indexed release to the next whose mod jars are read for this loader."""
-    every = [v for v in sorted(releases(), key=vkey) if vkey(v) >= vkey(settings.FIRST[loader])]
+def updates(loader, index=None):
+    """Every update from one indexed release to the next whose mod jars are read for this loader (index: another copy of
+    the change index)."""
+    every = [v for v in sorted(releases(index), key=vkey) if vkey(v) >= vkey(settings.FIRST[loader])]
     return list(zip(every, every[1:]))
 
 

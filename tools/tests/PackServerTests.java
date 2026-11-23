@@ -22,6 +22,7 @@ public final class PackServerTests extends PackCheckFixtures {
             clientLaunch(scratch);
             agentSignals(harness, scratch);
             assets(scratch);
+            installsSideBySide(scratch);
             spawnArea(harness, scratch);
             System.out.println(
                 count +
@@ -30,6 +31,7 @@ public final class PackServerTests extends PackCheckFixtures {
                 " the client launch built from a loader's version file over the game's (one version of a library, this system's rules, the agent built on the launch's ASM)," +
                 " the client agent's ready and failed signals whatever the game does to its output, a fatal loading line ends the wait," +
                 " snippets open screens wherever the game keeps them, the game's assets fetched into one shared store and checked," +
+                " two installs of one loader at once each keep their own files and leave one whole install," +
                 " the server agent cuts a pre-1.20.5 spawn wait to the spawn chunk and leaves any other shape alone"
             );
         } finally {
@@ -37,6 +39,54 @@ public final class PackServerTests extends PackCheckFixtures {
             try (var paths = Files.walk(scratch)) {
                 for (Path p : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ installs side by side
+    /**
+     * A port check starts the server and the client at once, and both install the loader's server into one folder of
+     * ~/.mmt/packs/loaders: each emptied it and ran the installer into it, and both failed (neoforge 1.20.3, fabric 1.18,
+     * 2026-11-23). Two installs that are both under way at once must each find their own files where they wrote them,
+     * and leave one whole install with its marker and no part folders; an install that fails leaves nothing behind.
+     */
+    static void installsSideBySide(Path scratch) throws Exception {
+        Path dir = scratch.resolve("loaders").resolve("neoforge-1.20.3-20.3.8-beta");
+        var both = new java.util.concurrent.CountDownLatch(2);
+        List<String> broken = Collections.synchronizedList(new ArrayList<>());
+        PackLoaders.Style.Work work = folder -> {
+            Path lib = folder.resolve("libraries/asm-9.5.jar");
+            Files.createDirectories(lib.getParent());
+            String mine = Thread.currentThread().getName();
+            Files.writeString(lib, mine);
+            both.countDown();
+            both.await();
+            if (!Files.isRegularFile(lib) || !Files.readString(lib).equals(mine)) broken.add(folder + " lost its own library while the other installed");
+            Files.writeString(folder.resolve("run.sh"), "java @libraries/args.txt");
+        };
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        var a = pool.submit(() -> PackLoaders.Style.installOnce(dir, work));
+        var b = pool.submit(() -> PackLoaders.Style.installOnce(dir, work));
+        expect(a.get().equals(dir) && b.get().equals(dir), "both installs answer the one folder");
+        pool.shutdown();
+        expect(broken.isEmpty(), String.join("; ", broken));
+        expect(Files.isRegularFile(dir.resolve("mmt-installed")) && Files.isRegularFile(dir.resolve("libraries/asm-9.5.jar")) && Files.isRegularFile(dir.resolve("run.sh")),
+            "one whole install with its marker");
+        try (var left = Files.list(dir.getParent())) {
+            List<String> names = left.map(p -> p.getFileName().toString()).toList();
+            expect(names.equals(List.of(dir.getFileName().toString())), "no part folder is left: " + names);
+        }
+        Path failed = scratch.resolve("loaders").resolve("fabric-1.18-0.20.1");
+        try {
+            PackLoaders.Style.installOnce(failed, folder -> {
+                Files.writeString(folder.resolve("half.jar"), "cut off");
+                throw new IOException("fabric's installer failed");
+            });
+            expect(false, "a failed install fails");
+        } catch (IOException expected) {
+            expect(!Files.exists(failed), "a failed install leaves no folder the next run would trust");
+        }
+        try (var left = Files.list(dir.getParent())) {
+            expect(left.count() == 1, "a failed install leaves no part folder");
         }
     }
 

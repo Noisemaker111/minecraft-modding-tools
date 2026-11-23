@@ -18,6 +18,13 @@ import java.util.zip.*;
  * stops, or reaches the loader's error screen, names the mods its log and crash report point at.
  */
 final class PackClient {
+
+    /** What a client crash report says caused it, on one line (Game.crashCause); a report with no Description, its own excerpt. */
+    static String crashCause(String report) {
+        String cause = Game.crashCause(report.lines().toList());
+        return cause.isEmpty() ? PackChecks.failure(report, List.of()) : cause.replace("\n", "; ");
+    }
+
     private PackClient() {}
 
     static final String OS = Runtimes.WINDOWS ? "windows" : System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("mac") ? "osx" : "linux";
@@ -28,36 +35,34 @@ final class PackClient {
         List<Object> arguments = Json.array(style.spec.getOrDefault("installClient", List.of()));
         String profile = Json.text(style.spec, "clientProfile", "");
         if (arguments.isEmpty() && profile.isEmpty()) return null;
-        Path dir = context.cache().resolve("loaders").resolve(loader.id() + "-client-" + minecraft + "-" + version);
-        if (PackLoaders.Style.finished(dir)) return dir;
-        if (!profile.isEmpty()) {
-            // The loader publishes its launcher profile itself (Fabric's meta): its version file over the game's, which
-            // comes from Mojang's list as a launcher gets it.
-            Path game = dir.resolve("versions").resolve(minecraft).resolve(minecraft + ".json");
-            Files.createDirectories(game.getParent());
-            Files.writeString(game, Json.write(PackLoaders.Vanilla.version(context.cache(), context.harness(), minecraft)));
-            var own = Json.object(Json.parse(new String(PackCheck.get(style.fill(profile, minecraft, version, dir)), StandardCharsets.UTF_8)));
-            String id = Json.text(own, "id", loader.id() + "-" + minecraft);
-            Path file = dir.resolve("versions").resolve(id).resolve(id + ".json");
-            Files.createDirectories(file.getParent());
-            Files.writeString(file, Json.write(own));
-        } else {
-            Path installer = dir.resolve("installer.jar");
-            PackCheck.download(style.fill(style.setting(minecraft, "installer"), minecraft, version, null), installer, null);
-            // Installers that write into a launcher folder refuse one without a profile list.
-            Files.writeString(dir.resolve("launcher_profiles.json"), "{\"profiles\":{}}");
-            List<String> filled = new ArrayList<>();
-            for (Object a : arguments) filled.add(style.fill(String.valueOf(a), minecraft, version, dir));
-            style.runInstaller(context, installer, filled, dir, version);
-        }
-        Map<String, Object> merged = merged(dir, minecraft);
-        libraries(dir, minecraft);
-        // A launcher runs the game's jar under the name of the version it starts (a loader's ignore list names it so).
-        var client = Json.object(Json.object(merged.getOrDefault("downloads", Map.of())).getOrDefault("client", Map.of()));
-        Path jar = gameJar(dir, merged);
-        if (!client.isEmpty() && !Files.isRegularFile(jar)) PackCheck.download(Json.text(client, "url", ""), jar, Json.text(client, "sha1", null));
-        Files.writeString(dir.resolve("mmt-installed"), minecraft + "-" + version + "\n");
-        return dir;
+        return PackLoaders.Style.installOnce(context.cache().resolve("loaders").resolve(loader.id() + "-client-" + minecraft + "-" + version), dir -> {
+            if (!profile.isEmpty()) {
+                // The loader publishes its launcher profile itself (Fabric's meta): its version file over the game's, which
+                // comes from Mojang's list as a launcher gets it.
+                Path game = dir.resolve("versions").resolve(minecraft).resolve(minecraft + ".json");
+                Files.createDirectories(game.getParent());
+                Files.writeString(game, Json.write(PackLoaders.Vanilla.version(context.cache(), context.harness(), minecraft)));
+                var own = Json.object(Json.parse(new String(PackCheck.get(style.fill(profile, minecraft, version, dir)), StandardCharsets.UTF_8)));
+                String id = Json.text(own, "id", loader.id() + "-" + minecraft);
+                Path file = dir.resolve("versions").resolve(id).resolve(id + ".json");
+                Files.createDirectories(file.getParent());
+                Files.writeString(file, Json.write(own));
+            } else {
+                Path installer = dir.resolve("installer.jar");
+                PackCheck.download(style.fill(style.setting(minecraft, "installer"), minecraft, version, null), installer, null);
+                // Installers that write into a launcher folder refuse one without a profile list.
+                Files.writeString(dir.resolve("launcher_profiles.json"), "{\"profiles\":{}}");
+                List<String> filled = new ArrayList<>();
+                for (Object a : arguments) filled.add(style.fill(String.valueOf(a), minecraft, version, dir));
+                style.runInstaller(context, installer, filled, dir, version);
+            }
+            Map<String, Object> merged = merged(dir, minecraft);
+            libraries(dir, minecraft);
+            // A launcher runs the game's jar under the name of the version it starts (a loader's ignore list names it so).
+            var client = Json.object(Json.object(merged.getOrDefault("downloads", Map.of())).getOrDefault("client", Map.of()));
+            Path jar = gameJar(dir, merged);
+            if (!client.isEmpty() && !Files.isRegularFile(jar)) PackCheck.download(Json.text(client, "url", ""), jar, Json.text(client, "sha1", null));
+        });
     }
 
     static final String OBJECTS = "https://resources.download.minecraft.net/";
@@ -506,7 +511,7 @@ final class PackClient {
             reader.join(TimeUnit.SECONDS.toMillis(30));
             String text = Files.isRegularFile(log) ? new String(Files.readAllBytes(log), StandardCharsets.UTF_8) : "";
             List<String> reports = PackChecks.crashReports(instance, since);
-            result.put("failure", String.valueOf(failure.getMessage()).lines().findFirst().orElse("") + (reports.isEmpty() ? "" : "; " + PackChecks.failure(reports.get(0), List.of())));
+            result.put("failure", String.valueOf(failure.getMessage()).lines().findFirst().orElse("") + (reports.isEmpty() ? "" : "; " + crashCause(reports.get(0))));
             result.put("suspects", PackChecks.suspects(text, reports, owner.scan, owner.loader));
         } finally {
             // Programs a mod starts from the game (a crash helper's own window) end with it: none outlives the check.
@@ -708,12 +713,12 @@ final class PackClient {
         Path mappings = dir.resolve("client.txt");
         if (!Files.isRegularFile(mappings)) PackCheck.download(Json.text(named, "url", ""), mappings, Json.text(named, "sha1", null));
         if (!Files.isRegularFile(table)) {
-            Path part = dir.resolve(table.getFileName() + ".tmp");
+            Path part = PackCheck.own(table);
             Files.writeString(part, runtimeTable(Files.readString(mappings), Files.readString(tiny)));
             Files.move(part, table, StandardCopyOption.REPLACE_EXISTING);
         }
         if (!Files.isRegularFile(jar)) {
-            Path part = dir.resolve("client-mojang.jar.tmp");
+            Path part = PackCheck.own(jar);
             PackLoaders.rename(context, "client-mojang-names", gameJar(install, merged), part, mappings, true, List.of());
             Files.move(part, jar, StandardCopyOption.REPLACE_EXISTING);
         }
