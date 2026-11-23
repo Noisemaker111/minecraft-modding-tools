@@ -73,8 +73,8 @@ jobs:
             ~/.mmt/exposure/ports
             ~/.mmt/exposure/game
             ~/.mmt/exposure/maps
-          key: exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-
-          restore-keys: exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:
+          key: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-"
+          restore-keys: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:"
       - name: Port and link against main's row
         shell: bash
         run: |
