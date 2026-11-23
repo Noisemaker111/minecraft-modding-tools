@@ -227,19 +227,19 @@ public final class DependenciesTest {
     static void mixinTargets() throws Exception {
         String text = "@ModifyReturnValue(method = {\"method_5260\", \"method_5236\"}, at = @At(\"RETURN\"))\n";
         require(
-            Port.removeDeadTarget(text, "method_5236").equals(
+            PortMixins.removeDeadTarget(text, "method_5236").equals(
                 "@ModifyReturnValue(method = {\"method_5260\"}, at = @At(\"RETURN\"))\n"
             ),
             "dead target removed from a multi-target mixin annotation"
         );
         try {
-            Port.removeDeadTarget(text, "method_9999");
+            PortMixins.removeDeadTarget(text, "method_9999");
             throw new AssertionError("missing annotation accepted");
         } catch (IOException expected) {
             require(expected.getMessage().contains("no single-line multi-target"), "unknown mixin target refused");
         }
         try {
-            Port.removeDeadTarget("@ModifyReturnValue(method = \"method_5236\")", "method_5236");
+            PortMixins.removeDeadTarget("@ModifyReturnValue(method = \"method_5236\")", "method_5236");
             throw new AssertionError("single target removed");
         } catch (IOException expected) {
             require(
@@ -476,7 +476,7 @@ public final class DependenciesTest {
             "dependency groups still decide when no plugin matches"
         );
         require(
-            Target.neoForgePrefix("1.21.6").equals("21.6.") && Target.neoForgePrefix("1.20.1").equals("47."),
+            TargetNeoForge.neoForgePrefix("1.21.6").equals("21.6.") && TargetNeoForge.neoForgePrefix("1.20.1").equals("47."),
             "NeoForge numbering follows the Minecraft minor"
         );
         Map<String, Object> good = Json.map(
@@ -488,7 +488,7 @@ public final class DependenciesTest {
                 )
             )
         );
-        Port.verifyLoaderVersion(good, "1.21.6");
+        PortMetadata.verifyLoaderVersion(good, "1.21.6");
         Map<String, Object> stale = Json.map(
             "projects",
             List.of(
@@ -499,7 +499,7 @@ public final class DependenciesTest {
             )
         );
         try {
-            Port.verifyLoaderVersion(stale, "1.21.6");
+            PortMetadata.verifyLoaderVersion(stale, "1.21.6");
             throw new AssertionError("stale NeoForge accepted");
         } catch (IOException expected) {
             require(

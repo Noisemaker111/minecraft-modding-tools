@@ -174,7 +174,7 @@ final class JarPortStandinTest {
         }
         JarPortTest.expect(refused.contains("answers no member of s9.Gauge"), "a stand-in that answers no old member is refused, not ignored: " + refused);
 
-        String outer = JarPort.standinHome("mod.jar", "1.0", "2.0"), inner = JarPort.standinHome("mod.jar!library.jar", "1.0", "2.0");
+        String outer = StandinClasses.standinHome("mod.jar", "1.0", "2.0"), inner = StandinClasses.standinHome("mod.jar!library.jar", "1.0", "2.0");
         JarPortTest.expect(!outer.equals(inner) && outer.matches("mmt/standin/m[0-9a-f]+/") && inner.matches("mmt/standin/m[0-9a-f]+/"),
             "a mod and a jar nested in it carry their stand-ins in packages of their own (one module each on NeoForge): " + outer + " " + inner);
 
@@ -190,7 +190,7 @@ final class JarPortStandinTest {
             """);
         Map<String, Integer> majors = new TreeMap<>();
         for (String release : List.of("1.16.5", "1.17.1", "1.20.3", "1.21.1", "26.1")) {
-            byte[] gauge = JarPort.compileStandins(List.of(old.getParent()), new GameDiff.Snap(release)).get("mmt/standin/s9/Gauge");
+            byte[] gauge = StandinClasses.compileStandins(List.of(old.getParent()), new GameDiff.Snap(release)).get("mmt/standin/s9/Gauge");
             majors.put(release, ((gauge[6] & 0xff) << 8) | (gauge[7] & 0xff));
         }
         JarPortTest.expect(majors.equals(Map.of("1.16.5", 52, "1.17.1", 60, "1.20.3", 61, "1.21.1", 65, "26.1", 65)),
@@ -231,7 +231,7 @@ final class JarPortStandinTest {
             JarPortTest.expect(unlinked.isEmpty(), (fabric ? "Fabric" : "NeoForge") + ": a nested library's references a stand-in answers link: " + unlinked);
             Map<String, byte[]> lib2 = JarPortTest.entries(ported.get(innerPath));
             List<String> carried = lib2.keySet().stream().filter(n -> n.startsWith("mmt/standin/")).sorted().toList();
-            JarPortTest.expect(carried.equals(List.of(JarPort.standinHome("outer.jar!n9lib.jar", "1.0", "2.0") + "s9/Gauge.class")),
+            JarPortTest.expect(carried.equals(List.of(StandinClasses.standinHome("outer.jar!n9lib.jar", "1.0", "2.0") + "s9/Gauge.class")),
                 (fabric ? "Fabric" : "NeoForge") + ": the nested library carries the stand-ins it uses in its own package: " + carried);
             JarPortTest.expect(ported.keySet().stream().noneMatch(n -> n.startsWith("mmt/")),
                 (fabric ? "Fabric" : "NeoForge") + ": the outer jar, which calls no stand-in, carries none of its own: " + ported.keySet());

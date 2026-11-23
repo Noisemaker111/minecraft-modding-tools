@@ -20,11 +20,11 @@ final class GameMeaningTest {
         Map<String, byte[]> oldGame = game(false), newGame = game(true);
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of());
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
         Map<String, String> learned = new TreeMap<>();
         List<String> lines = new ArrayList<>();
-        for (GameDiff.Learner.Learned l : new GameDiff.Learner(hop).learn()) {
+        for (GameLearner.Learned l : new GameLearner(hop).learn()) {
             learned.put(l.owner() + "." + l.name() + l.desc(), l.expr());
             lines.add(l.json("1.0 -> 2.0"));
         }

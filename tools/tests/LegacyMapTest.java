@@ -115,7 +115,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             "MD: ccc/e ()V net/minecraft/block/ShiftedBlock/func_4_e ()V\n" +
             "FD: ccc/b net/minecraft/block/ShiftedBlock/field_5_b\n";
         VersionMap.Table newT = table("1.12.2", moved, METHODS, FIELDS);
-        Map<String, String> links = VersionMap.Chain.linkSrgClasses(oldT, newT);
+        Map<String, String> links = MapChain.linkSrgClasses(oldT, newT);
         check(
             links.equals(Map.of("net/minecraft/block/Block", "net/minecraft/block/ShiftedBlock")),
             "a renamed class links back up when each side is the other's best match by shared member ids"
@@ -125,7 +125,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             "MD: ddd/a ()V net/minecraft/block/TinyBlock/func_1_a ()V\n";
         VersionMap.Table tinyT = table("1.12.2", tiny, METHODS, FIELDS);
         check(
-            VersionMap.Chain.linkSrgClasses(oldT, tinyT).isEmpty(),
+            MapChain.linkSrgClasses(oldT, tinyT).isEmpty(),
             "a class sharing too few member ids stays unlinked, honestly removed and added"
         );
         VersionMap.Table grownOld = table(
@@ -142,7 +142,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             FIELDS
         );
         check(
-            VersionMap.Chain.linkSrgClasses(grownOld, grownNew).equals(
+            MapChain.linkSrgClasses(grownOld, grownNew).equals(
                 Map.of("net/minecraft/block/Block", "net/minecraft/block/ShiftedBlock")
             ),
             "a mutual match with twice the runner-up's shared ids links even when class growth drops Jaccard below half"
@@ -155,7 +155,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             FIELDS
         );
         check(
-            VersionMap.Chain.linkSrgClasses(grownOld, tiedNew).isEmpty(),
+            MapChain.linkSrgClasses(grownOld, tiedNew).isEmpty(),
             "the clear-winner fallback never breaks a tied overlap by iteration order"
         );
         Set<String> reverseTieIds = Set.of("mfunc_1_x", "mfunc_2_x", "mfunc_3_x", "mfunc_4_x");
@@ -164,7 +164,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             reverseTieTarget.add("mfunc_" + id + "_x");
         }
         check(
-            VersionMap.Chain.linkBySharedIds(
+            MapChain.linkBySharedIds(
                 Set.of("oldA", "oldB"),
                 Set.of("new"),
                 Map.of("oldA", reverseTieIds, "oldB", reverseTieIds),
@@ -180,7 +180,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             mixedNew.add("mfunc_" + id + "_x");
         }
         check(
-            VersionMap.Chain.linkBySharedIds(
+            MapChain.linkBySharedIds(
                 Set.of("old"),
                 Set.of("new"),
                 Map.of("old", mixedOld),
@@ -204,13 +204,13 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             );
         }
         check(
-            VersionMap.Chain.linkBySharedIds(
+            MapChain.linkBySharedIds(
                 Set.of("old"), new HashSet<>(freqFresh.keySet()), Map.of("old", freqOld), freqFresh
             ).isEmpty(),
             "three shared ids used across the lane carry no rename weight even with no rival"
         );
         check(
-            VersionMap.Chain.linkBySharedIds(
+            MapChain.linkBySharedIds(
                 Set.of("old"), Set.of("new"), Map.of("old", freqOld), Map.of("new", freqNew)
             ).equals(Map.of("old", "new")),
             "the same overlap links when its ids are distinctive"
@@ -225,13 +225,13 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
         Map<String, Set<String>> tieFresh = new HashMap<>();
         tieFresh.put("n1", tieF1);
         tieFresh.put("n2", tieF2);
-        Map<String, String> tieFwd = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> tieFwd = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("old")),
             new LinkedHashSet<>(List.of("n1", "n2")),
             Map.of("old", tieOld),
             tieFresh
         );
-        Map<String, String> tieRev = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> tieRev = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("old")),
             new LinkedHashSet<>(List.of("n2", "n1")),
             Map.of("old", tieOld),
@@ -253,13 +253,13 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
         Map<String, Set<String>> marginFresh = new HashMap<>();
         marginFresh.put("new", marginNew);
         marginFresh.put("rival", marginRival);
-        Map<String, String> marginFwd = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> marginFwd = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("old")),
             new LinkedHashSet<>(List.of("new", "rival")),
             Map.of("old", marginOld),
             marginFresh
         );
-        Map<String, String> marginRev = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> marginRev = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("old")),
             new LinkedHashSet<>(List.of("rival", "new")),
             Map.of("old", marginOld),
@@ -271,13 +271,13 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
         );
         Set<String> tieKeys = new HashSet<>(List.of("mfunc_1_a", "mfunc_2_b", "mfunc_3_c", "mfunc_4_d"));
         Map<String, Set<String>> twinFresh = Map.of("n1", tieKeys, "n2", new HashSet<>(tieKeys));
-        Map<String, String> twinFwd = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> twinFwd = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("old")),
             new LinkedHashSet<>(List.of("n1", "n2")),
             Map.of("old", tieKeys),
             twinFresh
         );
-        Map<String, String> twinRev = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> twinRev = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("old")),
             new LinkedHashSet<>(List.of("n2", "n1")),
             Map.of("old", tieKeys),
@@ -288,8 +288,8 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
             "a tie no evidence breaks links neither candidate, identically whatever order the classes arrive in"
         );
         check(
-            VersionMap.Chain.nameSim("net/m/RecipesArmorDyes", "net/m/BannerDuplicateRecipe") == 1
-                && VersionMap.Chain.nameSim("net/m/BlockDoor$EnumDoorHalf", "net/m/state/DoubleBlockHalf") == 2,
+            MapChain.nameSim("net/m/RecipesArmorDyes", "net/m/BannerDuplicateRecipe") == 1
+                && MapChain.nameSim("net/m/BlockDoor$EnumDoorHalf", "net/m/state/DoubleBlockHalf") == 2,
             "shared name tokens count stemmed words, so recipes matches recipe and door-half matches"
         );
         Set<String> nameOld = new HashSet<>(List.of("mfunc_1_a", "mfunc_2_b", "mfunc_3_c", "mfunc_4_d"));
@@ -302,13 +302,13 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
         Map<String, Set<String>> nameFresh = new HashMap<>();
         nameFresh.put("net/m/NewWidget", nameF1);
         nameFresh.put("net/m/OtherGadget", nameF2);
-        Map<String, String> nameFwd = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> nameFwd = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("net/m/OldWidget")),
             new LinkedHashSet<>(List.of("net/m/NewWidget", "net/m/OtherGadget")),
             Map.of("net/m/OldWidget", nameOld),
             nameFresh
         );
-        Map<String, String> nameRev = VersionMap.Chain.linkBySharedIds(
+        Map<String, String> nameRev = MapChain.linkBySharedIds(
             new LinkedHashSet<>(List.of("net/m/OldWidget")),
             new LinkedHashSet<>(List.of("net/m/OtherGadget", "net/m/NewWidget")),
             Map.of("net/m/OldWidget", nameOld),
@@ -319,7 +319,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
                 && nameRev.equals(Map.of("net/m/OldWidget", "net/m/NewWidget")),
             "a tie on ids and counts breaks by shared name tokens, identically either arrival order"
         );
-        VersionMap.Chain chain = VersionMap.Chain.of(List.of("1.7.10", "1.12.2"), v ->
+        MapChain chain = MapChain.of(List.of("1.7.10", "1.12.2"), v ->
             v.equals("1.7.10") ? oldT : newT
         );
         check(
@@ -366,7 +366,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
                 MD: aji/B ()V net/minecraft/block/Block/func_72966_v ()V
                 """;
         String methods2 = "searge,name,side,desc\nfunc_72966_v,computeSkylight,0,\n";
-        VersionMap.Chain chain = VersionMap.Chain.of(List.of("1.7.10", "1.12.2"),
+        MapChain chain = MapChain.of(List.of("1.7.10", "1.12.2"),
                 v -> v.equals("1.7.10") ? t : table("1.12.2", srg2, methods2, FIELDS));
         VersionMap.Diff d = chain.diff;
         check(d.methodMoved.size() == 1 && d.methodMoved.get(0).from().equals("calculateInitialSkylight")

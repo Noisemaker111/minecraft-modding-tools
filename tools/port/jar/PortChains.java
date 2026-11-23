@@ -75,7 +75,7 @@ final class PortChains {
             if (mm.code().isEmpty()) {
                 continue;
             }
-            GameDiff.Decoder d = new GameDiff.Decoder(origin, self);
+            BodyDecoder d = new BodyDecoder(origin, self);
             GameDiff.Body body = d.run(mm);
             if (body == null || !body.whole) {
                 continue;
@@ -104,11 +104,11 @@ final class PortChains {
     }
 
     /** The chains one body makes, by the instruction each edit replaces. */
-    static Map<Integer, Edit> find(GameDiff.Body body, GameDiff.Decoder d, List<Spec> specs, Declarer declarer) {
+    static Map<Integer, Edit> find(GameDiff.Body body, BodyDecoder d, List<Spec> specs, Declarer declarer) {
         return find(body, d, specs, declarer, owner -> null);
     }
 
-    static Map<Integer, Edit> find(GameDiff.Body body, GameDiff.Decoder d, List<Spec> specs, Declarer declarer, java.util.function.Function<String, Boolean> interfaces) {
+    static Map<Integer, Edit> find(GameDiff.Body body, BodyDecoder d, List<Spec> specs, Declarer declarer, java.util.function.Function<String, Boolean> interfaces) {
         Map<GameDiff.Node, List<GameDiff.Node>> parents = new IdentityHashMap<>();
         Set<GameDiff.Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         Deque<GameDiff.Node> todo = new ArrayDeque<>(body.statements);
@@ -202,7 +202,7 @@ final class PortChains {
     }
 
     /** A late chain ending at y: X found through Y's receiver, Y's argument movable to where X is. */
-    static void late(GameDiff.Node y, Spec s, GameDiff.Decoder d, Map<GameDiff.Node, List<GameDiff.Node>> parents, Map<Integer, Integer> storesTo,
+    static void late(GameDiff.Node y, Spec s, BodyDecoder d, Map<GameDiff.Node, List<GameDiff.Node>> parents, Map<Integer, Integer> storesTo,
         Map<Integer, GameDiff.Node> storeAt, Declarer declarer, java.util.function.Function<String, Boolean> interfaces, Map<Integer, Edit> out) {
         if (y.op != 'v' || y.kids.length != 2 || out.containsKey(y.at) || !y.ref.name().equals(s.yName()) || !y.ref.desc().equals(s.yDesc())
             || !s.yOwner().equals(declarer.declaring(y.ref.owner(), 'm', y.ref.name(), y.ref.desc()))) {
@@ -284,7 +284,7 @@ final class PortChains {
     }
 
     /** Nothing jumps into the run after `from`, up to and with `to`, and nothing in it jumps out. */
-    static boolean straight(GameDiff.Decoder d, int from, int to) {
+    static boolean straight(BodyDecoder d, int from, int to) {
         for (int i = from + 1; i <= to; i++) {
             if (d.starts.contains(i)) {
                 return false;
