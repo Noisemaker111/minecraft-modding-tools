@@ -5035,7 +5035,11 @@ public final class JarPort {
                 { why(key, before == null ? "O2-old" : after == null ? "O2-new" : f.changed() == null ? "O2-changed" : ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 ? "O2-static" : "O2-result"); return; }
             }
             Type[] bp = Type.getArgumentTypes(desc(before.desc)), ap = Type.getArgumentTypes(after.desc);
-            if (inj.kind().endsWith("/ModifyVariable;") && !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray())) {
+            // A @ModifyVariable without an index finds its variable by type and ordinal, which other parameters' sizes do
+            // not move; only one whose type the update added to or took from the parameters may find another one.
+            Type variable = Type.getReturnType(desc(handler.desc));
+            boolean byType = inj.ordinal()[1] < 0 && Arrays.stream(bp).filter(variable::equals).count() == Arrays.stream(ap).filter(variable::equals).count();
+            if (inj.kind().endsWith("/ModifyVariable;") && !byType && !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray())) {
                 { why(key, "O3 a local named by its slot would be another one"); return; } // a local named by its slot would be another one
             }
             for (int n = Math.min(hp.length, bp.length); n >= 1; n--) {
@@ -5120,7 +5124,7 @@ public final class JarPort {
                 continue;
             }
             for (int i = 1; i < v.length; i++) {
-                if (v[i].startsWith("x:") || v[i].startsWith("k:")) {
+                if (v[i].startsWith("x:") || v[i].startsWith("k:") || v[i].startsWith("o:") || v[i].startsWith("s:")) {
                     continue;
                 }
                 String[] st = Retype.step(v[i]);
@@ -7156,11 +7160,17 @@ public final class JarPort {
         boolean stepsLink(String reading) {
             String[] parts = reading.split(" ");
             for (int s = 1; s < parts.length; s++) {
-                if (parts[s].startsWith("x:") || parts[s].startsWith("k:")) {
+                if (parts[s].startsWith("x:") || parts[s].startsWith("k:") || parts[s].startsWith("o:")) {
                     continue;
                 }
                 String[] step = step(parts[s]);
-                if (step[0].equals("m")) {
+                if (step[0].equals("s")) {
+                    GameDiff.Meth m = b.method(step[1], step[2], step[3]);
+                    if (m == null || (m.flags & Opcodes.ACC_PUBLIC) == 0 || (m.flags & Opcodes.ACC_STATIC) == 0
+                        || (b.classes.get(step[1]).flags & Opcodes.ACC_PUBLIC) == 0) {
+                        return false;
+                    }
+                } else if (step[0].equals("m")) {
                     GameDiff.Meth m = b.method(step[1], step[2], step[3]);
                     if (m == null || (m.flags & Opcodes.ACC_PUBLIC) == 0 || (m.flags & Opcodes.ACC_STATIC) != 0) {
                         return false;
@@ -7177,11 +7187,12 @@ public final class JarPort {
 
         /** {kind, owner, name, desc} of one step. */
         static String[] step(String text) {
-            int dot = text.lastIndexOf('.', text.indexOf(text.charAt(0) == 'm' ? '(' : ':', 2));
+            boolean call = text.charAt(0) == 'm' || text.charAt(0) == 's';
+            int dot = text.lastIndexOf('.', text.indexOf(call ? '(' : ':', 2));
             String owner = text.substring(2, dot), rest = text.substring(dot + 1);
-            if (text.charAt(0) == 'm') {
+            if (call) {
                 int p = rest.indexOf('(');
-                return new String[] { "m", owner, rest.substring(0, p), rest.substring(p) };
+                return new String[] { text.substring(0, 1), owner, rest.substring(0, p), rest.substring(p) };
             }
             int colon = rest.indexOf(':');
             return new String[] { "f", owner, rest.substring(0, colon), rest.substring(colon + 1) };
@@ -7394,7 +7405,10 @@ public final class JarPort {
                     GameDiff.Node arg = old.kids[receiver(old) + i];
                     int q = arg.op == 'p' && arg.value instanceof Integer s ? indexOf(cslots, s) : -1;
                     if (q < 0) {
-                        continue; // a value worked out in the caller says nothing of the parameter as it was
+                        // The caller worked the old value out of something it now passes as it is (1.21.2's glyphs took
+                        // red, green, blue and alpha that Font read out of the colour it now passes): the same steps.
+                        vote(votes, derived(arg, fresh2, cwas, cnow, cfirst, want));
+                        continue;
                     }
                     String sub = followed(cdecl.name, cn, cd, q, depth + 1);
                     if (sub.isEmpty() || sub.equals(CONFLICT)) {
@@ -7418,6 +7432,87 @@ public final class JarPort {
                     }
                 }
             }
+        }
+
+        /**
+         * An old argument (arg) worked out, through primitive conversions, arithmetic with a constant and static calls
+         * whose other arguments are constants, from a value the new call (now) passes as one of its arguments: "j steps"
+         * for that argument j, the steps in the order the value goes through them; "" when there is none, or the value
+         * is a constant (a constant passed in both says nothing of which parameter it is).
+         */
+        String derived(GameDiff.Node arg, GameDiff.Node now, Type[] cwas, Type[] cnow, int cfirst, String want) {
+            Map<Integer, Integer> same = new HashMap<>();
+            if (cfirst == 1) {
+                same.put(0, 0);
+            }
+            int[] paired = pair(cnow, Arrays.stream(cwas).map(t -> Type.getType(desc(t.getDescriptor()))).toArray(Type[]::new));
+            int[] oldAt = slots(cwas, cfirst), newAt = slots(cnow, cfirst);
+            for (int k = 0; k < cwas.length; k++) {
+                if (paired[k] >= 0) {
+                    same.put(oldAt[k], newAt[paired[k]]);
+                }
+            }
+            Lining equal = new Lining(Map.of(), same);
+            List<List<String>> levels = new ArrayList<>(); // outermost first
+            GameDiff.Node n = arg;
+            for (int depth = 0; depth < 8 && n != null; depth++) {
+                if (!constant(n)) {
+                    int found = -1;
+                    for (int j = receiver(now); j < now.kids.length; j++) {
+                        equal.budget = 20_000;
+                        if (now.kids[j].type.equals(desc(n.type)) && equal.match(n, now.kids[j], new IdentityHashMap<>())) {
+                            found = found == -1 ? j - receiver(now) : -2;
+                        }
+                    }
+                    if (found >= 0) {
+                        List<String> steps = new ArrayList<>();
+                        for (int l = levels.size() - 1; l >= 0; l--) {
+                            steps.addAll(levels.get(l));
+                        }
+                        return arg.type.equals(want) || desc(arg.type).equals(want) ? (found + (steps.isEmpty() ? "" : " " + String.join(" ", steps))) : "";
+                    }
+                }
+                if (n.op == 'x' && n.kids.length == 1 && CONVERT.containsKey(n.kids[0].type + n.type)) {
+                    levels.add(List.of("x:" + n.kids[0].type + n.type));
+                    n = n.kids[0];
+                } else if (n.op == 'o' && n.kids.length == 2 && n.kids[1].op == 'k' && n.kids[1].value != null && ARITHMETIC.contains(String.valueOf(n.value))) {
+                    levels.add(List.of("o:" + java.lang.classfile.Opcode.valueOf((String) n.value).bytecode() + ":" + n.kids[1].type + ":" + n.kids[1].value));
+                    n = n.kids[0];
+                } else if (n.op == 's' && n.kids.length >= 1 && n.ref != null && Arrays.stream(n.kids, 1, n.kids.length).allMatch(k -> k.op == 'k' && k.value != null)) {
+                    GameDiff.Cls decl = Exposure.declaring(a, n.ref.owner(), 'm', n.ref.name(), n.ref.desc());
+                    String[] moved = route.method(decl == null ? n.ref.owner() : decl.name, n.ref.name(), n.ref.desc());
+                    List<String> level = new ArrayList<>();
+                    for (int k = 1; k < n.kids.length; k++) {
+                        level.add("k:" + n.kids[k].type + ":" + n.kids[k].value);
+                    }
+                    level.add("s:" + declarer(moved[0], moved[1], moved[2]) + "." + moved[1] + moved[2]);
+                    levels.add(level);
+                    n = n.kids[0];
+                } else {
+                    return "";
+                }
+            }
+            return "";
+        }
+
+        /** Operations on a value and a constant that the steps can write again (the value first, then the constant). */
+        static final Set<String> ARITHMETIC = Set.of("IADD", "ISUB", "IMUL", "IDIV", "IREM", "ISHL", "ISHR", "IUSHR", "IAND", "IOR", "IXOR",
+            "LADD", "LSUB", "LMUL", "LDIV", "LSHL", "LSHR", "LUSHR", "LAND", "LOR", "LXOR", "FADD", "FSUB", "FMUL", "FDIV", "DADD", "DSUB", "DMUL", "DDIV");
+
+        /** Whether a tree is made of constants alone. */
+        static boolean constant(GameDiff.Node n) {
+            if (n.op == 'p' || n.op == 'f' || n.op == 'g' || n.op == 'v' || n.op == 'l' || n.op == 'S') {
+                return false;
+            }
+            if (n.op != 'k' && n.op != 'n' && n.op != 'x' && n.op != 'o' && n.op != 's') {
+                return false;
+            }
+            for (GameDiff.Node k : n.kids) {
+                if (!constant(k)) {
+                    return false;
+                }
+            }
+            return n.op != 'o' || !"phi".equals(n.value);
         }
 
         static void vote(Map<String, Integer> votes, String reading) {
@@ -8609,9 +8704,25 @@ public final class JarPort {
                 });
                 continue;
             }
+            if (text.startsWith("o:")) {
+                // An operation with a constant: o:OPCODE:type:value (the value on the stack, then the constant).
+                String[] o = text.split(":", 4);
+                mv.visitLdcInsn(switch (o[2]) {
+                    case "J" -> (Object) Long.valueOf(o[3]);
+                    case "F" -> Float.valueOf(o[3]);
+                    case "D" -> Double.valueOf(o[3]);
+                    default -> Integer.valueOf(o[3]);
+                });
+                mv.visitInsn(Integer.parseInt(o[1]));
+                continue;
+            }
             String[] s = Retype.step(text);
             String owner = inverse.getOrDefault(s[1], s[1]);
-            if (s[0].equals("m")) {
+            if (s[0].equals("s")) {
+                GameDiff.Cls holder = b.classes.get(s[1]);
+                boolean itf = holder != null && (holder.flags & Opcodes.ACC_INTERFACE) != 0;
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, s[2], oldDesc(s[3]), itf);
+            } else if (s[0].equals("m")) {
                 GameDiff.Cls holder = b.classes.get(s[1]);
                 boolean itf = holder != null && (holder.flags & Opcodes.ACC_INTERFACE) != 0;
                 mv.visitMethodInsn(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, owner, s[2], oldDesc(s[3]), itf);
