@@ -92,7 +92,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import port_tools  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = port_tools.ROOT
 # Gigabytes of heap GameDiff and Exposure may grow to. They hold two releases (a map's chain, read one after another),
 # whatever the mods: about 1.4 GB live, 2.4 GB taken, measured on a 6-release chain and on 147 mods' references.
 # JarPort's heap is sized to the jars it ports (jar_ports), not this.
