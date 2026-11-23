@@ -477,7 +477,12 @@ public final class JarPort {
             }
             now.classes.keySet().retainAll(read);
             Exposure.forget(stops.get(i));
-            GameCode.READ.remove(stops.get(i));
+            Object[] gone = GameCode.READ.remove(stops.get(i));
+            if (gone != null) {
+                synchronized (GameCode.CALLERS) {
+                    GameCode.CALLERS.remove(gone[0]);
+                }
+            }
             was = now;
         }
         reader.shutdown();
@@ -6596,6 +6601,11 @@ public final class JarPort {
                 return null;
             }
             if (callers == null) {
+                synchronized (CALLERS) {
+                    callers = CALLERS.get(all);
+                }
+            }
+            if (callers == null) {
                 Map<String, Set<String>> index = new HashMap<>();
                 for (var e : all.entrySet()) {
                     String jarOwner = e.getKey();
@@ -6628,9 +6638,15 @@ public final class JarPort {
                     }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
                 }
                 callers = index;
+                synchronized (CALLERS) {
+                    CALLERS.put(all, index);
+                }
             }
             return callers.getOrDefault(owner + "." + name + desc, Set.of());
         }
+
+        /** Each release's callers index, by the classes it was read from: every worker's porter reads the same release. */
+        static final Map<Map<String, byte[]>, Map<String, Set<String>>> CALLERS = new IdentityHashMap<>();
 
         /**
          * What a game method's new code has where its old code had an injection point. game says what the game did:
@@ -6780,10 +6796,10 @@ public final class JarPort {
                 }
             }
             if (kind == 'm') {
-                for (String[] x : gap) {
-                    if (x[0].equals("m") && x[1].equals(point[1]) && x[3].equals(point[3]) && !x[2].equals(point[2])) {
-                        return found(now, x, "renamed", 'm');
-                    }
+                // The one call in its place of another method of the class with its signature.
+                List<String[]> like = gap.stream().filter(x -> x[0].equals("m") && x[1].equals(point[1]) && x[3].equals(point[3]) && !x[2].equals(point[2])).toList();
+                if (like.size() == 1) {
+                    return found(now, like.get(0), "renamed", 'm');
                 }
             }
             return new Slot("dropped", gap.isEmpty() ? "nothing in its place" : gap.size() + " other instructions in its place", null, -1);
