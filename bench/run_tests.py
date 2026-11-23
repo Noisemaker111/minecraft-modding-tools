@@ -16,12 +16,13 @@ The self-test runs from the packaged jar, as users get it, not from the checkout
 so a child's non-ASCII output is read through a non-UTF-8 console; Windows gives cp1252. No game, no network
 beyond Gradle's own downloads. Each check prints its time; the run exits 1 when any check failed.
 
-The checks run side by side, as many at once as the machine has cores: package first, alone, then every other check at
-once. Each check prints its block whole when it
-finishes. Checks that run mmt on the demo mod each get their own copy of it (two mmt commands on one project refuse each
-other, and port-plan edits its build.gradle), and every check keeps its own scratch folder.
+package runs first, alone; then the other checks run side by side, with no more commands at once than the machine has
+cores, and each prints its block whole when it finishes. The checks that build with Gradle share one lane and one warm
+daemon (GRADLE). The demo mod is copied for the checks that run mmt on it, so two lanes never share one, and every check
+keeps its own scratch folder.
 """
 import argparse
+import heapq
 import json
 import os
 import shutil
@@ -39,7 +40,7 @@ ZIP = "build/distributions/mmt-portable.zip"
 FIXTURE = "fixtures/prism-lab"  # Prism Lab, the demo mod the mod-project checks run on
 WINDOWS = os.name == "nt"
 SEP = ";" if WINDOWS else ":"
-CORES = os.cpu_count() or 1
+CORES = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
 
 # Every bench/**/test_*.py runs in the python check, except one another check runs with arguments.
 PYTHON = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "bench").rglob("test_*.py") if p.name != "test_fingerprint.py")
@@ -57,10 +58,41 @@ class Together(list):
 BUILT = {".gradle", "build", ".mmt", ".runs"}
 
 
-# These checks run mmt on one copy of the demo mod, one after another in this order: they would refuse each other's
-# project lock, and each would set Gradle up cold on a copy of its own (fast 20 s and port-plan 14 s alone on CI became
-# 96 s and 132 s that way). The other checks run beside them.
+# These checks build with Gradle in one lane, one after another in this order, so one warm Gradle daemon serves them;
+# beside each other each starts its own and sets up cold, and on CI's 4 cores fast (20 s alone) took 127 s that way.
+# The first three run mmt on one shared copy of the demo mod: they would refuse each other's project lock.
+# fastlane-isolation, which builds two small projects of its own, is a lane of its own: on 4 cores the whole run takes
+# 68 s that way and 76 s with it in this lane.
+GRADLE = ("fast", "port-plan", "legacy-agent", "runtime-natives")
 SHARED = ("fast", "port-plan", "legacy-agent")
+
+
+class Slots:
+    """No more commands at once than the machine has cores (self-test's suites and Gradle use more on their own). A
+    free slot goes to the waiting command of the earliest-listed lane: the long lanes are listed first, and a short
+    test queued ahead of them would otherwise make the whole run wait (fast waited 29 s behind jar-port's tests)."""
+
+    def __init__(self, count):
+        self.free = count
+        self.waiting = []
+        self.changed = threading.Condition()
+
+    def take(self, rank):
+        with self.changed:
+            ticket = (rank, time.monotonic_ns(), threading.get_ident())
+            heapq.heappush(self.waiting, ticket)
+            self.changed.wait_for(lambda: self.free and self.waiting[0] == ticket)
+            heapq.heappop(self.waiting)
+            self.free -= 1
+            self.changed.notify_all()
+
+    def give(self):
+        with self.changed:
+            self.free += 1
+            self.changed.notify_all()
+
+
+SLOTS = Slots(CORES)
 
 
 def fixture(check):
@@ -228,13 +260,17 @@ def affected(changed, names):
     return picked, None
 
 
-def execute(name, item):
-    """Runs one command; its report line (with the end of its output when it failed) and whether it passed."""
+def execute(name, item, rank):
+    """Runs one command when a slot is free; its report line (with the end of its output when it failed) and whether it passed."""
     command, env = item if isinstance(item, tuple) else (item, {})
-    started = time.monotonic()
-    done = subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
-    took = time.monotonic() - started
+    SLOTS.take(rank)
+    try:
+        started = time.monotonic()
+        done = subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        took = time.monotonic() - started
+    finally:
+        SLOTS.give()
     shown = " ".join(str(c) for c in command)
     if done.returncode:
         return f"FAIL {name} ({took:.0f} s): {shown}\n{done.stdout[-4000:]}{done.stderr[-4000:]}", False
@@ -242,7 +278,7 @@ def execute(name, item):
     return f"ok   {name} ({took:.0f} s): {shown[-90:]}  {last if not last.startswith('{') else ''}", True
 
 
-def run(name, suites=None):
+def run(name, suites=None, rank=0):
     """Runs every command of one check, side by side where they share nothing; its report and whether all passed.
     A failed compile stops the check, since its tests cannot run; a failed test does not stop the next."""
     _, _, commands = CHECKS[name]
@@ -254,9 +290,9 @@ def run(name, suites=None):
         for item in (commands() if callable(commands) else commands):
             if isinstance(item, Together):
                 with ThreadPoolExecutor(CORES) as pool:
-                    results = list(pool.map(lambda one: execute(name, one), item))
+                    results = list(pool.map(lambda one: execute(name, one, rank), item))
             else:
-                results = [execute(name, item)]
+                results = [execute(name, item, rank)]
             lines += [line for line, _ in results]
             if not all(ok for _, ok in results):
                 passed = False
@@ -274,8 +310,8 @@ def run_all(names, suites):
     printing = threading.Lock()
     failed = []
 
-    def one(name):
-        report, passed = run(name, suites)
+    def one(name, rank=0):
+        report, passed = run(name, suites, rank)
         with printing:
             print(report, flush=True)
             if not passed:
@@ -290,11 +326,11 @@ def run_all(names, suites):
             print(f"FAIL not run, as package failed: {', '.join(jar)}", flush=True)
             failed.extend(jar)
         rest = [n for n in rest if n not in jar]
-    # Each lane runs its checks in order; the SHARED checks are one lane, started where the first of them is listed.
-    shared = [n for n in SHARED if n in rest]
-    lanes = [shared if shared and n == shared[0] else [n] for n in rest if n not in shared[1:]]
-    with ThreadPoolExecutor(CORES) as pool:
-        list(pool.map(lambda lane: [one(n) for n in lane], lanes))
+    # Each lane runs its checks in order: the GRADLE checks are one lane, started where the first of them is listed.
+    gradle = [n for n in GRADLE if n in rest]
+    lanes = [gradle if gradle and n == gradle[0] else [n] for n in rest if n not in gradle[1:]]
+    with ThreadPoolExecutor(len(lanes) or 1) as pool:
+        list(pool.map(lambda rank: [one(n, rank) for n in lanes[rank]], range(len(lanes))))
     return [n for n in names if n in failed]
 
 

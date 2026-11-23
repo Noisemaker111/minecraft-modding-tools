@@ -3,8 +3,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -23,19 +21,6 @@ public final class FastLaneIsolationTest {
         if (!Files.isRegularFile(jar)) throw new IOException("Missing package: " + jar);
         Path runs = home.resolve(".runs");
         Files.createDirectories(runs);
-        // The two projects share nothing, so they run side by side.
-        CompletableFuture<Void> plain = CompletableFuture.runAsync(() -> {
-            try {
-                plain(home, jar, runs);
-            } catch (Exception e) {
-                throw new CompletionException(e);
-            }
-        });
-        isolation(home, jar, runs);
-        plain.join();
-    }
-
-    static void isolation(Path home, Path jar, Path runs) throws Exception {
         Path root = Files.createTempDirectory(runs, "fastlane-isolation-");
         Path wrapper = root.resolve("gradle/wrapper");
         Files.createDirectories(wrapper);
@@ -77,6 +62,7 @@ public final class FastLaneIsolationTest {
         Files.writeString(b, test("fromB", true));
         require(run(home, jar, root), 0, 2, 0, "restored module B");
         System.out.println("PASS FastLane module isolation; fixture " + root);
+        plain(home, jar, runs);
     }
 
     /** No Minecraft on the test classpath: untagged tests run on the Gradle and the reuse path; zero tests is explained. */
