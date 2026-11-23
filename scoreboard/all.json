@@ -1,50 +1,50 @@
 {
- "commit": "9c3b8d1c55e12993a277fda083cc8e00487af227",
- "run": "https://github.com/Noisemaker111/minecraft-modding-tools/actions/runs/45114807196",
+ "commit": "93080c5afabcdb83728cf6fb1e13822aff02de46",
+ "run": "https://github.com/Noisemaker111/minecraft-modding-tools/actions/runs/45124698184",
  "date": "2026-11-23",
  "total": {
   "mods": 9423,
-  "link": 6627,
+  "link": 6680,
   "big": {
    "updates": 35,
    "mods": 5149,
-   "link": 2468
+   "link": 2517
   },
   "small": {
    "updates": 29,
    "mods": 4274,
-   "link": 4159
+   "link": 4163
   },
   "jumps": {
    "jumps": 23,
    "mods": 3384,
-   "link": 1505
+   "link": 1532
   },
   "newest": {
    "jumps": 2,
    "mods": 294,
-   "link": 22
+   "link": 23
   },
   "data": {
    "updates": 64,
-   "link": 6627,
-   "linkAndData": 6609
+   "link": 6680,
+   "linkAndData": 6662
   },
   "loader": {
-   "uses": 4262,
-   "modsHeldOnlyByLoader": 100
+   "uses": 4254,
+   "modsHeldOnlyByLoader": 102
   }
  },
  "loaders": {
   "fabric": {
    "updates": 43,
    "mods": 6324,
-   "link": 4573
+   "link": 4605
   },
   "neoforge": {
    "updates": 21,
    "mods": 3099,
-   "link": 2054
+   "link": 2075
   }
  },
  "missing": [],
@@ -54,9 +54,9 @@
    "from": "1.14.4",
    "to": "1.15",
    "modsRead": 147,
-   "modsThatLink": 102,
-   "modsThatLinkAndData": 102,
-   "brokenUses": 562,
+   "modsThatLink": 103,
+   "modsThatLinkAndData": 103,
+   "brokenUses": 559,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -113,6 +113,7 @@
     "infinity-with-mending--infwithmend-1.0.2.jar",
     "inventory-profiles-next--InventoryProfilesNext-fabric-1.14-1.8.6.jar",
     "iris-shader-folder--iris_shader_folder-1.2.5-fabric.jar",
+    "item-scroller--itemscroller-fabric-1.14.4-0.15.0-dev.20190909.151706.jar",
     "keybind-fix-plus--keybindfixplus-2.0.0.jar",
     "konfig--konfig-fabric-0.6.1+1.14.4.jar",
     "ksyxis--Ksyxis-1.4.6.jar",
@@ -491,7 +492,7 @@
    "modsRead": 147,
    "modsThatLink": 74,
    "modsThatLinkAndData": 74,
-   "brokenUses": 949,
+   "brokenUses": 948,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -738,7 +739,7 @@
    "modsRead": 148,
    "modsThatLink": 132,
    "modsThatLinkAndData": 132,
-   "brokenUses": 173,
+   "brokenUses": 170,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -1358,7 +1359,7 @@
    "modsRead": 146,
    "modsThatLink": 59,
    "modsThatLinkAndData": 59,
-   "brokenUses": 928,
+   "brokenUses": 924,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -1586,9 +1587,9 @@
    "from": "1.17.1",
    "to": "1.18",
    "modsRead": 147,
-   "modsThatLink": 116,
-   "modsThatLinkAndData": 116,
-   "brokenUses": 416,
+   "modsThatLink": 118,
+   "modsThatLinkAndData": 118,
+   "brokenUses": 412,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -1608,6 +1609,7 @@
     "boat-item-view--Boat-Item-View-Fabric-1.17-0.0.2.jar",
     "bookshelf-lib--Bookshelf-Fabric-1.17.1-11.0.3.jar",
     "borderless-mining--borderless-mining-1.1.1+1.17.jar",
+    "bountiful--BountifulFabric-1.0.0.jar",
     "bridging-mod--SurvivalBuildingToolkit-1.17.1-1.0.0.jar",
     "caelus--caelus-fabric-0.0.18-1.17.1.jar",
     "cameraoverhaul--CameraOverhaul-v2.1.2-fabric+mc[1.17-1.17.1].jar",
@@ -1699,6 +1701,7 @@
     "swingthrough--swingthrough-1.0.6+1.20.jar",
     "tool-stats--ToolStats-fabric-1.17.1-2.0.1.jar",
     "tooltipfix--tooltipfix-1.0.4-1.17.1.jar",
+    "travelersbackpack--travelers-backpack-1.17.1-6.0.38.jar",
     "ukulib--ukulib-0.4.0+1.17.1.jar",
     "unilib--UniLib-1.2.0+1.17.1-fabric.jar",
     "vein-mining--veinmining-fabric-0.0.11-1.17.1.jar",
@@ -2011,9 +2014,9 @@
    "from": "1.18.2",
    "to": "1.19",
    "modsRead": 147,
-   "modsThatLink": 68,
-   "modsThatLinkAndData": 66,
-   "brokenUses": 760,
+   "modsThatLink": 69,
+   "modsThatLinkAndData": 67,
+   "brokenUses": 758,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -2023,6 +2026,7 @@
     "better-advancements--BetterAdvancements-Fabric-1.18.2-0.2.0.146.jar",
     "better-mount-hud--bettermounthud-1.1.4.jar",
     "capes--Capes-1.3.1+1.18.2.jar",
+    "cherished-worlds--cherishedworlds-fabric-2.0.2-1.18.jar",
     "chipped--chipped-fabric-1.18.2-2.0.1.jar",
     "cit-resewn--CITResewn-1.1.1+1.18.2.jar",
     "cloth-config--cloth-config-6.5.102-fabric.jar",
@@ -2091,9 +2095,9 @@
    "from": "1.19",
    "to": "1.19.1",
    "modsRead": 147,
-   "modsThatLink": 133,
-   "modsThatLinkAndData": 133,
-   "brokenUses": 50,
+   "modsThatLink": 135,
+   "modsThatLinkAndData": 135,
+   "brokenUses": 48,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -2107,6 +2111,7 @@
     "balm--balm-fabric-1.19.2-4.6.0.jar",
     "better-combat--bettercombat-fabric-1.7.1+1.19.jar",
     "better-mount-hud--bettermounthud-1.1.4.jar",
+    "better-stats--betterstats-1.4.2.jar",
     "betterend--better-end-2.1.7.jar",
     "betterf3--BetterF3-4.0.1-Fabric-1.19.2.jar",
     "bisect-mod--BHMenu-Fabric-1.19.2-2.4.2.jar",
@@ -2163,6 +2168,7 @@
     "iris--iris-mc1.19.2-1.6.11.jar",
     "item-highlighter--Highlighter-1.19.1-fabric-1.1.4.jar",
     "jamlib--jamlib-0.6.1+1.19-1.19.2.jar",
+    "jei--jei-1.19-fabric-11.1.1.239.jar",
     "justenoughcharacters--jecharacters-1.21.1-fabric-4.5.27.jar",
     "konkrete--konkrete_fabric_1.6.1_MC_1.19.jar",
     "lambdynamiclights--lambdynamiclights-2.2.0+1.19.2.jar",
@@ -2397,9 +2403,9 @@
    "from": "1.19.2",
    "to": "1.19.3",
    "modsRead": 147,
-   "modsThatLink": 50,
-   "modsThatLinkAndData": 50,
-   "brokenUses": 1055,
+   "modsThatLink": 51,
+   "modsThatLinkAndData": 51,
+   "brokenUses": 1054,
    "loaderUses": 86,
    "modsHeldOnlyByLoader": 1,
    "links": [
@@ -2435,6 +2441,7 @@
     "mixintrace--mixintrace-1.1.1+1.17.jar",
     "morechathistory--morechathistory-1.3.0.jar",
     "mouse-tweaks--MouseTweaks-fabric-mc1.19-2.22.jar",
+    "mru--mru-0.1.5+1.19.2.jar",
     "netherportalfix--netherportalfix-fabric-1.19-10.0.2.jar",
     "optigui--optigui-2.1.7.jar",
     "packet-fixer--packetfixer-3.3.2-1.18-1.20.4-merged.jar",
@@ -2461,14 +2468,15 @@
    "from": "1.19.3",
    "to": "1.19.4",
    "modsRead": 147,
-   "modsThatLink": 84,
-   "modsThatLinkAndData": 84,
-   "brokenUses": 296,
+   "modsThatLink": 86,
+   "modsThatLinkAndData": 86,
+   "brokenUses": 273,
    "loaderUses": 8,
    "modsHeldOnlyByLoader": 1,
    "links": [
     "3dskinlayers--skinlayers3d-fabric-1.7.4-mc1.19.3.jar",
     "advancement-plaques--AdvancementPlaques-1.19.3-fabric-1.4.8.jar",
+    "ambientsounds--AmbientSounds_FABRIC_v5.2.17_mc1.19.3.jar",
     "animatica--animatica-0.5+1.19.jar",
     "attributefix--AttributeFix-Fabric-1.19.3-18.0.2.jar",
     "better-advancements--BetterAdvancements-Fabric-1.19.3-0.3.1.153.jar",
@@ -2507,6 +2515,7 @@
     "handcrafted--handcrafted-fabric-1.19.3-2.1.1.jar",
     "indium--indium-1.0.14+mc1.19.3.jar",
     "kiwi--Kiwi-1.19.3-fabric-9.2.0.jar",
+    "krypton--krypton-0.2.1.jar",
     "lmd--letmedespawn-fabric-1.3.2b.jar",
     "main-menu-credits--main-menu-credits-1.1.1.jar",
     "midnightlib--midnightlib-fabric-1.1.0.jar",
@@ -2798,7 +2807,7 @@
    "modsRead": 147,
    "modsThatLink": 55,
    "modsThatLinkAndData": 55,
-   "brokenUses": 820,
+   "brokenUses": 799,
    "loaderUses": 32,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -2865,9 +2874,9 @@
    "from": "1.20.2",
    "to": "1.20.3",
    "modsRead": 147,
-   "modsThatLink": 106,
-   "modsThatLinkAndData": 106,
-   "brokenUses": 141,
+   "modsThatLink": 107,
+   "modsThatLinkAndData": 107,
+   "brokenUses": 133,
    "loaderUses": 4,
    "modsHeldOnlyByLoader": 1,
    "links": [
@@ -2950,6 +2959,7 @@
     "not-enough-animations--notenoughanimations-fabric-1.12.7-mc1.20.2.jar",
     "optigui--optigui-2.3.0-beta.9+1.20.2.jar",
     "packet-fixer--packetfixer-3.3.2-1.18-1.20.4-merged.jar",
+    "paginatedadvancements--paginatedadvancements-2.4.2.jar",
     "particle-core--particle_core-0.1.2+1.20.jar",
     "particle-rain--particle-rain-2.1.5.jar",
     "polymorph--polymorph-fabric-0.50.0+1.20.2.jar",
@@ -3145,17 +3155,19 @@
    "from": "1.20.4",
    "to": "1.20.5",
    "modsRead": 147,
-   "modsThatLink": 39,
-   "modsThatLinkAndData": 38,
-   "brokenUses": 1446,
+   "modsThatLink": 45,
+   "modsThatLinkAndData": 44,
+   "brokenUses": 1332,
    "loaderUses": 410,
-   "modsHeldOnlyByLoader": 3,
+   "modsHeldOnlyByLoader": 5,
    "links": [
+    "almanac--almanac-1.20.x-fabric-1.0.2.jar",
     "animatica--animatica-0.6.1+1.20.4.jar",
     "athena-ctm--athena-fabric-1.20.4-3.3.2.jar",
     "attributefix--AttributeFix-Fabric-1.20.4-24.0.2.jar",
     "better-advancements--BetterAdvancements-Fabric-1.20.4-0.4.2.8.jar",
     "better-mount-hud--bettermounthud-1.2.2.jar",
+    "better-stats--betterstats-3.12.6+fabric-1.20.4.jar",
     "better-third-person--BetterThirdPerson-Fabric-1.20-1.9.0.jar",
     "cherished-worlds--cherishedworlds-fabric-8.0.1+1.20.4.jar",
     "cloth-config--cloth-config-13.0.138-fabric.jar",
@@ -3173,6 +3185,9 @@
     "fastquit--fastquit-3.0.0+1.20.4.jar",
     "indium--indium-1.0.31+mc1.20.4.jar",
     "konkrete--konkrete_fabric_1.9.2_MC_1.20.4.jar",
+    "lambdynamiclights--lambdynamiclights-2.3.4+1.20.4.jar",
+    "lmd--letmedespawn-1.20.x-fabric-1.5.0.jar",
+    "melody--melody_fabric_1.0.4_MC_1.20.1-1.20.4.jar",
     "memoryleakfix--memoryleakfix-fabric-1.17+-1.1.5.jar",
     "modelfix--modelfix-1.14-fabric.jar",
     "mouse-tweaks--MouseTweaks-fabric-mc1.20-2.26.jar",
@@ -3187,6 +3202,7 @@
     "sound-physics-remastered--sound-physics-remastered-fabric-1.20.4-1.4.5.jar",
     "spark--spark-1.10.58-fabric.jar",
     "terrablender--TerraBlender-fabric-1.20.4-3.3.0.12.jar",
+    "visuality--visuality-0.7.4+1.20.4.jar",
     "yosbr--yosbr-0.1.2.jar",
     "zoomify--zoomify-2.15.2+1.20.4.jar"
    ],
@@ -3359,9 +3375,9 @@
    "from": "1.20.6",
    "to": "1.21",
    "modsRead": 147,
-   "modsThatLink": 68,
-   "modsThatLinkAndData": 67,
-   "brokenUses": 619,
+   "modsThatLink": 69,
+   "modsThatLinkAndData": 68,
+   "brokenUses": 609,
    "loaderUses": 21,
    "modsHeldOnlyByLoader": 2,
    "links": [
@@ -3392,6 +3408,7 @@
     "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.20.6-fabric.jar",
     "fastquit--fastquit-3.0.0+1.20.6.jar",
     "forge-config-api-port--ForgeConfigAPIPort-v20.6.1-1.20.6-Fabric.jar",
+    "fzzy-config--fzzy_config-0.5.9+1.20.6.jar",
     "i18nupdatemod--I18nUpdateMod-3.8.0-all.jar",
     "indium--indium-1.0.36+mc1.20.1.jar",
     "item-highlighter--Highlighter-1.20.6-fabric-1.1.10.jar",
@@ -3820,9 +3837,9 @@
    "from": "1.21.3",
    "to": "1.21.4",
    "modsRead": 147,
-   "modsThatLink": 86,
-   "modsThatLinkAndData": 86,
-   "brokenUses": 486,
+   "modsThatLink": 88,
+   "modsThatLinkAndData": 88,
+   "brokenUses": 483,
    "loaderUses": 133,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -3874,6 +3891,7 @@
     "main-menu-credits--main-menu-credits-1.2.0.jar",
     "midnightlib--midnightlib-fabric-1.6.4+1.21.3.jar",
     "modelfix--modelfix-1.21.3-1.10-fabric.jar",
+    "modmenu--modmenu-12.0.1.jar",
     "morechathistory--morechathistory-1.3.1.jar",
     "mouse-tweaks--MouseTweaks-fabric-mc1.21.3-2.27.jar",
     "mru--mru-1.0.17+1.21.5+fabric.jar",
@@ -3889,6 +3907,7 @@
     "replaymod--replaymod-1.21.2-2.6.23.jar",
     "resourceful-config--resourcefulconfig-fabric-1.21.3-3.3.4.jar",
     "rhino--rhino-2101.2.7-build.85.jar",
+    "searchables--Searchables-fabric-1.21.3-1.0.1.jar",
     "servercore--servercore-fabric-1.5.8+1.21.3.jar",
     "shulkerboxtooltip--shulkerboxtooltip-fabric-5.2.6+1.21.3.jar",
     "simple-voice-chat--voicechat-fabric-1.21.3-2.5.31.jar",
@@ -3920,9 +3939,9 @@
    "from": "1.21.4",
    "to": "1.21.5",
    "modsRead": 147,
-   "modsThatLink": 64,
-   "modsThatLinkAndData": 64,
-   "brokenUses": 1720,
+   "modsThatLink": 65,
+   "modsThatLinkAndData": 65,
+   "brokenUses": 1716,
    "loaderUses": 75,
    "modsHeldOnlyByLoader": 1,
    "links": [
@@ -3973,6 +3992,7 @@
     "reeses-sodium-options--reeses-sodium-options-fabric-1.8.3+mc1.21.4.jar",
     "rhino--rhino-2101.2.7-build.85.jar",
     "searchables--Searchables-fabric-1.21.4-1.0.5.jar",
+    "sodium-options-api--sodiumoptionsapi-fabric-1.0.10-1.21.4.jar",
     "sound--sounds-2.4.12+1.21.4+fabric.jar",
     "spark--spark-1.10.121-fabric.jar",
     "supermartijn642s-config-lib--supermartijn642configlib-1.1.8-fabric-mc1.21.jar",
@@ -3998,9 +4018,9 @@
    "from": "1.21.5",
    "to": "1.21.6",
    "modsRead": 147,
-   "modsThatLink": 56,
-   "modsThatLinkAndData": 56,
-   "brokenUses": 1006,
+   "modsThatLink": 57,
+   "modsThatLinkAndData": 57,
+   "brokenUses": 980,
    "loaderUses": 156,
    "modsHeldOnlyByLoader": 3,
    "links": [
@@ -4051,6 +4071,7 @@
     "searchables--Searchables-fabric-1.21.5-1.0.3.jar",
     "sodium-options-api--sodiumoptionsapi-fabric-1.0.11-1.21.5.jar",
     "sodium-shadowy-path-blocks--sodium-shadowy-path-blocks-fabric-5.0.1.jar",
+    "spark--spark-1.10.138-fabric.jar",
     "supermartijn642s-config-lib--supermartijn642configlib-1.1.8-fabric-mc1.21.jar",
     "terrablender--TerraBlender-fabric-1.21.5-5.0.0.1.jar",
     "terralith--Terralith_1.21.x_v2.5.13.jar",
@@ -4389,9 +4410,9 @@
    "from": "1.21.8",
    "to": "1.21.9",
    "modsRead": 147,
-   "modsThatLink": 58,
-   "modsThatLinkAndData": 58,
-   "brokenUses": 1194,
+   "modsThatLink": 59,
+   "modsThatLinkAndData": 59,
+   "brokenUses": 1182,
    "loaderUses": 109,
    "modsHeldOnlyByLoader": 5,
    "links": [
@@ -4432,6 +4453,7 @@
     "mru--mru-1.0.22+edge+1.21.8+fabric.jar",
     "natures-compass--NaturesCompass-1.21.8-2.2.9-fabric.jar",
     "netherportalfix--netherportalfix-fabric-1.21.8-21.8.1.jar",
+    "no-chat-reports--NoChatReports-FABRIC-1.21.8-v2.15.0.jar",
     "optigui--optigui-2.3.0-beta.9+1.21.6.jar",
     "packet-fixer--packetfixer-3.3.1-1.20.5-1.21.X-merged.jar",
     "paginatedadvancements--paginatedadvancements-2.7.0+1.21.8.jar",
@@ -4622,13 +4644,15 @@
    "from": "1.21.10",
    "to": "1.21.11",
    "modsRead": 147,
-   "modsThatLink": 58,
-   "modsThatLinkAndData": 58,
-   "brokenUses": 984,
+   "modsThatLink": 64,
+   "modsThatLinkAndData": 64,
+   "brokenUses": 928,
    "loaderUses": 27,
    "modsHeldOnlyByLoader": 1,
    "links": [
+    "almanac--Almanac-1.21.9-x-fabric-1.5.0.jar",
     "ambientsounds--AmbientSounds_FABRIC_v6.3.1_mc1.21.10.jar",
+    "appleskin--appleskin-fabric-mc1.21.9-3.0.7.jar",
     "attributefix--attributefix-fabric-1.21.10-21.10.2.jar",
     "better-advancements--BetterAdvancements-Fabric-1.21.10-0.4.7.50.jar",
     "better-mount-hud--bettermounthud-1.2.6.jar",
@@ -4637,6 +4661,7 @@
     "carry-on--carryon-fabric-1.21.9-2.8.0.jar",
     "cherished-worlds--cherishedworlds-fabric-14.0.0+1.21.10.jar",
     "chunky--Chunky-Fabric-1.4.52.jar",
+    "cloth-config--cloth-config-20.0.149-fabric.jar",
     "clumps--Clumps-fabric-1.21.10-28.0.0.1.jar",
     "controlling--Controlling-fabric-1.21.10-28.0.2.jar",
     "cubes-without-borders--cwb-5.0.0+1.21.2.fabric.jar",
@@ -4668,6 +4693,7 @@
     "mru--mru-1.0.25+edge+1.21.10-fabric.jar",
     "natures-compass--NaturesCompass-1.21.10-2.2.9-fabric.jar",
     "netherportalfix--netherportalfix-fabric-1.21.10-21.10.1.jar",
+    "no-chat-reports--NoChatReports-FABRIC-1.21.10-v2.16.0.jar",
     "optigui--optigui-2.3.0-beta.10+1.21.9.jar",
     "packet-fixer--packetfixer-fabric-3.3.5-1.21.11.jar",
     "paginatedadvancements--paginatedadvancements-2.8.0+1.21.9.jar",
@@ -4676,11 +4702,13 @@
     "rhino--rhino-2101.2.7-build.81.jar",
     "searchables--Searchables-fabric-1.21.10-1.0.2.jar",
     "shulkerboxtooltip--shulkerboxtooltip-fabric-5.2.13+1.21.10.jar",
+    "simple-voice-chat--voicechat-fabric-1.21.10-2.6.27.jar",
     "supermartijn642s-config-lib--supermartijn642configlib-1.1.8-fabric-mc1.21.jar",
     "tectonic--tectonic-3.0.17-fabric-1.21.10.jar",
     "terrablender--TerraBlender-fabric-1.21.10-21.10.0.0.jar",
     "terralith--Terralith_1.21.x_v2.5.13.jar",
     "towns-and-towers--t_and_t-fabric-neoforge-1.13.7.jar",
+    "veinminer-enchantment--veinminer-enchant-2.3.0.jar",
     "visual-workbench--VisualWorkbench-v21.10.0+mc1.21.10-Fabric.jar",
     "visuality--visuality-0.7.11+1.21.9.jar",
     "yeetus-experimentus--yeetusexperimentus-fabric-87.0.0.jar",
@@ -5091,7 +5119,7 @@
    "modsRead": 147,
    "modsThatLink": 48,
    "modsThatLinkAndData": 47,
-   "brokenUses": 1413,
+   "brokenUses": 1396,
    "loaderUses": 26,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -5150,9 +5178,9 @@
    "from": "26.2",
    "to": "26.3",
    "modsRead": 147,
-   "modsThatLink": 58,
-   "modsThatLinkAndData": 55,
-   "brokenUses": 2007,
+   "modsThatLink": 62,
+   "modsThatLinkAndData": 59,
+   "brokenUses": 1986,
    "loaderUses": 57,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -5185,6 +5213,7 @@
     "item-highlighter--Highlighter-26.2-fabric-1.2.2.jar",
     "konkrete--konkrete_fabric_1.11.1_MC_26.2.jar",
     "krypton--krypton-0.3.1.jar",
+    "lambdynamiclights--lambdynamiclights-4.12.4+26.2.jar",
     "lmd--letmedespawn-fabric-26.2-1.26.11.1.jar",
     "main-menu-credits--main-menu-credits-1.4.0+26.2-universal.jar",
     "melody--melody_fabric_1.0.17_MC_26.2.jar",
@@ -5195,7 +5224,9 @@
     "optigui--optigui-2.3.0-beta.11+26.2.jar",
     "packet-fixer--PacketFixer-fabric-3.3.6.jar",
     "particle-core--particle_core-0.3.3+fix1+26.2.jar",
+    "particle-rain--particlerain-4.0.3+26.2-fabric.jar",
     "prism-lib--Prism-26.2-fabric-1.1.2.jar",
+    "puzzle--puzzle-fabric-2.3.1+26.2.jar",
     "reeses-sodium-options--reeses-sodium-options-fabric-2.2.4+mc26.2.jar",
     "resourceful-config--ResourcefulConfig-5.0.1.jar",
     "searchables--Searchables-fabric-26.2-1.0.1.jar",
@@ -5206,6 +5237,7 @@
     "veinminer--veinminer-fabric-2.12.1.jar",
     "veinminer-client--veinminer-client-fabric-2.12.1.jar",
     "veinminer-enchantment--veinminer-enchant-2.14.0.jar",
+    "visual-workbench--VisualWorkbench-v26.2.1-mc26.2.x-Fabric.jar",
     "visuality--visuality-0.7.15+26.3.jar",
     "wavey-capes--waveycapes-fabric-1.11.3-mc26.2.jar",
     "yeetus-experimentus--yeetusexperimentus-fabric-102.0.0.jar",
@@ -5219,9 +5251,9 @@
    "from": "1.20.2",
    "to": "1.20.3",
    "modsRead": 149,
-   "modsThatLink": 113,
-   "modsThatLinkAndData": 113,
-   "brokenUses": 216,
+   "modsThatLink": 114,
+   "modsThatLinkAndData": 114,
+   "brokenUses": 208,
    "loaderUses": 119,
    "modsHeldOnlyByLoader": 4,
    "links": [
@@ -5257,6 +5289,7 @@
     "ct-overhaul-village--[neoforge]ctov-3.4.10.jar",
     "default-options--defaultoptions-neoforge-1.20.2-19.0.0.jar",
     "difficulty-lock--difficultylock-1.20.2-4.0.jar",
+    "do-api--doapi-1.3.1-forge.jar",
     "double-doors--doubledoors-1.20.2-5.2.jar",
     "dripsounds--Drip Sounds-0.5.2+1.20.4-NeoForge.jar",
     "dynamic-fps--dynamic-fps-3.11.4+minecraft-1.20.2-neoforge.jar",
@@ -5346,11 +5379,11 @@
    "from": "1.20.3",
    "to": "1.20.4",
    "modsRead": 149,
-   "modsThatLink": 128,
-   "modsThatLinkAndData": 128,
-   "brokenUses": 297,
-   "loaderUses": 292,
-   "modsHeldOnlyByLoader": 17,
+   "modsThatLink": 129,
+   "modsThatLinkAndData": 129,
+   "brokenUses": 290,
+   "loaderUses": 285,
+   "modsHeldOnlyByLoader": 16,
    "links": [
     "additional-structures--AdditionalStructures-1.20.x-(v.5.0.2-NEO).jar",
     "ai-improvements--AI-Improvements-1.20.2-0.5.3.jar",
@@ -5364,6 +5397,7 @@
     "bl4cks-sit--sit-1.20.4-1.3.5.jar",
     "blossom-blade--blossom-blade-1.2.jar",
     "boat-break-fix--BoatBreakFix-Universal-1.0.2.jar",
+    "bookshelf-lib--Bookshelf-NeoForge-1.20.3-22.0.1.jar",
     "bridging-mod--BridgingMod-2.4.0+1.20.4.neoforge-release.jar",
     "cameraoverhaul--CameraOverhaul-v2.1.2-forge+mc[1.20-1.20.5].jar",
     "chat-heads--chat_heads-0.15.6-neoforge-1.20.4.jar",
@@ -5488,11 +5522,11 @@
    "from": "1.20.4",
    "to": "1.20.5",
    "modsRead": 148,
-   "modsThatLink": 37,
-   "modsThatLinkAndData": 36,
-   "brokenUses": 2237,
+   "modsThatLink": 43,
+   "modsThatLinkAndData": 42,
+   "brokenUses": 2118,
    "loaderUses": 1066,
-   "modsHeldOnlyByLoader": 4,
+   "modsHeldOnlyByLoader": 6,
    "links": [
     "ai-improvements--AI-Improvements-1.20.2-0.5.3.jar",
     "alternate-current--alternate_current-mc1.20-1.7.0.jar",
@@ -5500,11 +5534,13 @@
     "attributefix--AttributeFix-NeoForge-1.20.4-24.0.2.jar",
     "bad-wither-no-cookie--bwncr-neoforge-1.20.4-3.19.0.jar",
     "better-advancements--BetterAdvancements-NeoForge-1.20.4-0.4.2.8.jar",
+    "bisect-mod--BHMenu-NeoForge-1.20.4-2.4.3.jar",
     "cherished-worlds--cherishedworlds-neoforge-8.0.1+1.20.4.jar",
     "chunky--Chunky-1.3.146.jar",
     "cloth-config--cloth-config-13.0.138-neoforge.jar",
     "clumps--Clumps-neoforge-1.20.4-15.0.0.2.jar",
     "controlling--Controlling-neoforge-1.20.4-15.0.5.jar",
+    "craftpresence--CraftPresence-2.7.1+1.20.4-neoforge.jar",
     "crash-assistant--CrashAssistant-neoforge-1.20.2-1.20.4-1.11.12.jar",
     "default-options--defaultoptions-neoforge-1.20.4-20.0.2.jar",
     "drippy-loading-screen--drippyloadingscreen_neoforge_3.0.8_MC_1.20.4.jar",
@@ -5517,11 +5553,15 @@
     "invmove--InvMove-0.9.3+1.20.4-NeoForge.jar",
     "konkrete--konkrete_neoforge_1.9.1_MC_1.20.4.jar",
     "leaves-be-gone--LeavesBeGone-v20.4.1-1.20.4-NeoForge.jar",
+    "lmd--letmedespawn-neoforge-1.20.2-1.2.0.jar",
+    "melody--melody_neoforge_1.0.5_MC_1.20.4.jar",
     "midnightlib--midnightlib-neoforge-1.5.2.jar",
     "mouse-tweaks--MouseTweaks-neoforge-mc1.20.4-2.26.jar",
+    "necronomicon--Necronomicon-Forge-1.6.0+1.20.1.jar",
     "netherportalfix--netherportalfix-neoforge-1.20.4-15.0.1.jar",
     "playeranimator--player-animation-lib-forge-1.0.2-rc1+1.20.4.jar",
     "rebind-narrator--rebind_narrator-neoforge-1.20.4-2.0.3.jar",
+    "rightclickharvest--rightclickharvest-neoforge-4.2.0+1.20.4.jar",
     "rrls--rrls-4.0.3+mc1.20.4-forge.jar",
     "searchables--Searchables-neoforge-1.20.4-1.0.6.jar",
     "sound-physics-remastered--sound-physics-remastered-neoforge-1.20.4-1.4.5.jar",
@@ -5538,11 +5578,11 @@
    "from": "1.20.5",
    "to": "1.20.6",
    "modsRead": 148,
-   "modsThatLink": 132,
-   "modsThatLinkAndData": 132,
-   "brokenUses": 67,
-   "loaderUses": 64,
-   "modsHeldOnlyByLoader": 13,
+   "modsThatLink": 133,
+   "modsThatLinkAndData": 133,
+   "brokenUses": 66,
+   "loaderUses": 63,
+   "modsHeldOnlyByLoader": 12,
    "links": [
     "additional-structures--AdditionalStructures-1.20.x-(v.5.0.2-NEO).jar",
     "adorabuild-structures--adorabuild-structures-2.6.1-neoforge-1.20.5.jar",
@@ -5550,6 +5590,7 @@
     "ambient-environment--AmbientEnvironment-neoforge-1.20.5-15.0.0.1.jar",
     "appleskin--appleskin-neoforge-mc1.20.5-3.0.8.jar",
     "athena-ctm--athena-neoforge-1.20.5-3.4.0.jar",
+    "azurelib--azurelib-neo-1.20.5-2.2.1.jar",
     "badoptimizations--BadOptimizations-2.4.1-1.20.5-20.6.jar",
     "badpackets--badpackets-neo-0.7.4.jar",
     "betterf3--BetterF3-10.0.3-NeoForge-1.20.6.jar",
@@ -5684,9 +5725,9 @@
    "from": "1.20.6",
    "to": "1.21",
    "modsRead": 147,
-   "modsThatLink": 72,
-   "modsThatLinkAndData": 71,
-   "brokenUses": 564,
+   "modsThatLink": 74,
+   "modsThatLinkAndData": 73,
+   "brokenUses": 543,
    "loaderUses": 82,
    "modsHeldOnlyByLoader": 4,
    "links": [
@@ -5698,6 +5739,7 @@
     "chat-heads--chat_heads-0.15.6-neoforge-1.20.6.jar",
     "cherished-worlds--cherishedworlds-neoforge-9.0.0+1.20.6.jar",
     "chunky--Chunky-1.4.10.jar",
+    "client-tweaks--clienttweaks-neoforge-1.20.6-14.0.1.jar",
     "controlling--Controlling-neoforge-1.20.6-17.0.1.jar",
     "craftpresence--CraftPresence-2.7.0+1.20.6-neoforge.jar",
     "cristel-lib--cristellib-neoforge-1.2.5.jar",
@@ -5714,6 +5756,7 @@
     "explorers-compass--ExplorersCompass-1.20.6-3.0.1-neoforge.jar",
     "explorify--Explorify v1.6.6.mod.jar",
     "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.20.6-neoforge.jar",
+    "fzzy-config--fzzy_config-0.5.9+1.20.6+neoforge.jar",
     "geophilic--Geophilic v3.7.mod.jar",
     "gravestone-mod--gravestone-neoforge-1.20.6-1.0.15.jar",
     "hardcore-revival--hardcorerevival-neoforge-1.20.6-15.1.0.jar",
@@ -6147,9 +6190,9 @@
    "from": "1.21.3",
    "to": "1.21.4",
    "modsRead": 147,
-   "modsThatLink": 87,
-   "modsThatLinkAndData": 87,
-   "brokenUses": 546,
+   "modsThatLink": 88,
+   "modsThatLinkAndData": 88,
+   "brokenUses": 545,
    "loaderUses": 114,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -6219,6 +6262,7 @@
     "resourceful-config--resourcefulconfig-neoforge-1.21.3-3.3.4.jar",
     "rhino--rhino-2101.2.8-build.91.jar",
     "rightclickharvest--rightclickharvest-neoforge-4.5.3+1.21.3.jar",
+    "searchables--Searchables-neoforge-1.21.3-1.0.1.jar",
     "servercore--servercore-neoforge-1.5.8+1.21.3.jar",
     "shatterbyte-lib--OctoLib-NEOFORGE-0.5.0.1+1.21.2.jar",
     "shulkerboxtooltip--shulkerboxtooltip-neoforge-5.2.6+1.21.3.jar",
@@ -6248,9 +6292,9 @@
    "from": "1.21.4",
    "to": "1.21.5",
    "modsRead": 147,
-   "modsThatLink": 65,
-   "modsThatLinkAndData": 65,
-   "brokenUses": 1867,
+   "modsThatLink": 66,
+   "modsThatLinkAndData": 66,
+   "brokenUses": 1863,
    "loaderUses": 141,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -6301,6 +6345,7 @@
     "rhino--rhino-2101.2.8-build.91.jar",
     "searchables--Searchables-neoforge-1.21.4-1.0.5.jar",
     "sodium-dynamic-lights--sodiumdynamiclights-neoforge-1.0.10-1.21.4.jar",
+    "sodium-options-api--sodiumoptionsapi-neoforge-1.0.10-1.21.4.jar",
     "sound--sounds-2.4.8+1.21.4+neoforge.jar",
     "spark--spark-1.10.121-neoforge.jar",
     "supermartijn642s-config-lib--supermartijn642configlib-1.1.8-neoforge-mc1.21.jar",
@@ -6329,7 +6374,7 @@
    "modsRead": 147,
    "modsThatLink": 63,
    "modsThatLinkAndData": 63,
-   "brokenUses": 882,
+   "brokenUses": 852,
    "loaderUses": 90,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -6719,9 +6764,9 @@
    "from": "1.21.8",
    "to": "1.21.9",
    "modsRead": 147,
-   "modsThatLink": 54,
-   "modsThatLinkAndData": 54,
-   "brokenUses": 1108,
+   "modsThatLink": 55,
+   "modsThatLinkAndData": 55,
+   "brokenUses": 1094,
    "loaderUses": 78,
    "modsHeldOnlyByLoader": 4,
    "links": [
@@ -6760,6 +6805,7 @@
     "mouse-tweaks--MouseTweaks-neoforge-mc1.21.6-2.28.jar",
     "mru--mru-1.0.21+edge+1.21.8+neoforge.jar",
     "netherportalfix--netherportalfix-neoforge-1.21.8-21.8.1.jar",
+    "no-chat-reports--NoChatReports-NEOFORGE-1.21.8-v2.15.0.jar",
     "packet-fixer--packetfixer-3.3.1-1.20.5-1.21.X-merged.jar",
     "paginatedadvancements--PaginatedAdvancements-2.7.0+1.21.8-neoforge.jar",
     "pick-up-notifier--PickUpNotifier-v21.8.1-1.21.8-NeoForge.jar",
@@ -6941,9 +6987,9 @@
    "from": "1.21.10",
    "to": "1.21.11",
    "modsRead": 148,
-   "modsThatLink": 68,
-   "modsThatLinkAndData": 68,
-   "brokenUses": 1028,
+   "modsThatLink": 70,
+   "modsThatLinkAndData": 70,
+   "brokenUses": 992,
    "loaderUses": 40,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -6959,6 +7005,7 @@
     "carry-on--carryon-neoforge-1.21.9-2.8.0.jar",
     "cherished-worlds--cherishedworlds-neoforge-14.0.0+1.21.10.jar",
     "chunky--Chunky-NeoForge-1.4.52.jar",
+    "cloth-config--cloth-config-20.0.149-neoforge.jar",
     "clumps--Clumps-neoforge-1.21.10-28.0.0.1.jar",
     "controlling--Controlling-neoforge-1.21.10-28.0.2.jar",
     "craftpresence--CraftPresence-2.7.1+1.21.10-neoforge.jar",
@@ -6983,6 +7030,7 @@
     "inventory-profiles-next--InventoryProfilesNext-neoforge-1.21.10-2.2.4.jar",
     "invmove--InvMove-0.9.3+1.21.10-NeoForge.jar",
     "ixeris--Ixeris-4.6.11+1.21.11-neoforge.jar",
+    "jei--jei-1.21.10-neoforge-26.3.0.31.jar",
     "justenoughcharacters--jecharacters-1.21.10-neoforge-4.6.9.jar",
     "kotlin-for-forge--kotlinforforge-6.5.0-all.jar",
     "leaves-be-gone--LeavesBeGone-v21.10.0+mc1.21.10-NeoForge.jar",
@@ -7424,7 +7472,7 @@
    "modsRead": 147,
    "modsThatLink": 52,
    "modsThatLinkAndData": 51,
-   "brokenUses": 1459,
+   "brokenUses": 1439,
    "loaderUses": 61,
    "modsHeldOnlyByLoader": 1,
    "links": [
@@ -7487,9 +7535,9 @@
    "from": "26.2",
    "to": "26.3",
    "modsRead": 147,
-   "modsThatLink": 61,
-   "modsThatLinkAndData": 58,
-   "brokenUses": 2076,
+   "modsThatLink": 66,
+   "modsThatLinkAndData": 63,
+   "brokenUses": 2058,
    "loaderUses": 145,
    "modsHeldOnlyByLoader": 1,
    "links": [
@@ -7498,6 +7546,7 @@
     "appleskin--appleskin-neoforge-mc26.2-3.0.10.jar",
     "attributefix--AttributeFix-neoforge-MC26.2-26.2.0.1.jar",
     "badoptimizations--BadOptimizations-2.4.1-26.2-forge.jar",
+    "better-combat--bettercombat-neoforge-3.2.2+26.2.jar",
     "betterf3--BetterF3-19.0.1-NeoForge-26.2.jar",
     "bisect-mod--bhmenu-neoforge-26.2-3.0.0.jar",
     "carry-on--carryon-neoforge-26.2-2.11.2.jar",
@@ -7525,6 +7574,7 @@
     "justenoughcharacters--jecharacters-26.1.2-neoforge-4.6.9.jar",
     "konkrete--konkrete_neoforge_1.11.1_MC_26.2.jar",
     "kotlin-for-forge--kotlinforforge-6.5.0-all.jar",
+    "lambdynamiclights--lambdynamiclights-4.12.4+26.2.jar",
     "lmd--letmedespawn-neoforge-26.2-1.26.11.1.jar",
     "main-menu-credits--main-menu-credits-1.4.0+26.2-universal.jar",
     "melody--melody_neoforge_1.0.17_MC_26.2.jar",
@@ -7532,10 +7582,12 @@
     "mouse-tweaks--MouseTweaks-neoforge-mc26.2-2.31.jar",
     "natures-compass--NaturesCompass-26.2-3.3.0-neoforge.jar",
     "netherportalfix--netherportalfix-neoforge-26.2-26.2.0.1.jar",
+    "notenoughcrashes--notenoughcrashes-neoforge-4.4.9+26.2.jar",
     "packet-fixer--PacketFixer-neoforge-3.3.6.jar",
     "particle-core--particle_core-0.3.3+fix1+26.2+neoforge.jar",
     "pick-up-notifier--PickUpNotifier-v26.2.0-mc26.2.x-NeoForge.jar",
     "prism-lib--Prism-26.2-neoforge-1.1.2.jar",
+    "puzzle--puzzle-neoforge-2.3.1.1+26.2.jar",
     "reeses-sodium-options--reeses-sodium-options-neoforge-2.2.4+mc26.2.jar",
     "resourceful-config--ResourcefulConfig-5.0.1.jar",
     "resourceful-lib--ResourcefulLib-5.0.4.jar",
@@ -7548,6 +7600,7 @@
     "veinminer--veinminer-neoforge-2.12.1.jar",
     "veinminer-client--veinminer-client-neoforge-2.12.1.jar",
     "veinminer-enchantment--veinminer-enchant-2.14.0.jar",
+    "visual-workbench--VisualWorkbench-v26.2.1-mc26.2.x-NeoForge.jar",
     "wavey-capes--waveycapes-neoforge-1.11.3-mc26.2.jar",
     "yeetus-experimentus--yeetusexperimentus-neoforge-102.0.0.jar",
     "zoomify--zoomify-2.17.0+mc26.2-universal.jar"
@@ -7561,9 +7614,9 @@
    "from": "1.14.4",
    "to": "1.15.2",
    "modsRead": 147,
-   "modsThatLink": 103,
-   "modsThatLinkAndData": 103,
-   "brokenUses": 565,
+   "modsThatLink": 104,
+   "modsThatLinkAndData": 104,
+   "brokenUses": 562,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -7621,6 +7674,7 @@
     "infinity-with-mending--infwithmend-1.0.2.jar",
     "inventory-profiles-next--InventoryProfilesNext-fabric-1.14-1.8.6.jar",
     "iris-shader-folder--iris_shader_folder-1.2.5-fabric.jar",
+    "item-scroller--itemscroller-fabric-1.14.4-0.15.0-dev.20190909.151706.jar",
     "keybind-fix-plus--keybindfixplus-2.0.0.jar",
     "konfig--konfig-fabric-0.6.1+1.14.4.jar",
     "ksyxis--Ksyxis-1.4.6.jar",
@@ -7680,7 +7734,7 @@
    "modsRead": 147,
    "modsThatLink": 74,
    "modsThatLinkAndData": 74,
-   "brokenUses": 936,
+   "brokenUses": 935,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -7768,7 +7822,7 @@
    "modsRead": 148,
    "modsThatLink": 132,
    "modsThatLinkAndData": 132,
-   "brokenUses": 173,
+   "brokenUses": 170,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -7914,7 +7968,7 @@
    "modsRead": 146,
    "modsThatLink": 57,
    "modsThatLinkAndData": 57,
-   "brokenUses": 927,
+   "brokenUses": 923,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -7983,9 +8037,9 @@
    "from": "1.17.1",
    "to": "1.18.1",
    "modsRead": 147,
-   "modsThatLink": 115,
-   "modsThatLinkAndData": 115,
-   "brokenUses": 417,
+   "modsThatLink": 117,
+   "modsThatLinkAndData": 117,
+   "brokenUses": 413,
    "loaderUses": 0,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -8004,6 +8058,7 @@
     "boat-item-view--Boat-Item-View-Fabric-1.17-0.0.2.jar",
     "bookshelf-lib--Bookshelf-Fabric-1.17.1-11.0.3.jar",
     "borderless-mining--borderless-mining-1.1.1+1.17.jar",
+    "bountiful--BountifulFabric-1.0.0.jar",
     "bridging-mod--SurvivalBuildingToolkit-1.17.1-1.0.0.jar",
     "caelus--caelus-fabric-0.0.18-1.17.1.jar",
     "cameraoverhaul--CameraOverhaul-v2.1.2-fabric+mc[1.17-1.17.1].jar",
@@ -8095,6 +8150,7 @@
     "swingthrough--swingthrough-1.0.6+1.20.jar",
     "tool-stats--ToolStats-fabric-1.17.1-2.0.1.jar",
     "tooltipfix--tooltipfix-1.0.4-1.17.1.jar",
+    "travelersbackpack--travelers-backpack-1.17.1-6.0.38.jar",
     "ukulib--ukulib-0.4.0+1.17.1.jar",
     "unilib--UniLib-1.2.0+1.17.1-fabric.jar",
     "vein-mining--veinmining-fabric-0.0.11-1.17.1.jar",
@@ -8112,9 +8168,9 @@
    "from": "1.18.2",
    "to": "1.19.2",
    "modsRead": 147,
-   "modsThatLink": 62,
-   "modsThatLinkAndData": 60,
-   "brokenUses": 793,
+   "modsThatLink": 65,
+   "modsThatLinkAndData": 63,
+   "brokenUses": 789,
    "loaderUses": 1,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -8124,6 +8180,7 @@
     "better-advancements--BetterAdvancements-Fabric-1.18.2-0.2.0.146.jar",
     "better-mount-hud--bettermounthud-1.1.4.jar",
     "capes--Capes-1.3.1+1.18.2.jar",
+    "cherished-worlds--cherishedworlds-fabric-2.0.2-1.18.jar",
     "chipped--chipped-fabric-1.18.2-2.0.1.jar",
     "cit-resewn--CITResewn-1.1.1+1.18.2.jar",
     "cloth-config--cloth-config-6.5.102-fabric.jar",
@@ -8148,6 +8205,7 @@
     "iceberg--Iceberg-1.18.2-fabric-1.0.38.jar",
     "item-highlighter--Highlighter-1.18-fabric-1.1.2.jar",
     "jei--jei-1.18.2-fabric-10.2.1.1002.jar",
+    "libipn--libIPN-fabric-1.18.2-4.0.2.jar",
     "lmd--letmedespawn-fabric-1.3.2b.jar",
     "main-menu-credits--main-menu-credits-1.1.1.jar",
     "melody--melody_fabric_1.0.1_MC_1.18.2.jar",
@@ -8170,6 +8228,7 @@
     "rhino--rhino-fabric-1802.2.1-build.255.jar",
     "rrls--Rrls-1.18.2-3.1.0-fabric.jar",
     "searchables--Searchables-fabric-1.18.2-1.0.1.jar",
+    "simple-voice-chat--voicechat-fabric-1.18.2-2.6.27.jar",
     "sodium-shadowy-path-blocks--sodium-shadowy-path-blocks-2.0.1.jar",
     "spark--spark-1.10.39-fabric.jar",
     "supermartijn642s-config-lib--supermartijn642configlib-1.1.8a-fabric-mc1.18.jar",
@@ -8264,9 +8323,9 @@
    "from": "1.20.2",
    "to": "1.20.4",
    "modsRead": 147,
-   "modsThatLink": 106,
-   "modsThatLinkAndData": 106,
-   "brokenUses": 143,
+   "modsThatLink": 107,
+   "modsThatLinkAndData": 107,
+   "brokenUses": 135,
    "loaderUses": 6,
    "modsHeldOnlyByLoader": 1,
    "links": [
@@ -8349,6 +8408,7 @@
     "not-enough-animations--notenoughanimations-fabric-1.12.7-mc1.20.2.jar",
     "optigui--optigui-2.3.0-beta.9+1.20.2.jar",
     "packet-fixer--packetfixer-3.3.2-1.18-1.20.4-merged.jar",
+    "paginatedadvancements--paginatedadvancements-2.4.2.jar",
     "particle-core--particle_core-0.1.2+1.20.jar",
     "particle-rain--particle-rain-2.1.5.jar",
     "polymorph--polymorph-fabric-0.50.0+1.20.2.jar",
@@ -8384,17 +8444,19 @@
    "from": "1.20.4",
    "to": "1.20.6",
    "modsRead": 147,
-   "modsThatLink": 39,
-   "modsThatLinkAndData": 38,
-   "brokenUses": 1452,
+   "modsThatLink": 45,
+   "modsThatLinkAndData": 44,
+   "brokenUses": 1338,
    "loaderUses": 416,
-   "modsHeldOnlyByLoader": 3,
+   "modsHeldOnlyByLoader": 5,
    "links": [
+    "almanac--almanac-1.20.x-fabric-1.0.2.jar",
     "animatica--animatica-0.6.1+1.20.4.jar",
     "athena-ctm--athena-fabric-1.20.4-3.3.2.jar",
     "attributefix--AttributeFix-Fabric-1.20.4-24.0.2.jar",
     "better-advancements--BetterAdvancements-Fabric-1.20.4-0.4.2.8.jar",
     "better-mount-hud--bettermounthud-1.2.2.jar",
+    "better-stats--betterstats-3.12.6+fabric-1.20.4.jar",
     "better-third-person--BetterThirdPerson-Fabric-1.20-1.9.0.jar",
     "cherished-worlds--cherishedworlds-fabric-8.0.1+1.20.4.jar",
     "cloth-config--cloth-config-13.0.138-fabric.jar",
@@ -8412,6 +8474,9 @@
     "fastquit--fastquit-3.0.0+1.20.4.jar",
     "indium--indium-1.0.31+mc1.20.4.jar",
     "konkrete--konkrete_fabric_1.9.2_MC_1.20.4.jar",
+    "lambdynamiclights--lambdynamiclights-2.3.4+1.20.4.jar",
+    "lmd--letmedespawn-1.20.x-fabric-1.5.0.jar",
+    "melody--melody_fabric_1.0.4_MC_1.20.1-1.20.4.jar",
     "memoryleakfix--memoryleakfix-fabric-1.17+-1.1.5.jar",
     "modelfix--modelfix-1.14-fabric.jar",
     "mouse-tweaks--MouseTweaks-fabric-mc1.20-2.26.jar",
@@ -8426,6 +8491,7 @@
     "sound-physics-remastered--sound-physics-remastered-fabric-1.20.4-1.4.5.jar",
     "spark--spark-1.10.58-fabric.jar",
     "terrablender--TerraBlender-fabric-1.20.4-3.3.0.12.jar",
+    "visuality--visuality-0.7.4+1.20.4.jar",
     "yosbr--yosbr-0.1.2.jar",
     "zoomify--zoomify-2.15.2+1.20.4.jar"
    ],
@@ -8436,9 +8502,9 @@
    "from": "1.20.6",
    "to": "1.21.1",
    "modsRead": 147,
-   "modsThatLink": 68,
-   "modsThatLinkAndData": 67,
-   "brokenUses": 619,
+   "modsThatLink": 69,
+   "modsThatLinkAndData": 68,
+   "brokenUses": 609,
    "loaderUses": 21,
    "modsHeldOnlyByLoader": 2,
    "links": [
@@ -8469,6 +8535,7 @@
     "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.20.6-fabric.jar",
     "fastquit--fastquit-3.0.0+1.20.6.jar",
     "forge-config-api-port--ForgeConfigAPIPort-v20.6.1-1.20.6-Fabric.jar",
+    "fzzy-config--fzzy_config-0.5.9+1.20.6.jar",
     "i18nupdatemod--I18nUpdateMod-3.8.0-all.jar",
     "indium--indium-1.0.36+mc1.20.1.jar",
     "item-highlighter--Highlighter-1.20.6-fabric-1.1.10.jar",
@@ -8576,9 +8643,9 @@
    "from": "1.21.5",
    "to": "1.21.8",
    "modsRead": 147,
-   "modsThatLink": 56,
-   "modsThatLinkAndData": 56,
-   "brokenUses": 1008,
+   "modsThatLink": 57,
+   "modsThatLinkAndData": 57,
+   "brokenUses": 982,
    "loaderUses": 157,
    "modsHeldOnlyByLoader": 3,
    "links": [
@@ -8629,6 +8696,7 @@
     "searchables--Searchables-fabric-1.21.5-1.0.3.jar",
     "sodium-options-api--sodiumoptionsapi-fabric-1.0.11-1.21.5.jar",
     "sodium-shadowy-path-blocks--sodium-shadowy-path-blocks-fabric-5.0.1.jar",
+    "spark--spark-1.10.138-fabric.jar",
     "supermartijn642s-config-lib--supermartijn642configlib-1.1.8-fabric-mc1.21.jar",
     "terrablender--TerraBlender-fabric-1.21.5-5.0.0.1.jar",
     "terralith--Terralith_1.21.x_v2.5.13.jar",
@@ -8646,9 +8714,9 @@
    "from": "1.21.8",
    "to": "1.21.10",
    "modsRead": 147,
-   "modsThatLink": 58,
-   "modsThatLinkAndData": 58,
-   "brokenUses": 1194,
+   "modsThatLink": 59,
+   "modsThatLinkAndData": 59,
+   "brokenUses": 1182,
    "loaderUses": 109,
    "modsHeldOnlyByLoader": 5,
    "links": [
@@ -8689,6 +8757,7 @@
     "mru--mru-1.0.22+edge+1.21.8+fabric.jar",
     "natures-compass--NaturesCompass-1.21.8-2.2.9-fabric.jar",
     "netherportalfix--netherportalfix-fabric-1.21.8-21.8.1.jar",
+    "no-chat-reports--NoChatReports-FABRIC-1.21.8-v2.15.0.jar",
     "optigui--optigui-2.3.0-beta.9+1.21.6.jar",
     "packet-fixer--packetfixer-3.3.1-1.20.5-1.21.X-merged.jar",
     "paginatedadvancements--paginatedadvancements-2.7.0+1.21.8.jar",
@@ -8791,15 +8860,16 @@
    "from": "1.20.1",
    "to": "26.3",
    "modsRead": 147,
-   "modsThatLink": 6,
-   "modsThatLinkAndData": 4,
-   "brokenUses": 14359,
+   "modsThatLink": 7,
+   "modsThatLinkAndData": 5,
+   "brokenUses": 14085,
    "loaderUses": 1379,
    "modsHeldOnlyByLoader": 2,
    "links": [
     "attributefix--AttributeFix-Fabric-1.20.1-21.0.5.jar",
     "fabric-language-kotlin--fabric-language-kotlin-1.14.2+kotlin.2.4.21.jar",
     "fast-ip-ping--fast-ip-ping-v1.0.8-mc1.20.4-fabric.jar",
+    "melody--melody_fabric_1.0.4_MC_1.20.1-1.20.4.jar",
     "yosbr--yosbr-0.1.2.jar"
    ],
    "updatesCrossed": 22
@@ -8809,10 +8879,10 @@
    "from": "1.20.2",
    "to": "1.20.4",
    "modsRead": 149,
-   "modsThatLink": 100,
-   "modsThatLinkAndData": 100,
-   "brokenUses": 751,
-   "loaderUses": 654,
+   "modsThatLink": 101,
+   "modsThatLinkAndData": 101,
+   "brokenUses": 730,
+   "loaderUses": 641,
    "modsHeldOnlyByLoader": 17,
    "links": [
     "3dskinlayers--skinlayers3d-neoforge-1.11.4-mc1.20.2.jar",
@@ -8843,6 +8913,7 @@
     "ct-overhaul-village--[neoforge]ctov-3.4.10.jar",
     "default-options--defaultoptions-neoforge-1.20.2-19.0.0.jar",
     "difficulty-lock--difficultylock-1.20.2-4.0.jar",
+    "do-api--doapi-1.3.1-forge.jar",
     "double-doors--doubledoors-1.20.2-5.2.jar",
     "dripsounds--Drip Sounds-0.5.2+1.20.4-NeoForge.jar",
     "dynamic-fps--dynamic-fps-3.11.4+minecraft-1.20.2-neoforge.jar",
@@ -8923,22 +8994,24 @@
    "from": "1.20.4",
    "to": "1.20.6",
    "modsRead": 148,
-   "modsThatLink": 35,
-   "modsThatLinkAndData": 34,
-   "brokenUses": 2350,
+   "modsThatLink": 41,
+   "modsThatLinkAndData": 40,
+   "brokenUses": 2231,
    "loaderUses": 1179,
-   "modsHeldOnlyByLoader": 6,
+   "modsHeldOnlyByLoader": 8,
    "links": [
     "ai-improvements--AI-Improvements-1.20.2-0.5.3.jar",
     "alternate-current--alternate_current-mc1.20-1.7.0.jar",
     "attributefix--AttributeFix-NeoForge-1.20.4-24.0.2.jar",
     "bad-wither-no-cookie--bwncr-neoforge-1.20.4-3.19.0.jar",
     "better-advancements--BetterAdvancements-NeoForge-1.20.4-0.4.2.8.jar",
+    "bisect-mod--BHMenu-NeoForge-1.20.4-2.4.3.jar",
     "cherished-worlds--cherishedworlds-neoforge-8.0.1+1.20.4.jar",
     "chunky--Chunky-1.3.146.jar",
     "cloth-config--cloth-config-13.0.138-neoforge.jar",
     "clumps--Clumps-neoforge-1.20.4-15.0.0.2.jar",
     "controlling--Controlling-neoforge-1.20.4-15.0.5.jar",
+    "craftpresence--CraftPresence-2.7.1+1.20.4-neoforge.jar",
     "default-options--defaultoptions-neoforge-1.20.4-20.0.2.jar",
     "drippy-loading-screen--drippyloadingscreen_neoforge_3.0.8_MC_1.20.4.jar",
     "durability-tooltip--durabilitytooltip-1.2.0-neoforge-mc1.20.4.jar",
@@ -8950,11 +9023,15 @@
     "invmove--InvMove-0.9.3+1.20.4-NeoForge.jar",
     "konkrete--konkrete_neoforge_1.9.1_MC_1.20.4.jar",
     "leaves-be-gone--LeavesBeGone-v20.4.1-1.20.4-NeoForge.jar",
+    "lmd--letmedespawn-neoforge-1.20.2-1.2.0.jar",
+    "melody--melody_neoforge_1.0.5_MC_1.20.4.jar",
     "midnightlib--midnightlib-neoforge-1.5.2.jar",
     "mouse-tweaks--MouseTweaks-neoforge-mc1.20.4-2.26.jar",
+    "necronomicon--Necronomicon-Forge-1.6.0+1.20.1.jar",
     "netherportalfix--netherportalfix-neoforge-1.20.4-15.0.1.jar",
     "playeranimator--player-animation-lib-forge-1.0.2-rc1+1.20.4.jar",
     "rebind-narrator--rebind_narrator-neoforge-1.20.4-2.0.3.jar",
+    "rightclickharvest--rightclickharvest-neoforge-4.2.0+1.20.4.jar",
     "rrls--rrls-4.0.3+mc1.20.4-forge.jar",
     "searchables--Searchables-neoforge-1.20.4-1.0.6.jar",
     "sound-physics-remastered--sound-physics-remastered-neoforge-1.20.4-1.4.5.jar",
@@ -8971,9 +9048,9 @@
    "from": "1.20.6",
    "to": "1.21.1",
    "modsRead": 147,
-   "modsThatLink": 72,
-   "modsThatLinkAndData": 71,
-   "brokenUses": 564,
+   "modsThatLink": 74,
+   "modsThatLinkAndData": 73,
+   "brokenUses": 543,
    "loaderUses": 82,
    "modsHeldOnlyByLoader": 4,
    "links": [
@@ -8985,6 +9062,7 @@
     "chat-heads--chat_heads-0.15.6-neoforge-1.20.6.jar",
     "cherished-worlds--cherishedworlds-neoforge-9.0.0+1.20.6.jar",
     "chunky--Chunky-1.4.10.jar",
+    "client-tweaks--clienttweaks-neoforge-1.20.6-14.0.1.jar",
     "controlling--Controlling-neoforge-1.20.6-17.0.1.jar",
     "craftpresence--CraftPresence-2.7.0+1.20.6-neoforge.jar",
     "cristel-lib--cristellib-neoforge-1.2.5.jar",
@@ -9001,6 +9079,7 @@
     "explorers-compass--ExplorersCompass-1.20.6-3.0.1-neoforge.jar",
     "explorify--Explorify v1.6.6.mod.jar",
     "fast-ip-ping--fast-ip-ping-v1.0.12-mc1.20.6-neoforge.jar",
+    "fzzy-config--fzzy_config-0.5.9+1.20.6+neoforge.jar",
     "geophilic--Geophilic v3.7.mod.jar",
     "gravestone-mod--gravestone-neoforge-1.20.6-1.0.15.jar",
     "hardcore-revival--hardcorerevival-neoforge-1.20.6-15.1.0.jar",
@@ -9121,7 +9200,7 @@
    "modsRead": 147,
    "modsThatLink": 63,
    "modsThatLinkAndData": 63,
-   "brokenUses": 887,
+   "brokenUses": 857,
    "loaderUses": 92,
    "modsHeldOnlyByLoader": 0,
    "links": [
@@ -9196,9 +9275,9 @@
    "from": "1.21.8",
    "to": "1.21.10",
    "modsRead": 147,
-   "modsThatLink": 52,
-   "modsThatLinkAndData": 52,
-   "brokenUses": 1130,
+   "modsThatLink": 53,
+   "modsThatLinkAndData": 53,
+   "brokenUses": 1116,
    "loaderUses": 99,
    "modsHeldOnlyByLoader": 6,
    "links": [
@@ -9235,6 +9314,7 @@
     "mouse-tweaks--MouseTweaks-neoforge-mc1.21.6-2.28.jar",
     "mru--mru-1.0.21+edge+1.21.8+neoforge.jar",
     "netherportalfix--netherportalfix-neoforge-1.21.8-21.8.1.jar",
+    "no-chat-reports--NoChatReports-NEOFORGE-1.21.8-v2.15.0.jar",
     "packet-fixer--packetfixer-3.3.1-1.20.5-1.21.X-merged.jar",
     "paginatedadvancements--PaginatedAdvancements-2.7.0+1.21.8-neoforge.jar",
     "pick-up-notifier--PickUpNotifier-v21.8.1-1.21.8-NeoForge.jar",
@@ -9348,7 +9428,7 @@
    "modsRead": 147,
    "modsThatLink": 16,
    "modsThatLinkAndData": 14,
-   "brokenUses": 16657,
+   "brokenUses": 16458,
    "loaderUses": 2086,
    "modsHeldOnlyByLoader": 1,
    "links": [
@@ -9373,20 +9453,20 @@
  "types": [
   {
    "type": "call, game: linked",
-   "finishes": 85,
-   "mods": 1530,
-   "references": 2708,
+   "finishes": 89,
+   "mods": 1507,
+   "references": 2672,
    "updates": 43,
    "examples": [
     "fabric 1.16.5 -> 1.17: call: net.minecraft.client.renderer.entity.EntityRenderer.<init>(Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;)V",
     "fabric 1.19.4 -> 1.20: call: net.minecraft.client.gui.components.AbstractWidget.render(Lcom/mojang/blaze3d/vertex/PoseStack;IIF)V",
     "fabric 1.20.1 -> 1.20.2: call: net.minecraft.client.gui.components.events.ContainerEventHandler.mouseScrolled(DDD)Z",
-    "fabric 1.15.2 -> 1.16: call: net.minecraft.client.gui.screens.Screen.render(IIF)V"
+    "fabric 26.2 -> 26.3: call: net.minecraft.client.renderer.texture.AbstractTexture.getTextureView()Lcom/mojang/blaze3d/textures/GpuTextureView;"
    ]
   },
   {
    "type": "mixin target changed signature, game: linked",
-   "finishes": 67,
+   "finishes": 68,
    "mods": 800,
    "references": 1174,
    "updates": 40,
@@ -9398,16 +9478,16 @@
    ]
   },
   {
-   "type": "call, game: redesigned",
-   "finishes": 30,
-   "mods": 1293,
-   "references": 2311,
-   "updates": 40,
+   "type": "call, game: split",
+   "finishes": 26,
+   "mods": 1024,
+   "references": 842,
+   "updates": 39,
    "examples": [
-    "neoforge 26.2 -> 26.3: call: net.minecraft.client.renderer.feature.FeatureRenderDispatcher.renderAllFeatures(Lnet/minecraft/client/renderer/SubmitNodeStorage;)V",
-    "fabric 1.19 -> 1.19.1: call: net.minecraft.client.gui.Gui.handlePlayerChat(Lnet/minecraft/network/chat/ChatType;Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/ChatSender;)V",
-    "fabric 26.2 -> 26.3: call: net.minecraft.client.renderer.feature.FeatureRenderDispatcher.renderAllFeatures(Lnet/minecraft/client/renderer/SubmitNodeStorage;)V",
-    "neoforge 1.20.3 -> 1.20.4: call: net.neoforged.neoforge.network.NetworkEvent$Context.setPacketHandled(Z)V"
+    "fabric 1.20.4 -> 1.20.5: call: net.minecraft.world.item.ItemStack.save(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/nbt/CompoundTag;",
+    "fabric 26.1.2 -> 26.2: call: net.minecraft.client.renderer.RenderBuffers.bufferSource()Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;",
+    "neoforge 26.1.2 -> 26.2: call: net.minecraft.client.renderer.RenderBuffers.bufferSource()Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;",
+    "fabric 1.21.5 -> 1.21.6: call: net.minecraft.client.gui.GuiGraphics.drawSpecial(Ljava/util/function/Consumer;)V"
    ]
   },
   {
@@ -9424,21 +9504,8 @@
    ]
   },
   {
-   "type": "call, game: split",
-   "finishes": 23,
-   "mods": 1072,
-   "references": 869,
-   "updates": 39,
-   "examples": [
-    "fabric 1.20.4 -> 1.20.5: call: net.minecraft.world.item.ItemStack.save(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/nbt/CompoundTag;",
-    "neoforge 1.21.10 -> 1.21.11: call: net.minecraft.client.StringSplitter.componentStyleAtWidth(Lnet/minecraft/util/FormattedCharSequence;I)Lnet/minecraft/network/chat/Style;",
-    "fabric 1.21.10 -> 1.21.11: call: com.mojang.blaze3d.systems.RenderPass.bindSampler(Ljava/lang/String;Lcom/mojang/blaze3d/textures/GpuTextureView;)V",
-    "neoforge 1.20.4 -> 1.20.5: call: net.neoforged.neoforge.network.PacketDistributor$PacketTarget.send([Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload;)V"
-   ]
-  },
-  {
    "type": "abstract method not written, game: added",
-   "finishes": 22,
+   "finishes": 24,
    "mods": 328,
    "references": 297,
    "updates": 34,
@@ -9446,7 +9513,7 @@
     "fabric 1.16.5 -> 1.17: abstract method not written: net.minecraft.client.gui.components.ObjectSelectionList$Entry.getNarration()Lnet/minecraft/network/chat/Component;",
     "fabric 1.16.1 -> 1.16.2: abstract method not written: net.minecraft.core.Registry.elementsLifecycle()Lcom/mojang/serialization/Lifecycle;",
     "fabric 1.21.11 -> 26.1: abstract method not written: net.minecraft.client.renderer.special.SpecialModelRenderer.submit(Ljava/lang/Object;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;IIZI)V",
-    "fabric 1.19.4 -> 1.20: abstract method not written: net.minecraft.world.inventory.CraftingContainer.getItems()Ljava/util/List;"
+    "fabric 26.2 -> 26.3: abstract method not written: com.mojang.blaze3d.vertex.VertexConsumer.setUv3(FF)Lcom/mojang/blaze3d/vertex/VertexConsumer;"
    ]
   },
   {
@@ -9463,16 +9530,29 @@
    ]
   },
   {
-   "type": "call, game: replaced",
-   "finishes": 14,
-   "mods": 776,
-   "references": 629,
-   "updates": 38,
+   "type": "abstract method not written, game: moved",
+   "finishes": 16,
+   "mods": 345,
+   "references": 127,
+   "updates": 27,
    "examples": [
-    "fabric 1.14.4 -> 1.15: call: net.minecraft.client.renderer.texture.TextureManager.register(Lnet/minecraft/resources/ResourceLocation;Lnet/minecraft/client/renderer/texture/TextureObject;)Z",
-    "fabric 1.17 -> 1.17.1: call: net.minecraft.client.Screenshot.grab(Ljava/io/File;Ljava/lang/String;IILcom/mojang/blaze3d/pipeline/RenderTarget;Ljava/util/function/Consumer;)V",
-    "fabric 1.18.2 -> 1.19: call: com.mojang.blaze3d.vertex.BufferUploader._endInternal(Lcom/mojang/blaze3d/vertex/BufferBuilder;)V",
-    "fabric 1.20.1 -> 1.20.2: call: net.minecraft.server.ServerAdvancementManager.getAdvancement(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/advancements/Advancement;"
+    "fabric 1.19.3 -> 1.19.4: abstract method not written: net.minecraft.client.gui.components.events.GuiEventListener.isFocused()Z",
+    "neoforge 1.21.10 -> 1.21.11: abstract method not written: net.minecraft.client.gui.components.AbstractButton.renderContents(Lnet/minecraft/client/gui/GuiGraphics;IIF)V",
+    "fabric 26.2 -> 26.3: abstract method not written: net.minecraft.server.packs.repository.Pack$ResourcesSupplier.openMetadata(Lnet/minecraft/server/packs/PackLocationInfo;)Lnet/minecraft/server/packs/PackMetadataResources;",
+    "neoforge 26.2 -> 26.3: abstract method not written: net.minecraft.server.packs.repository.Pack$ResourcesSupplier.openMetadata(Lnet/minecraft/server/packs/PackLocationInfo;)Lnet/minecraft/server/packs/PackMetadataResources;"
+   ]
+  },
+  {
+   "type": "call, game: redesigned",
+   "finishes": 15,
+   "mods": 1201,
+   "references": 2268,
+   "updates": 40,
+   "examples": [
+    "neoforge 1.20.3 -> 1.20.4: call: net.neoforged.neoforge.network.NetworkEvent$Context.setPacketHandled(Z)V",
+    "neoforge 1.21.3 -> 1.21.4: call: net.minecraft.client.renderer.entity.ItemRenderer.getModel(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/level/Level;Lnet/minecraft/world/entity/LivingEntity;I)Lnet/minecraft/client/resources/model/BakedModel;",
+    "fabric 1.14.4 -> 1.15: call: com.mojang.blaze3d.vertex.BufferBuilder.normal(FFF)Lcom/mojang/blaze3d/vertex/BufferBuilder;",
+    "fabric 1.18.2 -> 1.19: call: net.minecraft.commands.synchronization.ArgumentTypes.register(Ljava/lang/String;Ljava/lang/Class;Lnet/minecraft/commands/synchronization/ArgumentSerializer;)V"
    ]
   },
   {
@@ -9502,16 +9582,29 @@
    ]
   },
   {
-   "type": "call, game: template",
+   "type": "call, game: replaced",
    "finishes": 13,
-   "mods": 803,
-   "references": 349,
-   "updates": 35,
+   "mods": 750,
+   "references": 611,
+   "updates": 38,
    "examples": [
-    "fabric 1.21.5 -> 1.21.6: call: com.mojang.blaze3d.systems.RenderSystem.setShaderColor(FFFF)V",
-    "fabric 1.19.3 -> 1.19.4: call: net.minecraft.client.gui.GuiComponent.setBlitOffset(I)V",
-    "fabric 1.21.10 -> 1.21.11: call: net.minecraft.client.renderer.block.model.BakedQuad.vertices()[I",
-    "neoforge 1.21.5 -> 1.21.6: call: com.mojang.blaze3d.systems.RenderSystem.setShaderColor(FFFF)V"
+    "fabric 1.21.10 -> 1.21.11: call: com.mojang.blaze3d.textures.GpuTexture.setTextureFilter(Lcom/mojang/blaze3d/textures/FilterMode;Z)V",
+    "fabric 1.14.4 -> 1.15: call: net.minecraft.client.renderer.texture.TextureManager.register(Lnet/minecraft/resources/ResourceLocation;Lnet/minecraft/client/renderer/texture/TextureObject;)Z",
+    "fabric 1.17 -> 1.17.1: call: net.minecraft.client.Screenshot.grab(Ljava/io/File;Ljava/lang/String;IILcom/mojang/blaze3d/pipeline/RenderTarget;Ljava/util/function/Consumer;)V",
+    "fabric 1.20.1 -> 1.20.2: call: net.minecraft.server.ServerAdvancementManager.getAdvancement(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/advancements/Advancement;"
+   ]
+  },
+  {
+   "type": "mixin injection point gone, game: dropped",
+   "finishes": 12,
+   "mods": 147,
+   "references": 202,
+   "updates": 32,
+   "examples": [
+    "fabric 1.16.5 -> 1.17: mixin injection point gone: net.minecraft.server.level.ServerLevel.getChunk(IILnet/minecraft/world/level/chunk/ChunkStatus;Z)Lnet/minecraft/world/level/chunk/ChunkAccess; in net.minecraft.server.level.ServerLevel.addEntity(Lnet/minecraft/world/entity/Entity;)Z",
+    "fabric 1.21.5 -> 1.21.6: mixin injection point gone: net.minecraft.client.gui.screens.Screen.renderBackground(Lnet/minecraft/client/gui/GuiGraphics;IIF)V in net.minecraft.client.gui.screens.Screen.render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V",
+    "fabric 1.18.2 -> 1.19: mixin injection point gone: net.minecraft.client.Options.gammaD in net.minecraft.client.renderer.LightTexture.updateLightTexture(F)V",
+    "fabric 1.20.2 -> 1.20.3: mixin injection point gone: java.io.File.createTempFile(Ljava/lang/String;Ljava/lang/String;Ljava/io/File;)Ljava/io/File; in net.minecraft.world.level.storage.PlayerDataStorage.save(Lnet/minecraft/world/entity/player/Player;)V"
    ]
   },
   {
@@ -9528,16 +9621,29 @@
    ]
   },
   {
-   "type": "abstract method not written, game: moved",
+   "type": "field, game: redesigned",
    "finishes": 10,
-   "mods": 345,
-   "references": 127,
-   "updates": 27,
+   "mods": 794,
+   "references": 1913,
+   "updates": 39,
    "examples": [
-    "fabric 1.19.3 -> 1.19.4: abstract method not written: net.minecraft.client.gui.components.events.GuiEventListener.isFocused()Z",
-    "fabric 26.2 -> 26.3: abstract method not written: net.minecraft.server.packs.repository.Pack$ResourcesSupplier.openMetadata(Lnet/minecraft/server/packs/PackLocationInfo;)Lnet/minecraft/server/packs/PackMetadataResources;",
-    "neoforge 26.2 -> 26.3: abstract method not written: net.minecraft.server.packs.repository.Pack$ResourcesSupplier.openMetadata(Lnet/minecraft/server/packs/PackLocationInfo;)Lnet/minecraft/server/packs/PackMetadataResources;",
-    "fabric 1.20.4 -> 1.20.5: abstract method not written: net.minecraft.network.protocol.common.custom.CustomPacketPayload.type()Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload$Type;"
+    "fabric 26.2 -> 26.3: field: com.mojang.blaze3d.platform.InputConstants$Type.SCANCODE",
+    "neoforge 26.2 -> 26.3: field: com.mojang.blaze3d.platform.InputConstants$Type.SCANCODE",
+    "fabric 1.17.1 -> 1.18: field: net.minecraft.world.level.levelgen.structure.StructureStart.random",
+    "fabric 1.19.4 -> 1.20: field: net.minecraft.world.level.material.Material.LAVA"
+   ]
+  },
+  {
+   "type": "call, game: template",
+   "finishes": 10,
+   "mods": 768,
+   "references": 342,
+   "updates": 35,
+   "examples": [
+    "fabric 1.21.5 -> 1.21.6: call: com.mojang.blaze3d.systems.RenderSystem.setShaderColor(FFFF)V",
+    "neoforge 1.21.5 -> 1.21.6: call: com.mojang.blaze3d.systems.RenderSystem.setShaderColor(FFFF)V",
+    "fabric 1.19.3 -> 1.19.4: call: net.minecraft.client.gui.GuiComponent.setBlitOffset(I)V",
+    "fabric 1.21.10 -> 1.21.11: call: net.minecraft.client.renderer.block.model.BakedQuad.vertices()[I"
    ]
   },
   {
@@ -9567,16 +9673,16 @@
    ]
   },
   {
-   "type": "mixin injection point gone, game: dropped",
+   "type": "class gone, game: unused",
    "finishes": 9,
-   "mods": 147,
-   "references": 202,
-   "updates": 32,
+   "mods": 406,
+   "references": 228,
+   "updates": 36,
    "examples": [
-    "fabric 1.16.5 -> 1.17: mixin injection point gone: net.minecraft.server.level.ServerLevel.getChunk(IILnet/minecraft/world/level/chunk/ChunkStatus;Z)Lnet/minecraft/world/level/chunk/ChunkAccess; in net.minecraft.server.level.ServerLevel.addEntity(Lnet/minecraft/world/entity/Entity;)Z",
-    "fabric 1.18.2 -> 1.19: mixin injection point gone: net.minecraft.client.Options.gammaD in net.minecraft.client.renderer.LightTexture.updateLightTexture(F)V",
-    "fabric 1.20.6 -> 1.21: mixin injection point gone: net.minecraft.server.level.ServerPlayer.getActiveEffects()Ljava/util/Collection; in net.minecraft.server.players.PlayerList.placeNewPlayer(Lnet/minecraft/network/Connection;Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/server/network/CommonListenerCookie;)V",
-    "fabric 1.21.1 -> 1.21.2: mixin injection point gone: net.minecraft.client.renderer.entity.ItemRenderer.renderModelLists(Lnet/minecraft/client/resources/model/BakedModel;Lnet/minecraft/world/item/ItemStack;IILcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;)V in net.minecraft.client.renderer.entity.ItemRenderer.render(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/ItemDisplayContext;ZLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;IILnet/minecraft/client/resources/model/BakedModel;)V"
+    "neoforge 1.20.2 -> 1.20.3: class gone: net.minecraft.data.recipes.FinishedRecipe",
+    "neoforge 1.21.3 -> 1.21.4: class gone: net.minecraft.client.renderer.item.ClampedItemPropertyFunction",
+    "neoforge 1.21.9 -> 1.21.10: class gone: net.neoforged.neoforge.client.event.ContainerScreenEvent$Render$Background",
+    "fabric 1.20.2 -> 1.20.3: class gone: net.minecraft.data.recipes.FinishedRecipe"
    ]
   },
   {
@@ -9593,42 +9699,29 @@
    ]
   },
   {
-   "type": "field, game: redesigned",
-   "finishes": 8,
-   "mods": 796,
-   "references": 1914,
-   "updates": 39,
+   "type": "class gone, game: redesigned",
+   "finishes": 7,
+   "mods": 873,
+   "references": 614,
+   "updates": 36,
    "examples": [
-    "fabric 26.2 -> 26.3: field: com.mojang.blaze3d.platform.InputConstants$Type.SCANCODE",
-    "neoforge 26.2 -> 26.3: field: com.mojang.blaze3d.platform.InputConstants$Type.SCANCODE",
-    "fabric 1.17.1 -> 1.18: field: net.minecraft.world.level.levelgen.structure.StructureStart.random",
-    "fabric 1.19.4 -> 1.20: field: net.minecraft.world.level.material.Material.LAVA"
+    "neoforge 1.20.4 -> 1.20.5: class gone: net.neoforged.neoforge.event.TickEvent$ClientTickEvent",
+    "fabric 1.18.1 -> 1.18.2: class gone: net.minecraft.server.packs.resources.SimpleReloadableResourceManager",
+    "fabric 1.21.3 -> 1.21.4: class gone: net.minecraft.client.color.item.ItemColor",
+    "neoforge 1.21.3 -> 1.21.4: class gone: net.minecraft.client.color.item.ItemColor"
    ]
   },
   {
    "type": "call, game: unused",
-   "finishes": 8,
-   "mods": 741,
-   "references": 988,
+   "finishes": 7,
+   "mods": 736,
+   "references": 979,
    "updates": 40,
    "examples": [
     "fabric 1.19.2 -> 1.19.3: call: net.fabricmc.fabric.api.client.itemgroup.FabricItemGroupBuilder.build(Lnet/minecraft/resources/ResourceLocation;Ljava/util/function/Supplier;)Lnet/minecraft/world/item/CreativeModeTab;",
     "fabric 1.21.1 -> 1.21.2: call: net.minecraft.client.multiplayer.ClientLevel.getRecipeManager()Lnet/minecraft/world/item/crafting/RecipeManager;",
     "fabric 1.21.3 -> 1.21.4: call: net.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin$Context.resolveModel()Lnet/fabricmc/fabric/api/event/Event;",
-    "fabric 1.21.4 -> 1.21.5: call: com.mojang.blaze3d.systems.RenderSystem.depthFunc(I)V"
-   ]
-  },
-  {
-   "type": "class gone, game: unused",
-   "finishes": 8,
-   "mods": 411,
-   "references": 230,
-   "updates": 36,
-   "examples": [
-    "neoforge 1.20.2 -> 1.20.3: class gone: net.minecraft.data.recipes.FinishedRecipe",
-    "neoforge 1.21.3 -> 1.21.4: class gone: net.minecraft.client.renderer.item.ClampedItemPropertyFunction",
-    "neoforge 1.21.9 -> 1.21.10: class gone: net.neoforged.neoforge.client.event.ContainerScreenEvent$Render$Background",
-    "fabric 1.20.2 -> 1.20.3: class gone: net.minecraft.data.recipes.FinishedRecipe"
+    "fabric 1.21.11 -> 26.1: call: net.minecraft.client.Minecraft.getItemRenderer()Lnet/minecraft/client/renderer/entity/ItemRenderer;"
    ]
   },
   {
@@ -9654,6 +9747,19 @@
     "neoforge 1.20.3 -> 1.20.4: built for another loader: every class names the game as another loader's build does",
     "neoforge 1.20.5 -> 1.20.6: built for another loader: every class names the game as another loader's build does",
     "neoforge 1.20.2 -> 1.20.3: built for another loader: every class names the game as another loader's build does"
+   ]
+  },
+  {
+   "type": "field, game: split",
+   "finishes": 6,
+   "mods": 590,
+   "references": 615,
+   "updates": 36,
+   "examples": [
+    "fabric 1.19.3 -> 1.19.4: field: net.minecraft.client.renderer.entity.ItemRenderer.blitOffset",
+    "fabric 1.20.1 -> 1.20.2: field: net.minecraft.client.gui.components.AbstractWidget.WIDGETS_LOCATION",
+    "fabric 1.20.6 -> 1.21: field: net.minecraft.core.registries.BuiltInRegistries.ENCHANTMENT",
+    "fabric 26.1.2 -> 26.2: field: com.mojang.blaze3d.vertex.VertexFormatElement.POSITION"
    ]
   },
   {
@@ -9706,19 +9812,6 @@
     "neoforge 1.20.4 -> 1.20.5: lambda for a changed method: net.neoforged.neoforge.network.IContainerFactory.create(ILnet/minecraft/world/entity/player/Inventory;Lnet/minecraft/network/FriendlyByteBuf;)Lnet/minecraft/world/inventory/AbstractContainerMenu;",
     "fabric 1.18.1 -> 1.18.2: lambda for a changed method: net.minecraft.world.level.biome.BiomeManager$NoiseBiomeSource.getNoiseBiome(III)Lnet/minecraft/world/level/biome/Biome;",
     "fabric 1.20.6 -> 1.21: lambda for a changed method: net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback.onHudRender(Lnet/minecraft/client/gui/GuiGraphics;F)V"
-   ]
-  },
-  {
-   "type": "class gone, game: redesigned",
-   "finishes": 5,
-   "mods": 877,
-   "references": 615,
-   "updates": 36,
-   "examples": [
-    "fabric 1.18.1 -> 1.18.2: class gone: net.minecraft.server.packs.resources.SimpleReloadableResourceManager",
-    "fabric 1.21.3 -> 1.21.4: class gone: net.minecraft.client.color.item.ItemColor",
-    "neoforge 1.20.4 -> 1.20.5: class gone: net.neoforged.neoforge.event.TickEvent$ClientTickEvent",
-    "neoforge 1.21.3 -> 1.21.4: class gone: net.minecraft.client.color.item.ItemColor"
    ]
   },
   {
@@ -9826,19 +9919,6 @@
    ]
   },
   {
-   "type": "field, game: split",
-   "finishes": 3,
-   "mods": 590,
-   "references": 615,
-   "updates": 36,
-   "examples": [
-    "fabric 1.20.1 -> 1.20.2: field: net.minecraft.client.gui.components.AbstractWidget.WIDGETS_LOCATION",
-    "fabric 1.20.6 -> 1.21: field: net.minecraft.core.registries.BuiltInRegistries.ENCHANTMENT",
-    "fabric 26.1.2 -> 26.2: field: com.mojang.blaze3d.vertex.VertexFormatElement.POSITION",
-    "fabric 1.14.4 -> 1.15: field: net.minecraft.client.renderer.entity.EntityRenderDispatcher.playerRotX"
-   ]
-  },
-  {
    "type": "mixin invoker target gone, game: redesigned",
    "finishes": 3,
    "mods": 60,
@@ -9907,7 +9987,7 @@
    "type": "method reference, game: split",
    "finishes": 2,
    "mods": 45,
-   "references": 55,
+   "references": 53,
    "updates": 23,
    "examples": [
     "fabric 1.21.10 -> 1.21.11: method reference: net.minecraft.client.resources.model.BlockModelRotation.by(Lcom/mojang/math/Quadrant;Lcom/mojang/math/Quadrant;)Lnet/minecraft/client/resources/model/BlockModelRotation;",
@@ -9951,19 +10031,6 @@
    "examples": [
     "fabric 1.20.6 -> 1.21: mixin target no longer a net.minecraft.resources.ResourceLocation: net.minecraft.client.resources.model.ModelResourceLocation",
     "neoforge 1.20.6 -> 1.21: mixin target no longer a net.minecraft.resources.ResourceLocation: net.minecraft.client.resources.model.ModelResourceLocation"
-   ]
-  },
-  {
-   "type": "field, game: replaced",
-   "finishes": 1,
-   "mods": 302,
-   "references": 279,
-   "updates": 36,
-   "examples": [
-    "neoforge 26.2 -> 26.3: field: net.minecraft.world.entity.LivingEntity.swinging",
-    "fabric 1.14.4 -> 1.15: field: net.minecraft.client.particle.ItemPickupParticle.yOffs",
-    "fabric 1.15.2 -> 1.16: field: net.minecraft.util.profiling.InactiveProfiler.INACTIVE",
-    "fabric 1.16.5 -> 1.17: field: net.minecraft.world.item.AxeItem.STRIPABLES"
    ]
   },
   {
@@ -10045,6 +10112,19 @@
    ]
   },
   {
+   "type": "method reference, game: template",
+   "finishes": 1,
+   "mods": 23,
+   "references": 22,
+   "updates": 15,
+   "examples": [
+    "fabric 1.21.5 -> 1.21.6: method reference: net.minecraft.client.renderer.RenderType.crosshair(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;",
+    "fabric 1.14.4 -> 1.15: method reference: net.minecraft.client.renderer.entity.layers.RenderLayer.bindTexture(Lnet/minecraft/resources/ResourceLocation;)V",
+    "fabric 1.15.2 -> 1.16: method reference: net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration.deserialize(Lcom/mojang/datafixers/Dynamic;)Lnet/minecraft/world/level/levelgen/feature/configurations/NoneFeatureConfiguration;",
+    "fabric 1.18.1 -> 1.18.2: method reference: net.minecraft.tags.BlockTags.getAllTags()Lnet/minecraft/tags/TagCollection;"
+   ]
+  },
+  {
    "type": "lambda for a changed method, game: replaced",
    "finishes": 1,
    "mods": 17,
@@ -10094,6 +10174,19 @@
    ]
   },
   {
+   "type": "field, game: replaced",
+   "finishes": 0,
+   "mods": 294,
+   "references": 277,
+   "updates": 36,
+   "examples": [
+    "fabric 1.14.4 -> 1.15: field: net.minecraft.client.particle.ItemPickupParticle.yOffs",
+    "fabric 1.15.2 -> 1.16: field: net.minecraft.util.profiling.InactiveProfiler.INACTIVE",
+    "fabric 1.16.5 -> 1.17: field: net.minecraft.world.item.AxeItem.STRIPABLES",
+    "fabric 1.17.1 -> 1.18: field: net.minecraft.data.worldgen.Features.BIRCH"
+   ]
+  },
+  {
    "type": "mixin target class gone, game: redesigned",
    "finishes": 0,
    "mods": 175,
@@ -10122,9 +10215,9 @@
   {
    "type": "mixin target class gone, game: unused",
    "finishes": 0,
-   "mods": 80,
-   "references": 65,
-   "updates": 26,
+   "mods": 77,
+   "references": 62,
+   "updates": 24,
    "examples": [
     "fabric 1.15.2 -> 1.16: mixin target class gone: net.minecraft.client.renderer.entity.layers.AbstractArmorLayer",
     "fabric 1.16.5 -> 1.17: mixin target class gone: net.minecraft.client.model.HumanoidHeadModel",
@@ -10135,8 +10228,8 @@
   {
    "type": "method reference, game: redesigned",
    "finishes": 0,
-   "mods": 71,
-   "references": 120,
+   "mods": 70,
+   "references": 117,
    "updates": 23,
    "examples": [
     "fabric 1.14.4 -> 1.15: method reference: com.mojang.blaze3d.platform.GlStateManager.multMatrix(Ljava/nio/FloatBuffer;)V",
@@ -10377,19 +10470,6 @@
     "fabric 1.19.2 -> 1.19.3: lambda for a changed method: net.minecraft.data.BuiltinRegistries$RegistryBootstrap.run(Lnet/minecraft/core/Registry;)Lnet/minecraft/core/Holder;",
     "fabric 1.20.1 -> 1.20.2: lambda for a changed method: net.fabricmc.fabric.api.loot.v1.event.LootTableLoadingCallback$LootTableSetter.set(Lnet/minecraft/world/level/storage/loot/LootTable;)V",
     "fabric 1.20.6 -> 1.21: lambda for a changed method: net.fabricmc.fabric.api.client.model.ModelProviderContext.loadModel(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/resources/model/UnbakedModel;"
-   ]
-  },
-  {
-   "type": "method reference, game: template",
-   "finishes": 0,
-   "mods": 25,
-   "references": 24,
-   "updates": 15,
-   "examples": [
-    "fabric 1.14.4 -> 1.15: method reference: net.minecraft.client.renderer.entity.layers.RenderLayer.bindTexture(Lnet/minecraft/resources/ResourceLocation;)V",
-    "fabric 1.15.2 -> 1.16: method reference: net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration.deserialize(Lcom/mojang/datafixers/Dynamic;)Lnet/minecraft/world/level/levelgen/feature/configurations/NoneFeatureConfiguration;",
-    "fabric 1.18.1 -> 1.18.2: method reference: net.minecraft.tags.BlockTags.getAllTags()Lnet/minecraft/tags/TagCollection;",
-    "fabric 1.19.2 -> 1.19.3: method reference: net.minecraft.commands.arguments.MobEffectArgument.effect()Lnet/minecraft/commands/arguments/MobEffectArgument;"
    ]
   },
   {
@@ -10995,12 +11075,27 @@
   {
    "loader": "fabric",
    "update": "1.21.10 -> 1.21.11",
-   "mod": "no-chat-reports--NoChatReports-FABRIC-1.21.10-v2.16.0.jar",
+   "mod": "freecam--freecam-fabric-1.3.5+mc1.21.10.jar",
    "members": [
     {
-     "member": "call: net.minecraft.client.gui.components.MultiLineLabel.render(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/gui/components/MultiLineLabel$Align;IIIZI)I",
-     "game": "template",
-     "gameDetail": "m net.minecraft.client.gui.components.MultiLineLabel.visitLines(Lnet.minecraft.client.gui.TextAlignment;IIILnet.minecraft.client.gui.ActiveTextCollector;)I at 10 of 10 rewritten uses (13 uses)",
+     "member": "call: net.minecraft.world.entity.player.Player.setClientLoaded(Z)V",
+     "game": "split",
+     "gameDetail": "m net.minecraft.server.network.ServerGamePacketListenerImpl.markClientLoaded()V at 1 of 1 rewritten uses (3 uses)",
+     "portable": false,
+     "part": "game"
+    }
+   ],
+   "wanted": 19836
+  },
+  {
+   "loader": "fabric",
+   "update": "1.21.10 -> 1.21.11",
+   "mod": "jei--jei-1.21.10-fabric-26.3.0.31.jar",
+   "members": [
+    {
+     "member": "mixin target changed signature: net.minecraft.client.gui.screens.inventory.EffectsInInventory.renderEffects(Lnet/minecraft/client/gui/GuiGraphics;II)V",
+     "game": "linked",
+     "gameDetail": "the map follows it; the new signature differs",
      "portable": false,
      "part": "game"
     }
@@ -11025,12 +11120,12 @@
   {
    "loader": "fabric",
    "update": "1.21.10 -> 1.21.11",
-   "mod": "resourceful-lib--ResourcefulLib-fabric-1.21.9-3.9.1.jar",
+   "mod": "placeholder-api--placeholder-api-2.8.2+1.21.10.jar",
    "members": [
     {
-     "member": "method reference: net.minecraft.client.resources.model.BlockModelRotation.by(Lcom/mojang/math/Quadrant;Lcom/mojang/math/Quadrant;)Lnet/minecraft/client/resources/model/BlockModelRotation;",
-     "game": "split",
-     "gameDetail": "f net.minecraft.client.renderer.block.model.Variant$SimpleModelState.z ; m com.mojang.math.Quadrant.fromXYZAngles(Lcom.mojang.math.Quadrant;Lcom.mojang.math.Quadrant;Lcom.mojang.math.Quadrant;)Lcom.mojang.math.OctahedralGroup; ; m net.minecraft.client.resources.model.BlockModelRotation.get(Lcom.mojang.math.OctahedralGroup;)Lnet.minecraft.client.resources.model.BlockModelRotation; at 1 of 1 rewritten uses (1 uses)",
+     "member": "call: net.minecraft.commands.CommandSourceStack.<init>(Lnet/minecraft/commands/CommandSource;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec2;Lnet/minecraft/server/level/ServerLevel;ILjava/lang/String;Lnet/minecraft/network/chat/Component;Lnet/minecraft/server/MinecraftServer;Lnet/minecraft/world/entity/Entity;)V",
+     "game": "replaced",
+     "gameDetail": "net.minecraft.commands.CommandSourceStack.<init>(Lnet.minecraft.commands.CommandSource;Lnet.minecraft.world.phys.Vec3;Lnet.minecraft.world.phys.Vec2;Lnet.minecraft.server.level.ServerLevel;Lnet.minecraft.server.permissions.PermissionSet;Ljava.lang.String;Lnet.minecraft.network.chat.Component;Lnet.minecraft.server.MinecraftServer;Lnet.minecraft.world.entity.Entity;)V at 7 of 7 aligned uses (7 uses)",
      "portable": false,
      "part": "game"
     }
@@ -11040,12 +11135,12 @@
   {
    "loader": "fabric",
    "update": "1.21.10 -> 1.21.11",
-   "mod": "simple-voice-chat--voicechat-fabric-1.21.10-2.6.27.jar",
+   "mod": "resourceful-lib--ResourcefulLib-fabric-1.21.9-3.9.1.jar",
    "members": [
     {
-     "member": "call: net.minecraft.server.MinecraftServer.operatorUserPermissionLevel()I",
+     "member": "method reference: net.minecraft.client.resources.model.BlockModelRotation.by(Lcom/mojang/math/Quadrant;Lcom/mojang/math/Quadrant;)Lnet/minecraft/client/resources/model/BlockModelRotation;",
      "game": "split",
-     "gameDetail": "m net.minecraft.server.MinecraftServer.operatorUserPermissions()Lnet.minecraft.server.permissions.LevelBasedPermissionSet; at 1 of 1 rewritten uses (2 uses)",
+     "gameDetail": "f net.minecraft.client.renderer.block.model.Variant$SimpleModelState.z ; m com.mojang.math.Quadrant.fromXYZAngles(Lcom.mojang.math.Quadrant;Lcom.mojang.math.Quadrant;Lcom.mojang.math.Quadrant;)Lcom.mojang.math.OctahedralGroup; ; m net.minecraft.client.resources.model.BlockModelRotation.get(Lcom.mojang.math.OctahedralGroup;)Lnet.minecraft.client.resources.model.BlockModelRotation; at 1 of 1 rewritten uses (1 uses)",
      "portable": false,
      "part": "game"
     }
@@ -11076,21 +11171,6 @@
      "member": "call: net.minecraft.client.Minecraft.useFancyGraphics()Z",
      "game": "template",
      "gameDetail": " at 2 of 2 rewritten uses (4 uses)",
-     "portable": false,
-     "part": "game"
-    }
-   ],
-   "wanted": 19836
-  },
-  {
-   "loader": "fabric",
-   "update": "1.21.10 -> 1.21.11",
-   "mod": "freecam--freecam-fabric-1.3.5+mc1.21.10.jar",
-   "members": [
-    {
-     "member": "call: net.minecraft.world.entity.player.Player.setClientLoaded(Z)V",
-     "game": "split",
-     "gameDetail": "m net.minecraft.server.network.ServerGamePacketListenerImpl.markClientLoaded()V at 1 of 1 rewritten uses (3 uses)",
      "portable": false,
      "part": "game"
     }
@@ -11160,6 +11240,21 @@
   {
    "loader": "neoforge",
    "update": "1.21.10 -> 1.21.11",
+   "mod": "freecam--freecam-neoforge-1.3.5+mc1.21.10.jar",
+   "members": [
+    {
+     "member": "call: net.minecraft.world.entity.player.Player.setClientLoaded(Z)V",
+     "game": "split",
+     "gameDetail": "m net.minecraft.server.network.ServerGamePacketListenerImpl.markClientLoaded()V at 1 of 1 rewritten uses (3 uses)",
+     "portable": false,
+     "part": "game"
+    }
+   ],
+   "wanted": 19836
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.21.10 -> 1.21.11",
    "mod": "konkrete--konkrete_neoforge_1.9.13_MC_1.21.10.jar",
    "members": [
     {
@@ -11220,57 +11315,12 @@
   {
    "loader": "neoforge",
    "update": "1.21.10 -> 1.21.11",
-   "mod": "no-chat-reports--NoChatReports-NEOFORGE-1.21.10-v2.16.0.jar",
-   "members": [
-    {
-     "member": "call: net.minecraft.client.gui.components.MultiLineLabel.render(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/gui/components/MultiLineLabel$Align;IIIZI)I",
-     "game": "template",
-     "gameDetail": "m net.minecraft.client.gui.components.MultiLineLabel.visitLines(Lnet.minecraft.client.gui.TextAlignment;IIILnet.minecraft.client.gui.ActiveTextCollector;)I at 10 of 11 rewritten uses (14 uses)",
-     "portable": false,
-     "part": "game"
-    }
-   ],
-   "wanted": 19836
-  },
-  {
-   "loader": "neoforge",
-   "update": "1.21.10 -> 1.21.11",
-   "mod": "simple-voice-chat--voicechat-neoforge-1.21.10-2.6.27.jar",
-   "members": [
-    {
-     "member": "call: net.minecraft.server.MinecraftServer.operatorUserPermissionLevel()I",
-     "game": "split",
-     "gameDetail": "m net.minecraft.server.MinecraftServer.operatorUserPermissions()Lnet.minecraft.server.permissions.LevelBasedPermissionSet; at 1 of 1 rewritten uses (2 uses)",
-     "portable": false,
-     "part": "game"
-    }
-   ],
-   "wanted": 19836
-  },
-  {
-   "loader": "neoforge",
-   "update": "1.21.10 -> 1.21.11",
    "mod": "tcdcommons--tcdcommons-4.0.1+neoforge-1.21.10.jar",
    "members": [
     {
      "member": "call: net.minecraft.client.Minecraft.useFancyGraphics()Z",
      "game": "template",
      "gameDetail": " at 2 of 2 rewritten uses (4 uses)",
-     "portable": false,
-     "part": "game"
-    }
-   ],
-   "wanted": 19836
-  },
-  {
-   "loader": "neoforge",
-   "update": "1.21.10 -> 1.21.11",
-   "mod": "freecam--freecam-neoforge-1.3.5+mc1.21.10.jar",
-   "members": [
-    {
-     "member": "call: net.minecraft.world.entity.player.Player.setClientLoaded(Z)V",
-     "game": "split",
-     "gameDetail": "m net.minecraft.server.network.ServerGamePacketListenerImpl.markClientLoaded()V at 1 of 1 rewritten uses (3 uses)",
      "portable": false,
      "part": "game"
     }
@@ -11376,21 +11426,6 @@
      "member": "mixin target gone: net.minecraft.client.renderer.entity.ItemRenderer.render(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/ItemDisplayContext;ZLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;IILnet/minecraft/client/resources/model/BakedModel;)V",
      "game": "template",
      "gameDetail": "m net.minecraft.client.renderer.item.ItemStackRenderState.render(Lcom.mojang.blaze3d.vertex.PoseStack;Lnet.minecraft.client.renderer.MultiBufferSource;II)V at 3 of 3 rewritten uses (16 uses)",
-     "portable": false,
-     "part": "game"
-    }
-   ],
-   "wanted": 17747
-  },
-  {
-   "loader": "fabric",
-   "update": "1.21.3 -> 1.21.4",
-   "mod": "searchables--Searchables-fabric-1.21.3-1.0.1.jar",
-   "members": [
-    {
-     "member": "call: net.minecraft.client.gui.components.AbstractWidget.clicked(DD)Z",
-     "game": "replaced",
-     "gameDetail": "net.minecraft.client.gui.components.AbstractWidget.isMouseOver(DD)Z at 1 of 1 aligned uses (1 uses)",
      "portable": false,
      "part": "game"
     }
@@ -11541,21 +11576,6 @@
      "member": "mixin target gone: net.minecraft.client.renderer.entity.ItemRenderer.render(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/ItemDisplayContext;ZLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;IILnet/minecraft/client/resources/model/BakedModel;)V",
      "game": "template",
      "gameDetail": "m net.minecraft.client.renderer.item.ItemStackRenderState.render(Lcom.mojang.blaze3d.vertex.PoseStack;Lnet.minecraft.client.renderer.MultiBufferSource;II)V at 3 of 3 rewritten uses (16 uses)",
-     "portable": false,
-     "part": "game"
-    }
-   ],
-   "wanted": 17747
-  },
-  {
-   "loader": "neoforge",
-   "update": "1.21.3 -> 1.21.4",
-   "mod": "searchables--Searchables-neoforge-1.21.3-1.0.1.jar",
-   "members": [
-    {
-     "member": "call: net.minecraft.client.gui.components.AbstractWidget.clicked(DD)Z",
-     "game": "replaced",
-     "gameDetail": "net.minecraft.client.gui.components.AbstractWidget.isMouseOver(DD)Z at 1 of 1 aligned uses (1 uses)",
      "portable": false,
      "part": "game"
     }
@@ -11786,6 +11806,66 @@
     }
    ],
    "wanted": 15440
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.20.6 -> 1.21",
+   "mod": "imblocker-original--IMBlocker-5.6.2.1-neoforge+1.20.6-1.21.8.jar",
+   "members": [
+    {
+     "member": "mixin target changed signature: net.minecraft.client.renderer.GameRenderer.render(FJZ)V",
+     "game": "linked",
+     "gameDetail": "the map follows it; the new signature differs",
+     "portable": false,
+     "part": "game"
+    }
+   ],
+   "wanted": 15440
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.20.6 -> 1.21",
+   "mod": "resourceful-lib--resourcefullib-neoforge-1.20.5-2.5.5.jar",
+   "members": [
+    {
+     "member": "field: net.minecraft.core.registries.BuiltInRegistries.ENCHANTMENT",
+     "game": "template",
+     "gameDetail": " at 2 of 3 rewritten uses (12 uses)",
+     "portable": false,
+     "part": "game"
+    }
+   ],
+   "wanted": 15440
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.20.6 -> 1.21",
+   "mod": "enhancedvisuals--EnhancedVisuals_NEOFORGE_v1.7.2_mc1.20.6.jar",
+   "members": [
+    {
+     "member": "call: com.mojang.blaze3d.vertex.BufferBuilder.begin(Lcom/mojang/blaze3d/vertex/VertexFormat$Mode;Lcom/mojang/blaze3d/vertex/VertexFormat;)V",
+     "game": "split",
+     "gameDetail": " at 1 of 3 rewritten uses (32 uses)",
+     "portable": false,
+     "part": "game"
+    }
+   ],
+   "wanted": 15440
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.20.6 -> 1.21",
+   "mod": "first-person-model--firstperson-neoforge-2.7.3-mc1.20.6.jar",
+   "members": [
+    {
+     "member": "mixin target changed signature: net.minecraft.client.renderer.LevelRenderer.renderLevel(FJZLnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/GameRenderer;Lnet/minecraft/client/renderer/LightTexture;Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V",
+     "game": "linked",
+     "gameDetail": "the map follows it; the new signature differs",
+     "portable": false,
+     "part": "game"
+    }
+   ],
+   "wanted": 15440
   }
  ],
  "top": [
@@ -11841,16 +11921,6 @@
   },
   {
    "loader": "fabric",
-   "update": "1.20.4 -> 1.20.5",
-   "member": "call: net.minecraft.world.item.ItemStack.getTag()Lnet/minecraft/nbt/CompoundTag;",
-   "mods": 35,
-   "game": "template",
-   "gameDetail": " at 7 of 10 rewritten uses (81 uses)",
-   "portable": false,
-   "part": "game"
-  },
-  {
-   "loader": "fabric",
    "update": "1.21.4 -> 1.21.5",
    "member": "class gone: net.minecraft.client.renderer.ShaderProgram",
    "mods": 34,
@@ -11896,16 +11966,6 @@
    "mods": 32,
    "game": "template",
    "gameDetail": " at 2 of 2 rewritten uses (15 uses)",
-   "portable": false,
-   "part": "game"
-  },
-  {
-   "loader": "neoforge",
-   "update": "1.20.4 -> 1.20.5",
-   "member": "call: net.minecraft.world.item.ItemStack.getTag()Lnet/minecraft/nbt/CompoundTag;",
-   "mods": 32,
-   "game": "template",
-   "gameDetail": " at 12 of 14 rewritten uses (98 uses)",
    "portable": false,
    "part": "game"
   },
@@ -12360,16 +12420,6 @@
    "part": "game"
   },
   {
-   "loader": "neoforge",
-   "update": "26.1.2 -> 26.2",
-   "member": "call: net.minecraft.client.Minecraft.renderBuffers()Lnet/minecraft/client/renderer/RenderBuffers;",
-   "mods": 20,
-   "game": "redesigned",
-   "gameDetail": "2 uses, 1 in methods b kept, none line up",
-   "portable": false,
-   "part": "game"
-  },
-  {
    "loader": "fabric",
    "update": "1.16.5 -> 1.17",
    "member": "class gone: net.minecraft.world.level.block.entity.TickableBlockEntity",
@@ -12386,6 +12436,36 @@
    "mods": 19,
    "game": "split",
    "gameDetail": "m net.minecraft.world.item.ItemStack.save(Lnet.minecraft.core.HolderLookup$Provider;)Lnet.minecraft.nbt.Tag; at 6 of 18 rewritten uses (36 uses)",
+   "portable": false,
+   "part": "game"
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.20.4 -> 1.20.5",
+   "member": "field: net.neoforged.neoforge.event.TickEvent$Phase.START",
+   "mods": 19,
+   "game": "redesigned",
+   "gameDetail": "7 uses, 0 in methods b kept, none line up",
+   "portable": false,
+   "part": "loader"
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.20.6 -> 1.21",
+   "member": "call: com.mojang.blaze3d.vertex.Tesselator.getBuilder()Lcom/mojang/blaze3d/vertex/BufferBuilder;",
+   "mods": 19,
+   "game": "template",
+   "gameDetail": " at 20 of 22 rewritten uses (24 uses)",
+   "portable": false,
+   "part": "game"
+  },
+  {
+   "loader": "neoforge",
+   "update": "1.21.1 -> 1.21.2",
+   "member": "class gone: net.minecraft.client.renderer.block.model.ItemOverrides",
+   "mods": 19,
+   "game": "redesigned",
+   "gameDetail": "2 uses, 0 in methods b kept, none line up",
    "portable": false,
    "part": "game"
   }

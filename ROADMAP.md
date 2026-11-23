@@ -123,8 +123,8 @@ An author changes code and gets an answer about the mod's real behaviour in seco
 One command moves a mod's source from any version to any other, forward or back, with no hand edits, and the result is checked in the real game. Every edit can be undone; what cannot be ported is named, never guessed or dropped. Commands: `port`, `explain`, `dependencies`.
 
 - **Today:** Fabric and NeoForge mods as .jar or source, any version from 1.14.4 to 26.3, in about ten seconds a jar. What comes back working is the gap: of the 150 most-downloaded mods of the most-used release (Fabric 1.20.1, NeoForge 1.21.1), ported as jars to the newest game and linked against it, 11 of 294 link. One update at a time, 36% link across the 35 big updates and 93% across the 29 small ones (62% together). What does not link is named, never guessed. 16 of the 126 corpus ports build with no hand edits.
-- **The number that says most:** Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge is **22 mods**
-- **Also:** Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge is **2,468 mods**
+- **The number that says most:** Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge is **23 mods**
+- **Also:** Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge is **2,517 mods**
 - **Also:** Corpus ports that build with no hand edits is **16 updates**, target 60 updates by Dec 22, step 44
 - **Also:** Real mods with a port that works in the game is **9 mods**, target 6 mods by Dec 18, step 12
 
@@ -452,9 +452,9 @@ One command moves a mod's source from any version to any other, forward or back,
 | NeoForm steps a second mod on the same NeoForge version runs again, warm | 16 steps (Nov 8) | 0 steps (Nov 8) | 0 steps by Nov 8, step 10b | Met |
 | Most-downloaded NeoForge mods with nothing left to port by hand, 1.21.1 to 1.21.2 | — | 58 mods (Nov 18) | 100 mods by Dec 22, step 46 | Baseline |
 | Most-downloaded mods whose ported jar links, NeoForge 1.21.1 to 1.21.2 | 32 mods (Nov 18) | 45 mods (Nov 19) | 50 mods by Dec 8, step 47 | 72% of the way |
-| Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge | 11 mods (Nov 20) | 22 mods (Nov 23) | — | Fact |
-| Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge | 1,861 mods (Nov 20) | 2,468 mods (Nov 23) | — | Fact |
-| Most-downloaded mods whose ported jar links, every update, Fabric and NeoForge | 5,018 mods (Nov 19) | 6,627 mods (Nov 23) | — | Fact |
+| Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge | 11 mods (Nov 20) | 23 mods (Nov 23) | — | Fact |
+| Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge | 1,861 mods (Nov 20) | 2,517 mods (Nov 23) | — | Fact |
+| Most-downloaded mods whose ported jar links, every update, Fabric and NeoForge | 5,018 mods (Nov 19) | 6,680 mods (Nov 23) | — | Fact |
 | Scoreboard-cleared standalone mods whose ported jar loads on a real server, NeoForge 1.21.1 to 1.21.2 | 28 mods (Nov 18) | 34 mods (Nov 19) | 33 mods by Dec 8, step 47 | Met |
 | Standalone mods the jar scoreboard says link whose ported jar loads on a real server, NeoForge 1.21.1 to 1.21.2 | — | 23 mods (Nov 19) | — | Fact |
 | Ported mods that load in a real game client, NeoForge 1.21.1 to 1.21.2 | — | 23 mods (Nov 19) | — | Fact |
