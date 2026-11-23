@@ -42,8 +42,7 @@ import org.objectweb.asm.*;
  */
 final class DataIds {
 
-    static final Path CACHE = (System.getenv("MMT_EXPOSURE_HOME") != null ? Path.of(System.getenv("MMT_EXPOSURE_HOME"))
-        : Path.of(System.getProperty("user.home"), ".mmt", "exposure")).resolve("registries");
+    static final Path CACHE = Exposure.HOME.resolve("registries");
     /** Each release's registry report, read or made once per process; an empty Optional when its generator does not run. */
     static final Map<String, Optional<Map<String, Set<String>>>> REPORTS = new java.util.concurrent.ConcurrentHashMap<>();
     /** Each release's data fixer renames, read once per process. */

@@ -13,17 +13,19 @@ the same every time, so any line listed there is a bug.
 """
 import argparse
 import concurrent.futures
+import io
 import json
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import exposure  # noqa: E402
+import port_tools  # noqa: E402
 
 ROOT = exposure.ROOT
 OUT = ROOT / ".runs" / "learn-diff"
-SOURCES = [f"tools/{n}" for n in exposure.JAR_SOURCES]
 
 
 def base_classes(ref):
@@ -33,13 +35,13 @@ def base_classes(ref):
     classes = folder / "classes"
     if not (classes / "GameDiff.class").is_file():
         src = folder / "src"
-        for name in SOURCES:
-            body = subprocess.run(["git", "show", f"{sha}:{name}"], cwd=ROOT, capture_output=True, check=True).stdout
-            (src / name).parent.mkdir(parents=True, exist_ok=True)
-            (src / name).write_bytes(body)
+        packed = subprocess.run(["git", "archive", sha, port_tools.PORT, *port_tools.WITH], cwd=ROOT, capture_output=True, check=True).stdout
+        with tarfile.open(fileobj=io.BytesIO(packed)) as t:
+            t.extractall(src, filter="data")
+        sources = port_tools.sources(root=src)
         javac = exposure.java().replace("java.exe", "javac.exe") if exposure.java().endswith("java.exe") else exposure.java() + "c"
         subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", ";".join(map(str, exposure.ASM)) if sys.platform == "win32" else ":".join(map(str, exposure.ASM)),
-                        "-d", str(classes)] + [str(src / n) for n in SOURCES], check=True, capture_output=True)
+                        "-d", str(classes)] + [str(src / n) for n in sources], check=True, capture_output=True)
     sep = ";" if sys.platform == "win32" else ":"
     return folder, sep.join([str(classes)] + [str(a) for a in exposure.ASM])
 

@@ -6,110 +6,31 @@ import java.util.zip.*;
 
 final class Installation {
 
+    /**
+     * What a package carries beside its classes. An entry ending in / is a whole folder: a file added to it ships by
+     * being there (this list named every file once, and every new probe, porter source and test had to be added here).
+     * The self-test's sources are not named either: they follow from SUITES (testSources).
+     */
     static final List<String> RESOURCES = List.of(
         "tools/cli/gradle.init.gradle",
         "PERFORMANCE.md",
-        "tools/perf/PerfAgent.java",
-        "tools/perf/suite.html",
-        "tools/perf/lib/asm-9.9.jar",
-        "tools/perf/lib/asm-commons-9.9.jar",
-        "tools/perf/lib/ASM-LICENSE.txt",
         "tools/cli/Json.java",
+        "tools/cli/Route.java",
         "tools/cli/Versions.java",
         "tools/cli/Relocate.java",
         "tools/cli/QuietOptions.java",
-        "tools/agent/PortableAgent.java",
-        "tools/agent/BackgroundWindows.java",
-        "tools/agent/GameLaunchAgent.java",
-        "tools/agent/Console.java",
-        "tools/agent/HotReload.java",
-        "tools/runner/PureTests.java",
-        "tools/plugincheck/MmtPluginCheck.java",
-        "tools/servercheck/MmtServerCheck.java",
-        "tools/packcheck/MmtPackProbe.java",
-        "tools/packcheck/MmtPackProbeFabric.java",
-        "tools/packcheck/MmtPackOpener.java",
-        "tools/packcheck/stubs/net/minecraftforge/fml/common/Mod.java",
-        "tools/packcheck/stubs/net/neoforged/fml/common/Mod.java",
-        "tools/packcheck/stubs/net/fabricmc/api/DedicatedServerModInitializer.java",
-        "tools/packcheck/mods.toml",
-        "tools/packcheck/neoforge.mods.toml",
-        "tools/packcheck/fabric.mod.json",
-        "tools/packcheck/pack.mcmeta",
-        "tools/packcheck/game/1.14/MmtPackGame.java",
-        "tools/packcheck/game/1.16/MmtPackGame.java",
-        "tools/packcheck/game/1.16.2/MmtPackGame.java",
-        "tools/packcheck/game/1.18.2/MmtPackGame.java",
-        "tools/packcheck/game/1.19.3/MmtPackGame.java",
-        "tools/packcheck/game/1.21.2/MmtPackGame.java",
-        "tools/packcheck/game/1.21.5/MmtPackGame.java",
-        "tools/packcheck/game/1.21.9/MmtPackGame.java",
-        "tools/packcheck/game/1.21.11/MmtPackGame.java",
-        "tools/packcheck/game/26.1/MmtPackGame.java",
-        "tools/packcheck/MmtFingerprint.java",
-        "tools/packcheck/fingerprint/1.16/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.18.2/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.19/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.19.3/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.20/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.20.3/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.20.5/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.21.2/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.21.5/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.21.6/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/26.1/MmtFingerprintGame.java",
-        "tools/VersionMap.java",
-        "tools/GameDiff.java",
-        "tools/JarPort.java",
-        "tools/DataIds.java",
-        "tools/ModNames.java",
-        "tools/FixExpr.java",
-        "tools/SourceAnswers.java",
-        "tools/PortChains.java",
-        "tools/Downgrade.java",
-        "tools/Exposure.java",
+        "tools/agent/",
+        "tools/datacheck/",
+        "tools/mixincheck/",
+        "tools/packcheck/",
+        "tools/perf/",
+        "tools/plugincheck/",
+        "tools/runner/",
+        "tools/servercheck/",
+        "tools/port/",
         "tools/MixinAudit.java",
         "tools/MixinTriage.java",
-        "tools/mixincheck/MmtMixinCheck.java",
-        "tools/mixincheck/MmtMixinErrors.java",
-        "tools/mixincheck/MmtLaunchRecorder.java",
-        "tools/mixincheck/MmtNeoForgeTarget.java",
-        "tools/datacheck/MmtDataCheck.java",
-        "tools/datacheck/MmtDataProbe.java",
-        "tools/datacheck/mod/SkipShapeCache.java",
-        "tools/datacheck/mod/fabric.mod.json",
-        "tools/datacheck/mod/mmt_datacheck.mixins.json",
-        "tools/mixincheck/stubs/org/spongepowered/asm/mixin/extensibility/IMixinErrorHandler.java",
-        "tools/mixincheck/stubs/org/spongepowered/asm/mixin/extensibility/IMixinInfo.java",
-        "tools/mixincheck/stubs/org/spongepowered/asm/mixin/extensibility/IMixinConfig.java",
         "tools/GamePrep.java",
-        "tools/tests/PortTests.java",
-        "tools/tests/DesugarTests.java",
-        "tools/tests/PortScaffoldTests.java",
-        "tools/tests/PortRepairTests.java",
-        "tools/tests/ConvertTests.java",
-        "tools/tests/ConvertBridgeTests.java",
-        "tools/tests/ConvertNamesTests.java",
-        "tools/tests/ConvertDataTests.java",
-        "tools/tests/BuildScriptTests.java",
-        "tools/tests/CommandTests.java",
-        "tools/tests/GameTests.java",
-        "tools/tests/PerfTest.java",
-        "tools/tests/JdkDownloadsTest.java",
-        "tools/tests/DependenciesTest.java",
-        "tools/tests/FabricMetadataTest.java",
-        "tools/tests/HardeningTest.java",
-        "tools/tests/MixinCheckTest.java",
-        "tools/tests/TrustTest.java",
-        "tools/tests/ModFileTests.java",
-        "tools/tests/ErrorMessageTests.java",
-        "tools/tests/ProjectSafetyTests.java",
-        "tools/tests/PackCheckFixtures.java",
-        "tools/tests/PackMetadataTests.java",
-        "tools/tests/PackLogTests.java",
-        "tools/tests/PackServerTests.java",
-        "tools/tests/PackRepairTests.java",
-        "tools/tests/RulesTest.java",
         "knowledge/",
         "coverage/changes/index.json"
     );
@@ -124,7 +45,7 @@ final class Installation {
      * perf-optimize silently ran without them.
      */
     static List<String> resources(Path harness) throws IOException {
-        List<String> files = new ArrayList<>();
+        List<String> files = new ArrayList<>(testSources(harness));
         for (String name : RESOURCES) {
             if (!name.endsWith("/")) {
                 files.add(name);
@@ -150,6 +71,31 @@ final class Installation {
                 .forEach(n -> files.add("coverage/changes/" + n));
         }
         return files;
+    }
+
+    /**
+     * The self-test's sources: each suite's class, and every other file of tools/tests one of them names (a shared
+     * fixture, a suite another suite runs), followed until nothing new is named.
+     */
+    static List<String> testSources(Path harness) throws IOException {
+        Path tests = harness.resolve("tools/tests");
+        Map<String, String> sources = new TreeMap<>();
+        try (var list = Files.list(tests)) {
+            for (Path file : list.filter(p -> p.toString().endsWith(".java")).toList()) {
+                String name = file.getFileName().toString();
+                sources.put(name.substring(0, name.length() - 5), Files.readString(file));
+            }
+        }
+        Set<String> shipped = new TreeSet<>();
+        Deque<String> open = new ArrayDeque<>();
+        for (Suite suite : SUITES) open.add(suite.main());
+        while (!open.isEmpty()) {
+            String name = open.poll();
+            if (!sources.containsKey(name) || !shipped.add(name)) continue;
+            var words = java.util.regex.Pattern.compile("\\b[A-Z]\\w*\\b").matcher(sources.get(name));
+            while (words.find()) open.add(words.group());
+        }
+        return shipped.stream().map(name -> "tools/tests/" + name + ".java").toList();
     }
 
     static synchronized Path home() throws Exception {
@@ -223,7 +169,7 @@ final class Installation {
                 classes.toString()
             )
         );
-        try (var files = Files.list(harness.resolve("tools/cli"))) {
+        try (var files = Files.walk(harness.resolve("tools/cli"))) {
             files
                 .filter(p -> p.toString().endsWith(".java") && !p.getFileName().toString().equals("Bootstrap.java"))
                 .sorted()

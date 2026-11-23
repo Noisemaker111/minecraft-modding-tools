@@ -14,7 +14,7 @@ import java.util.zip.*;
  * the ones a porter can learn from the game; that is what makes the list a to-do list.
  *
  *   java Exposure --from 1.21.1 --to 1.21.2 [--loader neoforge] --report jarport.json --out evidence.json
- *   java Exposure --fabric-api 1.16,1.16.5      the Fabric API jar of each release (fabricApi)
+ *   java Exposure --fabric-api 1.16,1.16.5      the Fabric API jar of each release (FabricApi)
  *
  * Also the shared lookups of the port: one release's snapshot with its loader, where a member is declared, and the
  * route map read for lookups.
@@ -38,7 +38,14 @@ public final class Exposure {
         if (fabricApis != null) {
             // The Fabric API jar of each release, one "VERSION<tab>PATH" line each (no path: none), for the bench's packs.
             for (String v : fabricApis.split(",")) {
-                Path api = fabricApi(v);
+                Path api;
+                try {
+                    api = FabricApi.of(v);
+                } catch (Exception failed) {
+                    System.err.println("no Fabric API answer for Minecraft " + v + ": " + failed);
+                    System.exit(1);
+                    return;
+                }
                 System.out.println(v + "\t" + (api == null ? "" : api.toAbsolutePath()));
             }
             return;
@@ -348,7 +355,7 @@ public final class Exposure {
 
     /**
      * Fabric Loader (its newest stable release, from Fabric's maven: players run the newest loader on every release) and
-     * the Fabric API players install on the release (fabricApi), in Mojang names. Fabric API's modules name game classes they
+     * the Fabric API players install on the release (FabricApi), in Mojang names. Fabric API's modules name game classes they
      * add an interface to ("loom:injected_interfaces"); a mod built with Loom calls those methods on the game class.
      */
     static Platform fabric(String version) throws Exception {
@@ -359,7 +366,7 @@ public final class Exposure {
             Path jar = VersionMap.fetch(FABRIC_MAVEN + "fabric-loader/" + loaderVersion + "/fabric-loader-" + loaderVersion + ".jar", "fabric-loader-" + loaderVersion + ".jar");
             classes.addAll(classes(Files.readAllBytes(jar), "net/fabricmc/"));
         }
-        Path api = fabricApi(version);
+        Path api = FabricApi.of(version);
         StringBuilder access = new StringBuilder();
         Map<String, List<String>> injected = new HashMap<>();
         if (api != null) {
@@ -423,151 +430,228 @@ public final class Exposure {
      * 1.16.1's class_5414. Nor are Modrinth's release tags: they give 1.15 the early 0.4.24, while 0.28.5+1.15 starts on
      * 1.15. From 1.19.2 the maven jar is the released jar; before it, it is an empty parent (each module a separate
      * artifact), so the released file is Fabric's own Modrinth file of that build. The link check, the route map, the
-     * port and the game a port is started in all read this one jar. Null when none runs.
+     * port and the game a port is started in all read this one jar.
+     *
+     * Finding a build reads up to two jars per release of the family and, before 26.1, the release's own mappings: about
+     * 107 downloads for the releases from 1.20.1 to 26.3, any of which failing stopped a cloud port job. The answer is
+     * kept in the shared cache the cloud jobs restore (maps/fabric-api/), keyed by the content of Fabric's release list
+     * and of this class's code, so a new build or a changed search is a new key; with it, a release needs only its jar.
      */
-    static Path fabricApi(String version) throws Exception {
-        Path have = FABRIC_APIS.get(version);
-        if (have != null) {
-            return have;
+    static final class FabricApi {
+        static final Map<String, Path> KNOWN = new java.util.concurrent.ConcurrentHashMap<>();
+        static final String MAVEN = "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/";
+        static final String MODRINTH = "https://api.modrinth.com/v2/project/fabric-api/version";
+
+        /** The release's Fabric API jar (in ~/.mmt/mappings/), or null when no build runs on it. */
+        static Path of(String version) throws Exception {
+            Path have = KNOWN.get(version);
+            if (have != null) {
+                return have;
+            }
+            String list = VersionMap.fetchText(MAVEN + "maven-metadata.xml", "fabric-api-maven-metadata.xml");
+            Path kept = HOME.resolve("maps").resolve("fabric-api").resolve(key(list, version));
+            String build;
+            if (Files.isRegularFile(kept)) {
+                build = Files.readString(kept, StandardCharsets.UTF_8).trim();
+            } else {
+                build = search(version, list);
+                keep(kept, build == null ? "" : build);
+            }
+            Path jar = build == null || build.isEmpty() ? null : jarOf(build);
+            if (jar != null) {
+                KNOWN.put(version, jar);
+            }
+            return jar;
         }
-        String metadata = VersionMap.fetchText(FABRIC_API + "maven-metadata.xml", "fabric-api-maven-metadata.xml");
-        Map<String, List<String>> byRelease = new HashMap<>();
-        Matcher m = Pattern.compile("<version>([^<]+\\+(?:build\\.\\d+-)?(\\d+(?:\\.\\d+)+))</version>").matcher(metadata);
-        while (m.find()) {
-            if (family(m.group(2)).equals(family(version))) {
-                byRelease.computeIfAbsent(m.group(2), k -> new ArrayList<>()).add(m.group(1));
+
+        /** The answer's name: Fabric's release list, the release, and the code that searches it (without line numbers). */
+        static String key(String list, String version) throws Exception {
+            java.security.MessageDigest sha = java.security.MessageDigest.getInstance("SHA-256");
+            for (Class<?> c : List.of(FabricApi.class, Versions.class)) {
+                sha.update(code(c));
+            }
+            sha.update(("\0" + version + "\0" + list).getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(sha.digest()).substring(0, 24);
+        }
+
+        /** A class's code without its debug information, which an edit elsewhere in the file changes. */
+        static byte[] code(Class<?> c) throws java.io.IOException {
+            try (var in = c.getResourceAsStream("/" + c.getName().replace('.', '/') + ".class")) {
+                org.objectweb.asm.ClassWriter w = new org.objectweb.asm.ClassWriter(0);
+                new org.objectweb.asm.ClassReader(in.readAllBytes()).accept(w, org.objectweb.asm.ClassReader.SKIP_DEBUG);
+                return w.toByteArray();
             }
         }
-        // Within one release's builds the releases they accept only move forward, so the ones that accept a release are a
-        // run of builds; the newest is found by halving. Releases are taken newest build first, and once a release's
-        // newest build is older than an accepting one found, no build of it or of the releases after it can be newer.
-        List<List<String>> releases = new ArrayList<>(byRelease.values());
-        releases.forEach(builds -> builds.sort(Comparator.comparing(Exposure::apiNumber, Versions::compare)));
-        releases.sort(Comparator.comparing((List<String> builds) -> apiNumber(builds.get(builds.size() - 1)), Versions::compare).reversed());
-        List<String> accepting = new ArrayList<>();
-        String best = null;
-        for (List<String> builds : releases) {
-            int top = builds.size() - 1;
-            if (best != null && Versions.compare(apiNumber(builds.get(top)), apiNumber(best)) < 0) {
-                break;
-            }
-            if (!runsOn(builds.get(top), version)) {
-                if (!runsOn(builds.get(0), version)) {
-                    continue;
+
+        /** Writes an answer whole under a name of its own, then moves it into place; a run beside this one wrote the same. */
+        static void keep(Path kept, String build) throws java.io.IOException {
+            Files.createDirectories(kept.getParent());
+            Path part = Files.createTempFile(kept.getParent(), kept.getFileName().toString(), ".part");
+            Files.writeString(part, build, StandardCharsets.UTF_8);
+            try {
+                Files.move(part, kept, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.io.IOException another) {
+                Files.deleteIfExists(part);
+                if (!Files.isRegularFile(kept)) {
+                    throw another;
                 }
-                int lo = 0; // builds[lo] accepts the release, builds[top] does not
-                while (top - lo > 1) {
-                    int mid = (lo + top) >>> 1;
-                    if (runsOn(builds.get(mid), version)) {
-                        lo = mid;
-                    } else {
-                        top = mid;
+            }
+        }
+
+        /** The build players install on the release, read from Fabric's release list and the builds' jars, or null. */
+        static String search(String version, String list) throws Exception {
+            Map<String, List<String>> byRelease = new HashMap<>();
+            Matcher m = Pattern.compile("<version>([^<]+\\+(?:build\\.\\d+-)?(\\d+(?:\\.\\d+)+))</version>").matcher(list);
+            while (m.find()) {
+                if (family(m.group(2)).equals(family(version))) {
+                    byRelease.computeIfAbsent(m.group(2), k -> new ArrayList<>()).add(m.group(1));
+                }
+            }
+            // Within one release's builds the releases they accept only move forward, so the ones that accept a release are a
+            // run of builds; the newest is found by halving. Releases are taken newest build first, and once a release's
+            // newest build is older than an accepting one found, no build of it or of the releases after it can be newer.
+            List<List<String>> releases = new ArrayList<>(byRelease.values());
+            releases.forEach(builds -> builds.sort(Comparator.comparing(FabricApi::apiNumber, Versions::compare)));
+            releases.sort(Comparator.comparing((List<String> builds) -> apiNumber(builds.get(builds.size() - 1)), Versions::compare).reversed());
+            List<String> accepting = new ArrayList<>();
+            String best = null;
+            for (List<String> builds : releases) {
+                int top = builds.size() - 1;
+                if (best != null && Versions.compare(apiNumber(builds.get(top)), apiNumber(best)) < 0) {
+                    break;
+                }
+                if (!runsOn(builds.get(top), version)) {
+                    if (!runsOn(builds.get(0), version)) {
+                        continue;
                     }
-                }
-                top = lo;
-            }
-            accepting.addAll(builds.subList(0, top + 1));
-            if (best == null || Versions.compare(apiNumber(builds.get(top)), apiNumber(best)) > 0) {
-                best = builds.get(top);
-            }
-        }
-        accepting.sort(Comparator.comparing(Exposure::apiNumber, Versions::compare).reversed());
-        Set<String> gameClasses = compare(version, "26.1") < 0 ? Intermediary.of(version).classes.keySet() : null;
-        for (String build : accepting) {
-            Path jar = mavenJar(build);
-            if (modJsons(Files.readAllBytes(jar)).size() <= 1) {
-                jar = released(build);
-            }
-            if (jar != null && (gameClasses == null || missingGameClass(Files.readAllBytes(jar), gameClasses) == null)) {
-                FABRIC_APIS.put(version, jar);
-                return jar;
-            }
-        }
-        return null;
-    }
-
-    /** The family a release belongs to, its first two parts: 1.21 of 1.21.11, 26.1 of 26.1.2. */
-    static String family(String release) {
-        return release.replaceFirst("^(\\d+\\.\\d+).*", "$1");
-    }
-
-    /** A build's own version, before its "+": 0.14.2 of 0.14.2+build.373-1.16. */
-    static String apiNumber(String build) {
-        return build.replaceFirst("\\+.*", "");
-    }
-
-    /** Whether a Fabric API build's own fabric.mod.json accepts the release ("minecraft" in depends; a list is any of). */
-    static boolean runsOn(String build, String version) throws Exception {
-        String fmj;
-        try (ZipFile zip = new ZipFile(mavenJar(build).toFile())) {
-            fmj = new String(zip.getInputStream(zip.getEntry("fabric.mod.json")).readAllBytes(), StandardCharsets.UTF_8);
-        }
-        Object wanted = Json.object(Json.object(Json.parse(fmj)).get("depends")).get("minecraft");
-        if (wanted == null) {
-            return true;
-        }
-        for (Object range : wanted instanceof List<?> l ? l : List.of(wanted)) {
-            if (Versions.matches(String.valueOf(range), version)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** The first intermediary game class a jar's classes (and its nested jars') name that the release has not, or null. */
-    static String missingGameClass(byte[] jar, Set<String> gameClasses) throws java.io.IOException {
-        try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(jar))) {
-            for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
-                String n = e.getName();
-                if (n.endsWith(".class")) {
-                    Matcher c = Intermediary.CLASS.matcher(new String(zip.readAllBytes(), StandardCharsets.ISO_8859_1));
-                    while (c.find()) {
-                        if (!gameClasses.contains(c.group().replace('.', '/'))) {
-                            return c.group();
+                    int lo = 0; // builds[lo] accepts the release, builds[top] does not
+                    while (top - lo > 1) {
+                        int mid = (lo + top) >>> 1;
+                        if (runsOn(builds.get(mid), version)) {
+                            lo = mid;
+                        } else {
+                            top = mid;
                         }
                     }
-                } else if (n.endsWith(".jar") && n.startsWith("META-INF/jars/")) {
-                    String inner = missingGameClass(zip.readAllBytes(), gameClasses);
-                    if (inner != null) {
-                        return inner;
+                    top = lo;
+                }
+                accepting.addAll(builds.subList(0, top + 1));
+                if (best == null || Versions.compare(apiNumber(builds.get(top)), apiNumber(best)) > 0) {
+                    best = builds.get(top);
+                }
+            }
+            accepting.sort(Comparator.comparing(FabricApi::apiNumber, Versions::compare).reversed());
+            Set<String> gameClasses = compare(version, "26.1") < 0 ? Intermediary.of(version).classes.keySet() : null;
+            for (String build : accepting) {
+                Path jar = jarOf(build);
+                if (jar != null && (gameClasses == null || missingGameClass(Files.readAllBytes(jar), gameClasses) == null)) {
+                    return build;
+                }
+            }
+            return null;
+        }
+
+        /** The jar players have of a build: the maven jar, or before 1.19.2 (an empty parent there) its Modrinth file. */
+        static Path jarOf(String build) throws Exception {
+            Path jar = mavenJar(build);
+            return modJsons(Files.readAllBytes(jar)).size() <= 1 ? released(build) : jar;
+        }
+
+        /** The family a release belongs to, its first two parts: 1.21 of 1.21.11, 26.1 of 26.1.2. */
+        static String family(String release) {
+            return release.replaceFirst("^(\\d+\\.\\d+).*", "$1");
+        }
+
+        /** A build's own version, before its "+": 0.14.2 of 0.14.2+build.373-1.16. */
+        static String apiNumber(String build) {
+            return build.replaceFirst("\\+.*", "");
+        }
+
+        /** Whether a Fabric API build's own fabric.mod.json accepts the release ("minecraft" in depends; a list is any of). */
+        static boolean runsOn(String build, String version) throws Exception {
+            String fmj;
+            Path jar = mavenJar(build);
+            try (ZipFile zip = new ZipFile(jar.toFile())) {
+                ZipEntry entry = zip.getEntry("fabric.mod.json");
+                if (entry == null) {
+                    throw new java.io.IOException(jar + " has no fabric.mod.json");
+                }
+                fmj = new String(zip.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8);
+            } catch (java.util.zip.ZipException broken) {
+                throw new java.io.IOException(jar + " is not a whole jar (" + broken.getMessage() + ")", broken);
+            }
+            Object wanted = Json.object(Json.object(Json.parse(fmj)).get("depends")).get("minecraft");
+            if (wanted == null) {
+                return true;
+            }
+            for (Object range : wanted instanceof List<?> l ? l : List.of(wanted)) {
+                if (Versions.matches(String.valueOf(range), version)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** The first intermediary game class a jar's classes (and its nested jars') name that the release has not, or null. */
+        static String missingGameClass(byte[] jar, Set<String> gameClasses) throws java.io.IOException {
+            try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(jar))) {
+                for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
+                    String n = e.getName();
+                    if (n.endsWith(".class")) {
+                        Matcher c = Intermediary.CLASS.matcher(new String(zip.readAllBytes(), StandardCharsets.ISO_8859_1));
+                        while (c.find()) {
+                            if (!gameClasses.contains(c.group().replace('.', '/'))) {
+                                return c.group();
+                            }
+                        }
+                    } else if (n.endsWith(".jar") && n.startsWith("META-INF/jars/")) {
+                        String inner = missingGameClass(zip.readAllBytes(), gameClasses);
+                        if (inner != null) {
+                            return inner;
+                        }
                     }
                 }
             }
-        }
-        return null;
-    }
-
-    static Path mavenJar(String build) throws Exception {
-        return VersionMap.fetch(FABRIC_API + build + "/fabric-api-" + build + ".jar", "fabric-api-" + build + ".jar");
-    }
-
-    /** The jar Fabric released a build as, from its own Modrinth project, or null when it has none there. */
-    static Path released(String build) throws Exception {
-        String url = MODRINTH_FABRIC_API + "/" + java.net.URLEncoder.encode(build, StandardCharsets.UTF_8);
-        var response = VersionMap.HTTP.send(
-            java.net.http.HttpRequest.newBuilder(java.net.URI.create(url)).header("User-Agent", AGENT).build(),
-            java.net.http.HttpResponse.BodyHandlers.ofString()
-        );
-        if (response.statusCode() == 404) {
             return null;
         }
-        if (response.statusCode() != 200) {
-            throw new java.io.IOException("HTTP " + response.statusCode() + " for " + url);
+
+        static Path mavenJar(String build) throws Exception {
+            return VersionMap.fetch(MAVEN + build + "/fabric-api-" + build + ".jar", "fabric-api-" + build + ".jar");
         }
-        // A release with one file need not mark it primary (Fabric API for 1.18 does not).
-        List<Object> files = Json.array(Json.object(Json.parse(response.body())).get("files"));
-        for (Object f : files) {
-            Map<String, Object> file = Json.object(f);
-            if (Boolean.TRUE.equals(file.get("primary")) || files.size() == 1) {
-                return VersionMap.fetch(Json.text(file, "url", ""), "fabric-api-" + build + "-released.jar");
+
+        /** The jar Fabric released a build as, from its own Modrinth project, or null when it has none there. */
+        static Path released(String build) throws Exception {
+            String url = MODRINTH + "/" + java.net.URLEncoder.encode(build, StandardCharsets.UTF_8);
+            java.net.http.HttpResponse<String> response;
+            try {
+                response = VersionMap.HTTP.send(
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create(url)).header("User-Agent", AGENT).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString()
+                );
+            } catch (java.io.IOException failed) {
+                throw new java.io.IOException("download of " + url + " failed: " + failed, failed);
             }
+            if (response.statusCode() == 404) {
+                return null;
+            }
+            if (response.statusCode() != 200) {
+                throw new java.io.IOException("HTTP " + response.statusCode() + " for " + url);
+            }
+            // A release with one file need not mark it primary (Fabric API for 1.18 does not).
+            List<Object> files = Json.array(Json.object(Json.parse(response.body())).get("files"));
+            for (Object f : files) {
+                Map<String, Object> file = Json.object(f);
+                if (Boolean.TRUE.equals(file.get("primary")) || files.size() == 1) {
+                    return VersionMap.fetch(Json.text(file, "url", ""), "fabric-api-" + build + "-released.jar");
+                }
+            }
+            return null;
         }
-        return null;
     }
 
-    static final Map<String, Path> FABRIC_APIS = new java.util.concurrent.ConcurrentHashMap<>();
-    static final String FABRIC_API = "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/";
-    static final String MODRINTH_FABRIC_API = "https://api.modrinth.com/v2/project/fabric-api/version";
+    /** The cache every run on this machine shares (bench/exposure.py's HOME); the cloud jobs restore parts of it. */
+    static final Path HOME = System.getenv("MMT_EXPOSURE_HOME") != null ? Path.of(System.getenv("MMT_EXPOSURE_HOME"))
+        : Path.of(System.getProperty("user.home"), ".mmt", "exposure");
     static final String AGENT = "modding-accelerator-exposure/1.0";
 
     /** A Fabric API class in a mixin package: Mixin applies it to the game, no mod links against it. */

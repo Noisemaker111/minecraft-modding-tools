@@ -3,7 +3,7 @@ really been ported. It is a section of the roadmap page (docs/index.html, bench/
 docs/porting-map.html only sends old links there. Both are written to the generated branch (bench/generated.py).
 
 Reads coverage/changes/index.json (bench/change_routes.py) and every <from>__<to>.json step file
-(tools/ChangeIndex.java). The page carries the small index inline; each step's full change list
+(tools/port/names/ChangeIndex.java). The page carries the small index inline; each step's full change list
 is written to docs/porting-map/steps/<from>__<to>.js as gzip + base64 and loaded only when a
 step is opened, so the page works from a local file and on GitHub Pages without a server.
 
