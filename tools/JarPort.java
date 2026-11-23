@@ -7265,7 +7265,13 @@ public final class JarPort {
         static final String CONFLICT = "!";
         final Map<String, String> followed = new HashMap<>(); // "owner.name+desc#i" -> a reading, CONFLICT, or "" for nothing shown
         final Set<String> following = new HashSet<>();
-        final Map<String, Optional<GameDiff.Body>> bodies = new HashMap<>();
+        // The bodies read last, few enough that a port of many jars does not keep every game method it ever read.
+        final Map<String, Optional<GameDiff.Body>> bodies = new LinkedHashMap<>(256, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Optional<GameDiff.Body>> eldest) {
+                return size() > 2_000;
+            }
+        };
         boolean cut; // a reading was cut short by a loop or the depth: what it found is not kept
 
         /**
@@ -7713,7 +7719,13 @@ public final class JarPort {
 
         /** A game method's body (body), read once. */
         GameDiff.Body body(GameCode code, String owner, String key, boolean old) {
-            return bodies.computeIfAbsent((old ? "a " : "b ") + owner + "." + key, k -> Optional.ofNullable(body(code, owner, key))).orElse(null);
+            String k = (old ? "a " : "b ") + owner + "." + key;
+            Optional<GameDiff.Body> known = bodies.get(k);
+            if (known == null) {
+                known = Optional.ofNullable(body(code, owner, key));
+                bodies.put(k, known);
+            }
+            return known.orElse(null);
         }
 
         final Map<String, List<String>> overridersOf = new HashMap<>();
