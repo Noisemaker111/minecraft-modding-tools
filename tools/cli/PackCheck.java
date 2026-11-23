@@ -982,7 +982,7 @@ final class PackCheck {
         /** What this lane's starts found; known: the findings before any start (the known faults), read only. */
         final List<Object> found, known;
         final PackLoaders.Context context;
-        Path install, instance, probe;
+        Path install, instance, probe, spawnAgent;
         ServerMods selection;
         /** What check() found, once it has run. */
         Map<String, Object> result;
@@ -1000,6 +1000,7 @@ final class PackCheck {
         void prepare() throws Exception {
             install = loader.install(context, pack.minecraft(), pack.loaderVersion());
             probe = PackLoaders.probe(context, loader, pack.minecraft(), install);
+            spawnAgent = PackLoaders.spawnAgent(context);
         }
 
         Map<String, Object> check(String userWorld) throws Exception {
@@ -1196,6 +1197,9 @@ final class PackCheck {
                     )
                 );
                 for (var p : properties.entrySet()) command.add("-D" + p.getKey() + "=" + p.getValue());
+                // The world generates no spawn area before it opens (SpawnArea); the probe's test area is generated when
+                // it loads it, with every mod's world generation. A fingerprint records the world as the game makes it.
+                if (!mode.startsWith("fingerprint")) command.add("-javaagent:" + spawnAgent);
                 if (!options.get("only", "").isEmpty()) command.add("-Dmmt.probe.only=" + options.get("only", ""));
                 command.addAll(loader.launch(install, instance, pack.minecraft(), pack.loaderVersion()));
                 command.add("nogui");

@@ -1592,36 +1592,7 @@ final class Game {
         manifest.getMainAttributes().putValue("Premain-Class", "PortableAgent");
         // reload swaps recompiled classes into the running game.
         manifest.getMainAttributes().putValue("Can-Redefine-Classes", "true");
-        Path temporary = dir.resolve("agent.tmp");
-        Set<String> entries = new HashSet<>();
-        try (
-            JarOutputStream output = new JarOutputStream(Files.newOutputStream(temporary), manifest);
-            var input = new ZipFile(asm.toFile());
-            var walk = Files.walk(classes)
-        ) {
-            for (Path file : walk.filter(Files::isRegularFile).toList()) {
-                String name = classes.relativize(file).toString().replace('\\', '/');
-                output.putNextEntry(new JarEntry(name));
-                output.write(Relocate.classes(Files.readAllBytes(file)));
-                output.closeEntry();
-                entries.add(name);
-            }
-            var items = input.entries();
-            while (items.hasMoreElements()) {
-                ZipEntry entry = items.nextElement();
-                if (
-                    !entry.getName().startsWith("org/objectweb/asm/") ||
-                    !entry.getName().endsWith(".class") ||
-                    !entries.add(entry.getName())
-                ) continue;
-                output.putNextEntry(new JarEntry(Relocate.name(entry.getName())));
-                try (var stream = input.getInputStream(entry)) {
-                    output.write(Relocate.classes(stream.readAllBytes()));
-                }
-                output.closeEntry();
-            }
-        }
-        Files.move(temporary, jar, StandardCopyOption.REPLACE_EXISTING);
+        Relocate.agentJar(classes, asm, manifest, jar);
         return jar;
     }
 }
