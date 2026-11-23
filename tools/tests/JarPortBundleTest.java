@@ -71,7 +71,8 @@ final class JarPortBundleTest {
         results.clear();
         for (GameDiff.Snap[] hop : new GameDiff.Snap[][] { { a, b }, { b, c } }) {
             JarPort port = new JarPort(hop[0], hop[1], map);
-            port.portFrom = "1.20.1";
+            port.origin = "1.20.1";
+            port.dataStep = new DataIds.Step(Map.of(), Map.of(), null, null, false); // no data in this mod: no reports to read
             port.portTo = "1.20.3";
             port.decided = decided;
             step = port.port(step, "steps.jar", results);
