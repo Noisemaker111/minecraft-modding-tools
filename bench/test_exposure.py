@@ -845,40 +845,6 @@ with tempfile.TemporaryDirectory() as tmp:
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
           f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
 
-# A mod compiled for a newer Java than the release runs on does not link there (ports back meet it): its classes and
-# its nested jars' are read, a multi-release jar's newer copies are not.
-with tempfile.TemporaryDirectory() as tmp:
-    def compiled(java):
-        return b"\xca\xfe\xba\xbe\x00\x00" + (java + 44).to_bytes(2, "big") + b"\x00" * 8
-
-    def jar_of(path, entries):
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as z:
-            for name, data in entries.items():
-                z.writestr(name, data)
-        if path:
-            path.write_bytes(buf.getvalue())
-        return buf.getvalue()
-
-    inner = jar_of(None, {"lib/L.class": compiled(21)})
-    nested, plain = Path(tmp) / "nested.jar", Path(tmp) / "plain.jar"
-    jar_of(nested, {"a/A.class": compiled(17), "META-INF/jars/lib.jar": inner})
-    jar_of(plain, {"a/A.class": compiled(17), "META-INF/versions/21/a/A.class": compiled(21), "module-info.class": compiled(21)})
-    check((E.class_java(nested.read_bytes()), E.class_java(plain.read_bytes())) == (21, 17),
-          "a nested jar's classes count, a multi-release jar's newer copies and module-info do not")
-    asked, E.release_java = E.release_java, lambda v: {"old": 17, "new": 21}[v]
-    try:
-        def report():
-            return {"mods": [{"mod": "nested.jar", "unlinked": []}, {"mod": "plain.jar", "unlinked": []}], "linked": 2, "unlinkedByMods": []}
-        jars = {"nested.jar": nested, "plain.jar": plain}
-        back, forward = E.with_target_java(report(), jars, "old"), E.with_target_java(report(), jars, "new")
-    finally:
-        E.release_java = asked
-    check(back["linked"] == 1 and E.left(back["mods"][0]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
-          and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
-          f"a mod built for a newer Java than the release's does not link on it: {back}")
-    check(forward["linked"] == 2 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
-
 # A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
 # PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.
 skipped = E.not_loaded({"findings": [

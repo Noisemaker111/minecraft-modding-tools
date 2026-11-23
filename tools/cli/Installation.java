@@ -65,6 +65,7 @@ final class Installation {
         "tools/FixExpr.java",
         "tools/SourceAnswers.java",
         "tools/PortChains.java",
+        "tools/Downgrade.java",
         "tools/Exposure.java",
         "tools/MixinAudit.java",
         "tools/MixinTriage.java",

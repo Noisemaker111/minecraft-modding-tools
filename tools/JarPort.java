@@ -82,6 +82,7 @@ public final class JarPort {
         final Map<String, Integer> requires = new HashMap<>(); // mixin class -> its config's injectors.defaultRequire
         final Map<String, String[]> supers = new HashMap<>(); // class -> {removed superclass (old name), what it extends now (new name)}
         final Set<String> foreign = new HashSet<>(); // entries of classes built for another loader (otherLoader), left as they are
+        int lowered; // the Java this jar's classes were lowered to (lowerJava), 0 when the new release's Java runs them as they came
 
         void change(String kind) {
             changed.merge(kind, 1, Integer::sum);
@@ -1111,6 +1112,9 @@ public final class JarPort {
             mod.changed.clear();
             mod.changed.putAll(wasChanged);
         }
+        if (!between) {
+            lowerJava(mod, rewritten, entries, name);
+        }
         verify(mod, rewritten, entries);
         bundle(mod, rewritten, entries, name);
         List<String> atFiles = atFiles(entries);
@@ -1163,7 +1167,7 @@ public final class JarPort {
                 } else if (n.equals("META-INF/neoforge.mods.toml") || n.equals("META-INF/mods.toml")) {
                     data = metadata(new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
                 } else if (n.equals("fabric.mod.json")) {
-                    data = fabricMetadata(data, widener, platformNested);
+                    data = runsOn(fabricMetadata(data, widener, platformNested), mod.lowered);
                 } else if (n.equals("pack.mcmeta")) {
                     data = packMetadata(mod, data);
                 } else if (n.equals(widener)) {
@@ -1191,6 +1195,9 @@ public final class JarPort {
                         mod.change("members opened through the mod's access transformer");
                     }
                     data = text.getBytes(StandardCharsets.UTF_8);
+                }
+                if (mod.lowered > 0 && n.endsWith(".json") && !n.equals("fabric.mod.json")) {
+                    data = mixinLevel(data, mod.lowered);
                 }
                 ZipEntry entry = new ZipEntry(n);
                 entry.setTime(times.getOrDefault(n, 0L));
@@ -10335,6 +10342,8 @@ public final class JarPort {
     static final String STANDIN = "mmt/standin/";
 
     final Map<String, byte[]> standins = new HashMap<>(); // stand-in class (internal, unrelocated) -> its bytes
+    /** Stand-ins for the JDK methods an older Java lacks (standins/jdk/), which a mod lowered to that Java calls instead. */
+    Downgrade.Standins jdkStandins = Downgrade.Standins.NONE;
 
     /**
      * Reads the stand-ins written for this update (knowledge/standins/FROM-TO/): Java sources, one class per old game
@@ -10794,6 +10803,62 @@ public final class JarPort {
     }
 
     /**
+     * The jar's classes lowered to the Java the new release runs on, when they were built for a newer one (Downgrade): the
+     * release's JVM refuses a newer class file outright. What that Java cannot run is reported, and the JDK stand-ins the
+     * classes call now are carried under a package of the jar's own.
+     */
+    void lowerJava(Mod mod, Map<String, byte[]> rewritten, Map<String, byte[]> entries, String jarName) {
+        int java = b.java > 0 ? b.java : standinJava(b.version);
+        Set<String> breaks = new TreeSet<>();
+        Map<String, Integer> changed = new TreeMap<>();
+        Map<String, byte[]> carried = new Downgrade(java, jdkStandins).lower(rewritten, standinHome(jarName, "java", "java" + java), breaks, changed);
+        if (changed.isEmpty()) {
+            return;
+        }
+        mod.lowered = java;
+        mod.unlinked.addAll(breaks);
+        changed.forEach((k, v) -> mod.changed.merge(k, v, Integer::sum));
+        entries.putAll(carried);
+        rewritten.putAll(carried);
+        if (!carried.isEmpty()) {
+            mod.change("JDK stand-ins carried: " + carried.keySet().stream().filter(n -> !n.matches(".*\\$\\d+\\.class$"))
+                .map(n -> Exposure.dotted(n.substring(n.indexOf("/java/") + 1, n.length() - 6))).toList());
+        }
+    }
+
+    static final Pattern MIXIN_LEVEL = Pattern.compile("(\"compatibilityLevel\"\\s*:\\s*\"JAVA_)(\\d+)(\")");
+
+    /**
+     * A Mixin config asking for a newer Java than the jar was lowered to asks for that one: Mixin refuses a level the JVM
+     * running it does not reach (JAVA_17 on Java 8), and the lowered classes need no more.
+     */
+    static byte[] mixinLevel(byte[] json, int java) {
+        String text = new String(json, StandardCharsets.UTF_8);
+        Matcher m = MIXIN_LEVEL.matcher(text);
+        if (!m.find() || Integer.parseInt(m.group(2)) <= java) {
+            return json;
+        }
+        return m.replaceFirst("$1" + java + "$3").getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** fabric.mod.json asking for the Java the jar was lowered to: Fabric Loader refuses a mod whose "java" dependency the JVM does not meet. */
+    static byte[] runsOn(byte[] fmj, int java) {
+        if (java == 0) {
+            return fmj;
+        }
+        try {
+            Map<String, Object> meta = Json.object(Json.parse(new String(fmj, StandardCharsets.UTF_8)));
+            if (meta.get("depends") instanceof Map<?, ?> depends && depends.containsKey("java")) {
+                Json.object(depends).put("java", ">=" + java);
+                return Json.write(meta).getBytes(StandardCharsets.UTF_8);
+            }
+        } catch (RuntimeException unreadable) {
+            // the loader cannot read it either
+        }
+        return fmj;
+    }
+
+    /**
      * The package a jar carries one update's stand-ins under, from the jar's whole name and the update: a jar nested in a
      * mod ("MOD.jar!INNER.jar") is a module of its own on NeoForge, which refuses one package in two modules, and a port
      * across several updates carries each one's stand-in for a class (Screen in 1.20 and again in 1.21.11) side by side.
@@ -10985,6 +11050,7 @@ public final class JarPort {
         if (!dirs.isEmpty()) {
             standins(dirs);
         }
+        jdkStandins = Downgrade.Standins.of(root.resolve("jdk"));
     }
 
     /**

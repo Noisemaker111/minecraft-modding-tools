@@ -420,7 +420,7 @@ def route_maps(updates, loader, classes):
 
 
 ASM = [ROOT / "tools" / "perf" / "lib" / "asm-9.9.jar", ROOT / "tools" / "perf" / "lib" / "asm-commons-9.9.jar"]
-JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
+JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Downgrade.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
                "cli/Versions.java")
 
 
@@ -558,7 +558,7 @@ def port_key(loader, frm, to, runtime=False):
     steps = stops(loader, frm, to)
     maps = routes(loader, frm, to)
     return content_key(tools_classes_key(), *(r.read_bytes() for r in maps), (ROOT / "knowledge" / "fixes.json").read_bytes(),
-                       *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), *(platform_key(loader, r) for r in maps),
+                       *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), standins_key(loader, "jdk", None), *(platform_key(loader, r) for r in maps),
                        java_version(), loader, frm, to, runtime, pinned)
 
 
@@ -566,7 +566,9 @@ def standins_key(loader, frm, to):
     """The stand-ins JarPort reads for one update and loader (knowledge/standins/FROM-TO/ and FROM-TO.LOADER/), each file's
     path and content."""
     parts = []
-    for folder in (ROOT / "knowledge" / "standins" / f"{frm}-{to}", ROOT / "knowledge" / "standins" / f"{frm}-{to}.{loader}"):
+    # to None: the JDK stand-ins (knowledge/standins/jdk/), which a port to a release on an older Java reads.
+    folders = [ROOT / "knowledge" / "standins" / frm] if to is None else [ROOT / "knowledge" / "standins" / f"{frm}-{to}", ROOT / "knowledge" / "standins" / f"{frm}-{to}.{loader}"]
+    for folder in folders:
         if folder.is_dir():
             for f in sorted(folder.rglob("*.java")):
                 parts += [f.relative_to(folder.parent).as_posix().encode(), f.read_bytes()]
@@ -849,58 +851,6 @@ def with_hidden_code_unread(report, jars):
     return report
 
 
-def class_java(data):
-    """The newest Java a jar's classes, and those of the jars nested in it, are compiled for (a class file's major version
-    less 44), or 0. A multi-release jar's META-INF/versions/ copies and module-info only load on the Java that reads them."""
-    import io
-    import zipfile
-    newest = 0
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        for entry in z.namelist():
-            if entry.endswith(".jar"):
-                newest = max(newest, class_java(z.read(entry)))
-            elif entry.endswith(".class") and not entry.startswith("META-INF/versions/") and not entry.endswith("module-info.class"):
-                head = z.open(entry).read(8)
-                if head[:4] == b"\xca\xfe\xba\xbe":
-                    newest = max(newest, int.from_bytes(head[6:8], "big") - 44)
-    return newest
-
-
-def release_java(version):
-    """The Java a release runs on: its version.json's javaVersion (8 before 1.17, 16, 17 from 1.18, 21 from 1.20.5...)."""
-    kept = Path(os.path.expanduser("~")) / ".mmt" / "mappings" / f"version-{version}.json"
-    if kept.is_file():
-        meta = json.loads(kept.read_text(encoding="utf-8"))
-    else:
-        manifest = json.load(urllib.request.urlopen(urllib.request.Request("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", headers=AGENT), timeout=60))
-        meta = json.load(urllib.request.urlopen(urllib.request.Request(next(v["url"] for v in manifest["versions"] if v["id"] == version), headers=AGENT), timeout=60))
-    return int((meta.get("javaVersion") or {}).get("majorVersion") or 8)
-
-
-def with_target_java(report, jars, to):
-    """A mod compiled for a newer Java than the release runs on does not link there: the release's JVM refuses its
-    classes before any reference is read. Ports back to an older release meet it (a 1.21.1 mod's Java 21 classes on
-    1.20.2's Java 17, a 1.20.1 mod's Java 17 on 1.16.5's Java 8), and a real 1.20.2 server started without such a mod
-    while the link count called it linked. The port keeps each class's version, so the mod as it came says it."""
-    runs_on = release_java(to)
-    for m in report["mods"]:
-        if "error" in m or m["mod"] not in jars:
-            continue
-        try:
-            needs = class_java(jars[m["mod"]].read_bytes())
-        except Exception:  # a jar zipfile cannot open: JarPort judged it already
-            continue
-        if needs > runs_on:
-            m["unlinked"] = m["unlinked"] + [f"{m['mod']}: built for a newer Java: Java {needs} classes, Java {runs_on} runs {to}"]
-    counts = {}
-    for m in report["mods"]:
-        for member in left(m):
-            counts[member] = counts.get(member, 0) + 1
-    report["unlinkedByMods"] = [{"member": k, "mods": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
-    report["linked"] = sum(1 for m in report["mods"] if "error" not in m and not m["unlinked"])
-    return report
-
-
 def without_platform_copies(report, provided, jars):
     """JarPort's report without what mods' nested copies of platform modules reference (a nested jar named
     "MOD.jar!INNER.jar: ..."): that copy never runs. Each mod's counts are made again from what is left."""
@@ -1049,7 +999,6 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     if mods:
         report = without_platform_copies(report, platform_ids(loader, to), {m.name: m for m in mods})
         report = with_hidden_code_unread(report, {m.name: m for m in mods})
-        report = with_target_java(report, {m.name: m for m in mods}, to)
         written.write_text(json.dumps(report, indent=1), encoding="utf-8")
     said = timed("game", game_says, loader, frm, to, written) if report["unlinkedByMods"] else {}
     rows = [m for m in report["mods"] if "error" not in m]
