@@ -53,7 +53,14 @@ if (portedLibraries) {
 // and NeoGradle depend on, cpw.mods:modlauncher and net.minecraftforge:srgutils, which it serves too): what resolved
 // before still resolves from where it did (Gradle takes the first repository that has a module).
 def loaderMavens = ['https://maven.neoforged.net/releases': '(net\\.(neoforged|minecraftforge)|cpw\\.mods)(\\..*)?']
+// A repository address that moved: NeoForged's root served everything /releases serves now, NeoForge's own
+// dependencies included (Forge's MCP tools, de.oceanlabs.mcp:mcinjector for Architectury Loom), so it is pointed there.
+def movedRepositories = ['https://maven.neoforged.net': 'https://maven.neoforged.net/releases']
 def addLoaderMavens = { handler ->
+    handler.each { r ->
+        def at = r.hasProperty('url') && r.url != null ? r.url.toString().replaceFirst('/+$', '') : ''
+        if (movedRepositories[at]) r.url = movedRepositories[at]
+    }
     loaderMavens.each { address, groups ->
         if (handler.any { it.hasProperty('url') && it.url.toString().startsWith(address) }) return
         handler.maven { repository -> repository.name = 'mmt ' + address; repository.url = address; repository.content { includeGroupByRegex(groups) } }
