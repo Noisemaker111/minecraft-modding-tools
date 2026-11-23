@@ -22,7 +22,10 @@ import org.objectweb.asm.commons.SimpleRemapper;
  * reported, never guessed. Class renames are applied everywhere. The mod's metadata is moved to the new release, nested
  * mods (jar-in-jar) are ported the same way, and signatures that no longer match are removed.
  *
- *   java JarPort --from 1.21.1 --to 1.21.2 --map route.json [--loader neoforge] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...
+ *   java JarPort --from 1.21.1 --to 1.21.2 --map route.json [--loader neoforge] [--fixes knowledge/fixes.json] [--data-from V] --out OUT.jar|DIR [--report R.json] IN.jar ...
+ *
+ * --data-from judges the jars' data ids against release V instead of --from: a jar built from source for --to, checked
+ * as a port from --to to itself, whose data was written for V (bench/source_ports.py).
  *
  * --fixes applies the port rules' "inClass" replacements (FixExpr) to members nothing in the game's own code replaces.
  *
@@ -51,6 +54,7 @@ public final class JarPort {
     final NewerCode newerCode = new NewerCode(this);
     final RuleCode ruleCode = new RuleCode(this);
     final Conversions conversions = new Conversions(this);
+    final EveryStart everyStart = new EveryStart(this);
 
     final GameDiff.Snap a, b;
     String loader; // "neoforge" or "fabric": the loader ported for, which a rule may name
@@ -347,7 +351,7 @@ public final class JarPort {
     static final long PORT_WORKER = 400L << 20;
 
     public static void main(String[] args) throws Exception {
-        String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null;
+        String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null, dataFrom = null;
         boolean runtime = false, hopsOnly = false;
         Path originalsDir = null;
         List<String> via = new ArrayList<>(), maps = new ArrayList<>();
@@ -367,6 +371,7 @@ public final class JarPort {
                 case "--fixes" -> book = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
                 case "--originals" -> originalsDir = Path.of(args[++i]);
+                case "--data-from" -> dataFrom = args[++i];
                 default -> jars.add(Path.of(args[i]));
             }
         }
@@ -383,7 +388,7 @@ public final class JarPort {
         stops.addAll(via);
         stops.add(to);
         if (from == null || to == null || maps.size() != stops.size() - 1 || out == null || jars.isEmpty()) {
-            System.err.println("usage: JarPort --from V [--via V,...] --to V --map route.json (one per step) [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...");
+            System.err.println("usage: JarPort --from V [--via V,...] --to V --map route.json (one per step) [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] [--data-from V] --out OUT.jar|DIR [--report R.json] IN.jar ...");
             System.exit(2);
         }
         Path target = Path.of(out);
@@ -445,6 +450,7 @@ public final class JarPort {
                 port.between = !last;
                 port.loaderNames.originalsDir = originalsDir;
                 port.origin = from;
+                port.dataOrigin = dataFrom;
                 port.portTo = to;
                 port.decided = decided;
                 if ("fabric".equals(loader)) {
@@ -699,6 +705,7 @@ public final class JarPort {
             }
         }
         MixinPoints.requires(mod, entries);
+        everyStart.check(mod, entries);
         PLANNING.set(mod);
         try {
             plan(mod);
@@ -891,7 +898,8 @@ public final class JarPort {
             return false; // a porter made in code (tests) has no releases to read reports of unless it is given a step
         }
         if (dataStep == null) {
-            dataStep = DataIds.Step.of(origin == null ? a.version : origin, a.version, b.version, !between);
+            String written = dataOrigin != null ? dataOrigin : origin != null ? origin : a.version;
+            dataStep = DataIds.Step.of(written, a.version, b.version, !between);
         }
         if (dataStep.idle()) {
             return false;
@@ -1467,6 +1475,7 @@ public final class JarPort {
     GameCode newCode, oldCode; // read when an injection point is first checked; tests set them
 
     String origin; // the release the whole port started from: the data pass judges the mod's data ids against it, and with portTo it decides the nested jars carried
+    String dataOrigin; // the release the mod's data was written for when not origin (--data-from)
     DataIds.Step dataStep; // the data pass of this step: made on first use; tests set it
     boolean codeTried;
 

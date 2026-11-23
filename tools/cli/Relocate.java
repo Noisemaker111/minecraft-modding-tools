@@ -1,4 +1,8 @@
 import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.jar.*;
+import java.util.zip.*;
 
 /** Relocate the agent's private ASM copy without loading or changing the game's ASM. */
 final class Relocate {
@@ -39,5 +43,36 @@ final class Relocate {
         }
         input.transferTo(output);
         return buffer.toByteArray();
+    }
+
+    /**
+     * A java agent's jar: its compiled classes and the ASM they were built against, both with ASM renamed, so the agent
+     * never meets the ASM the game or a loader ships. Written under a name of this run's own beside target, then moved
+     * onto it: two builds side by side each write their own.
+     */
+    static void agentJar(Path classes, Path asm, Manifest manifest, Path target) throws IOException {
+        Files.createDirectories(target.getParent());
+        Path part = Files.createTempFile(target.getParent(), target.getFileName() + "-", ".part");
+        Set<String> entries = new HashSet<>();
+        try (var output = new JarOutputStream(Files.newOutputStream(part), manifest); var input = new ZipFile(asm.toFile()); var walk = Files.walk(classes)) {
+            for (Path file : walk.filter(Files::isRegularFile).sorted().toList()) {
+                String name = classes.relativize(file).toString().replace('\\', '/');
+                output.putNextEntry(new JarEntry(name));
+                output.write(classes(Files.readAllBytes(file)));
+                output.closeEntry();
+                entries.add(name);
+            }
+            var items = input.entries();
+            while (items.hasMoreElements()) {
+                ZipEntry entry = items.nextElement();
+                if (!entry.getName().startsWith("org/objectweb/asm/") || !entry.getName().endsWith(".class") || !entries.add(entry.getName())) continue;
+                output.putNextEntry(new JarEntry(name(entry.getName())));
+                try (var stream = input.getInputStream(entry)) {
+                    output.write(classes(stream.readAllBytes()));
+                }
+                output.closeEntry();
+            }
+        }
+        Files.move(part, target, StandardCopyOption.REPLACE_EXISTING);
     }
 }
