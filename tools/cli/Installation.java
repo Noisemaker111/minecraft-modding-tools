@@ -152,7 +152,7 @@ final class Installation {
         return files;
     }
 
-    static Path home() throws Exception {
+    static synchronized Path home() throws Exception {
         Path location = Path.of(Mmt.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         // A child started by perf-optimize (PerfOptimize.childJava) is handed its parent's resources; a test hands its own.
         // Not mmt.home: the portable launchers set that to the ZIP's folder, which has no resources.
@@ -167,7 +167,22 @@ final class Installation {
             ".mmt/packages",
             Fingerprints.bytes(Files.readAllBytes(location))
         );
-        try (var jar = new JarFile(location.toFile())) {
+        // The folder is named for the jar's bytes, so once unpacked whole it never changes: a command reads nothing more.
+        Path unpacked = directory.resolve(".unpacked");
+        if (Files.isRegularFile(unpacked)) return directory;
+        Files.createDirectories(directory);
+        // Commands from one package often start together (the checks, the desktop app): one unpacks while the others
+        // wait, so none sees a file another is replacing. The JVM's own threads share one lock, hence synchronized.
+        try (
+            var channel = java.nio.channels.FileChannel.open(
+                directory.resolve(".unpack.lock"),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE
+            );
+            var lock = channel.lock();
+            var jar = new JarFile(location.toFile())
+        ) {
+            if (Files.isRegularFile(unpacked)) return directory;
             List<String> names;
             try (var input = jar.getInputStream(jar.getJarEntry(RESOURCE_LIST))) {
                 names = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).lines().toList();
@@ -182,16 +197,11 @@ final class Installation {
                     Files.createDirectories(file.getParent());
                     Path temporary = Files.createTempFile(file.getParent(), "resource-", ".tmp");
                     Files.write(temporary, bytes);
-                    try {
-                        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (IOException busy) {
-                        // Two commands from one package starting at once both unpack it; on Windows the second cannot
-                        // replace a file the first just wrote and holds open. Those bytes are the same ones.
-                        Files.deleteIfExists(temporary);
-                        if (!Files.isRegularFile(file) || !Arrays.equals(Files.readAllBytes(file), bytes)) throw busy;
-                    }
+                    Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
+            // Last, so a folder an interrupted command left half unpacked is unpacked again.
+            Files.writeString(unpacked, "");
         }
         return directory;
     }
@@ -457,7 +467,9 @@ final class Installation {
     /** One self-test suite: a class in tools/tests with a main, and what it is given beside the classpath. */
     record Suite(String name, String main, boolean wantsHarness, boolean wantsScratch) {}
 
+    // perf is listed first: the suites run side by side and it takes longest (its captures last seconds), so it starts first.
     static final List<Suite> SUITES = List.of(
+        new Suite("perf", "PerfTest", true, true),
         new Suite("desugar", "DesugarTests", true, true),
         new Suite("port", "PortTests", true, true),
         new Suite("port-scaffold", "PortScaffoldTests", true, true),
@@ -466,7 +478,6 @@ final class Installation {
         new Suite("build-script", "BuildScriptTests", true, true),
         new Suite("command", "CommandTests", true, true),
         new Suite("game", "GameTests", true, true),
-        new Suite("perf", "PerfTest", true, true),
         new Suite("jdk", "JdkDownloadsTest", false, false),
         new Suite("dependency", "DependenciesTest", false, false),
         new Suite("manifest", "FabricMetadataTest", false, false),
@@ -529,15 +540,36 @@ final class Installation {
         report.stage("test-compile", compile, Map.of());
         if (compile.exit() != 0) throw new IOException(Run.tail(compile.log()));
 
+        // The suites share nothing (each makes its own scratch folder), so they run side by side, one per core; the
+        // report keeps their listed order.
+        List<Path> logs = new ArrayList<>();
+        for (Suite suite : suites) logs.add(report.log(suite.name() + "-tests"));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        List<java.util.concurrent.Future<Run.Result>> runs = new ArrayList<>();
+        try {
+            for (int i = 0; i < suites.size(); i++) {
+                Suite suite = suites.get(i);
+                Path log = logs.get(i);
+                List<String> command = new ArrayList<>(
+                    List.of(jdk.java().toString(), "-cp", own + File.pathSeparator + classes, suite.main())
+                );
+                if (suite.wantsHarness()) command.add(harness.toString());
+                if (suite.wantsScratch()) command.add(report.directory.resolve("fixtures").toString());
+                runs.add(pool.submit(() -> Run.command(command, report.root, Map.of(), log, 120)));
+            }
+        } finally {
+            pool.shutdown();
+        }
         List<Object> results = new ArrayList<>();
         List<String> failed = new ArrayList<>(), passedLines = new ArrayList<>(), failedText = new ArrayList<>();
-        for (Suite suite : suites) {
-            List<String> command = new ArrayList<>(
-                List.of(jdk.java().toString(), "-cp", own + File.pathSeparator + classes, suite.main())
-            );
-            if (suite.wantsHarness()) command.add(harness.toString());
-            if (suite.wantsScratch()) command.add(report.directory.resolve("fixtures").toString());
-            var run = Run.command(command, report.root, Map.of(), report.log(suite.name() + "-tests"), 120);
+        for (int i = 0; i < suites.size(); i++) {
+            Suite suite = suites.get(i);
+            Run.Result run;
+            try {
+                run = runs.get(i).get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw e.getCause() instanceof Exception cause ? cause : e;
+            }
             report.stage(suite.name() + "-tests", run, Map.of());
             boolean ok = run.exit() == 0;
             results.add(
