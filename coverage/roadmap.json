@@ -28,6 +28,7 @@
    "intro": "One command moves a mod's source from any version to any other, forward or back, with no hand edits, and the result is checked in the real game. Every edit can be undone; what cannot be ported is named, never guessed or dropped. Commands: `port`, `explain`, `dependencies`.",
    "headline": [
     "port.jar-links.any-version",
+    "port.breaks-left",
     "port.source.any-version",
     "port.jar-links.newest",
     "port.jar-links.big-updates",
