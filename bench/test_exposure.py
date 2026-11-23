@@ -241,6 +241,10 @@ with tempfile.TemporaryDirectory() as tmp:
     listed = {"v-ipn": ["P-libipn"], "v-libipn": ["P-lang"], "v-lone": []}
     files = {("P-libipn", "2.0"): (lib, "v-libipn"), ("P-lang", "1.0"): (lang, "v-lang")}
     real = E.required_projects, E.library
+    real_api, real_home = E.api, E.HOME
+    searched = []
+    E.api = lambda path, params=None: searched.append(params["query"]) or {"hits": []}  # noqa: E731
+    E.HOME = Path(tmp) / "home"
     E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
     try:
         chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["ipn--ktmod.jar", "lone--lone.jar"], folder, pins, set())
@@ -316,6 +320,43 @@ with tempfile.TemporaryDirectory() as tmp:
         E.required_projects, E.library = real
     check(not ready and list(to_port) == ["libipn-1.jar"],
           f"a library two mods need fits every range they ask for: {ready} {to_port}")
+    check(searched == ["nowhere"], f"an id no listed library gives is looked for once, by its words: {searched}")
+    # A library the mod's metadata requires that its Modrinth version does not list (Sounds requires YACL's
+    # yet_another_config_lib_v3 and lists nothing): the project is found for the id, among the old release's pinned mods
+    # or by Modrinth's search for its words, and taken only when the file it would install declares the id. A search hit
+    # whose file does not (a mod that only names the library) is not added.
+    def fabric_mod(mod_id, depends=(), provides=()):
+        return jar({"fabric.mod.json": json.dumps({"id": mod_id, "depends": {d: "*" for d in depends}, "provides": list(provides)})})
+    (folder / "sound--sound.jar").write_bytes(fabric_mod("sounds", ["fabric-api", "yet_another_config_lib_v3"]))
+    (folder / "ui--ui.jar").write_bytes(fabric_mod("ui", ["owo"]))
+    (folder / "chat--chat.jar").write_bytes(fabric_mod("chat", ["nolib_v2"]))
+    pinned_old = E.HOME / "jars" / "fabric-1.0"
+    pinned_old.mkdir(parents=True)
+    (pinned_old / "yacl--yacl-old.jar").write_bytes(fabric_mod("yet_another_config_lib_v3"))
+    yacl_new, owo_new, decoy = Path(tmp) / "yacl-new.jar", Path(tmp) / "owo-new.jar", Path(tmp) / "decoy.jar"
+    yacl_new.write_bytes(fabric_mod("yet_another_config_lib_v3", ["owo"]))
+    owo_new.write_bytes(fabric_mod("owo-lib", provides=["owo"]))
+    decoy.write_bytes(fabric_mod("owo-addon", ["owo"]))
+    pins = [{"slug": "sound", "file": "sound.jar", "project": "P-sound", "version": "v-sound"},
+            {"slug": "ui", "file": "ui.jar", "project": "P-ui", "version": "v-ui"},
+            {"slug": "chat", "file": "chat.jar", "project": "P-chat", "version": "v-chat"},
+            {"slug": "yacl", "file": "yacl-old.jar", "project": "P-yacl", "version": "v-yacl-old"}]
+    files = {("P-yacl", "2.0"): (yacl_new, "v-yacl"), ("P-owo", "2.0"): (owo_new, "v-owo"), ("P-decoy", "2.0"): (decoy, "v-decoy")}
+    hits = {"owo": ["P-decoy", "P-owo"], "nolib": ["P-decoy"]}
+    searched.clear()
+    E.api = lambda path, params=None: searched.append(params["query"]) or {"hits": [{"project_id": h} for h in hits.get(params["query"], [])]}  # noqa: E731
+    E.required_projects, E.library = (lambda v: []), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["sound--sound.jar", "ui--ui.jar", "chat--chat.jar"], folder, pins, {"fabric-api"})
+    finally:
+        E.required_projects, E.library = real
+        E.api, E.HOME = real_api, real_home
+    check(sorted(j.name for j in chosen) == ["sound--sound.jar", "ui--ui.jar"] and sorted(ready) == ["owo-new.jar", "yacl-new.jar"] and not to_port,
+          f"a library is found for the id a mod's metadata requires, and the library's own in turn: {chosen} {ready} {to_port}")
+    check(left == {"chat--chat.jar": ["nolib_v2"]} and "decoy.jar" not in ready,
+          f"a found project whose file does not declare the id is not taken: {left} {ready}")
+    check("yet another config lib" not in searched and sorted(searched) == ["nolib", "owo"],
+          f"an id a pinned mod of the old release declares is not searched for; a trailing version is not searched: {searched}")
 
 # A start stopped by a mixin that cannot apply names the mod whose mixin config it is; a warning about a client class the
 # server lacks, from another mod, does not.
@@ -367,14 +408,33 @@ finally:
     sys.stdout = sys.__stdout__
 check(picked == ["chunky--Chunky.jar"] and list(skipped) == ["clumps--Clumps.jar"] and "Clumps.jar: does not link" in said,
       f"--mods starts the asked mods that link and names the rest: {picked} {skipped} {said!r}")
+# One proof of several updates asks each for the same slugs: a slug this release does not pin is not started here, with
+# why, and the other asked mods still start (fabric 1.20.4 pins fastquit and not sound, and stopped before any game).
+sys.stdout = io.StringIO()
 try:
-    E.only_mods([], pinned, ["nonesuch"])
-    check(False, "a slug that is not pinned stops the run")
-except SystemExit:
-    pass
+    picked, skipped = E.only_mods(["chunky--Chunky.jar"], pinned, ["chunky", "sound"])
+finally:
+    sys.stdout = sys.__stdout__
+check(picked == ["chunky--Chunky.jar"] and skipped == {"sound": ["it is not among this release's pinned mods (bench/exposure/mods/)"]},
+      f"a slug another update pins is not started on this one, and the rest start: {picked} {skipped}")
+with tempfile.TemporaryDirectory() as tmp:
+    real_pins = E.PINS
+    E.PINS = Path(tmp)
+    for release, slugs in (("1.0", ["fastquit"]), ("2.0", ["fastquit", "sound"])):
+        (E.PINS / f"fabric-{release}.json").write_text(json.dumps({"mods": [{"slug": x} for x in slugs]}), encoding="utf-8")
+    try:
+        check(E.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "sound"]) == ["fabric:1.0:2.0", "fabric:2.0:3.0"],
+              "a slug one update of a proof pins is asked of each")
+        try:
+            E.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "nonesuch"])
+            check(False, "a slug no update pins stops the plan")
+        except SystemExit as stop:
+            check("nonesuch" in str(stop), f"the plan names the slug no update pins: {stop}")
+    finally:
+        E.PINS = real_pins
 
-# --mods where no asked mod links is a finished proof: a receipt with no game verdicts and why each mod was not started,
-# not a port of zero jars that fails with none.
+# --mods where no asked mod links keeps a receipt with no game verdicts and why each mod was not started, and fails with
+# that why: a proof that started no game never passes as one.
 with tempfile.TemporaryDirectory() as tmp:
     real = E.ROOT, E.PINS, E.HOME
     E.ROOT, E.PINS, E.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
@@ -384,13 +444,17 @@ with tempfile.TemporaryDirectory() as tmp:
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps({"mods": [{"mod": "chunky--Chunky.jar", "unlinked": []}, {"mod": "clumps--Clumps.jar", "unlinked": ["x"]}]}), encoding="utf-8")
     sys.stdout = io.StringIO()
+    stopped = None
     try:
-        empty = E.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
+        E.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
+    except SystemExit as stop:
+        stopped = str(stop)
     finally:
         sys.stdout = sys.__stdout__
         E.ROOT, E.PINS, E.HOME = real
     kept = json.loads((Path(tmp) / "out" / "load.json").read_text(encoding="utf-8"))
-check(kept == empty and kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"] == {} and kept["scope"] == ["clumps"]
+check(stopped == "no mod to start: clumps--Clumps.jar: it does not link after the port", f"a proof that starts no game fails with why: {stopped}")
+check(kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"] == {} and kept["scope"] == ["clumps"]
       and kept["notStarted"] == {"clumps--Clumps.jar": ["it does not link after the port"]},
       f"a proof with nothing to start keeps a receipt saying why: {kept}")
 

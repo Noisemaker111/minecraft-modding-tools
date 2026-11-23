@@ -6,7 +6,8 @@ name: Cloud game proof
 # load summary, named as load --save names it (load-LOADER-FROM-TO-COMMIT.json), and mmt's logs. Dispatch with
 # tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2; it downloads the summaries into .runs/cloud/ and compares each
 # with the receipt main keeps for that update (bench/exposure/load-*.json). A mod that fails is a result, not a job
-# failure; a job fails only when its run could not finish. Started only by dispatch. No caches, no retries.
+# failure; a job fails when its run could not finish or started no game, with why as the summary's last line. Started
+# only by dispatch. No caches, no retries.
 run-name: "Cloud game proof: ${{ inputs.updates }} ${{ inputs.mods }} ${{ inputs.request }}"
 on:
   workflow_dispatch:
@@ -33,7 +34,11 @@ jobs:
       - id: plan
         env:
           UPDATES: ${{ inputs.updates }}
-        run: echo "updates=$(python3 bench/exposure.py load-plan "$UPDATES")" >> "$GITHUB_OUTPUT"
+          MODS: ${{ inputs.mods }}
+        run: |
+          set -o pipefail
+          plan=$(python3 bench/exposure.py load-plan "$UPDATES" --mods "$MODS" 2>&1) || { echo "$plan" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }
+          echo "updates=$plan" >> "$GITHUB_OUTPUT"
   load:
     needs: plan
     name: ${{ matrix.update }}
@@ -83,10 +88,12 @@ jobs:
           set -o pipefail
           IFS=: read -r LOADER FROM TO <<< "$UPDATE"
           mkdir -p summary
-          python bench/exposure.py load --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} \
-            --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" | tee load.txt
-          # A run with nothing to start has no verdict table, only why.
-          { echo '```'; grep -A 1000 -e '^mod  ' -e '^no mod to start' load.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # Unbuffered and with its errors, so the reason a run stops is its last line, here and in the summary.
+          status=0
+          PYTHONUNBUFFERED=1 python bench/exposure.py load --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} \
+            --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" 2>&1 | tee load.txt || status=$?
+          { echo '```'; grep -A 1000 '^mod  ' load.txt || tail -n 5 load.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
       - name: Game logs
         # pack-check keeps each start's server or client log and result.json in its own cache, outside the workspace;
         # the runner is fresh, so every run there is this job's.

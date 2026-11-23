@@ -8,7 +8,12 @@ import org.objectweb.asm.*;
  * call is temp(y, 63); Bio.cold(y) only hands sea on to temp, so it is cold(y, 63). Ent.grief() read this.level() where
  * grief(level) reads its ServerLevel-like parameter, so it is grief((SLvl) this.level()). Fin.id() ignores the context it
  * takes now, so it gets null. Base.size(i) took a context its own body ignores too, but Sub overrides it: nothing is
- * learned, since the override may read it. The learned lines are applied by JarPort to a mod that then runs on this JVM.
+ * learned, since the override may read it. Lst(wide, screen, top, bottom) became Lst(wide, height, y) over a new
+ * superclass Pane whose getBottom() is getY() + height: the game reads top as getY() and bottom as getBottom(), so the old
+ * call is Lst($1, $4 - $3, $3), the screen height nothing reads any more dropped. Pt(a) became Pt(a, c), c a value the
+ * old object never held, and Fol(r, spread) became Fol(r) where the old size() read spread: nothing is learned for
+ * either, since dropping spread would change what a mod's Fol does. The learned lines are applied by JarPort to a mod that then runs on this
+ * JVM, its own list subclass's super(...) call included.
  *
  *   java -cp asm.jar:CLASSES GameSameCallTest SCRATCH   (in the jar-port check of bench/run_tests.py)
  */
@@ -26,7 +31,12 @@ final class GameSameCallTest {
         GameDiff.Learner learner = new GameDiff.Learner(hop);
         Map<String, String> learned = new TreeMap<>();
         List<String> lines = new ArrayList<>();
-        for (GameDiff.Learner.Learned l : new GameDiff.SameCall(hop, learner).learn(List.of())) {
+        // How the game reads Lst's removed fields in 2.0, as the learner gives them.
+        String lst = "net.minecraft.s5.Lst";
+        List<GameDiff.Learner.Learned> known = List.of(new GameDiff.Learner.Learned(lst, "top", "", true, false, "$0.getY()", 1, 1),
+            new GameDiff.Learner.Learned(lst, "bottom", "", true, false, "$0.getBottom()", 1, 1),
+            new GameDiff.Learner.Learned(lst, "wide", "", true, false, "$0.width", 1, 1));
+        for (GameDiff.Learner.Learned l : new GameDiff.SameCall(hop, learner).learn(known)) {
             learned.put(l.owner() + "." + l.name() + l.desc(), l.expr());
             lines.add(l.json("1.0 -> 2.0"));
         }
@@ -36,22 +46,29 @@ final class GameSameCallTest {
         check(learned, s + "Ent.grief()Z", "$0.grief((net.minecraft.s5.SLvl) $0.level())", "a parameter where the old body read a value of its receiver takes that value, narrowed to the new type");
         check(learned, s + "Fin.id()I", "$0.id(null)", "a parameter the new body never reads, of a method nothing overrides, takes its type's zero");
         check(learned, s + "Base.size(I)I", null, "a method an override may change says nothing about what to pass");
+        check(learned, s + "Lst.<init>(IIII)V", "new net.minecraft.s5.Lst($1, $4 - $3, $3)",
+            "a constructor's new parameters are solved so every field the new release reads holds what the old one stored");
+        check(learned, s + "Pt.<init>(I)V", null, "a parameter for a value the old object never held is not made up");
+        check(learned, s + "Fol.<init>(II)V", null, "an argument is not dropped when the old game used what it set");
 
         Path map = scratch.resolve("route-samecall.json");
         Files.writeString(map, "{\"learned\": [" + String.join(",\n", lines) + "]}");
         String trace = run(a, b, map, newGame);
-        JarPortTest.expect(trace.equals("1.00.5truetrue7"), "the old calls run on the new game as the old one behaved: " + trace);
+        JarPortTest.expect(trace.equals("1.00.5truetrue760"), "the old calls run on the new game as the old one behaved: " + trace);
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
-        System.out.println("game-samecall: 6 checks passed");
+        System.out.println("game-samecall: 9 checks passed");
     }
 
     static void check(Map<String, String> learned, String key, String want, String what) {
         JarPortTest.expect(Objects.equals(want, learned.get(key)), what + ": " + learned.get(key));
     }
 
-    /** m5.Run.go(bio, ent, fin): "" + bio.temp(100) + bio.temp(70) + bio.cold(70) + ent.grief() + fin.id(). */
+    /**
+     * m5.Run.go(bio, ent, fin): "" + bio.temp(100) + bio.temp(70) + bio.cold(70) + ent.grief() + fin.id() + new
+     * m5.Rows(10, 100, 20, 80).rows(), Rows being the mod's own Lst whose constructor is super(wide, screen, top, bottom).
+     */
     static String run(GameDiff.Snap a, GameDiff.Snap b, Path map, Map<String, byte[]> newGame) throws Exception {
         ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "m5/Run", null, "java/lang/Object", null);
@@ -76,15 +93,38 @@ final class GameSameCallTest {
         m.visitVarInsn(Opcodes.ALOAD, 2);
         m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Fin", "id", "()I", false);
         append(m, "I");
+        m.visitTypeInsn(Opcodes.NEW, "m5/Rows");
+        m.visitInsn(Opcodes.DUP);
+        for (int v : new int[] { 10, 100, 20, 80 }) {
+            m.visitIntInsn(Opcodes.BIPUSH, v);
+        }
+        m.visitMethodInsn(Opcodes.INVOKESPECIAL, "m5/Rows", "<init>", "(IIII)V", false);
+        m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "m5/Rows", "rows", "()I", false);
+        append(m, "I");
         m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false);
         m.visitInsn(Opcodes.ARETURN);
         m.visitMaxs(0, 0);
         m.visitEnd();
         w.visitEnd();
         List<Map<String, Object>> results = new ArrayList<>();
-        Map<String, byte[]> ported = JarPortTest.entries(new JarPort(a, b, map).port(JarPortTest.jar(Map.of("m5/Run.class", w.toByteArray())), "samecall.jar", results));
+        ClassWriter r = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        r.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "m5/Rows", null, U + "Lst", null);
+        MethodVisitor k = r.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(IIII)V", null, null);
+        k.visitCode();
+        k.visitVarInsn(Opcodes.ALOAD, 0);
+        for (int i = 1; i <= 4; i++) {
+            k.visitVarInsn(Opcodes.ILOAD, i);
+        }
+        k.visitMethodInsn(Opcodes.INVOKESPECIAL, U + "Lst", "<init>", "(IIII)V", false);
+        k.visitInsn(Opcodes.RETURN);
+        k.visitMaxs(0, 0);
+        k.visitEnd();
+        r.visitEnd();
+        Map<String, byte[]> ported = JarPortTest.entries(new JarPort(a, b, map).port(JarPortTest.jar(Map.of("m5/Run.class", w.toByteArray(), "m5/Rows.class", r.toByteArray())),
+            "samecall.jar", results));
         Map<String, byte[]> classes = new HashMap<>(newGame);
         classes.put("m5/Run", ported.get("m5/Run.class"));
+        classes.put("m5/Rows", ported.get("m5/Rows.class"));
         ClassLoader loader = new ClassLoader(null) {
             @Override
             protected Class<?> findClass(String name) throws ClassNotFoundException {
@@ -212,7 +252,140 @@ final class GameSameCallTest {
             constructor(w, U + "Base");
             constant(w, "size", two ? "(I" + CTX + ")I" : "(I)I", 2);
         }));
+        // Lst 1.0: Lst(wide, screen, top, bottom) keeps all four, rows() is bottom - top. 2.0: Pane(x, y, width, height)
+        // holds them, getBottom() is getY() + height; Lst(wide, height, y) is super(0, y, wide, height), rows() getBottom() - getY().
+        if (two) {
+            out.put(U + "Pane", cls("Pane", 0, null, w -> {
+                for (String f : new String[] { "y", "width", "height" }) {
+                    w.visitField(Opcodes.ACC_PUBLIC, f, "I", null, null).visitEnd();
+                }
+                MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(IIII)V", null, null);
+                c.visitCode();
+                c.visitVarInsn(Opcodes.ALOAD, 0);
+                c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+                put(c, U + "Pane", "y", 2);
+                put(c, U + "Pane", "width", 3);
+                put(c, U + "Pane", "height", 4);
+                c.visitInsn(Opcodes.RETURN);
+                c.visitMaxs(0, 0);
+                c.visitEnd();
+                MethodVisitor g = w.visitMethod(Opcodes.ACC_PUBLIC, "getY", "()I", null, null);
+                g.visitCode();
+                g.visitVarInsn(Opcodes.ALOAD, 0);
+                g.visitFieldInsn(Opcodes.GETFIELD, U + "Pane", "y", "I");
+                g.visitInsn(Opcodes.IRETURN);
+                g.visitMaxs(0, 0);
+                g.visitEnd();
+                MethodVisitor b = w.visitMethod(Opcodes.ACC_PUBLIC, "getBottom", "()I", null, null);
+                b.visitCode();
+                b.visitVarInsn(Opcodes.ALOAD, 0);
+                b.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Pane", "getY", "()I", false);
+                b.visitVarInsn(Opcodes.ALOAD, 0);
+                b.visitFieldInsn(Opcodes.GETFIELD, U + "Pane", "height", "I");
+                b.visitInsn(Opcodes.IADD);
+                b.visitInsn(Opcodes.IRETURN);
+                b.visitMaxs(0, 0);
+                b.visitEnd();
+            }));
+        }
+        String[] fields = { "wide", "screen", "top", "bottom" };
+        out.put(U + "Lst", cls("Lst", 0, two ? U + "Pane" : null, w -> {
+            if (!two) {
+                for (String f : fields) {
+                    w.visitField(Opcodes.ACC_PUBLIC, f, "I", null, null).visitEnd();
+                }
+            }
+            MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", two ? "(III)V" : "(IIII)V", null, null);
+            c.visitCode();
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            if (two) {
+                c.visitInsn(Opcodes.ICONST_0);
+                c.visitVarInsn(Opcodes.ILOAD, 3);
+                c.visitVarInsn(Opcodes.ILOAD, 1);
+                c.visitVarInsn(Opcodes.ILOAD, 2);
+                c.visitMethodInsn(Opcodes.INVOKESPECIAL, U + "Pane", "<init>", "(IIII)V", false);
+            } else {
+                c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+                for (int i = 0; i < 4; i++) {
+                    put(c, U + "Lst", fields[i], i + 1);
+                }
+            }
+            c.visitInsn(Opcodes.RETURN);
+            c.visitMaxs(0, 0);
+            c.visitEnd();
+            MethodVisitor rows = w.visitMethod(Opcodes.ACC_PUBLIC, "rows", "()I", null, null);
+            rows.visitCode();
+            rows.visitVarInsn(Opcodes.ALOAD, 0);
+            if (two) {
+                rows.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Lst", "getBottom", "()I", false);
+                rows.visitVarInsn(Opcodes.ALOAD, 0);
+                rows.visitMethodInsn(Opcodes.INVOKEVIRTUAL, U + "Lst", "getY", "()I", false);
+            } else {
+                rows.visitFieldInsn(Opcodes.GETFIELD, U + "Lst", "bottom", "I");
+                rows.visitVarInsn(Opcodes.ALOAD, 0);
+                rows.visitFieldInsn(Opcodes.GETFIELD, U + "Lst", "top", "I");
+            }
+            rows.visitInsn(Opcodes.ISUB);
+            rows.visitInsn(Opcodes.IRETURN);
+            rows.visitMaxs(0, 0);
+            rows.visitEnd();
+        }));
+        // Pt 1.0: Pt(a) keeps a. 2.0: Pt(a, c) keeps both.
+        out.put(U + "Pt", cls("Pt", 0, null, w -> {
+            w.visitField(Opcodes.ACC_PUBLIC, "a", "I", null, null).visitEnd();
+            if (two) {
+                w.visitField(Opcodes.ACC_PUBLIC, "c", "I", null, null).visitEnd();
+            }
+            MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", two ? "(II)V" : "(I)V", null, null);
+            c.visitCode();
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            put(c, U + "Pt", "a", 1);
+            if (two) {
+                put(c, U + "Pt", "c", 2);
+            }
+            c.visitInsn(Opcodes.RETURN);
+            c.visitMaxs(0, 0);
+            c.visitEnd();
+        }));
+        // Fol 1.0: Fol(r, spread) keeps both, size() is r + spread. 2.0: Fol(r) keeps r, size() is r.
+        out.put(U + "Fol", cls("Fol", 0, null, w -> {
+            w.visitField(Opcodes.ACC_PUBLIC, "r", "I", null, null).visitEnd();
+            if (!two) {
+                w.visitField(Opcodes.ACC_PUBLIC, "spread", "I", null, null).visitEnd();
+            }
+            MethodVisitor c = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", two ? "(I)V" : "(II)V", null, null);
+            c.visitCode();
+            c.visitVarInsn(Opcodes.ALOAD, 0);
+            c.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            put(c, U + "Fol", "r", 1);
+            if (!two) {
+                put(c, U + "Fol", "spread", 2);
+            }
+            c.visitInsn(Opcodes.RETURN);
+            c.visitMaxs(0, 0);
+            c.visitEnd();
+            MethodVisitor z = w.visitMethod(Opcodes.ACC_PUBLIC, "size", "()I", null, null);
+            z.visitCode();
+            z.visitVarInsn(Opcodes.ALOAD, 0);
+            z.visitFieldInsn(Opcodes.GETFIELD, U + "Fol", "r", "I");
+            if (!two) {
+                z.visitVarInsn(Opcodes.ALOAD, 0);
+                z.visitFieldInsn(Opcodes.GETFIELD, U + "Fol", "spread", "I");
+                z.visitInsn(Opcodes.IADD);
+            }
+            z.visitInsn(Opcodes.IRETURN);
+            z.visitMaxs(0, 0);
+            z.visitEnd();
+        }));
         return out;
+    }
+
+    /** this.field = the int parameter in slot. */
+    static void put(MethodVisitor c, String owner, String field, int slot) {
+        c.visitVarInsn(Opcodes.ALOAD, 0);
+        c.visitVarInsn(Opcodes.ILOAD, slot);
+        c.visitFieldInsn(Opcodes.PUTFIELD, owner, field, "I");
     }
 
     static void constant(ClassWriter w, String name, String desc, int value) {
