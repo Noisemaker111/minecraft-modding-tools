@@ -80,11 +80,13 @@ jobs:
         run: |
           echo "tree=$(git rev-parse HEAD^1^{tree})" >> "$GITHUB_OUTPUT"
           echo "name=main at $(git rev-parse --short=10 HEAD^1)" >> "$GITHUB_OUTPUT"
+          # A cache key may not hold a comma, and the named mods are a comma-separated list: the key takes their hash.
+          echo "mods=$(printf '%s' "$MODS" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
         id: kept-base
         with:
           path: base/port.json
-          key: "port-base-${{ steps.base.outputs.tree }}-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-${{ matrix.mods }}-${{ hashFiles('bench/exposure.py', 'bench/port_tools.py', 'bench/portboard/**') }}"
+          key: "port-base-${{ steps.base.outputs.tree }}-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-${{ steps.base.outputs.mods }}-${{ hashFiles('bench/exposure.py', 'bench/port_tools.py', 'bench/portboard/**') }}"
       - uses: actions/cache/restore@v4
         with:
           path: |
