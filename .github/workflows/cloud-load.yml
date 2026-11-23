@@ -71,18 +71,8 @@ jobs:
             --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" 2>&1 | tee load.txt || status=$?
           { echo '```'; grep -A 1000 '^mod  ' load.txt || tail -n 5 load.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
-      - name: Game logs
-        # pack-check keeps each start's server or client log and result.json in its own cache, outside the workspace;
-        # the runner is fresh, so every run there is this job's.
-        if: always()
-        run: |
-          mkdir -p logs
-          for run in "$HOME"/.mmt/packs/.runs/portable/*/; do
-            [ -d "$run" ] || continue
-            mkdir -p "logs/$(basename "$run")"
-            find "$run" -maxdepth 1 \( -name '*.log' -o -name 'result.json' \) -exec cp {} "logs/$(basename "$run")/" \;
-          done
-          echo "$(find logs -type f | wc -l) game log files"
+      - if: always()
+        uses: ./.github/actions/game-logs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

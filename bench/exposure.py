@@ -1393,20 +1393,18 @@ def gate(summary):
 
 def load_gate(summary):
     """A port check's verdict on its game proof (a load receipt): its lines and whether it passes, which it does when
-    every mod it was asked to start (its scope) loads on the server, or is client-only there, and then loads in the
-    client. A mod that loads alone and fails only next to the others (clash) is said and does not fail it; one the
-    proof did not start, or a client that could not be run, fails it: a check that proved nothing in game never passes."""
+    every mod it started (in its scope) loads on the server, or is client-only there, and then loads in the client. It
+    fails only on those: a mod it started that does not load, or a client that could not be run for them. A mod that
+    loads alone and fails only next to the others (clash) is said and does not fail it. A mod it could not start (its
+    metadata is for another loader, a library it needs is missing) is said with why, apart, and does not fail it either:
+    nothing about the port was tried in game for it. With nothing started the check says so and passes."""
     asked = set(summary["scope"]) if isinstance(summary.get("scope"), list) else None
     client = summary.get("client") or {}
-    clash = set(summary.get("clashOnly", []))
+    verdicts = {n: v for n, v in summary.get("verdicts", {}).items() if asked is None or n.split("--", 1)[0] in asked}
+    clash = set(summary.get("clashOnly", [])) & set(verdicts)
     pair = f"{summary['loader']} {summary['from']} -> {summary['to']}"
     failed = []
-    for name, why in sorted((summary.get("notStarted") or {}).items()):
-        if asked is None or name.split("--", 1)[0] in asked:
-            failed.append(f"{name}: not started: {'; '.join(why)}")
-    for name, verdict in sorted(summary.get("verdicts", {}).items()):
-        if asked is not None and name.split("--", 1)[0] not in asked:
-            continue  # a library an asked mod needs: a failing one fails the mods that need it
+    for name, verdict in sorted(verdicts.items()):
         if verdict.startswith("failed"):
             failed.append(f"{name}: server {verdict}"[:500])
             continue
@@ -1416,13 +1414,26 @@ def load_gate(summary):
             failed.append(f"{name}: the client was not run: {client['notRun']}"[:500])
         elif not str(client.get("verdicts", {}).get(name, "")).startswith("loaded"):
             failed.append(f"{name}: client {client.get('verdicts', {}).get(name, 'gave no verdict')}"[:500])
-    lines = [f"{pair}: game proof of {', '.join(sorted(asked)) if asked else 'every mod that links'}: "
-             f"{summary.get('loaded', 0)}/{summary.get('mods', 0)} load on the server, {client.get('loaded', 0)}/{client.get('mods', 0)} in the client"]
-    if clash & {n for n in summary.get("verdicts", {}) if asked is None or n.split("--", 1)[0] in asked}:
+    unstarted = [f"{name}: {'; '.join(why)}"[:500] for name, why in sorted((summary.get("notStarted") or {}).items())
+                 if asked is None or name.split("--", 1)[0] in asked]
+    what = ', '.join(sorted(asked)) if asked else 'every mod that links'
+    if not summary.get("mods"):
+        lines = [f"{pair}: game proof of {what}: nothing it can start, so no game was started and nothing was proven in game"]
+    else:
+        server_only = sum(1 for v in verdicts.values() if v.startswith("client-only"))
+        lines = [f"{pair}: game proof of {what}: started {summary['mods']}: {summary.get('loaded', 0)}/{summary['mods']} load on the server"
+                 + (f" ({server_only} client-only, not loaded by a server)" if server_only else "")
+                 + f", {client.get('loaded', 0)}/{client.get('mods', 0)} in the client"]
+    if clash:
         lines.append(f"  load alone but fail next to the others: {', '.join(sorted(clash))}")
     lines += [f"  {f}" for f in failed]
+    if summary.get("time"):
+        lines.append(f"  {time_line(summary['time'])}")
+    if unstarted:
+        lines.append(f"  not started ({len(unstarted)}, not counted):")
+        lines += [f"    {u}" for u in unstarted]
     if failed:
-        lines.append(f"FAIL: {len(failed)} mods the check started do not load in game")
+        lines.append(f"FAIL: {len(failed)} of the {summary['mods']} mods the check started do not load in game")
     return lines, not failed
 
 
@@ -2261,6 +2272,49 @@ def has_code(jar):
         return any(n.endswith(".class") and b"net/minecraft/" in z.read(n) for n in z.namelist())
 
 
+# Every pack-check a game proof starts, in order: its side, its seconds and mmt's own stages (load reports them).
+STARTS = []
+
+
+def pack_check(pack, to, loader, side="server"):
+    """One mmt pack-check of a pack folder on a side (server, or client): its JSON ({} when it printed none) and the
+    finished process. Its time and mmt's stages in it are kept in STARTS."""
+    mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
+    started = time.monotonic()
+    done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader] + (["--side", "client"] if side == "client" else []) + ["--json"],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    at = done.stdout.find("{")
+    result = json.loads(done.stdout[at:]) if at >= 0 else {}
+    stages = {}
+    for stage in result.get("stages") or []:
+        stages[stage.get("name", "?")] = round(stages.get(stage.get("name", "?"), 0) + float(stage.get("seconds") or 0), 1)
+    STARTS.append({"side": side, "seconds": round(time.monotonic() - started, 1), "stages": stages})
+    return result, done
+
+
+def start_times(starts):
+    """STARTS summed by side: {side: {"starts", "seconds", "stages": {name: seconds}}}."""
+    out = {}
+    for one in starts:
+        side = out.setdefault(one["side"], {"starts": 0, "seconds": 0.0, "stages": {}})
+        side["starts"] += 1
+        side["seconds"] = round(side["seconds"] + one["seconds"], 1)
+        for name, seconds in one["stages"].items():
+            side["stages"][name] = round(side["stages"].get(name, 0) + seconds, 1)
+    return out
+
+
+def time_line(times):
+    """A load receipt's time, as one line: the port before any start, then each side's starts and mmt's stages in them."""
+    parts = [f"port {times.get('port', 0):.0f} s"]
+    for side in ("server", "client"):
+        t = times.get(side)
+        if t:
+            stages = ", ".join(f"{n} {v:.0f} s" for n, v in sorted(t["stages"].items(), key=lambda kv: -kv[1]))
+            parts.append(f"{side} {t['starts']} start{'s' if t['starts'] != 1 else ''} {t['seconds']:.0f} s" + (f" ({stages})" if stages else ""))
+    return "time: " + "; ".join(parts)
+
+
 def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(), run=None):
     """The same ported jars in a real client of the new release (mmt pack-check --side client): the title screen, a world, the
     inventory and every creative tab. A start that fails drops the jar its log names and starts again; each mod ends loaded or
@@ -2277,16 +2331,12 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(),
         source = next((d / name for d in (server_pack / "mods", server_pack / "dropped")[:1 if name in platform else 2] if (d / name).is_file()), None)
         if source:
             shutil.copy2(source, pack / "mods" / name)
-    mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     verdicts = {}
 
     def start():
         if run:
             return run(pack), subprocess.CompletedProcess([], 1, "", "")
-        done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--side", "client", "--json"],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace")
-        at = done.stdout.find("{")
-        return json.loads(done.stdout[at:]) if at >= 0 else {}, done
+        return pack_check(pack, to, loader, "client")
 
     # As on the server, a jar whose client start classes need a newer Java than the release's is failed before any start
     # (a mod whose only too-new class is its client entrypoint loads on a server).
@@ -2447,11 +2497,7 @@ def starts_alone(loader, to, pack, name, platform):
     for jar in platform:
         if (pack / "mods" / jar).is_file():  # a library that failed was dropped with the mods that need it
             shutil.copy(pack / "mods" / jar, alone / "mods" / jar)
-    mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
-    done = subprocess.run([mmt, "pack-check", "--pack", str(alone), "--minecraft", to, "--loader", loader, "--json"],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace")
-    start = done.stdout.find("{")
-    return bool(start >= 0 and json.loads(done.stdout[start:]).get("ok"))
+    return bool(pack_check(alone, to, loader)[0].get("ok"))
 
 
 def display_name(jar):
@@ -2602,7 +2648,10 @@ def load(loader, frm, to, save, mods=None, out=None):
     (Modrinth slugs), with the libraries they need.
 
     One start holds them all; a start that fails drops the jar its log names and starts again, until a start opens a world,
-    places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only."""
+    places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only. The
+    receipt's time says where the proof's time went: the port before any start, and each side's starts with mmt's stages."""
+    STARTS.clear()
+    began = time.monotonic()
     work = ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}"
     report = proof_report(work, mods)
     if not report.is_file():
@@ -2642,7 +2691,8 @@ def load(loader, frm, to, save, mods=None, out=None):
         why = "no mod to start: " + ("; ".join(f"{n}: {', '.join(w)}" for n, w in sorted(left.items())) or "none links")
         summary = {"loader": loader, "from": frm, "to": to, "scope": scope, "mods": 0, "loaded": 0, "linkedAndLoaded": 0, "linked": 0,
                    "newerJava": [], "failedButLinked": [], "clashOnly": [], "failedDataOnly": [], "verdicts": {}, "libraries": {}, "notStarted": left,
-                   "client": {"mods": 0, "loaded": 0, "verdicts": {}}, "loadedOnServerFailedInClient": []}
+                   "client": {"mods": 0, "loaded": 0, "verdicts": {}}, "loadedOnServerFailedInClient": [],
+                   "time": {"port": round(time.monotonic() - began, 1)}}
         keep_load(summary, out, save)
         raise SystemExit(why)
     (pack / "mods").mkdir()
@@ -2666,15 +2716,12 @@ def load(loader, frm, to, save, mods=None, out=None):
         if api_jar:
             shutil.copy(api_jar, pack / "mods" / api_jar.name)
             platform.append(api_jar.name)
-    mmt = str(ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     verdicts = {}
 
     def start_server():
-        done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace")
-        at = done.stdout.find("{")
-        return json.loads(done.stdout[at:]) if at >= 0 else {}
+        return pack_check(pack, to, loader)[0]
 
+    ported_in = round(time.monotonic() - began, 1)
     # A jar built for a newer Java than the release runs on is failed from its class files before the first start, a
     # library with the mods that need it, so the starts hold only jars the release's Java can load.
     present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
@@ -2688,10 +2735,7 @@ def load(loader, frm, to, save, mods=None, out=None):
         present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
         in_pack = [n for n in libraries if (pack / "mods" / n).is_file()]
         if not culprits:
-            done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
-                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
-            text = done.stdout[done.stdout.find("{"):]
-            result = json.loads(text) if text else {}
+            result, done = pack_check(pack, to, loader)
             res = result.get("result", {})
             for name, why in (res.get("game", {}).get("leftOut") or {}).items():
                 verdicts[name] = "client-only: " + str(why)[:200]
@@ -2733,10 +2777,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     if result.get("ok"):
         for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and n not in misfits):
             (pack / "dropped" / name).rename(pack / "mods" / name)
-            done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
-                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
-            start = done.stdout.find("{")
-            again = json.loads(done.stdout[start:]) if start >= 0 else {}
+            again, done = pack_check(pack, to, loader)
             left_out = again.get("result", {}).get("game", {}).get("leftOut") or {}
             if name in left_out:
                 verdicts[name] = "client-only: " + str(left_out[name])[:200]
@@ -2774,17 +2815,23 @@ def load(loader, frm, to, save, mods=None, out=None):
         # A mod whose client start classes need a newer Java (its client entrypoint) is no sign of that.
         "loadedOnServerFailedInClient": sorted(n for n, v in client["verdicts"].items() if v.startswith("failed") and verdicts.get(n) == "loaded" and links.get(n)
                                                and n not in client.get("newerJava", ())),
+        "time": {"port": ported_in, **start_times(STARTS)},
     }
     print(f"{'mod':<60} {'server':<12} client")
     for name in sorted(verdicts):
         print(f"{name[:60]:<60} {verdicts[name].split(':')[0]:<12} {client['verdicts'].get(name, 'not started').split(':')[0]}")
-    print(f"client: {client['loaded']}/{client['mods']} load in a real {to} client; loaded on the server and failed in the client: "
-          f"{summary['loadedOnServerFailedInClient'] or 'none'}")
-    print(f"{summary['loaded']}/{summary['mods']} load on a real {to} server; {summary['linked']} link, "
-          f"{summary['linkedAndLoaded']} of them load; failed although they link: {summary['failedButLinked'] or 'none'}"
+    # Each line counts what its side did: a client-only mod is not loaded by a server, so it is counted apart there, and
+    # one that fails in the client is named in the client's line whatever the server said.
+    client_failed = sorted(n for n, v in client["verdicts"].items() if v.startswith("failed"))
+    client_only = sum(1 for v in verdicts.values() if v.startswith("client-only"))
+    print(f"client: {client['loaded']}/{client['mods']} load in a real {to} client; failed in the client: {client_failed or 'none'}"
+          f"; of them loaded on the server: {summary['loadedOnServerFailedInClient'] or 'none'}")
+    print(f"{summary['loaded']}/{summary['mods']} load on a real {to} server" + (f" ({client_only} client-only, not loaded by a server)" if client_only else "")
+          + f"; {summary['linked']} link, {summary['linkedAndLoaded']} of them load on the server; failed on the server although they link: {summary['failedButLinked'] or 'none'}"
           + (f"; failed on their data, with no game code: {summary['failedDataOnly']}" if summary["failedDataOnly"] else "")
           + (f"; load alone but fail next to the others: {summary['clashOnly']}" if summary["clashOnly"] else "")
           + (f"; built for a newer Java than {to} runs on, not started: {summary['newerJava']}" if summary["newerJava"] else ""))
+    print(time_line(summary["time"]))
     keep_load(summary, out, save)
     return summary
 

@@ -1097,10 +1097,35 @@ proof = {"loader": "fabric", "from": "1.0", "to": "1.1", "scope": ["a", "b"], "m
 check(E.load_gate(proof)[1], f"a proof whose mods load on both sides passes: {E.load_gate(proof)[0]}")
 for broken, what in ((dict(proof, verdicts={**proof["verdicts"], "a--a.jar": "failed: mixin"}), "a mod that fails on the server"),
                      (dict(proof, client={**proof["client"], "verdicts": {**proof["client"]["verdicts"], "b--b.jar": "failed: crash"}}), "a mod that fails in the client"),
-                     (dict(proof, client={**proof["client"], "notRun": "no display"}), "a client that could not be run"),
-                     (dict(proof, notStarted={"a--a.jar": ["it does not link after the port"]}), "an asked mod that was not started")):
+                     (dict(proof, client={**proof["client"], "notRun": "no display"}), "a client that could not be run")):
     lines, ok = E.load_gate(broken)
     check(not ok and any("FAIL" in x for x in lines), f"{what} fails the check: {lines}")
+# A mod the proof could not start is said apart with why and fails nothing: neoforge 1.21.7 -> 1.21.8 started 1 of 3
+# freed mods, which loaded on both sides, and failed counting the 2 it never started as "started and do not load".
+unstarted = dict(proof, mods=1, loaded=1, verdicts={"a--a.jar": "loaded"}, client={"mods": 1, "loaded": 1, "verdicts": {"a--a.jar": "loaded"}},
+                 notStarted={"b--b.jar": ["metadata for neoforge"], "c--c.jar": ["metadata for neoforge"]}, scope=["a", "b", "c"])
+lines, ok = E.load_gate(unstarted)
+check(ok and not any("FAIL" in x for x in lines) and "1/1 load on the server" in lines[0]
+      and lines[-3:] == ["  not started (2, not counted):", "    b--b.jar: metadata for neoforge", "    c--c.jar: metadata for neoforge"],
+      f"mods the proof could not start are said apart and fail nothing: {lines}")
+# Nothing it can start (neoforge 1.20.2 -> 1.20.3: the one freed mod has no NeoForge metadata): it says so and passes.
+nothing = dict(proof, mods=0, loaded=0, verdicts={}, client={"mods": 0, "loaded": 0, "verdicts": {}}, notStarted={"a--a.jar": ["metadata for neoforge"]})
+lines, ok = E.load_gate(nothing)
+check(ok and "nothing it can start" in lines[0] and "    a--a.jar: metadata for neoforge" in lines, f"a proof that could start nothing says so and passes: {lines}")
+# The receipt says where the proof's time went, each side's starts summed with mmt's stages in them, and the gate says it.
+times = {"port": 53.2, **E.start_times([{"side": "server", "seconds": 70.0, "stages": {"server-start": 50.0, "read": 12.0}},
+                                         {"side": "client", "seconds": 60.5, "stages": {"read": 30.0}},
+                                         {"side": "client", "seconds": 45.0, "stages": {"read": 2.0, "client": 40.0}}])}
+check(times["client"] == {"starts": 2, "seconds": 105.5, "stages": {"read": 32.0, "client": 40.0}}, f"each side's starts are summed: {times}")
+check(E.load_gate(dict(proof, time=times))[0][1] == "  time: port 53 s; server 1 start 70 s (server-start 50 s, read 12 s); client 2 starts 106 s (client 40 s, read 32 s)",
+      f"the gate says where the proof's time went: {E.load_gate(dict(proof, time=times))[0]}")
+# A client-only mod that fails in the client is one started mod that does not load (fabric 1.18.1 -> 1.18.2), and the
+# first line counts it as client-only on the server, so the lines agree with the FAIL.
+client_only = dict(proof, mods=1, loaded=0, verdicts={"b--b.jar": "client-only: its own metadata"}, scope=["b"],
+                   client={"mods": 1, "loaded": 0, "verdicts": {"b--b.jar": "failed: Description: Rendering screen"}})
+lines, ok = E.load_gate(client_only)
+check(not ok and "0/1 load on the server (1 client-only, not loaded by a server), 0/1 in the client" in lines[0]
+      and lines[-1] == "FAIL: 1 of the 1 mods the check started do not load in game", f"a client-only mod failing in the client fails the check: {lines}")
 clashed = dict(proof, clashOnly=["a--a.jar"], verdicts={**proof["verdicts"], "a--a.jar": "clash: loads alone, fails next to the other mods: x"})
 check(E.load_gate(clashed)[1], "a mod that loads alone and fails only next to the others is said and passes")
 

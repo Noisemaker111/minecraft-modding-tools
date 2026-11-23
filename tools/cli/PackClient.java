@@ -18,6 +18,13 @@ import java.util.zip.*;
  * stops, or reaches the loader's error screen, names the mods its log and crash report point at.
  */
 final class PackClient {
+
+    /** What a client crash report says caused it, on one line (Game.crashCause); a report with no Description, its own excerpt. */
+    static String crashCause(String report) {
+        String cause = Game.crashCause(report.lines().toList());
+        return cause.isEmpty() ? PackChecks.failure(report, List.of()) : cause.replace("\n", "; ");
+    }
+
     private PackClient() {}
 
     static final String OS = Runtimes.WINDOWS ? "windows" : System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("mac") ? "osx" : "linux";
@@ -506,7 +513,7 @@ final class PackClient {
             reader.join(TimeUnit.SECONDS.toMillis(30));
             String text = Files.isRegularFile(log) ? new String(Files.readAllBytes(log), StandardCharsets.UTF_8) : "";
             List<String> reports = PackChecks.crashReports(instance, since);
-            result.put("failure", String.valueOf(failure.getMessage()).lines().findFirst().orElse("") + (reports.isEmpty() ? "" : "; " + PackChecks.failure(reports.get(0), List.of())));
+            result.put("failure", String.valueOf(failure.getMessage()).lines().findFirst().orElse("") + (reports.isEmpty() ? "" : "; " + crashCause(reports.get(0))));
             result.put("suspects", PackChecks.suspects(text, reports, owner.scan, owner.loader));
         } finally {
             // Programs a mod starts from the game (a crash helper's own window) end with it: none outlives the check.

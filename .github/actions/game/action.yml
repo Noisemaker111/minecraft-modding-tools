@@ -1,5 +1,17 @@
 name: Game on a runner
-description: Every Java a covered release runs on, and a virtual display with Mesa's software OpenGL, for starting a real server and client (cloud-load.yml, port-check.yml).
+description: The Java the releases started run on, and a virtual display with Mesa's software OpenGL, for starting a real server and client (cloud-load.yml, port-check.yml).
+inputs:
+  java:
+    description: >-
+      The Javas to install, one per line, the last (17 or newer) the default mmt runs on. Every Java a covered release runs
+      on by default (1.14.4-1.16.5: 8, 1.17: 16, 1.18-1.20.4: 17, 1.20.5-1.21.11: 21, 26.x: 25); a job starting one
+      release names its own, as each takes about 5 s to download.
+    default: |
+      8
+      16
+      17
+      21
+      25
 runs:
   using: composite
   steps:
@@ -8,14 +20,8 @@ runs:
         # Azul's builds, from Azul's own CDN: Temurin 8 comes from a GitHub release asset, which these runners got back
         # as a 1,867-byte non-gzip body on four runs in a row (setup-java and mmt alike) on 2026-11-22.
         distribution: zulu
-        # Every Java a covered release runs on (1.14.4-1.16.5: 8, 1.17: 16, 1.18-1.20.4: 17, 1.20.5-1.21.11: 21, 26.x:
-        # 25), from the runner's own tool cache; mmt finds them by setup-java's JAVA_HOME_<N>_X64. The last is the default.
-        java-version: |
-          8
-          16
-          17
-          21
-          25
+        # mmt finds them by setup-java's JAVA_HOME_<N>_X64.
+        java-version: ${{ inputs.java }}
     - name: Virtual display with software OpenGL
       shell: bash
       run: |
