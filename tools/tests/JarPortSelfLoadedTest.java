@@ -56,6 +56,23 @@ final class JarPortSelfLoadedTest {
             "the digest the mod records of a jar it carries is the ported jar's: " + recorded);
         JarPortTest.expect(Arrays.equals(written.get("own.jar"), own) && Arrays.equals(written.get("META-INF/lib/app.jar"), app),
             "jars the port does not read are written as they came");
+
+        // A Fabric mod is read in Mojang's names first (ModNames), and the port gets that copy: own.jar must still be the
+        // mod's own, left as it came, not ported as a jar the loader reads (CustomSkinLoader's common jar, half renamed,
+        // stopped 1.18.2 with an AbstractMethodError).
+        byte[] read = new ModNames(new Exposure.Intermediary(Map.of(), Map.of())).jar(JarPortTest.jar(files), new ModNames.Counts());
+        JarPort again = new JarPort(a, b, map);
+        again.loader = "neoforge";
+        List<Map<String, Object>> readRuns = new ArrayList<>();
+        Map<String, byte[]> readOut = JarEntries.entries(again.port(read, "self.jar", readRuns), "self.jar", new HashMap<>());
+        List<String> readUnlinked = new ArrayList<>();
+        for (Map<String, Object> run : readRuns) {
+            Json.array(run.get("unlinked")).forEach(u -> readUnlinked.add(run.get("jar") + ": " + u));
+        }
+        JarPortTest.expect(readUnlinked.stream().noneMatch(u -> u.contains("own.jar")),
+            "read in Mojang's names first, a jar written in other names is still no part of the port: " + readUnlinked);
+        JarPortTest.expect(Arrays.equals(readOut.get("own.jar"), JarEntries.entries(read, "self.jar", new HashMap<>()).get("own.jar")),
+            "read in Mojang's names first, the port writes it as it was given");
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }
