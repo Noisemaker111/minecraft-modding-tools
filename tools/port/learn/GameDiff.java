@@ -48,7 +48,7 @@ import java.util.zip.*;
  *   java GameDiff --compare A B [--all] [--report file]   (validation only: an obfuscated pair, our
  *        linking scored against VersionMap's intermediary diff; --all includes private members)
  *
- * Compile with tools/VersionMap.java, JDK 25 (java.lang.classfile). Downloads are cached in
+ * Compile with tools/port/names/VersionMap.java, JDK 25 (java.lang.classfile). Downloads are cached in
  * VersionMap.cache (~/.mmt/mappings). Exit: 0 ok, 2 usage or I/O error.
  */
 public final class GameDiff {
@@ -9401,7 +9401,7 @@ public final class GameDiff {
             }
             head.append(retyped.isEmpty() ? "],\n" : "\n  ],\n");
             if (loader != null) {
-                String source = "fabric".equals(loader) ? Exposure.FABRIC_API : NEOFORGE;
+                String source = "fabric".equals(loader) ? Exposure.FabricApi.MAVEN : NEOFORGE;
                 head.append("  \"loader\": { \"name\": ").append(VersionMap.Diff.q(loader)).append(", \"source\": ").append(VersionMap.Diff.q(source)).append(", \"versions\": {");
                 int i = 0;
                 for (var e : loaderUsed.entrySet()) {

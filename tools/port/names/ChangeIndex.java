@@ -28,8 +28,8 @@ import java.util.zip.*;
  * link nothing, and what no other class claims still reads as a removal plus an addition. 1.14.4 has SRG data too, so 1.12.2 -> 1.14.4 is one SRG step; its Mojang-named side is
  * the neighbouring 1.14.4 -> 1.15 step.
  *
- * Single file plus tools/VersionMap.java (mapping parsers and the cached downloader), JDK 25:
- *   java tools/ChangeIndex.java [--out coverage/changes] [--cache .mmt/change-index]
+ * Single file plus tools/port/names/VersionMap.java (mapping parsers and the cached downloader), JDK 25:
+ *   java tools/port/names/ChangeIndex.java [--out coverage/changes] [--cache .mmt/change-index]
  *                               [--first 1.14.4] [--last 26.3] [--pair A B]...
  *
  * Without --pair every neighbouring release pair from --first to --last is written, plus
@@ -52,7 +52,7 @@ public final class ChangeIndex {
 				case "--first" -> first = args[++i];
 				case "--last" -> last = args[++i];
 				case "--pair" -> pairs.add(new String[] { args[++i], args[++i] });
-				default -> { System.err.println("usage: java tools/ChangeIndex.java [--out dir] [--cache dir] [--first v] [--last v] [--pair A B]..."); System.exit(2); }
+				default -> { System.err.println("usage: java tools/port/names/ChangeIndex.java [--out dir] [--cache dir] [--first v] [--last v] [--pair A B]..."); System.exit(2); }
 			}
 		}
 		VersionMap.cache = cache.toAbsolutePath();

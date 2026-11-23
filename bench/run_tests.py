@@ -15,15 +15,26 @@ iterating; CI still runs all of it on every push.
 The self-test runs from the packaged jar, as users get it, not from the checkout. On Linux it runs with LC_ALL=C
 so a child's non-ASCII output is read through a non-UTF-8 console; Windows gives cp1252. No game, no network
 beyond Gradle's own downloads. Each check prints its time; the run exits 1 when any check failed.
+
+package runs first, alone; then the other checks run side by side, with no more commands at once than the machine has
+cores, and each prints its block whole when it finishes. The checks that build with Gradle share one lane and one warm
+daemon (GRADLE). The demo mod is copied for the checks that run mmt on it, so two lanes never share one, and every check
+keeps its own scratch folder.
 """
 import argparse
+import heapq
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import port_tools
 
 ROOT = Path(__file__).resolve().parent.parent
 JAR = "build/distributions/mmt.jar"
@@ -31,6 +42,7 @@ ZIP = "build/distributions/mmt-portable.zip"
 FIXTURE = "fixtures/prism-lab"  # Prism Lab, the demo mod the mod-project checks run on
 WINDOWS = os.name == "nt"
 SEP = ";" if WINDOWS else ":"
+CORES = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
 
 # Every bench/**/test_*.py runs in the python check, except one another check runs with arguments.
 PYTHON = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "bench").rglob("test_*.py") if p.name != "test_fingerprint.py")
@@ -40,6 +52,70 @@ def java(*args):
     return ["java", *args]
 
 
+class Together(list):
+    """Commands that share nothing and run side by side; each still reports its own line."""
+
+
+# The demo mod's build output, kept in each copy so a rerun builds warm; everything else is refreshed from the fixture.
+BUILT = {".gradle", "build", ".mmt", ".runs"}
+
+
+# These checks build with Gradle in one lane, one after another in this order, so one warm Gradle daemon serves them;
+# beside each other each starts its own and sets up cold, and on CI's 4 cores fast (20 s alone) took 127 s that way.
+# The first three run mmt on one shared copy of the demo mod: they would refuse each other's project lock.
+# fastlane-isolation, which builds two small projects of its own, is a lane of its own: on 4 cores the whole run takes
+# 68 s that way and 76 s with it in this lane.
+GRADLE = ("fast", "port-plan", "legacy-agent", "runtime-natives")
+SHARED = ("fast", "port-plan", "legacy-agent")
+
+
+class Slots:
+    """No more commands at once than the machine has cores (self-test's suites and Gradle use more on their own). A
+    free slot goes to the waiting command of the earliest-listed lane: the long lanes are listed first, and a short
+    test queued ahead of them would otherwise make the whole run wait (fast waited 29 s behind jar-port's tests)."""
+
+    def __init__(self, count):
+        self.free = count
+        self.waiting = []
+        self.changed = threading.Condition()
+
+    def take(self, rank):
+        with self.changed:
+            ticket = (rank, time.monotonic_ns(), threading.get_ident())
+            heapq.heappush(self.waiting, ticket)
+            self.changed.wait_for(lambda: self.free and self.waiting[0] == ticket)
+            heapq.heappop(self.waiting)
+            self.free -= 1
+            self.changed.notify_all()
+
+    def give(self):
+        with self.changed:
+            self.free += 1
+            self.changed.notify_all()
+
+
+SLOTS = Slots(CORES)
+
+
+def fixture(check):
+    """A copy of the demo mod for a check (the SHARED checks share one), its sources the fixture's own; the path
+    relative to the checkout."""
+    copy = ROOT / ".runs" / "checks" / ("shared" if check in SHARED else check) / "prism-lab"
+    copy.mkdir(parents=True, exist_ok=True)
+    for entry in copy.iterdir():
+        if entry.name not in BUILT:
+            shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+    source = ROOT / FIXTURE
+    for entry in source.iterdir():
+        if entry.name in BUILT:
+            continue
+        if entry.is_dir():
+            shutil.copytree(entry, copy / entry.name)
+        else:
+            shutil.copy2(entry, copy / entry.name)
+    return copy.relative_to(ROOT).as_posix()
+
+
 def checkout_data():
     out = ROOT / ".runs" / "checkout-tests"
     out.mkdir(parents=True, exist_ok=True)
@@ -47,14 +123,16 @@ def checkout_data():
     yield java("-cp", JAR + SEP + str(out), "CheckoutDataTest", ".")
 
 
+PREFLIGHT_TESTS = ["tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"]
+
+
 def port_preflight():
     out = ROOT / ".runs" / "preflight-tests"
-    yield ["javac", "--release", "21", "-encoding", "UTF-8", "-d", str(out), "tools/VersionMap.java",
-           "tools/cli/Route.java", "tools/cli/Json.java", "tools/cli/Versions.java",
-           "tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"]
-    yield java("-cp", str(out), "PortPreflightTest")
-    yield java("-cp", str(out), "ChainMapTest")
-    yield java("-cp", str(out), "LegacyMapTest")
+    asm = SEP.join(port_tools.ASM)
+    home = jdk(25)
+    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *PREFLIGHT_TESTS]
+    for test in PREFLIGHT_TESTS:
+        yield [str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem]
 
 
 # The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test, SourceAnswers*Test), found
@@ -66,14 +144,53 @@ def jar_port_tests(folder=ROOT / "tools" / "tests"):
     return sorted({p.relative_to(ROOT).as_posix() for pattern in JAR_PORT_TESTS for p in folder.glob(pattern)})
 
 
+class Unavailable(Exception):
+    """Something a check needs is not on this machine; the message says what and where it was looked for."""
+
+
+def jdk_feature(home):
+    """The feature release of the JDK at home (25 for 25.0.1), from its release file; None when it is no JDK."""
+    try:
+        line = next(l for l in (home / "release").read_text(errors="replace").splitlines() if l.startswith("JAVA_VERSION="))
+        version = line.split("=", 1)[1].strip('"')
+        return int(version.split(".")[1] if version.startswith("1.") else version.split(".")[0].split("-")[0].split("+")[0])
+    except (OSError, StopIteration, ValueError, IndexError):
+        return None
+
+
+def jdk(feature):
+    """The home of a JDK of feature or newer, looked for where mmt looks (Runtimes.installed): JAVA_HOME and the
+    JAVA*_HOME variables, the javac on PATH, then mmt's own downloads and the usual install folders."""
+    candidates = [Path(os.environ[k]) for k in ("JAVA_HOME", "JDK_HOME", f"JAVA{feature}_HOME") if os.environ.get(k)]
+    on_path = shutil.which("javac")
+    if on_path:
+        candidates.append(Path(on_path).resolve().parent.parent)
+    # actions/setup-java names each JDK it installs JAVA_HOME_<feature>_<arch>.
+    candidates += [Path(v) for k, v in sorted(os.environ.items()) if k.startswith("JAVA_HOME_") and k[10:].split("_")[0].isdigit() and v]
+    user = Path.home()
+    folders = [user / ".mmt" / "jdks", ROOT / ".tools", user / ".gradle" / "jdks", user / ".jdks", user / "tools", Path("/usr/lib/jvm"),
+               Path("/Library/Java/JavaVirtualMachines")]
+    if WINDOWS:
+        folders += [Path(os.environ.get("ProgramFiles", "C:/Program Files")) / v for v in ("Eclipse Adoptium", "Java", "Microsoft", "JetBrains")]
+    for folder in folders:
+        if folder.is_dir():
+            for child in sorted(folder.iterdir()):
+                candidates += [child, child / "Contents" / "Home"]
+    javac = "javac.exe" if WINDOWS else "javac"
+    for home in candidates:
+        if (home / "bin" / javac).is_file() and (jdk_feature(home) or 0) >= feature:
+            return home
+    raise Unavailable(f"needs JDK {feature} or newer, and none was found in JAVA_HOME, JAVA{feature}_HOME, the javac on PATH, "
+                      f"~/.mmt/jdks or the usual install folders. Install one (any Temurin {feature}+), or set JAVA{feature}_HOME to it.")
+
+
 def jar_port():
     out = ROOT / ".runs" / "jarport-tests"
-    asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
+    asm = SEP.join(port_tools.ASM)
     tests = jar_port_tests()
-    yield ["javac", "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Downgrade.java", "tools/Exposure.java",
-           "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/cli/Versions.java", "tools/SourceAnswers.java", *tests]
-    for test in tests:
-        yield java("-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch"))
+    home = jdk(25)
+    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *tests]
+    yield Together([str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem)] for test in tests)
 
 
 def console_accessor():
@@ -94,47 +211,51 @@ def agent_world_open():
 
 def legacy_agent():
     """Windows: the legacy launch agent in JAVA_TOOL_OPTIONS keeps system properties strings, and Gradle still runs."""
-    prepared = subprocess.run(java("-jar", JAR, "legacy-agent", "--root", FIXTURE, "--json"), cwd=ROOT,
+    root = fixture("legacy-agent")
+    prepared = subprocess.run(java("-jar", JAR, "legacy-agent", "--root", root, "--json"), cwd=ROOT,
                               capture_output=True, text=True)
     agent = json.loads(prepared.stdout.strip().splitlines()[-1])["result"]["agent"]
     env = {"JAVA_TOOL_OPTIONS": f'"-javaagent:{agent}=legacy" -Dmmt.background=true -Dmmt.quiet=true'}
     yield java("tools/tests/LegacyAgentPropertiesTest.java"), env
-    yield java("-jar", JAR, "fast", "--root", FIXTURE, "--refresh", "--json"), env
+    yield java("-jar", JAR, "fast", "--root", root, "--refresh", "--json"), env
 
 
-# name -> (needs the jar, systems or None for all, commands or a generator of them)
+def on_fixture(check, *command):
+    """A check that runs one command on its own copy of the demo mod; {root} in command is the copy."""
+    def commands():
+        root = fixture(check)
+        yield [root if part == "{root}" else part for part in command]
+    return commands
+
+
+# name -> (needs the jar, systems or None for all, commands or a generator of them). The slowest checks come first, so
+# they start first when there are more checks than cores.
 CHECKS = {
-    "python": (False, None, [[sys.executable, p] for p in PYTHON]),
     "package": (False, None, [java("tools/cli/Bootstrap.java", ".", "package", "--json")]),
     "self-test": (True, None, [(java("-jar", JAR, "self-test", "--root", "."), {} if WINDOWS else {"LC_ALL": "C"})]),
-    "checkout-data": (True, None, checkout_data),
-    "fingerprint": (True, None, [[sys.executable, "bench/test_fingerprint.py", JAR]]),
-    "port-preflight": (False, None, port_preflight),
+    "fast": (True, None, on_fixture("fast", *java("-jar", JAR, "fast", "--root", "{root}", "--json"))),
+    "port-plan": (True, None, on_fixture("port-plan", *java("tools/tests/PortPlanCacheTest.java", "{root}", JAR))),
+    "legacy-agent": (True, ("nt",), legacy_agent),
+    "fastlane-isolation": (True, None, [java("tools/tests/FastLaneIsolationTest.java", ".", JAR)]),
     "jar-port": (False, None, jar_port),
+    "fingerprint": (True, None, [[sys.executable, "bench/test_fingerprint.py", JAR]]),
+    "runtime-natives": (True, ("posix",), [java("tools/tests/RuntimeNativesTest.java", ".", JAR)]),
+    "hidden-window": (True, None, on_fixture("hidden-window", *java("tools/tests/BackgroundWindowsTest.java", "{root}", JAR))),
+    "python": (False, None, [Together([sys.executable, p] for p in PYTHON)]),
+    "port-preflight": (False, None, port_preflight),
     "console-accessor": (False, None, console_accessor),
     "agent-world-open": (False, None, agent_world_open),
-    "zip": (True, None, [java("tools/tests/PackageAcceptanceTest.java", ZIP, ZIP + ".sha256", tempfile.gettempdir())]),
-    "fast": (True, None, [java("-jar", JAR, "fast", "--root", FIXTURE, "--json")]),
-    "port-plan": (True, None, [java("tools/tests/PortPlanCacheTest.java", FIXTURE, JAR)]),
-    "hidden-window": (True, None, [java("tools/tests/BackgroundWindowsTest.java", FIXTURE, JAR)]),
-    "fastlane-isolation": (True, None, [java("tools/tests/FastLaneIsolationTest.java", ".", JAR)]),
-    "runtime-natives": (True, ("posix",), [java("tools/tests/RuntimeNativesTest.java", ".", JAR)]),
     "launcher": (False, ("nt",), [[sys.executable, "tools/ci/launcher_experiments.py"]]),
-    "legacy-agent": (True, ("nt",), legacy_agent),
+    "checkout-data": (True, None, checkout_data),
+    "zip": (True, None, [java("tools/tests/PackageAcceptanceTest.java", ZIP, ZIP + ".sha256", tempfile.gettempdir())]),
 }
 
 
-def jar_port_sources():
-    return ["tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Downgrade.java", "tools/Exposure.java", "tools/GameDiff.java",
-            "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java"]
-
-
-ASM_JARS = ["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"]
+ASM_JARS = list(port_tools.ASM)
 # The files each check that compiles its own sources reads; a check not named here uses the packaged jar.
 READS = {
-    "port-preflight": ["tools/VersionMap.java", "tools/cli/Route.java", "tools/cli/Json.java", "tools/cli/Versions.java",
-                       "tools/tests/PortPreflightTest.java", "tools/tests/ChainMapTest.java", "tools/tests/LegacyMapTest.java"],
-    "jar-port": lambda: jar_port_sources() + jar_port_tests() + ASM_JARS + [f for f in git_files() if f.startswith("knowledge/standins/jdk/")],
+    "port-preflight": lambda: port_tools.sources() + PREFLIGHT_TESTS + ASM_JARS,
+    "jar-port": lambda: port_tools.sources() + jar_port_tests() + ASM_JARS + [f for f in git_files() if f.startswith("knowledge/standins/jdk/")],
     "console-accessor": ["tools/agent/Console.java", "tools/tests/ConsoleAccessorTest.java"],
     # Compiled with tools/agent, tools/cli and tools on its source path: any of them may be compiled in.
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
@@ -168,7 +289,7 @@ def affected(changed, names):
     """The checks of names that changed files can affect, and what self-test runs: None for every suite, else a list."""
     reads = {n: set(r() if callable(r) else r) for n, r in READS.items()}
     picked = [n for n in names if n == "python" or n in reads and reads[n] & set(changed)]
-    porter = set(jar_port_sources()) | set(jar_port_tests())
+    porter = {f for f in port_tools.sources() if f.startswith(port_tools.PORT)} | set(jar_port_tests())
     jar = [f for f in changed if in_jar(f)]
     if any(f not in porter for f in jar):
         return picked + [n for n in names if n not in READS and n not in picked and n != "python"], None
@@ -177,26 +298,81 @@ def affected(changed, names):
     return picked, None
 
 
-def run(name, suites=None):
-    """Runs every command of one check, reporting each; False when any failed."""
-    _, _, commands = CHECKS[name]
-    if name == "self-test" and suites:
-        commands = [(java("-jar", JAR, "self-test", "--root", ".", "--only", ",".join(suites)), {} if WINDOWS else {"LC_ALL": "C"})]
-    passed = True
-    for item in (commands() if callable(commands) else commands):
-        command, env = item if isinstance(item, tuple) else (item, {})
+def execute(name, item, rank):
+    """Runs one command when a slot is free; its report line (with the end of its output when it failed) and whether it passed."""
+    command, env = item if isinstance(item, tuple) else (item, {})
+    SLOTS.take(rank)
+    try:
         started = time.monotonic()
         done = subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, capture_output=True, text=True,
                               encoding="utf-8", errors="replace")
         took = time.monotonic() - started
-        shown = " ".join(str(c) for c in command)
-        if done.returncode:
-            print(f"FAIL {name} ({took:.0f} s): {shown}\n{done.stdout[-4000:]}{done.stderr[-4000:]}", flush=True)
-            passed = False
-            continue
-        last = (done.stdout.strip().splitlines() or [""])[-1][:160]
-        print(f"ok   {name} ({took:.0f} s): {shown[-90:]}  {last if not last.startswith('{') else ''}", flush=True)
-    return passed
+    finally:
+        SLOTS.give()
+    shown = " ".join(str(c) for c in command)
+    if done.returncode:
+        return f"FAIL {name} ({took:.0f} s): {shown}\n{done.stdout[-4000:]}{done.stderr[-4000:]}", False
+    last = (done.stdout.strip().splitlines() or [""])[-1][:160]
+    return f"ok   {name} ({took:.0f} s): {shown[-90:]}  {last if not last.startswith('{') else ''}", True
+
+
+def run(name, suites=None, rank=0):
+    """Runs every command of one check, side by side where they share nothing; its report and whether all passed.
+    A failed compile stops the check, since its tests cannot run; a failed test does not stop the next."""
+    _, _, commands = CHECKS[name]
+    if name == "self-test" and suites:
+        commands = [(java("-jar", JAR, "self-test", "--root", ".", "--only", ",".join(suites)), {} if WINDOWS else {"LC_ALL": "C"})]
+    started = time.monotonic()
+    lines, passed = [], True
+    try:
+        for item in (commands() if callable(commands) else commands):
+            if isinstance(item, Together):
+                with ThreadPoolExecutor(CORES) as pool:
+                    results = list(pool.map(lambda one: execute(name, one, rank), item))
+            else:
+                results = [execute(name, item, rank)]
+            lines += [line for line, _ in results]
+            if not all(ok for _, ok in results):
+                passed = False
+                if not isinstance(item, Together) and Path((item[0] if isinstance(item, tuple) else item)[0]).stem == "javac":
+                    break
+    except Unavailable as missing:
+        lines.append(f"FAIL {name}: {missing}")
+        passed = False
+    except Exception as error:  # a generator that prepares its commands (a fixture copy, legacy-agent's agent) failed
+        lines.append(f"FAIL {name}: {type(error).__name__}: {error}")
+        passed = False
+    lines.append(f"{'ok  ' if passed else 'FAIL'} {name} done in {time.monotonic() - started:.0f} s")
+    return "\n".join(lines), passed
+
+
+def run_all(names, suites):
+    """Runs package, then the other checks side by side, printing each check's block whole; the failed names."""
+    printing = threading.Lock()
+    failed = []
+
+    def one(name, rank=0):
+        report, passed = run(name, suites, rank)
+        with printing:
+            print(report, flush=True)
+            if not passed:
+                failed.append(name)
+        return passed
+
+    # package runs alone first: every jar check waits on it, and it builds slower (12 s, not 4 s) beside the others.
+    rest = [n for n in names if n != "package"]
+    if "package" in names and not one("package"):
+        jar = [n for n in rest if CHECKS[n][0]]
+        if jar:
+            print(f"FAIL not run, as package failed: {', '.join(jar)}", flush=True)
+            failed.extend(jar)
+        rest = [n for n in rest if n not in jar]
+    # Each lane runs its checks in order: the GRADLE checks are one lane, started where the first of them is listed.
+    gradle = [n for n in GRADLE if n in rest]
+    lanes = [gradle if gradle and n == gradle[0] else [n] for n in rest if n not in gradle[1:]]
+    with ThreadPoolExecutor(len(lanes) or 1) as pool:
+        list(pool.map(lambda rank: [one(n, rank) for n in lanes[rank]], range(len(lanes))))
+    return [n for n in names if n in failed]
 
 
 def main(argv=None):
@@ -229,7 +405,7 @@ def main(argv=None):
         print(f"{len(changed)} files changed against origin/main: running {', '.join(names)}"
               + (f" (self-test: {', '.join(suites)})" if suites else "") + "; --all runs every check", flush=True)
     started = time.monotonic()
-    failed = [n for n in names if not run(n, suites)]
+    failed = run_all(names, suites)
     print(f"{len(names) - len(failed)} of {len(names)} checks passed in {time.monotonic() - started:.0f} s"
           + (f"; failed: {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0

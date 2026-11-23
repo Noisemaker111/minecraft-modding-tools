@@ -52,13 +52,8 @@ final class Corpus {
             return null;
         }
         List<String> args = new ArrayList<>(List.of("--map", map.toString()));
-        List<Path> inputs = new ArrayList<>(
-            List.of(
-                map,
-                build.harness.resolve("tools/VersionMap.java"),
-                build.harness.resolve("knowledge/port-corpus.json")
-            )
-        );
+        List<Path> inputs = new ArrayList<>(List.of(map, build.harness.resolve("knowledge/port-corpus.json")));
+        inputs.addAll(JavaTools.portSources(build.harness, "names", "source"));
         List<Object> evidence = new ArrayList<>();
         long started = System.nanoTime();
         for (Object item : Json.array(Json.read(build.harness.resolve("knowledge/port-corpus.json")).get("repos"))) {
