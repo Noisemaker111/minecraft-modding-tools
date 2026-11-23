@@ -1032,7 +1032,7 @@ public final class JarPort {
                             };
                         }
                         if (MixinRetargets.INJECTORS.contains(annotation)) {
-                            MixinRetargets.Injector inj = new MixinRetargets.Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1, -1 }, new boolean[1]);
+                            MixinRetargets.Injector inj = new MixinRetargets.Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1, -1 }, new boolean[1], new boolean[1]);
                             mod.injectors.put(rc.name + "." + name + desc, inj);
                             return MixinRetargets.injection(inj, null);
                         }

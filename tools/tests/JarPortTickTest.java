@@ -23,7 +23,56 @@ final class JarPortTickTest {
     public static void main(String[] args) throws Exception {
         Path scratch = Files.createDirectories(Path.of(args[0]));
         check(scratch);
+        roomForConstants();
         JarPortTest.finish("JarPortTickTest");
+    }
+
+    /**
+     * A conversion that calls a static helper with the value and five constants (a long among them) needs that much
+     * operand stack above what an adapter already holds; the JVM's verifier rejects the handler when the room is short.
+     */
+    static void roomForConstants() throws Exception {
+        String[] via = { "k:I:1", "k:J:2", "k:I:3", "k:I:4", "k:F:5" };
+        for (int room : new int[] { Conversions.room(new String[][] { via }), 3 }) {
+            ClassWriter w = new ClassWriter(0);
+            w.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "m9/Room" + room, null, "java/lang/Object", null);
+            MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "run", "(I)I", null, null);
+            m.visitCode();
+            m.visitVarInsn(Opcodes.ILOAD, 0);
+            m.visitLdcInsn(1);
+            m.visitLdcInsn(2L);
+            m.visitLdcInsn(3);
+            m.visitLdcInsn(4);
+            m.visitLdcInsn(5f);
+            m.visitMethodInsn(Opcodes.INVOKESTATIC, "m9/Room" + room, "helper", "(IIJIIF)I", false);
+            m.visitInsn(Opcodes.IRETURN);
+            m.visitMaxs(1 + room, 1);
+            m.visitEnd();
+            MethodVisitor h = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "helper", "(IIJIIF)I", null, null);
+            h.visitCode();
+            h.visitVarInsn(Opcodes.ILOAD, 0);
+            h.visitInsn(Opcodes.IRETURN);
+            h.visitMaxs(1, 7);
+            h.visitEnd();
+            w.visitEnd();
+            byte[] bytes = w.toByteArray();
+            String name = "m9.Room" + room;
+            ClassLoader loader = new ClassLoader(null) {
+                @Override
+                protected Class<?> findClass(String n) throws ClassNotFoundException {
+                    return n.equals(name) ? defineClass(n, bytes, 0, bytes.length) : Class.forName(n, false, ClassLoader.getPlatformClassLoader());
+                }
+            };
+            boolean verified;
+            try {
+                verified = (int) loader.loadClass(name).getMethod("run", int.class).invoke(null, 7) == 7;
+            } catch (VerifyError | ReflectiveOperationException rejected) {
+                verified = false;
+            }
+            JarPortTest.expect(verified == (room != 3), room == 3
+                ? "the old fixed room of 3 is too little for five constants, so the verifier rejects it (the check can fail)"
+                : "Conversions.room leaves the operand stack its constants need, and the verifier accepts the handler: " + room);
+        }
     }
 
     static final String GFX = "Lg9/Gfx;", TICK = "Lg9/Tick;", HUD = "Lg9/Hud;";
@@ -72,7 +121,8 @@ final class JarPortTickTest {
             "m9/PanelMixin.class", redirect(),
             "m9/GlyphMixin.class", glyphs(),
             "m9/FlagMixin.class", variable("m9/FlagMixin", "(Z)Z", Opcodes.ILOAD), "m9/JitterMixin.class", variable("m9/JitterMixin", "(F)F", Opcodes.FLOAD),
-            "m9.mixins.json", "{\"package\": \"m9\", \"mixins\": [\"HudMixin\", \"WorldMixin\", \"BothMixin\", \"PanelMixin\", \"FlagMixin\", \"JitterMixin\", \"GlyphMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+            "m9/LocalFlagMixin.class", variable("m9/LocalFlagMixin", "(Z)Z", Opcodes.ILOAD, "RETURN", false),
+            "m9.mixins.json", "{\"package\": \"m9\", \"mixins\": [\"HudMixin\", \"WorldMixin\", \"BothMixin\", \"PanelMixin\", \"FlagMixin\", \"LocalFlagMixin\", \"JitterMixin\", \"GlyphMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
             "follow.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(unlinked.equals(List.of("mixin target changed signature: g9.Both.render(Lg9/Gfx;F)V", "mixin target changed signature: g9.Level.draw(FJZ)V")),
@@ -82,6 +132,10 @@ final class JarPortTickTest {
         String jitter = JarPortFixesTest.strings(ported.get("m9/JitterMixin.class")).getOrDefault("flag(F)F", "");
         JarPortTest.expect(flag.contains("draw(Lg9/Tick;Z)V") && jitter.contains("draw(FJZ)V"),
             "a @ModifyVariable of the boolean, found by its type, follows the new signature; one of the float the update took away stays: " + flag + " | " + jitter);
+        // Without argsOnly, at RETURN, Mixin also counts the live locals of its type, and the new body may hold one more.
+        String local = JarPortFixesTest.strings(ported.get("m9/LocalFlagMixin.class")).getOrDefault("flag(Z)Z", "");
+        JarPortTest.expect(local.contains("draw(FJZ)V") && !local.contains("draw(Lg9/Tick;Z)V"),
+            "a @ModifyVariable by type that may also match a local stays reported when the parameters' slots move: " + local);
 
         Map<String, byte[]> classes = new HashMap<>(after);
         classes.put("g9/Tick", tick());
@@ -367,6 +421,11 @@ final class JarPortTickTest {
 
     /** A mixin into Level.draw with a @ModifyVariable at HEAD, by type, that returns the variable as it was. */
     static byte[] variable(String name, String desc, int load) {
+        return variable(name, desc, load, "HEAD", true);
+    }
+
+    /** The same @ModifyVariable at point; argsOnly false lets Mixin pick among the live locals of its type too. */
+    static byte[] variable(String name, String desc, int load, String at, boolean argsOnly) {
         ClassWriter w = JarPortRetypeTest.writer(name, "java/lang/Object");
         mixinOf(w, "g9/Level");
         MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, "flag", desc, null, null);
@@ -375,9 +434,11 @@ final class JarPortTickTest {
         methods.visit(null, "draw(FJZ)V");
         methods.visitEnd();
         AnnotationVisitor point = av.visitAnnotation("at", "Lorg/spongepowered/asm/mixin/injection/At;");
-        point.visit("value", "HEAD");
+        point.visit("value", at);
         point.visitEnd();
-        av.visit("argsOnly", true);
+        if (argsOnly) {
+            av.visit("argsOnly", true);
+        }
         av.visitEnd();
         m.visitCode();
         m.visitVarInsn(load, 1);

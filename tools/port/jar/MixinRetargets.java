@@ -32,7 +32,7 @@ final class MixinRetargets {
      * too), and its require (-1: the mixin config's defaultRequire).
      */
     /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none, then its index (a @ModifyArg's argument); an @At's is in ats. */
-    record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable) {}
+    record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable, boolean[] argsOnly) {}
 
     /**
      * A handler re-declared with its target's new parameters (desc, new names) and the original body moved to name$mmt:
@@ -53,6 +53,8 @@ final class MixinRetargets {
                     inj.require()[0] = i;
                 } else if (at == null && "cancellable".equals(n) && Boolean.TRUE.equals(v)) {
                     inj.cancellable()[0] = true;
+                } else if (at == null && "argsOnly".equals(n) && Boolean.TRUE.equals(v)) {
+                    inj.argsOnly()[0] = true;
                 } else if (at == null && "ordinal".equals(n) && v instanceof Integer i && i >= 0) {
                     inj.ordinal()[0] = i;
                 } else if (at == null && "index".equals(n) && v instanceof Integer i && i >= 0) {
@@ -336,9 +338,10 @@ final class MixinRetargets {
             }
             Type[] bp = Type.getArgumentTypes(port.desc(before.desc)), ap = Type.getArgumentTypes(after.desc);
             // A @ModifyVariable without an index finds its variable by type and ordinal, which other parameters' sizes do
-            // not move; only one whose type the update added to or took from the parameters may find another one.
+            // not move; only one whose type the update added to or took from the parameters may find another one. Only
+            // with argsOnly: otherwise its candidates are the live locals too, and the new body may have one more of the type.
             Type variable = Type.getReturnType(port.desc(handler.desc));
-            boolean byType = inj.ordinal()[1] < 0 && Arrays.stream(bp).filter(variable::equals).count() == Arrays.stream(ap).filter(variable::equals).count();
+            boolean byType = inj.argsOnly()[0] && inj.ordinal()[1] < 0 && Arrays.stream(bp).filter(variable::equals).count() == Arrays.stream(ap).filter(variable::equals).count();
             if (inj.kind().endsWith("/ModifyVariable;") && !byType && !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray())) {
                 { JarPort.why(key, "O3 a local named by its slot would be another one"); return; } // a local named by its slot would be another one
             }

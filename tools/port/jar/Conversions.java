@@ -79,7 +79,26 @@ final class Conversions {
     }
 
     /** The value Java gives a variable of type t that nothing set: 0, false or null. */
-    static void pushDefault(MethodVisitor mv, Type t) {
+    /**
+     * The operand stack the conversions need above what is already on it: the value they start from, a receiver, and every
+     * constant pushed before the call that takes them (each long or double two slots), the most of any one conversion.
+     */
+    static int room(String[][] vias) {
+        int most = 3;
+        for (String[] steps : vias == null ? new String[0][] : vias) {
+            int need = 3;
+            for (String text : steps == null ? new String[0] : steps) {
+                if (text.startsWith("k:") || text.startsWith("o:")) {
+                    String type = text.startsWith("k:") ? text.substring(2, 3) : text.split(":", 4)[2];
+                    need += type.equals("J") || type.equals("D") ? 2 : 1;
+                }
+            }
+            most = Math.max(most, need);
+        }
+        return most;
+    }
+
+        static void pushDefault(MethodVisitor mv, Type t) {
         mv.visitInsn(switch (t.getSort()) {
             case Type.BOOLEAN, Type.CHAR, Type.BYTE, Type.SHORT, Type.INT -> Opcodes.ICONST_0;
             case Type.LONG -> Opcodes.LCONST_0;

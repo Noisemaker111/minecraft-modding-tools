@@ -228,6 +228,9 @@ final class Retype {
         return any ? out : null;
     }
 
+    /** The constants Conversions.steps can write: primitives (a string or class literal stays a break, not a guess). */
+    static final Set<String> WRITTEN = Set.of("I", "J", "F", "D", "Z", "S", "B", "C");
+
     /** -Djarport.retypelog=FILE: each game method whose parameters changed type, with the game's readings for each old parameter. */
     static final String LOG = System.getProperty("jarport.retypelog", "");
 
@@ -632,7 +635,8 @@ final class Retype {
             } else if (n.op == 'o' && n.kids.length == 2 && n.kids[1].op == 'k' && n.kids[1].value != null && ARITHMETIC.contains(String.valueOf(n.value))) {
                 levels.add(List.of("o:" + java.lang.classfile.Opcode.valueOf((String) n.value).bytecode() + ":" + n.kids[1].type + ":" + n.kids[1].value));
                 n = n.kids[0];
-            } else if (n.op == 's' && n.kids.length >= 1 && n.ref != null && Arrays.stream(n.kids, 1, n.kids.length).allMatch(k -> k.op == 'k' && k.value != null)) {
+            } else if (n.op == 's' && n.kids.length >= 1 && n.ref != null
+                && Arrays.stream(n.kids, 1, n.kids.length).allMatch(k -> k.op == 'k' && k.value != null && WRITTEN.contains(k.type))) {
                 GameDiff.Cls decl = Exposure.declaring(port.a, n.ref.owner(), 'm', n.ref.name(), n.ref.desc());
                 String[] moved = port.route.method(decl == null ? n.ref.owner() : decl.name, n.ref.name(), n.ref.desc());
                 List<String> level = new ArrayList<>();
