@@ -1478,8 +1478,8 @@ public final class JarPort {
      */
     record Bridge(String name, String desc, String target, String targetDesc, int[] from, int access, String[][] via) {}
 
-    /** A game class's method (new names) copied into a mod class as a private method named as. */
-    record Copy(String source, String name, String desc, String as) {}
+    /** A game class's method (new names) copied into a mod class as a method named as, with access; no source: an empty one. */
+    record Copy(String source, String name, String desc, String as, int access) {}
 
     /** In a Bridge's from: the old parameter is read from the object itself (this, then via's steps), not a new parameter. */
     static final int THIS = -3;
@@ -2930,7 +2930,7 @@ public final class JarPort {
                 chosen = sub.name;
             }
         }
-        return seen.size() == 1 ? new Copy(chosen, h, hd, h + "$default") : null;
+        return seen.size() == 1 ? new Copy(chosen, h, hd, h + "$default", Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC) : null;
     }
 
     /**
@@ -2964,7 +2964,7 @@ public final class JarPort {
                         int flags = field ? (dc.fields.containsKey(mapped) ? dc.fields.get(mapped).flags : Opcodes.ACC_PRIVATE)
                             : dc.methods.entrySet().stream().filter(e -> e.getKey().startsWith(mapped + "(") && e.getValue().desc.equals(code.names.desc(desc)))
                                 .map(e -> e.getValue().flags).findFirst().orElse(Opcodes.ACC_PRIVATE);
-                        boolean inherited = subtype(b, k, decl) && (flags & Opcodes.ACC_PRIVATE) == 0;
+                        boolean inherited = subtype(b, k, decl) && (flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED)) != 0; // a mod class is in another package
                         boolean open = (flags & Opcodes.ACC_PUBLIC) != 0 && !code.names.cls(owner).equals(source);
                         ok[0] &= inherited || open;
                     }
@@ -2996,6 +2996,15 @@ public final class JarPort {
 
     /** Writes a copy of a game class's method into the mod class being written, its own class read as the mod's. */
     void copyBody(Copy copy, String modClass, ClassVisitor out) {
+        if (copy.source() == null) {
+            String d = oldDesc(copy.desc());
+            MethodVisitor mv = out.visitMethod(copy.access(), copy.as(), d, null, null);
+            mv.visitCode();
+            mv.visitInsn(Opcodes.RETURN);
+            mv.visitMaxs(0, 1 + Arrays.stream(Type.getArgumentTypes(d)).mapToInt(Type::getSize).sum());
+            mv.visitEnd();
+            return;
+        }
         GameCode code = code(b);
         String jar = code.toJar.getOrDefault(copy.source(), copy.source());
         org.objectweb.asm.commons.Remapper names = new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
@@ -3023,7 +3032,7 @@ public final class JarPort {
                 if (!(code.names.method(jar, n, d) + code.names.desc(d)).equals(copy.name() + copy.desc())) {
                     return null;
                 }
-                MethodVisitor mv = out.visitMethod(Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC, copy.as(), names.mapMethodDesc(d), null, null);
+                MethodVisitor mv = out.visitMethod(copy.access(), copy.as(), names.mapMethodDesc(d), null, null);
                 return mv == null ? null : new org.objectweb.asm.commons.MethodRemapper(mv, names);
             }
         }, 0);
@@ -3538,6 +3547,7 @@ public final class JarPort {
                 written.add(renamed == null ? m.name + desc(m.desc) : renamed[0] + renamed[1]);
             }
             mod.bridges.getOrDefault(c.name, List.of()).forEach(br -> written.add(br.name() + br.desc()));
+            mod.copies.getOrDefault(c.name, List.of()).stream().filter(cp -> cp.as().equals(cp.name())).forEach(cp -> written.add(cp.name() + cp.desc()));
             if (c.sup != null && !mod.classes.containsKey(c.sup)) {
                 game.add(cls(c.sup));
             }
@@ -3588,10 +3598,220 @@ public final class JarPort {
             for (GameDiff.Meth m : k.methods.values()) {
                 if ((m.flags & Opcodes.ACC_ABSTRACT) != 0 && !written.contains(m.name + m.desc) && !OBJECT.contains(m.name + m.desc) && !generic(supers, m)
                     && !alreadyAbstract(k, m) && !before.contains(m.name + oldDesc(m.desc))) {
+                    Copy fill = gameDefault(mod, rc, k, m, supers);
+                    if (fill != null) {
+                        mod.copies.computeIfAbsent(rc.name, x -> new ArrayList<>()).add(fill);
+                        written.add(m.name + m.desc);
+                        mod.change(fill.source() == null ? "abstract method the update added written empty, as a game subclass writes it: the old release never asked the class" : "abstract method the update added written as the game's own subclasses write it");
+                        continue;
+                    }
                     mod.unlinked.add("abstract method not written: " + Exposure.dotted(k.name) + "." + m.name + m.desc + " (in " + Exposure.dotted(rc.name) + ")");
                 }
             }
         }
+    }
+
+    /**
+     * The body a mod class gets for an abstract method n of game class k that the update added and the class does not
+     * write: the one most of the game's own subclasses of k write for it, of those whose body a mod class could carry
+     * (1.17's widgets narrate through AbstractWidget's defaultButtonNarrationText, 1.19.4's key list entries refresh
+     * nothing). Where the game's subclasses moved an old method into n instead, a class that relied on the old method's
+     * default gets what it became (defaultBody). None where n takes over work: where a method the class inherited in the
+     * old release now hands its work to n on the object (1.17's LevelHeightAccessor.getMaxBuildHeight asks getHeight),
+     * or where the class writes a method the game no longer calls, whose code n may be meant to hold.
+     */
+    Copy gameDefault(Mod mod, GameDiff.RawCls rc, GameDiff.Cls k, GameDiff.Meth n, List<GameDiff.Cls> supers) {
+        GameCode code = code(b);
+        // Only from the game's own code: a loader's or a library's type, or one whose code is not there to read, gets nothing.
+        if (code == null || k.loader || k.library || code.bytes.apply(code.toJar.getOrDefault(k.name, k.name)) == null) {
+            return null;
+        }
+        for (GameDiff.RawCls c = rc; c != null; c = c.sup == null ? null : mod.classes.get(c.sup)) {
+            String in = " (in " + Exposure.dotted(c.name) + ")";
+            if (mod.silent.stream().anyMatch(s -> s.endsWith(in))) {
+                why(rc.name + "." + n.name + n.desc, "D writes a method the game no longer calls");
+                return null;
+            }
+        }
+        // A method of that name the old class had makes n another form of it (1.21.11's ItemModelOutput.accept took a
+        // third argument), which the class may write in its old form: a bridge's work, not a default's.
+        GameDiff.Cls before = a.classes.get(inverse.getOrDefault(k.name, k.name));
+        if (before != null && before.methods.values().stream().anyMatch(om -> om.name.equals(n.name))) {
+            why(rc.name + "." + n.name + n.desc, "D the old release had it in another form");
+            return null;
+        }
+        int access = n.flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED);
+        String[] was = takeover(k.name, n);
+        if (was != null) {
+            for (GameDiff.RawCls c = rc; c != null; c = c.sup == null ? null : mod.classes.get(c.sup)) {
+                if (c.methods.containsKey(was[0] + was[1])) {
+                    return null;
+                }
+            }
+            Copy old = defaultBody(k.name, was[0], was[1], n.name, n.desc, rc.name);
+            if (old == null) {
+                why(rc.name + "." + n.name + n.desc, "D the game moved " + was[0] + was[1] + " into it, and its default became no one body");
+                return null;
+            }
+            return new Copy(old.source(), n.name, n.desc, n.name, access);
+        }
+        for (GameDiff.Cls s : supers) {
+            if (s.loader || s.library) {
+                continue;
+            }
+            for (String d : Objects.requireNonNullElse(handsTo(code, s.name, n.name, n.desc), Set.<String>of())) {
+                Decl had = declaringOld(mod, rc.name, 'm', d.substring(0, d.indexOf('(')), oldDesc(d.substring(d.indexOf('('))));
+                if (had != null && had.game()) {
+                    why(rc.name + "." + n.name + n.desc, "D " + s.name + "." + d + ", which the class had, hands its work to it");
+                    return null;
+                }
+            }
+        }
+        String took = tookWork(k.name, n);
+        if (took != null) {
+            why(rc.name + "." + n.name + n.desc, "D " + took + " calls it where its old code did more");
+            return null;
+        }
+        List<String> parents = gameParents(mod, rc).stream().filter(p -> subtype(b, p, k.name)).toList();
+        Map<String, Integer> count = new HashMap<>();
+        Map<String, String> source = new HashMap<>();
+        for (GameDiff.Cls w : declaring(b, n.name + n.desc)) {
+            GameDiff.Meth own = w.methods.get(n.name + n.desc);
+            if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || w.name.equals(k.name) || w.loader || !subtype(b, w.name, k.name)) {
+                continue;
+            }
+            Map<String, String> bodies = code.bodies(w.name, x -> x);
+            String text = bodies == null ? null : bodies.get(n.name + n.desc);
+            if (text != null && parents.stream().anyMatch(p -> copyable(code, w.name, n.name, n.desc, p))) {
+                String same = text.replace(w.name + ".", "this.");
+                count.merge(same, 1, Integer::sum);
+                source.putIfAbsent(same, w.name);
+            }
+        }
+        List<Map.Entry<String, Integer>> best = count.entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed()).limit(2).toList();
+        if (best.isEmpty() || best.get(0).getValue() < 2 || best.size() > 1 && best.get(1).getValue().equals(best.get(0).getValue())) {
+            // Nothing the class had hands its work to n and the game did not move anything into it, and one of the game's
+            // own subclasses does nothing there (1.19.4's KeyBindsList.CategoryEntry.refreshEntry): the old release never
+            // asked the class this, and doing nothing is what it did there before. Without that, doing nothing may drop
+            // what the game now hands the class (a SubmitNodeCollector's submit calls).
+            if (count.containsKey(EMPTY)) {
+                if (WHY) {
+                    System.err.println("WHY D0 " + count.values() + " | " + rc.name + "." + n.name + n.desc);
+                }
+                return new Copy(null, n.name, n.desc, n.name, access);
+            }
+            why(rc.name + "." + n.name + n.desc, "D no body most of the game's subclasses a mod class could carry write: " + count.values());
+            return null;
+        }
+        if (WHY) {
+            System.err.println("WHY D+ " + source.get(best.get(0).getKey()) + " " + count.values() + " | " + rc.name + "." + n.name + n.desc);
+        }
+        return new Copy(source.get(best.get(0).getKey()), n.name, n.desc, n.name, access);
+    }
+
+    /** A method body that only returns, as GameCode.bodies writes it. */
+    static final String EMPTY = Opcodes.RETURN + "\n";
+
+    final Map<String, Optional<String>> tookWork = new HashMap<>();
+
+    /**
+     * A game method (class.name+desc, new names) that calls k's method n, was in the old release too (as it is, or
+     * under the name the route map follows), and no longer makes a call its old code made: n may do that work now (1.17's
+     * ProgramManager linked a shader's two programs itself; now it calls Shader.attachToProgram). Null when every
+     * caller is new, or calls n beside all it called before.
+     */
+    String tookWork(String k, GameDiff.Meth n) {
+        return tookWork.computeIfAbsent(k + "." + n.name + n.desc, key -> {
+            for (GameDiff.Cls c : b.classes.values()) {
+                for (GameDiff.Meth d : c.methods.values()) {
+                    boolean calls = false;
+                    Set<String> now = new HashSet<>();
+                    for (GameDiff.Ref r : d.refs) {
+                        if (r.kind() == 'm') {
+                            now.add(r.name() + r.desc());
+                            calls |= r.name().equals(n.name) && r.desc().equals(n.desc) && (subtype(b, r.owner(), k) || subtype(b, k, r.owner()));
+                        }
+                    }
+                    GameDiff.Meth was = calls ? kept(d) : null;
+                    if (was == null) {
+                        continue;
+                    }
+                    for (GameDiff.Ref r : was.refs) {
+                        if (r.kind() == 'm' && !r.name().startsWith("<")) {
+                            String[] to = route.method(r.owner(), r.name(), r.desc());
+                            if (!now.contains(to[1] + to[2])) {
+                                return Optional.of(c.name + "." + d.name + d.desc);
+                            }
+                        }
+                    }
+                }
+            }
+            return Optional.<String>empty();
+        }).orElse(null);
+    }
+
+    /** The old release's method a game method was (the same name and parameters, or one the route map follows to it); null for a new one. */
+    GameDiff.Meth kept(GameDiff.Meth d) {
+        GameDiff.Cls old = a.classes.get(inverse.getOrDefault(d.owner.name, d.owner.name));
+        if (old == null) {
+            return null;
+        }
+        GameDiff.Meth same = old.methods.get(d.name + oldDesc(d.desc));
+        if (same != null) {
+            return same;
+        }
+        for (GameDiff.Meth om : old.methods.values()) {
+            String[] to = route.method(old.name, om.name, om.desc);
+            if (to[0].equals(d.owner.name) && to[1].equals(d.name) && to[2].equals(d.desc)) {
+                return om;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The methods (new names) of a game class whose code calls name+desc on its own object; null when its code is not
+     * the game's (a loader class).
+     */
+    Set<String> handsTo(GameCode code, String cls, String name, String desc) {
+        String jar = code.toJar.getOrDefault(cls, cls);
+        byte[] bytes = code.bytes.apply(jar);
+        if (bytes == null) {
+            return null;
+        }
+        Set<String> out = new HashSet<>();
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                if (n.startsWith("<") || (access & (Opcodes.ACC_STATIC | Opcodes.ACC_ABSTRACT)) != 0) {
+                    return null;
+                }
+                String key = code.names.method(jar, n, d) + code.names.desc(d);
+                Object self = new Object();
+                return new org.objectweb.asm.commons.AnalyzerAdapter(Opcodes.ASM9, jar, access, n, d, null) {
+                    @Override
+                    public void visitVarInsn(int opcode, int var) {
+                        super.visitVarInsn(opcode, var);
+                        if (opcode == Opcodes.ALOAD && var == 0 && stack != null) {
+                            stack.set(stack.size() - 1, self);
+                        }
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String o, String mn, String md, boolean itf) {
+                        int depth = Arrays.stream(Type.getArgumentTypes(md)).mapToInt(Type::getSize).sum();
+                        if (opcode != Opcodes.INVOKESTATIC && stack != null && stack.size() > depth && stack.get(stack.size() - 1 - depth) == self) {
+                            String decl = o.startsWith("[") ? null : code.declarer(o, mn, md, false);
+                            if (((decl == null ? mn : code.names.method(decl, mn, md)) + code.names.desc(md)).equals(name + desc)) {
+                                out.add(key);
+                            }
+                        }
+                        super.visitMethodInsn(opcode, o, mn, md, itf);
+                    }
+                };
+            }
+        }, ClassReader.EXPAND_FRAMES);
+        return out;
     }
 
     /**
