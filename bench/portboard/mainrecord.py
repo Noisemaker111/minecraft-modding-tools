@@ -45,12 +45,13 @@ def against_main(row, summary):
     was, now = set(row["links"]) & read, set(summary["links"])
     return {"newly link": sorted(now - was), "no longer link": sorted(was - now), "same": len(read) - len(now ^ was)}
 
-# The measures main's table is recorded in, each with the totals it reads: (link, mods).
+# The measures main's table is recorded in, each with its name in a comparison and the totals it reads: (value, of).
 MAIN_MEASURES = {
-    "port.jar-links.every-update": lambda t: (t["total"]["link"], t["total"]["mods"]),
-    "port.jar-links.big-updates": lambda t: (t["total"]["big"]["link"], t["total"]["big"]["mods"]),
-    "port.jar-links.newest": lambda t: (t["total"]["newest"]["link"], t["total"]["newest"]["mods"]),
-    "port.jar-links.any-version": lambda t: (t.get("anyVersion", {}).get("every", 0), t.get("anyVersion", {}).get("mods", 0)),
+    "port.jar-links.every-update": ("every update", lambda t: (t["total"]["link"], t["total"]["mods"])),
+    "port.jar-links.big-updates": ("big updates", lambda t: (t["total"]["big"]["link"], t["total"]["big"]["mods"])),
+    "port.jar-links.newest": ("newest game", lambda t: (t["total"]["newest"]["link"], t["total"]["newest"]["mods"])),
+    "port.jar-links.any-version": ("any version", lambda t: (t.get("anyVersion", {}).get("every", 0), t.get("anyVersion", {}).get("mods", 0))),
+    "port.breaks-left": ("breaks left", lambda t: (anyversion.breaks_left(t.get("anyVersion", {})), t.get("anyVersion", {}).get("mods", 0))),
 }
 # The headline counts compare names first, one line each.
 HEADS = len(MAIN_MEASURES)
@@ -63,9 +64,7 @@ def compare(before, after):
         return f"{n:,}"
 
     def heads(t):
-        return {"every update": (t["total"]["link"], t["total"]["mods"]), "big updates": (t["total"]["big"]["link"], t["total"]["big"]["mods"]),
-                "newest game": (t["total"]["newest"]["link"], t["total"]["newest"]["mods"]),
-                "any version": MAIN_MEASURES["port.jar-links.any-version"](t)}
+        return {name: read(t) for name, read in MAIN_MEASURES.values()}
 
     lines = []
     for name, (b, a) in ((k, (heads(before)[k], v)) for k, v in heads(after).items()):
@@ -146,7 +145,7 @@ def record_main(table_path, commit, run, folder, day=None):
     # Main's losses travel with its table: the port check's sample is the fewest ports that would have caught each.
     lost = lost_ports(previous, table) if previous else []
     table["losses"] = losses(previous) + ([{"commit": commit, "ports": lost}] if lost else [])
-    for mid, read in MAIN_MEASURES.items():
+    for mid, (_, read) in MAIN_MEASURES.items():
         link, mods = read(table)
         points = kept.setdefault(mid, [])
         last = points[-1] if points else None
@@ -155,5 +154,5 @@ def record_main(table_path, commit, run, folder, day=None):
     points_path.write_text(M.dump(kept), encoding="utf-8", newline="\n")
     main_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
     (folder / anyversion.ANY_VERSION_PAGE).write_text(anyversion.any_version_page(table), encoding="utf-8", newline="\n")
-    print(f"main's table is {at}: " + "; ".join(compare(previous, table)[:HEADS] if previous else [f"{read(table)[0]:,}" for read in MAIN_MEASURES.values()]))
+    print(f"main's table is {at}: " + "; ".join(compare(previous, table)[:HEADS] if previous else [f"{read(table)[0]:,}" for _, read in MAIN_MEASURES.values()]))
     return table

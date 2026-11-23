@@ -727,8 +727,7 @@ def page(table):
            "it builds with no hand edits and the jar it built links by the jar scoreboard's check.", "",
            "**" + lines(table)[0] + "**", ""]
     out += [f"- {line.strip()}" for line in lines(table)[1:1 + len(table.get("sources") or {})]]
-    out += ["", "## What would free the most mods", "", "| Frees | Mods | Mod-releases | Type of break |", "|---|---|---|---|"]
-    out += [f"| {t['finishes']} | {t['mods']} | {t['releases']} | {t['type']} |" for t in a.get("types", [])[:30]]
+    out += [""] + anyversion.types_section(a)
     out += ["", "## Every mod that misses a release, nearest first", "", "| Loader | Mod | Reaches | Held by |", "|---|---|---|---|"]
     out += [f"| {m['loader']} | {m['mod']} | {m['reached']} of {m['of']} | {'; '.join(f'{k} ({n})' for k, n in m['types'].items())} |" for m in a.get("held", [])]
     return "\n".join(out) + "\n"
