@@ -9391,7 +9391,7 @@ public final class GameDiff {
             }
             head.append(retyped.isEmpty() ? "],\n" : "\n  ],\n");
             if (loader != null) {
-                String source = "fabric".equals(loader) ? Exposure.MODRINTH_FABRIC_API : NEOFORGE;
+                String source = "fabric".equals(loader) ? Exposure.FABRIC_API : NEOFORGE;
                 head.append("  \"loader\": { \"name\": ").append(VersionMap.Diff.q(loader)).append(", \"source\": ").append(VersionMap.Diff.q(source)).append(", \"versions\": {");
                 int i = 0;
                 for (var e : loaderUsed.entrySet()) {

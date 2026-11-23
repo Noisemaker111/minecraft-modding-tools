@@ -268,7 +268,7 @@ def compile_tools():
 
 
 # What a route map is built from: it changes with GameDiff or VersionMap, not with Exposure itself.
-MAP_SOURCES = ("GameDiff.java", "VersionMap.java", "Exposure.java", "ModNames.java", "FixExpr.java", "cli/Json.java")
+MAP_SOURCES = ("GameDiff.java", "VersionMap.java", "Exposure.java", "ModNames.java", "FixExpr.java", "cli/Json.java", "cli/Versions.java")
 
 
 def tools_key(*names):
@@ -398,13 +398,14 @@ def route_maps(updates, loader, classes):
 
 
 ASM = [ROOT / "tools" / "perf" / "lib" / "asm-9.9.jar", ROOT / "tools" / "perf" / "lib" / "asm-commons-9.9.jar"]
-JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java")
+JAR_SOURCES = ("JarPort.java", "FixExpr.java", "PortChains.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
+               "cli/Versions.java")
 
 
 def tools_classes_key():
     """The porter's sources and the ASM it is built with, hashed: what its classes, and so every port, are made of."""
     if "key" not in CLASSES:
-        CLASSES["key"] = content_key(tools_key(*JAR_SOURCES, "cli/Json.java"), *(a.read_bytes() for a in ASM))
+        CLASSES["key"] = content_key(tools_key(*JAR_SOURCES), *(a.read_bytes() for a in ASM))
     return CLASSES["key"]
 
 
@@ -418,7 +419,7 @@ def jar_tools():
         return CLASSES["path"]
     out = keyed_at("classes", tools_classes_key()) / "classes"
     if not (out / "JarPort.class").is_file():
-        sources = [ROOT / "tools" / n for n in JAR_SOURCES] + [ROOT / "tools" / "cli" / "Json.java"]
+        sources = [ROOT / "tools" / n for n in JAR_SOURCES]
         javac = java().replace("java.exe", "javac.exe") if java().endswith("java.exe") else java() + "c"
         part = part_of(out)
         subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", os.pathsep.join(map(str, ASM)), "-d", str(part)] + [str(s) for s in sources],
@@ -495,7 +496,7 @@ def mojang_names(loader, version, jars):
 
 
 # What reading a jar in Mojang's names is built from.
-NAME_SOURCES = ("ModNames.java", "Exposure.java", "VersionMap.java", "cli/Json.java")
+NAME_SOURCES = ("ModNames.java", "Exposure.java", "VersionMap.java", "cli/Json.java", "cli/Versions.java")
 
 
 def shipped_obfuscated(loader, version):
