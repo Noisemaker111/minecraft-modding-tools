@@ -405,7 +405,7 @@ def route_maps(updates, loader, classes):
     each as its own chain: a long port has a map per step (stops), and a process per map started cold and read both
     releases again every time."""
     folder = keyed_at("maps", content_key(tools_key(*MAP_SOURCES), platform_bytes(), java_version()))
-    # Fabric API is chosen per release (Exposure.fabricApi), not from a list platform_bytes holds: a map is kept per choice.
+    # Fabric API is chosen per release (Exposure.FabricApi), not from a list platform_bytes holds: a map is kept per choice.
     jars = fabric_apis([v for frm, to in updates for v in chain(frm, to)]) if loader == "fabric" else {}
     apis = lambda frm, to: "-" + content_key(*(jars[v].name if jars[v] else "" for v in chain(frm, to))) if jars else ""
     targets = [folder / f"{loader}-{frm}-{to}{apis(frm, to)}.json" for frm, to in updates]
@@ -1546,7 +1546,7 @@ def fabric_meta(jar):
 
 
 def fabric_api(version):
-    """The Fabric API players install on a release (a jar in ~/.mmt/mappings/), or None: Exposure.fabricApi chooses it, so
+    """The Fabric API players install on a release (a jar in ~/.mmt/mappings/), or None: Exposure.FabricApi chooses it (and keeps its answer in maps/fabric-api/), so
     the game a port is started in runs the jar the link check and the route map read."""
     return fabric_apis([version])[version]
 
