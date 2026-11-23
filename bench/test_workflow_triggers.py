@@ -4,7 +4,8 @@
 - Such a workflow runs on a push to main only for named files (the files of its cache keys, to save the caches main
   alone can save), never for a folder: main takes only pull requests that are up to date with it, so the merged tree is
   the tree the pull request's run already passed.
-- The names main requires (linux, windows) are never reported for a draft: GitHub counts a skipped job as passed.
+- The names main requires (linux, windows) are never reported for a draft: GitHub counts a skipped job as passed, and
+  lists one whose name is an expression under the expression's text.
 The rules are tried on workflows written here that break each one, so a rule that stopped reading the files fails too.
 Run: python bench/test_workflow_triggers.py"""
 import re

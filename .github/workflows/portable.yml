@@ -6,8 +6,9 @@ name: CI
 #
 # A pull request pays for this once. A draft's pushes start no job (the agent proves each commit on its own machine with
 # python bench/run_tests.py, which picks the checks the change can affect); marking it ready starts both jobs, and a push
-# to a ready pull request starts them again. On a draft the two jobs are skipped under another name, because GitHub
-# counts a skipped job as passed and "linux" and "windows" are the names main requires.
+# to a ready pull request starts them again. Each job's name is an expression, so that a draft's skipped job is never
+# listed as "linux" or "windows": GitHub counts a skipped job as passed, those two names are what main requires, and it
+# lists a skipped job under the expression's own text (seen on #225).
 #
 # Not on a merge to main: main takes only pull requests that are up to date with it, so the merged tree is the tree
 # these jobs just passed. In the 73 merges after that rule (2026-11-22) the rerun on main failed 4 times, each a
