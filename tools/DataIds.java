@@ -418,7 +418,7 @@ final class DataIds {
             Object json;
             try {
                 String text = new String(entries.get(file), StandardCharsets.UTF_8);
-                json = Json.parse(text.startsWith("﻿") ? text.substring(1) : text);
+                json = Json.parse(text.startsWith("\uFEFF") ? text.substring(1) : text);
             } catch (RuntimeException unreadable) {
                 continue;
             }
