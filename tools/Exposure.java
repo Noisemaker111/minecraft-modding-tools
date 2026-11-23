@@ -14,6 +14,7 @@ import java.util.zip.*;
  * the ones a porter can learn from the game; that is what makes the list a to-do list.
  *
  *   java Exposure --from 1.21.1 --to 1.21.2 [--loader neoforge] --report jarport.json --out evidence.json
+ *   java Exposure --fabric-api 1.16,1.16.5      the Fabric API jar of each release (fabricApi)
  *
  * Also the shared lookups of the port: one release's snapshot with its loader, where a member is declared, and the
  * route map read for lookups.
@@ -21,7 +22,7 @@ import java.util.zip.*;
 public final class Exposure {
 
     public static void main(String[] args) throws Exception {
-        String from = null, to = null, out = null, loader = null, report = null;
+        String from = null, to = null, out = null, loader = null, report = null, fabricApis = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--from" -> from = args[++i];
@@ -30,8 +31,17 @@ public final class Exposure {
                 case "--loader" -> loader = args[++i];
                 case "--report" -> report = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
+                case "--fabric-api" -> fabricApis = args[++i];
                 default -> throw new IllegalArgumentException("unknown argument " + args[i]);
             }
+        }
+        if (fabricApis != null) {
+            // The Fabric API jar of each release, one "VERSION<tab>PATH" line each (no path: none), for the bench's packs.
+            for (String v : fabricApis.split(",")) {
+                Path api = fabricApi(v);
+                System.out.println(v + "\t" + (api == null ? "" : api.toAbsolutePath()));
+            }
+            return;
         }
         if (from == null || to == null || out == null || report == null) {
             System.err.println("usage: Exposure --from V --to V [--loader neoforge] --report jarport.json --out evidence.json");
@@ -208,9 +218,10 @@ public final class Exposure {
 
     /**
      * What a loader adds to one release: its version (NeoForge's; null for Fabric, whose loader is not tied to a release),
-     * its classes in Mojang names, its access transformer, and interfaces it adds to game classes (Mojang names).
+     * its classes in Mojang names, its access transformer, interfaces it adds to game classes (Mojang names), and which of
+     * its builds were read (the NeoForge build, or Fabric API's file), which the route map records.
      */
-    record Platform(String version, List<byte[]> classes, String access, Map<String, List<String>> injected) {}
+    record Platform(String version, List<byte[]> classes, String access, Map<String, List<String>> injected, String read) {}
 
     /**
      * A release's platform, read once per process: a long port reads each release at two of its steps (as the new release
@@ -220,7 +231,7 @@ public final class Exposure {
         String key = loader + " " + version;
         Platform p = PLATFORMS.get(key);
         if (p == null) {
-            p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of());
+            p = "neoforge".equals(loader) ? neoforge(version) : "fabric".equals(loader) ? fabric(version) : new Platform(null, List.of(), "", Map.of(), null);
             Platform first = PLATFORMS.putIfAbsent(key, p);
             p = first == null ? p : first;
         }
@@ -245,7 +256,7 @@ public final class Exposure {
     static Platform neoforge(String version) throws Exception {
         String lv = neoforgeVersion(version);
         if (lv == null) {
-            return new Platform(null, List.of(), "", Map.of());
+            return new Platform(null, List.of(), "", Map.of(), null);
         }
         Path universal = VersionMap.fetch(GameDiff.NEOFORGE + lv + "/neoforge-" + lv + "-universal.jar", "neoforge-" + lv + "-universal.jar");
         byte[] bytes = Files.readAllBytes(universal);
@@ -272,7 +283,7 @@ public final class Exposure {
                 at = new String(zip.getInputStream(e).readAllBytes(), StandardCharsets.UTF_8);
             }
         }
-        return new Platform(lv, classes, srgNames(version) ? Intermediary.neoform(version).rename(at) : at, Map.of());
+        return new Platform(lv, classes, srgNames(version) ? Intermediary.neoform(version).rename(at) : at, Map.of(), lv);
     }
 
     static String neoforgeVersion(String version) throws Exception {
@@ -335,8 +346,8 @@ public final class Exposure {
     static final String FABRIC_MAVEN = "https://maven.fabricmc.net/net/fabricmc/";
 
     /**
-     * Fabric Loader (its newest stable release: players run the newest loader on every release) and the newest Fabric API
-     * built for the release, both from Fabric's own maven, in Mojang names. Fabric API's modules name game classes they
+     * Fabric Loader (its newest stable release, from Fabric's maven: players run the newest loader on every release) and
+     * the Fabric API players install on the release (fabricApi), in Mojang names. Fabric API's modules name game classes they
      * add an interface to ("loom:injected_interfaces"); a mod built with Loom calls those methods on the game class.
      */
     static Platform fabric(String version) throws Exception {
@@ -387,7 +398,7 @@ public final class Exposure {
             classes.addAll(classes(bytes, "net/fabricmc/"));
         }
         classes.removeIf(Exposure::isMixin);
-        return new Platform(null, classes, access.toString(), injected);
+        return new Platform(null, classes, access.toString(), injected, api == null ? null : api.getFileName().toString());
     }
 
     /** Releases in order: 1.20.4 before 1.20.5 before 26.1. */
@@ -402,22 +413,114 @@ public final class Exposure {
         return 0;
     }
 
-    /** The newest Fabric API built for a release ("+1.21.1", or "+1.14" for the first ones), or null. */
+    /**
+     * The Fabric API a release runs: the newest build whose own fabric.mod.json accepts the release, as players have it
+     * (every module nested in one jar). Builds are read from Fabric's maven by the release each is named for (+1.16,
+     * +build.373-1.16, +26.1.2): that release, the family it belongs to, or a release of its own family, since a name gives
+     * a family and not the releases a build runs on (0.42.0+1.16 needs 1.16.2; 0.155.3+26.1.2 runs on 26.1). From 1.19.2
+     * the maven jar is the released jar; before it, it is an empty parent and each module a separate artifact, so the
+     * released file of that build is Fabric's own Modrinth release. The link check, the route map, the port and the game a
+     * port is started in all read this one jar. Null when no build runs on the release.
+     */
     static Path fabricApi(String version) throws Exception {
+        Path have = FABRIC_APIS.get(version);
+        if (have != null) {
+            return have;
+        }
         String metadata = VersionMap.fetchText(FABRIC_API + "maven-metadata.xml", "fabric-api-maven-metadata.xml");
-        String minor = version.replaceFirst("^(\\d+\\.\\d+)\\.\\d+$", "$1");
-        String chosen = null;
-        for (String wanted : List.of(version, minor)) {
-            Matcher m = Pattern.compile("<version>([^<]+\\+" + Pattern.quote(wanted) + ")</version>").matcher(metadata);
-            while (m.find()) {
-                chosen = m.group(1);
-            }
-            if (chosen != null) {
-                break;
+        Map<String, List<String>> byRelease = new LinkedHashMap<>();
+        Matcher m = Pattern.compile("<version>([^<]+\\+(?:build\\.\\d+-)?(\\d+(?:\\.\\d+)+))</version>").matcher(metadata);
+        while (m.find()) {
+            String named = m.group(2);
+            if (named.equals(version) || version.startsWith(named + ".") || named.startsWith(version + ".")) {
+                byRelease.computeIfAbsent(named, k -> new ArrayList<>()).add(m.group(1));
             }
         }
-        return chosen == null ? null : VersionMap.fetch(FABRIC_API + chosen + "/fabric-api-" + chosen + ".jar", "fabric-api-" + chosen + ".jar");
+        // Within one release's builds the releases they accept only move forward, so the ones that run on a release are
+        // a run of builds; the newest of them is found by halving, reading a few small jars and not every build.
+        String chosen = null;
+        for (List<String> builds : byRelease.values()) {
+            builds.sort((x, y) -> Versions.compare(x.replaceFirst("\\+.*", ""), y.replaceFirst("\\+.*", "")));
+            String best = runsOn(builds.get(builds.size() - 1), version) ? builds.get(builds.size() - 1) : null;
+            if (best == null && runsOn(builds.get(0), version)) {
+                int lo = 0, hi = builds.size() - 1; // builds[lo] runs on it, builds[hi] does not
+                while (hi - lo > 1) {
+                    int mid = (lo + hi) >>> 1;
+                    if (runsOn(builds.get(mid), version)) {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                best = builds.get(lo);
+            }
+            if (best != null && (chosen == null || Versions.compare(best.replaceFirst("\\+.*", ""), chosen.replaceFirst("\\+.*", "")) > 0)) {
+                chosen = best;
+            }
+        }
+        if (chosen == null) {
+            return null;
+        }
+        have = mavenJar(chosen);
+        if (modJsons(Files.readAllBytes(have)).size() <= 1) {
+            have = released(chosen);
+        }
+        if (have != null) {
+            FABRIC_APIS.put(version, have);
+        }
+        return have;
     }
+
+    /** Whether a Fabric API build's own fabric.mod.json accepts the release ("minecraft" in depends; a list is any of). */
+    static boolean runsOn(String build, String version) throws Exception {
+        String fmj;
+        try (ZipFile zip = new ZipFile(mavenJar(build).toFile())) {
+            fmj = new String(zip.getInputStream(zip.getEntry("fabric.mod.json")).readAllBytes(), StandardCharsets.UTF_8);
+        }
+        Object wanted = Json.object(Json.object(Json.parse(fmj)).get("depends")).get("minecraft");
+        if (wanted == null) {
+            return true;
+        }
+        for (Object range : wanted instanceof List<?> l ? l : List.of(wanted)) {
+            if (Versions.matches(String.valueOf(range), version)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static Path mavenJar(String build) throws Exception {
+        return VersionMap.fetch(FABRIC_API + build + "/fabric-api-" + build + ".jar", "fabric-api-" + build + ".jar");
+    }
+
+    /** The jar Fabric released a build as, from its own Modrinth project, or null when it has none there. */
+    static Path released(String build) throws Exception {
+        String url = MODRINTH_FABRIC_API + "/" + java.net.URLEncoder.encode(build, StandardCharsets.UTF_8);
+        var response = VersionMap.HTTP.send(
+            java.net.http.HttpRequest.newBuilder(java.net.URI.create(url)).header("User-Agent", AGENT).build(),
+            java.net.http.HttpResponse.BodyHandlers.ofString()
+        );
+        if (response.statusCode() == 404) {
+            return null;
+        }
+        if (response.statusCode() != 200) {
+            throw new java.io.IOException("HTTP " + response.statusCode() + " for " + url);
+        }
+        // A release with one file need not mark it primary (Fabric API for 1.18 does not).
+        List<Object> files = Json.array(Json.object(Json.parse(response.body())).get("files"));
+        for (Object f : files) {
+            Map<String, Object> file = Json.object(f);
+            if (Boolean.TRUE.equals(file.get("primary")) || files.size() == 1) {
+                return VersionMap.fetch(Json.text(file, "url", ""), "fabric-api-" + build + "-released.jar");
+            }
+        }
+        return null;
+    }
+
+    static final Map<String, Path> FABRIC_APIS = new java.util.concurrent.ConcurrentHashMap<>();
+    static final String FABRIC_API = "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/";
+    static final String MODRINTH_FABRIC_API = "https://api.modrinth.com/v2/project/fabric-api/version";
+    static final String AGENT = "modding-accelerator-exposure/1.0";
 
     /** A Fabric API class in a mixin package: Mixin applies it to the game, no mod links against it. */
     static boolean isMixin(byte[] c) {
@@ -533,8 +636,6 @@ public final class Exposure {
             }
         }
     }
-
-    static final String FABRIC_API = "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/";
 
 
     /** Every access widener in a Fabric jar and the jars nested in it. */

@@ -1,0 +1,11 @@
+{
+ "id": "79F",
+ "title": "Fabric API is read on every release",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "Before 1.19.2 Fabric's maven publishes fabric-api as an empty parent jar, each module a separate artifact, so the link check, the route map and the port read no Fabric API on any Fabric update before it: Fabric API breaks were never seen, and calls into Fabric API that moved were never followed. The release was also chosen by name (+1.16), which gives a family, not the releases a build runs on: 1.16 was checked against 0.42.0+1.16, which needs 1.16.2, while the game ran another build. Exposure.fabricApi now chooses the newest build whose own fabric.mod.json accepts the release, read from Fabric's maven, and reads it as players have it: the maven jar from 1.19.2, Fabric's own Modrinth file of that build before. The link check, the route map, the port and the game a port starts in all read that one jar, and the route map names it per release.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "Every Fabric update reads a Fabric API with its modules; old updates count Fabric API breaks; Totally Lit's 1.15.2 -> 1.16 port either loads in game or is reported, never counted while it crashes",
+ "wrongIf": "a mod reported on a Fabric API member loads in game on the release's Fabric API, or a mod that links fails in game on a Fabric API member"
+}
