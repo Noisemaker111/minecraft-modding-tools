@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 import port_tools  # noqa: E402
 
@@ -96,12 +97,11 @@ def piles(jars):
     return [pile for _, pile in dealt]
 
 
-def side_by_side(command, jars, report, one=False):
+def side_by_side(command, jars, report):
     """Runs a tool that reads jars one at a time (ModNames) on every processor at once: a jar's result does not depend on
-    the jars beside it, and one process used one of this machine's processors (150 mods took 140 s on one of 24). one: a
-    tool that uses every processor itself (JarPort) gets every jar in one process. Returns the reports' rows in the order
-    the jars were given."""
-    dealt = [list(jars)] if one else piles(jars)
+    the jars beside it, and one process used one of this machine's processors (150 mods took 140 s on one of 24). Returns
+    the reports' rows in the order the jars were given."""
+    dealt = piles(jars)
     if len(dealt) > 1:
         # The piles share the memory one process had.
         command = [f"-Xmx{max(3, settings.HEAP // len(dealt))}g" if c.startswith("-Xmx") else c for c in command]
@@ -130,7 +130,8 @@ def mojang_names(loader, version, jars):
     failed = {}
     if missing:
         # ModNames writes each jar under a name of its own and moves it into place, so a run beside this one never reads half a jar.
-        report = settings.ROOT / ".runs" / "exposure" / f"names-{loader}-{version}-{os.getpid()}.json"
+        # Named for this call: the sweep's jobs run side by side in one process, two of them from the same release.
+        report = settings.ROOT / ".runs" / "exposure" / f"names-{loader}-{version}-{os.getpid()}-{uuid.uuid4().hex[:12]}.json"
         report.parent.mkdir(parents=True, exist_ok=True)
         rows = side_by_side([java(), f"-Xmx{min(4, settings.HEAP)}g", "-cp", jar_tools(), "ModNames", "--version", version, "--loader", loader, "--out", str(out)], missing, report)
         failed = {m["mod"]: m["error"] for m in rows if "error" in m}
@@ -200,62 +201,81 @@ def standins_key(loader, frm, to):
 
 
 def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False, data_from=None):
-    """Ports jars with tools/port/jar/JarPort.java into out_dir and returns its report. runtime: in the names the loader runs
-    (a Fabric jar handed back in the target release's intermediary), for a game to start them. cache: only the report is
-    wanted, so a mod whose port (port_key and its jar's content) was made before, by any run on this machine, is read from
-    ~/.mmt/exposure/ports/ instead of ported again; only the rest go to JarPort. data_from: the release the jars' data was
-    written for, when not frm (a jar built from source for to, checked from to to itself)."""
-    classpath = jar_tools()
-    steps = stops(loader, frm, to)
-    maps = routes(loader, frm, to)
-    registry_reports(steps + ([data_from] if data_from else []))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows, todo, keys, checked = {}, [], {}, 0
-    if cache:
-        folder = cachekeys.keyed_at("ports", port_key(loader, frm, to, runtime, data_from))
+    """Ports jars with tools/port/jar/JarPort.java into out_dir and returns its report: jar_ports with one target."""
+    return jar_ports(loader, frm, [(to, out_dir, report)], jars, runtime, cache, data_from)[to]
+
+
+def jar_ports(loader, frm, targets, jars, runtime=False, cache=False, data_from=None):
+    """Ports jars from frm to each (to, out_dir, report) of targets with tools/port/jar/JarPort.java, in one process that ports the
+    steps the targets share once (JarPort.portAll), and returns each target's report. runtime: in the names the loader
+    runs (a Fabric jar handed back in the target release's intermediary), for a game to start them. cache: only the
+    reports are wanted, so a mod whose port to a target (port_key and its jar's content) was made before, by any run on
+    this machine, is read from ~/.mmt/exposure/ports/; a mod with no kept port to some target is ported to all of them,
+    and where a kept port is there too the two must be the same, as --verify checks for every mod. data_from: the release
+    the jars' data was written for, when not frm (a jar built from source for to, checked from to to itself)."""
+    plan, keys, rows, todo, checked = [], {}, {}, set(), 0
+    for to, out_dir, report in targets:
+        steps = stops(loader, frm, to)
+        registry_reports(steps + ([data_from] if data_from else []))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        plan.append({"to": to, "via": steps[1:-1], "maps": [str(m) for m in routes(loader, frm, to)], "out": str(out_dir), "report": str(report)})
+        rows[to] = {}
+        folder = cachekeys.keyed_at("ports", port_key(loader, frm, to, runtime, data_from)) if cache else None
         for jar in jars:
-            keys[jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
-            if keys[jar.name].is_file() and not settings.VERIFY:
-                rows[jar.name] = json.loads(keys[jar.name].read_text(encoding="utf-8"))
+            if cache:
+                keys[to, jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
+            if cache and keys[to, jar.name].is_file() and not settings.VERIFY:
+                rows[to][jar.name] = json.loads(keys[to, jar.name].read_text(encoding="utf-8"))
             else:
-                todo.append(jar)
-    else:
-        todo = list(jars)
+                todo.add(jar.name)
+    todo = [j for j in jars if j.name in todo]
     if todo:
-        args = [java(), f"-Xmx{settings.HEAP}g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--fixes", str(settings.ROOT / "knowledge" / "fixes.json"),
-                "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else []) + (["--data-from", data_from] if data_from else [])
-        if len(steps) > 2:
-            args += ["--via", ",".join(steps[1:-1])]
-        for route in maps:
-            args += ["--map", str(route)]
+        written = Path(targets[0][2]).with_name(f"plan-{os.getpid()}-{uuid.uuid4().hex[:12]}.json")
+        written.write_text(json.dumps({"ports": plan}), encoding="utf-8")
+        args = [java(), f"-Xmx{settings.HEAP}g", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(settings.ROOT / "knowledge" / "fixes.json"),
+                "--loader", loader] + (["--runtime-names"] if runtime else []) + (["--data-from", data_from] if data_from else [])
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
             args += ["--originals", str(settings.HOME / "jars" / f"{loader}-{frm}")]
         # One process: JarPort ports the jars of each step on every processor, and each process read every step's releases.
-        runs = functools.cache(lambda: javalevels.release_java(to))
-        for m in side_by_side(args, todo, report, one=True):
-            m = javalevels.with_java_checked(m, loader, to, runs)
-            rows[m["mod"]] = m
-            if cache:
+        code = jarport(args + [str(j) for j in todo])
+        written.unlink()
+        if code:
+            raise SystemExit(f"JarPort failed on {loader} {frm} -> {', '.join(t[0] for t in targets)} (exit {code}); its output is above")
+        for to, _, report in targets:
+            runs = functools.cache(lambda to=to: javalevels.release_java(to))
+            for m in json.loads(Path(report).read_text(encoding="utf-8"))["mods"]:
+                m = javalevels.with_java_checked(m, loader, to, runs)
+                if not cache:
+                    rows[to][m["mod"]] = m
+                    continue
                 kept = {k: v for k, v in m.items() if k != "out"}  # where this run wrote it, not part of the answer
-                if settings.VERIFY and keys[m["mod"]].is_file():
+                if keys[to, m["mod"]].is_file():
                     checked += 1
-                if settings.VERIFY and keys[m["mod"]].is_file() and json.loads(keys[m["mod"]].read_text(encoding="utf-8")) != kept:
-                    raise SystemExit(f"the cached port of {m['mod']} ({loader} {frm} -> {to}, {keys[m['mod']]}) differs from porting it again: "
-                                     "the cache key misses an input of the port, or the port is not the same run to run")
-                part = cachekeys.part_of(keys[m["mod"]])
+                    if json.loads(keys[to, m["mod"]].read_text(encoding="utf-8")) != kept:
+                        raise SystemExit(f"the cached port of {m['mod']} ({loader} {frm} -> {to}, {keys[to, m['mod']]}) differs from porting it again: "
+                                         "the cache key misses an input of the port, or the port is not the same run to run")
+                rows[to][m["mod"]] = kept
+                part = cachekeys.part_of(keys[to, m["mod"]])
                 part.write_text(json.dumps(kept), encoding="utf-8")
-                cachekeys.publish(part, keys[m["mod"]])
-    rows = [rows[j.name] for j in jars if j.name in rows]
-    counts = {}
-    for m in rows:
-        for member in left(m):
-            counts[member] = counts.get(member, 0) + 1
-    merged = {"from": frm, "to": to, "loader": loader, "linked": sum(1 for m in rows if "error" not in m and not m["unlinked"]), "mods": rows,
-              "unlinkedByMods": [{"member": k, "mods": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))],
-              "ported": len(todo), "verified": checked}
-    report.write_text(json.dumps(merged, indent=1), encoding="utf-8")
+                cachekeys.publish(part, keys[to, m["mod"]])
+    merged = {}
+    for to, _, report in targets:
+        found = [rows[to][j.name] for j in jars if j.name in rows[to]]
+        counts = {}
+        for m in found:
+            for member in left(m):
+                counts[member] = counts.get(member, 0) + 1
+        merged[to] = {"from": frm, "to": to, "loader": loader, "linked": sum(1 for m in found if "error" not in m and not m["unlinked"]), "mods": found,
+                      "unlinkedByMods": [{"member": k, "mods": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))],
+                      "ported": len(todo), "verified": checked}
+        Path(report).write_text(json.dumps(merged[to], indent=1), encoding="utf-8")
     return merged
+
+
+def jarport(command):
+    """Runs JarPort and returns its exit code; its rows are in each target's report."""
+    return subprocess.run(command, stdout=subprocess.DEVNULL).returncode
 
 
 def classes_key(classpath, names):

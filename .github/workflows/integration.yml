@@ -1,18 +1,33 @@
 name: Integration
 # Real servers and real builds, once, on Linux (none of this code is OS-specific; 3 systems gave 774 jobs and no
-# failure only one system saw). On every push to main, and on a pull request that touches their code:
+# failure only one system saw). On a pull request that touches their code, once it is ready (a draft's pushes start no
+# job; a push to a ready pull request starts them again):
 # - plugins: pinned server plugins on fresh clones through the packaged command (fast, jar, plugin-check on MockBukkit,
 #   each break made on purpose; tools/tests/ServerPluginFixtures.java).
 # - server-check: plugins on a real headless Paper server with a bot player, one part per job (scenario, bot, breaks;
 #   tools/tests/ServerCheckFixtures.java).
 # - stonecutter: three representative Stonecutter nodes set up and compiled through mmt; every node runs on
 #   demand in stonecutter-nodes.yml.
-# Caches are saved only from a passing main run.
+# Not on a merge to main: main takes only pull requests that are up to date with it, so the merged tree is the tree the
+# pull request ran these on, and a pull request that touched none of the paths below merges the code main already ran
+# them on. In the 73 merges after that rule (2026-11-22) the rerun on main failed once, when a clone from GitHub was
+# refused (403), and found no break.
+# main runs it only to keep the caches: they are saved from main alone, so a push that changes a file of a cache key
+# runs the jobs once and saves them. After changing the cached paths below, or when a cache is gone, run it on main by
+# hand (Actions > Integration > Run workflow).
 on:
   push:
     branches: [main]
-  pull_request:
     paths:
+      - 'bench/server-plugins/manifest.json'
+      - 'bench/real-mods/manifest.json'
+      - 'knowledge/mcprotocollib.json'
+      - 'knowledge/viaproxy.json'
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - 'mmt'
+      - 'tools/launcher/**'
       - 'tools/cli/**'
       - 'tools/servercheck/**'
       - 'tools/plugincheck/**'
@@ -32,6 +47,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   plugins:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -55,7 +71,7 @@ jobs:
       - name: Server plugins through mmt
         run: java tools/tests/ServerPluginFixtures.java . build/distributions/mmt.jar
       - name: Save caches (main only)
-        if: success() && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: success() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -75,6 +91,7 @@ jobs:
           retention-days: 7
   server-check:
     name: server-check (${{ matrix.part }})
+    if: ${{ !github.event.pull_request.draft }}
     strategy:
       fail-fast: false
       matrix:
@@ -107,7 +124,7 @@ jobs:
       - name: Plugins on a real Paper server through mmt
         run: java tools/tests/ServerCheckFixtures.java . build/distributions/mmt.jar "${{ matrix.part }}"
       - name: Save caches (main only)
-        if: success() && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: success() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -128,6 +145,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
   stonecutter:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -153,10 +171,10 @@ jobs:
       - name: Set up and compile three nodes
         run: python bench/real-mods/run.py --compile-nodes --only diorama-26.3,diorama-1.21.1,ias-26.3-fabric --cache "${{ runner.temp }}/real-mods" --out "${{ runner.temp }}/real-mods-results" --label sample
       - name: Stop Gradle before the cache save
-        if: success() && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: success() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         run: pkill -f GradleDaemon || true
       - name: Save caches (main only)
-        if: success() && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: success() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -173,82 +191,3 @@ jobs:
           path: ${{ runner.temp }}/real-mods-results
           if-no-files-found: ignore
           retention-days: 7
-  report-red-main:
-    needs: [plugins, server-check, stonecutter]
-    if: always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: report-red-main-integration
-      cancel-in-progress: false
-    permissions:
-      contents: read
-      issues: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      TITLE: Integration red on main
-      PLUGINS_RESULT: ${{ needs.plugins.result }}
-      SERVER_CHECK_RESULT: ${{ needs.server-check.result }}
-      STONECUTTER_RESULT: ${{ needs.stonecutter.result }}
-    steps:
-      - name: Update or close red-main issue
-        run: |
-          set -euo pipefail
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          short_sha="${GITHUB_SHA:0:7}"
-          head_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
-          if [ "$head_sha" != "$GITHUB_SHA" ]; then
-            echo "Skipping stale run for ${short_sha}; main is now at ${head_sha:0:7}."
-            exit 0
-          fi
-          failed=()
-          for pair in "plugins:${PLUGINS_RESULT}" "server-check:${SERVER_CHECK_RESULT}" "stonecutter:${STONECUTTER_RESULT}"; do
-            job="${pair%%:*}"
-            res="${pair#*:}"
-            if [ "$res" = "failure" ]; then
-              failed+=("$job")
-            fi
-          done
-          issues_json=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100")
-          mapfile -t open_issues < <(
-            printf '%s\n' "$issues_json" \
-              | jq -rs --arg t "$TITLE" '[.[][] | select(.pull_request == null and .title == $t)] | sort_by(.number) | .[].number'
-          )
-          if [ "${#failed[@]}" -gt 0 ]; then
-            failed_list=$(printf '%s, ' "${failed[@]}")
-            failed_list="${failed_list%, }"
-            body=$(printf 'Integration is red on `main` at commit %s (`%s`).\n\n- Run: %s\n- Failed: %s\n- `plugins`: %s\n- `server-check`: %s\n- `stonecutter`: %s\n' \
-              "$GITHUB_SHA" "$short_sha" "$run_url" "$failed_list" "$PLUGINS_RESULT" "$SERVER_CHECK_RESULT" "$STONECUTTER_RESULT")
-            if [ "${#open_issues[@]}" -eq 0 ]; then
-              gh api --method POST "repos/${GITHUB_REPOSITORY}/issues" \
-                -f title="$TITLE" \
-                -f body="$body" >/dev/null
-              echo "Opened issue '${TITLE}' for ${short_sha} (failed: ${failed_list})."
-            else
-              issue="${open_issues[0]}"
-              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/${issue}" \
-                -f body="$body" >/dev/null
-              comment=$(printf 'Still red on `main` at commit %s (`%s`): failed %s.\n\n- Run: %s\n- `plugins`: %s\n- `server-check`: %s\n- `stonecutter`: %s\n' \
-                "$GITHUB_SHA" "$short_sha" "$failed_list" "$run_url" "$PLUGINS_RESULT" "$SERVER_CHECK_RESULT" "$STONECUTTER_RESULT")
-              gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" \
-                -f body="$comment" >/dev/null
-              echo "Updated issue #${issue} for ${short_sha} (failed: ${failed_list})."
-            fi
-          elif [ "${PLUGINS_RESULT}" = "success" ] && [ "${SERVER_CHECK_RESULT}" = "success" ] && [ "${STONECUTTER_RESULT}" = "success" ]; then
-            if [ "${#open_issues[@]}" -eq 0 ]; then
-              echo "Integration is green on main and no open '${TITLE}' issue exists."
-              exit 0
-            fi
-            comment=$(printf 'Integration is green again on `main` at commit %s (`%s`).\n\n- Run: %s\n- `plugins`: %s\n- `server-check`: %s\n- `stonecutter`: %s\n' \
-              "$GITHUB_SHA" "$short_sha" "$run_url" "$PLUGINS_RESULT" "$SERVER_CHECK_RESULT" "$STONECUTTER_RESULT")
-            for issue in "${open_issues[@]}"; do
-              gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" \
-                -f body="$comment" >/dev/null
-              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/${issue}" \
-                -f state="closed" \
-                -f state_reason="completed" >/dev/null
-              echo "Closed issue #${issue} after green run on ${short_sha}."
-            done
-          else
-            echo "No failure and not all jobs succeeded (plugins=${PLUGINS_RESULT}, server-check=${SERVER_CHECK_RESULT}, stonecutter=${STONECUTTER_RESULT}); leaving issues unchanged."
-          fi

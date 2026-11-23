@@ -27,6 +27,7 @@ import portboard.gamereleases  # noqa: E402
 import portboard.javalevels  # noqa: E402
 import portboard.mainrecord  # noqa: E402
 import portboard.modrinth  # noqa: E402
+import portboard.portcheck  # noqa: E402
 import portboard.porter  # noqa: E402
 import portboard.settings  # noqa: E402
 
@@ -58,6 +59,17 @@ newest = portboard.gamereleases.updates("fabric")[-1]
 check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1]}"], "--only LOADER:FROM:TO picks that update")
 check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
 check("names no update: fabric:1.20.1:99.9" in plan("fabric:1.20.1:99.9"), f"--only naming no update stops: {plan('fabric:1.20.1:99.9')}")
+
+# The sweep's jobs: every pair runs() lists is in exactly one job, a job's targets are one release's ports in one
+# direction (so JarPort ports the steps they share once), and --only keeps only the pairs it names.
+for lo in portboard.settings.FIRST:
+    jobs = portboard.board.plan(lo)
+    pairs = [(frm, to) for _, frm, tos in jobs for to in tos]
+    check(sorted(pairs) == sorted(portboard.gamereleases.runs(lo)) and len(pairs) == len(set(pairs)), f"{lo}: every pair runs in one job")
+    check(all(len({portboard.gamereleases.vkey(to) > portboard.gamereleases.vkey(frm) for to in tos}) == 1 for _, frm, tos in jobs), f"{lo}: a job's targets lie one way from its release")
+    check(len(jobs) < len(pairs), f"{lo}: ports from one release share jobs ({len(jobs)} jobs for {len(pairs)} pairs)")
+    frm, to = portboard.gamereleases.runs(lo)[-1]
+    check([(f, t) for _, f, tos in portboard.board.plan(lo, {f"{lo}:{frm}:{to}"}) for t in tos] == [(frm, to)], f"{lo}: --only LOADER:FROM:TO runs that pair alone")
 
 REPO, EXPOSURE_HOME = portboard.settings.ROOT, portboard.settings.HOME
 
@@ -460,6 +472,70 @@ check(kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"
       and kept["notStarted"] == {"clumps--Clumps.jar": ["it does not link after the port"]},
       f"a proof with nothing to start keeps a receipt saying why: {kept}")
 
+# A game proof starts the client beside the server, and no server when every mod to start is client-only by its own
+# metadata: fabric 1.18.1 -> 1.18.2 spent 147 s starting a server with neither of its two client-only mods on it. Run
+# through load with the game's starts stood in for; a client start that fails still fails the gate.
+def proof(mods, client_ok, server_waits_for_client):
+    S, G = portboard.settings, portboard.gameload
+    stubs = [(portboard.porter, "mojang_names"), (portboard.porter, "jar_port"), (portboard.porter, "fabric_api"), (portboard.dependencies, "choose"),
+             (portboard.javalevels, "platform_ids"), (portboard.javalevels, "newer_java"), (G, "pack_check")]
+    kept = [(m, n, getattr(m, n)) for m, n in stubs]
+    with tempfile.TemporaryDirectory() as tmp:
+        real = S.ROOT, S.PINS, S.HOME
+        S.ROOT, S.PINS, S.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
+        S.PINS.mkdir()
+        (S.PINS / "fabric-9.1.json").write_text(json.dumps({"mods": [{"slug": s, "file": f"{s}.jar"} for s in mods]}), encoding="utf-8")
+        report = Path(tmp) / ".runs" / "exposure" / "jars-fabric-9.1-9.2" / "report.json"
+        report.parent.mkdir(parents=True)
+        report.write_text(json.dumps({"mods": [{"mod": f"{s}--{s}.jar", "unlinked": []} for s in mods]}), encoding="utf-8")
+        folder = S.HOME / "jars" / "fabric-9.1"
+        folder.mkdir(parents=True)
+        for s, env in mods.items():
+            (folder / f"{s}--{s}.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": s, "environment": env})}))
+        starts, client_started = [], threading.Event()
+
+        def ported(loader, frm, to, read, out, rep, runtime=False):
+            out.mkdir(parents=True, exist_ok=True)
+            for j in read:
+                shutil.copy(j, out / j.name)
+            return {"mods": [{"mod": j.name, "unlinked": []} for j in read]}
+
+        def start(pack, to, loader, side="server"):
+            starts.append(side)
+            done = G.subprocess.CompletedProcess([], 0, "", "")
+            if side == "client":
+                client_started.set()
+                suspects = [{"jar": n.name, "why": ["crash"]} for n in (pack / "mods").glob("*.jar")]
+                return {"result": {"client": {"opened": client_ok, "failure": "Description: Rendering screen"},
+                                   "findings": [] if client_ok else [{"kind": "client-start", "severity": "problem", "suspects": suspects}]}}, done
+            if server_waits_for_client:
+                check(client_started.wait(10), "the client starts while the server runs")
+            return {"ok": True, "result": {"game": {"leftOut": {}}}}, done
+        portboard.porter.mojang_names = lambda loader, version, jars: (jars, {})
+        portboard.porter.jar_port, portboard.porter.fabric_api = ported, (lambda to: None)
+        portboard.dependencies.choose = lambda loader, frm, to, linked, out, pins, platform: ([out / n for n in linked], {}, {}, {})
+        portboard.javalevels.platform_ids, portboard.javalevels.newer_java, G.pack_check = (lambda loader, to: []), (lambda *a: {}), start
+        sys.stdout = io.StringIO()
+        try:
+            summary = G.load("fabric", "9.1", "9.2", False, sorted(mods))
+        finally:
+            sys.stdout = sys.__stdout__
+            S.ROOT, S.PINS, S.HOME = real
+            for m, n, f in kept:
+                setattr(m, n, f)
+    return summary, starts
+
+
+summary, starts = proof({"csl": "client", "jec": "client"}, True, False)
+check(starts == ["client"] and all(v.startswith("client-only: its fabric.mod.json says environment client") for v in summary["verdicts"].values())
+      and portboard.portcheck.load_gate(summary)[1], f"client-only mods start no server, only the client: {starts} {summary['verdicts']}")
+summary, starts = proof({"csl": "client"}, False, False)
+check(starts[0] == "client" and "server" not in starts and not portboard.portcheck.load_gate(summary)[1],
+      f"a client-only mod that fails in the client still fails the gate with no server started: {starts} {portboard.portcheck.load_gate(summary)[0]}")
+summary, starts = proof({"csl": "client", "chunky": "*"}, True, True)
+check(sorted(set(starts)) == ["client", "server"] and summary["verdicts"]["chunky--chunky.jar"] == "loaded" and portboard.portcheck.load_gate(summary)[1]
+      and summary["time"]["starts"] >= 0, f"with a mod a server runs, the server and the client start side by side: {starts} {summary['verdicts']}")
+
 # Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
 main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,
             "verdicts": {"a--a.jar": "loaded", "b--b.jar": "failed: its mixin x", "c--c.jar": "client-only: y"},
@@ -607,6 +683,8 @@ with tempfile.TemporaryDirectory() as tmp:
     points = json.loads(measures.read_text(encoding="utf-8"))
     every = points["port.jar-links.every-update"]
     check(saved["commit"] == head and saved["run"].endswith("/runs/2") and saved["total"]["link"] == 16, "main's table says the commit and run it came from")
+    check(saved["losses"] == portboard.mainrecord.losses(None) and len(saved["losses"]) >= 7,
+          "main's table carries main's losses from before it kept them, and adds none when no mod stopped linking")
     check([p["value"] for p in every] == [14, 16, 16] and every[1]["n"] == 20 and every[1]["note"].startswith("+2 on 14: ") and "fabric 1.1 -> 2.0 4 -> 6" in every[1]["note"]
           and head[:10] in every[1]["source"], f"each sweep of main adds a point saying what moved: {every}")
     check(every[2]["note"] == "the same", f"a sweep that moved nothing says so: {every[2]}")
@@ -738,7 +816,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # scoreboard after every edit, and porting every mod again is most of a run.
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
-    saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
+    saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
              portboard.porter.registry_reports)
     portboard.settings.ROOT, portboard.settings.HOME = root, root / "home"
     (root / "knowledge").mkdir()
@@ -755,16 +833,21 @@ with tempfile.TemporaryDirectory() as tmp:
 
     commands = []
 
-    def fake_side_by_side(command, given, report, one=False):
+    def fake_jarport(command):
+        given = [Path(c) for c in command if c.endswith(".jar")]
+        plan = json.loads(Path(command[command.index("--plan") + 1]).read_text(encoding="utf-8"))
         ported.append([j.name for j in given])
-        commands.append(command)
-        return [{"mod": j.name, "out": str(report.parent / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]), "silent": []} for j in given]
+        commands.append(plan)
+        for target in plan["ports"]:
+            Path(target["report"]).write_text(json.dumps({"mods": [{"mod": j.name, "out": str(Path(target["out"]) / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]),
+                                                                      "silent": []} for j in given]}), encoding="utf-8")
+        return 0
 
     # A port from 1.0 to 1.2 stops at 1.1, as JarPort plans it when 1.1 -> 1.2 has stand-ins: each step has a map of its own.
     step_routes = {("1.0", "1.1"): route, ("1.1", "1.2"): root / "route-1.1-1.2.json"}
     step_routes[("1.1", "1.2")].write_text("{}", encoding="utf-8")
     portboard.porter.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
-    portboard.porter.side_by_side, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools = fake_side_by_side, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
+    portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools = fake_jarport, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
     portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
     asked_reports = []
     portboard.porter.registry_reports = asked_reports.append
@@ -805,9 +888,32 @@ with tempfile.TemporaryDirectory() as tmp:
         return portboard.porter.jar_port("neoforge", "1.0", "1.2", jars, root / "out", root / "report.json", cache=True)
 
     long_port()
-    command = commands[-1]
-    check(command[command.index("--via") + 1] == "1.1" and [command[i + 1] for i, c in enumerate(command) if c == "--map"] == [str(route), str(step_routes[("1.1", "1.2")])],
-          f"a port across several updates gives JarPort its stops and each step's map: {command}")
+    target = commands[-1]["ports"][0]
+    check(target["via"] == ["1.1"] and target["maps"] == [str(route), str(step_routes[("1.1", "1.2")])],
+          f"a port across several updates gives JarPort its stops and each step's map: {target}")
+    # Ports from one release to several go to one JarPort, which ports the steps they share once; a mod kept for one
+    # target and not the other is ported to both, and the kept port must be what porting it again gives.
+    runs = len(ported)
+    both = portboard.porter.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+    check(len(ported) == runs and sorted(both) == ["1.1", "1.2"] and both["1.2"]["linked"] == 1,
+          f"two targets whose ports were kept are read, not ported: {ported[runs:]}")
+    jars[2].write_bytes(b"jar 2, edited")
+    portboard.porter.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+    both = portboard.porter.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+    check(ported[-1] == ["m2.jar"] and [t["to"] for t in commands[-1]["ports"]] == ["1.1", "1.2"] and both["1.1"]["verified"] == 1,
+          f"a mod with no kept port to one target goes to one JarPort with every target, and its kept port to the other is checked: {commands[-1]}")
+    answer["m2.jar"] = ["field: a.B.d"]
+    jars[2].write_bytes(b"jar 2, edited again")
+    portboard.porter.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+    answer["m2.jar"] = ["field: a.B.e"]
+    try:
+        portboard.porter.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+        caught = False
+    except SystemExit as failed:
+        caught = "m2.jar" in str(failed) and "1.1" in str(failed)
+    check(caught, "a kept port that differs from the same port made beside another target fails the run")
+    answer.pop("m2.jar")
+    jars[2].write_bytes(b"jar 2, as the checks below have it")
     later = root / "knowledge" / "standins" / "1.1-1.2" / "a" / "C.java"
     for change in (lambda: (later.parent.mkdir(parents=True, exist_ok=True), later.write_text("package mmt.standin.a; public final class C {}", encoding="utf-8")),
                    lambda: step_routes[("1.1", "1.2")].write_text('{"rewrites": []}', encoding="utf-8")):
@@ -825,7 +931,7 @@ with tempfile.TemporaryDirectory() as tmp:
     except SystemExit as failed:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
-    (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
+    (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
      portboard.porter.registry_reports) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
@@ -977,22 +1083,24 @@ with tempfile.TemporaryDirectory() as tmp:
                           "m/neoforge/Init.class": class_file(65)})}
     ported_now = []
 
-    def fake_port(command, given, report, one=False):
-        out = Path(command[command.index("--out") + 1])
-        rows = []
-        for j in given:
-            (out / j.name).write_bytes(wrote[j.name])
-            ported_now.append(j.name)
-            rows.append({"mod": j.name, "out": str(out / j.name), "unlinked": [], "silent": []})
-        return rows
+    def fake_jarport(command):
+        given = [Path(c) for c in command if c.endswith(".jar")]
+        ported_now.extend(j.name for j in given)
+        for target in json.loads(Path(command[command.index("--plan") + 1]).read_text(encoding="utf-8"))["ports"]:
+            out = Path(target["out"])
+            for j in given:
+                (out / j.name).write_bytes(wrote[j.name])
+            Path(target["report"]).write_text(json.dumps({"mods": [{"mod": j.name, "out": str(out / j.name), "unlinked": [], "silent": []} for j in given]}),
+                                              encoding="utf-8")
+        return 0
 
-    saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
+    saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
              portboard.porter.registry_reports)
     portboard.settings.ROOT, portboard.settings.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     (root / "knowledge" / "fixes.json").write_text("[]", encoding="utf-8")
     (root / "route.json").write_text("{}", encoding="utf-8")
-    portboard.porter.side_by_side, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools = fake_port, (lambda updates, *a: [root / "route.json"]), (lambda: "classes"), (lambda: "classes")
+    portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools = fake_jarport, (lambda updates, *a: [root / "route.json"]), (lambda: "classes"), (lambda: "classes")
     portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops = (lambda: "tools"), (lambda loader, r: b"platform"), (lambda: "java 25"), (lambda loader, frm, to: [frm, to])
     portboard.javalevels.release_java = lambda v: {"old": 17, "new": 21}[v]
     portboard.porter.registry_reports = lambda versions: None  # these mods carry no data
@@ -1006,7 +1114,7 @@ with tempfile.TemporaryDirectory() as tmp:
         shutil.rmtree(root / "out-old")
         kept = first, port("old", cache=True)
     finally:
-        (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
+        (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
          portboard.porter.registry_reports) = saved
     check([m["mod"] for m in back["mods"] if m["unlinked"]] == ["nested.jar"] and back["linked"] == 3
           and portboard.porter.left(back["mods"][1]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
@@ -1093,5 +1201,197 @@ with tempfile.TemporaryDirectory() as tmp:
     check(fresh == cache / "fabric-api-0.3.0+26.9.jar", f"a changed release list gets a fresh answer, not the kept one: {fresh}")
     check(isinstance(said, str) and "26.8" in said and "fabric-api-0.2.0+26.8.jar" in said and "not a whole jar" in said
           and "returned non-zero exit status" not in said, f"a failed Fabric API lookup names the release and the file that failed: {said}")
+
+# A pull request's port check runs only the ports its change can move, compared with main's row of each, and fails when
+# a mod that links on main stops linking. Main's table is a made-up one with one row per loader, so the picks are its.
+repo = Path(__file__).resolve().parent.parent
+portboard.settings.ROOT, portboard.settings.INDEX, portboard.settings.PINS, portboard.settings.FIRST = repo, repo / "coverage" / "changes" / "index.json", repo / "bench" / "exposure" / "mods", {"fabric": "1.14.4", "neoforge": "1.20.2"}
+lo_f, lo_n = portboard.gamereleases.updates("fabric"), portboard.gamereleases.updates("neoforge")
+small_f = next(u for u in lo_f if not portboard.gamereleases.big(*u))
+big_f = next(u for u in lo_f if portboard.gamereleases.big(*u))
+table = {"commit": "c" * 40, "run": "r", "jumps": [], "updates": [
+    {"loader": "fabric", "from": big_f[0], "to": big_f[1], "big": True, "modsThatLink": 3, "links": ["a--1.jar"], "heldBy": {"b--1.jar": ["call, game: linked"], "c--1.jar": ["mixin, game: split"]}},
+    {"loader": "fabric", "from": lo_f[-1][0], "to": lo_f[-1][1], "big": True, "modsThatLink": 9, "links": ["a--2.jar"]},
+    {"loader": "fabric", "from": small_f[0], "to": small_f[1], "big": False, "modsThatLink": 5, "links": []}]}
+plan = lambda changed, body="": portboard.portcheck.check_plan(changed, body, table)  # noqa: E731
+jobs, why = plan(["docs/index.html", "README.md", "app/src/main.rs", "tools/cli/PackCheck.java"])
+check(jobs == [] and "nothing the scoreboard reads" in why[-1], f"a change to nothing the scoreboard reads runs no port: {jobs}")
+# A porter change runs the fewest ports that would have caught every time main lost a mod. Here main lost mods three
+# times: on the big update and the newest (one port catches neither alone), on the newest, and on a jump with the small
+# update; the newest catches two and the jump and the small update one each, and the update goes before the jump.
+jump = (portboard.gamereleases.most_used("fabric"), lo_f[-1][1])
+table["jumps"] = [{"loader": "fabric", "from": jump[0], "to": jump[1], "modsThatLink": 50, "links": []}]
+p = lambda lo, frm, to: f"{lo}:{frm}:{to}"  # noqa: E731
+table["losses"] = [{"commit": "1", "ports": [p("fabric", *big_f), p("fabric", *lo_f[-1])]}, {"commit": "2", "ports": [p("fabric", *lo_f[-1])]},
+                   {"commit": "3", "ports": [p("fabric", *jump), p("fabric", *small_f), "fabric:0.1:0.2"]}]
+jobs, why = plan(["tools/port/jar/JarPort.java"])
+pairs = [(j["loader"], j["from"], j["to"]) for j in jobs]
+check(pairs == [("fabric", *lo_f[-1]), ("fabric", *small_f)] and all(j["mods"] == "" for j in jobs)
+      and any("sample of 2 ports" in w and "each of the 3 times" in w for w in why),
+      f"a porter change runs the fewest ports that catch every loss of main's, an update before a jump, and says so: {jobs} {why}")
+del table["losses"]
+check(portboard.portcheck.sample("fabric", {**table, "losses": []})[0]
+      == [(lo_f[-1], "sample: main has lost no fabric mod yet; the update with the most mods linking on main (9)")],
+      "with no loss yet, the sample is the update with the most mods linking on main")
+del table["jumps"]
+# main's table keeps the losses: a sweep that finds a mod no longer linking adds its ports, and one that finds none adds nothing.
+before = {"updates": [{"loader": "fabric", "from": "1", "to": "2", "links": ["a", "b"]}, {"loader": "fabric", "from": "2", "to": "3", "links": ["c"]}]}
+after = {"updates": [{"loader": "fabric", "from": "1", "to": "2", "links": ["a", "d"]}, {"loader": "fabric", "from": "2", "to": "3", "links": ["c", "e"]}]}
+check(portboard.mainrecord.lost_ports(before, after) == ["fabric:1:2"] and portboard.mainrecord.lost_ports(after, after) == [],
+      f"a port that lost a mod is named: {portboard.mainrecord.lost_ports(before, after)}")
+jobs, _ = plan(["bench/exposure/mods/fabric-" + small_f[0] + ".json", f"knowledge/standins/{lo_n[0][0]}-{lo_n[0][1]}.neoforge/x/Y.java"])
+check({(j["loader"], j["from"], j["to"]) for j in jobs} == {("fabric", *small_f), ("neoforge", *lo_n[0])},
+      f"changed pins or stand-ins run the update they are for, and only for its loader's: {jobs}")
+jobs, _ = plan([f"knowledge/standins/{lo_n[0][0]}-{lo_n[0][1]}/x/Y.java"])
+check({j["loader"] for j in jobs} == {"fabric", "neoforge"}, f"stand-ins for both loaders run the update for both: {jobs}")
+jobs, _ = plan(["docs/a.md"], f"Step 80.\n**Port check:** fabric:{big_f[0]} type=call, game: linked\nfabric:{small_f[0]}:{small_f[1]} is not named")
+check(jobs == [{"loader": "fabric", "from": big_f[0], "to": big_f[1], "mods": "b", "why": "named in the description, type 'call, game: linked'"}],
+      f"a named port with a type checks only the mods main says that type holds back: {jobs}")
+jobs, _ = plan([], f"Port check: fabric:{small_f[0]}:{small_f[1]} mods=chunky,clumps")
+check(jobs[0]["mods"] == "chunky,clumps", f"named mods are the only ones ported: {jobs}")
+try:
+    plan([], "Port check: fabric:0.1:0.2")
+    check(False, "a port the scoreboard does not read stops the plan")
+except SystemExit as no:
+    check("not a port the scoreboard reads" in str(no), str(no))
+row = portboard.mainrecord.main_row("fabric", big_f[0], big_f[1], table)
+run = {"loader": "fabric", "from": big_f[0], "to": big_f[1], "modsRead": 3, "modsThatLink": 2, "links": ["b--1.jar", "c--1.jar"],
+       "verdicts": {"a--1.jar": {}, "b--1.jar": {}, "c--1.jar": {}}}
+run["againstMain"] = portboard.mainrecord.against_main(row, run)
+lines, freed, ok = portboard.portcheck.gate(run)
+check(not ok and freed == ["b", "c"] and "a--1.jar" in lines[2], f"a mod that links on main and not now fails the check; the newly linked are its game proof: {lines}")
+run["links"] = ["a--1.jar", "b--1.jar"]
+run["againstMain"] = portboard.mainrecord.against_main(row, {**run, "verdicts": {"a--1.jar": {}, "b--1.jar": {}}})
+check(portboard.portcheck.gate(run)[2] and portboard.portcheck.gate(run)[1] == ["b"], "a check of some mods compares only those, and passes when none stops linking")
+check(portboard.portcheck.gate({**run, "againstMain": None})[2], "a port main has no row for passes, and says there was nothing to compare")
+run["againstMain"] = portboard.mainrecord.against_main(row, {**run, "links": ["b--1.jar"], "verdicts": {"b--1.jar": {}}, "unreadable": {"a--1.jar": "ZipException"}})
+check(not portboard.portcheck.gate(run)[2] and run["againstMain"]["no longer link"] == ["a--1.jar"],
+      f"a mod that links on main and that the port can no longer read fails the check: {run['againstMain']}")
+# The check compares with the base commit's own port of the same pair and mods, not main's saved table: that table is
+# remade only by hand or at a release, and a merge after it (#223 on fabric 1.18 -> 1.18.1: rechiseled and
+# right-click-harvest stopped linking on main) failed every later pull request for main's change. Here main's table says
+# a and b link; main since stopped a, and the pull request changes nothing: the check passes against the base and names
+# what is the pull request's own. Against the stale table it would fail.
+stale = {"loader": "fabric", "from": big_f[0], "to": big_f[1], "links": ["a--1.jar", "b--1.jar"]}
+base = {"loader": "fabric", "from": big_f[0], "to": big_f[1], "modsRead": 3, "modsThatLink": 1, "links": ["b--1.jar"],
+        "verdicts": {"a--1.jar": {}, "b--1.jar": {}, "c--1.jar": {}}}
+head = {**base, "againstMain": portboard.mainrecord.against_main(stale, base)}
+check(not portboard.portcheck.gate(head)[2], "against main's stale table the unchanged pull request fails (what the check no longer does)")
+lines, freed, ok = portboard.portcheck.gate(head, base, "main at 1234567890")
+check(ok and freed == [] and "against main at 1234567890" in lines[0], f"against the base's own port an unchanged pull request passes: {lines}")
+moved = {**base, "modsThatLink": 1, "links": ["c--1.jar"]}
+lines, freed, ok = portboard.portcheck.gate(moved, base, "main at 1234567890")
+check(not ok and freed == ["c"] and lines[2] == "  no longer link: b--1.jar" and lines[-1] == "FAIL: 1 mods that link on main at 1234567890 stop linking",
+      f"a mod that links on the base and not with the pull request fails it; one it frees goes to the game proof: {lines}")
+with tempfile.TemporaryDirectory() as tmp:
+    (Path(tmp) / "head.json").write_text(json.dumps(head), encoding="utf-8")
+    (Path(tmp) / "base.json").write_text(json.dumps(base), encoding="utf-8")
+    said = E.subprocess.run([sys.executable, str(repo / "bench" / "exposure.py"), "gate", str(Path(tmp) / "head.json"), "--base", str(Path(tmp) / "base.json"),
+                             "--base-name", "main at abc", "--freed", str(Path(tmp) / "freed.txt")], capture_output=True, text=True)
+    check(said.returncode == 0 and "against main at abc" in said.stdout, f"gate --base compares with the base's summary: {said.stdout} {said.stderr}")
+
+
+# A changed change index runs every update it makes, beside the sample: a release newly indexed between two others makes
+# two updates main's index did not have.
+index_now = json.loads(portboard.settings.INDEX.read_text(encoding="utf-8"))
+middle = next(b for (a, b), (_, c) in zip(lo_f, lo_f[1:]) if (portboard.settings.PINS / f"fabric-{a}.json").is_file() and (portboard.settings.PINS / f"fabric-{b}.json").is_file())
+index_main = {**index_now, "allVersions": [v for v in index_now["allVersions"] if v["id"] != middle]}
+jobs, why = portboard.portcheck.check_plan(["coverage/changes/index.json"], "", table, index_main)
+made = {(j["from"], j["to"]) for j in jobs if j["loader"] == "fabric" and "change index" in j["why"]}
+before_middle = next(a for a, b in lo_f if b == middle)
+check(made == {(before_middle, middle), (middle, dict(lo_f)[middle])} and any("sample" in w for w in why),
+      f"a change to the change index runs the updates it makes and the sample: {made} {why}")
+
+# The game proof of a port check: every mod it started loads on the server and in the client, or the check fails.
+proof = {"loader": "fabric", "from": "1.0", "to": "1.1", "scope": ["a", "b"], "mods": 3, "loaded": 3, "clashOnly": [],
+         "verdicts": {"a--a.jar": "loaded", "b--b.jar": "client-only: no server", "lib--lib.jar": "loaded"}, "notStarted": {},
+         "client": {"mods": 3, "loaded": 3, "verdicts": {"a--a.jar": "loaded", "b--b.jar": "loaded", "lib--lib.jar": "loaded"}}}
+check(portboard.portcheck.load_gate(proof)[1], f"a proof whose mods load on both sides passes: {portboard.portcheck.load_gate(proof)[0]}")
+for broken, what in ((dict(proof, verdicts={**proof["verdicts"], "a--a.jar": "failed: mixin"}), "a mod that fails on the server"),
+                     (dict(proof, client={**proof["client"], "verdicts": {**proof["client"]["verdicts"], "b--b.jar": "failed: crash"}}), "a mod that fails in the client"),
+                     (dict(proof, client={**proof["client"], "notRun": "no display"}), "a client that could not be run")):
+    lines, ok = portboard.portcheck.load_gate(broken)
+    check(not ok and any("FAIL" in x for x in lines), f"{what} fails the check: {lines}")
+# A mod the proof could not start is said apart with why and fails nothing: neoforge 1.21.7 -> 1.21.8 started 1 of 3
+# freed mods, which loaded on both sides, and failed counting the 2 it never started as "started and do not load".
+unstarted = dict(proof, mods=1, loaded=1, verdicts={"a--a.jar": "loaded"}, client={"mods": 1, "loaded": 1, "verdicts": {"a--a.jar": "loaded"}},
+                 notStarted={"b--b.jar": ["metadata for neoforge"], "c--c.jar": ["metadata for neoforge"]}, scope=["a", "b", "c"])
+lines, ok = portboard.portcheck.load_gate(unstarted)
+check(ok and not any("FAIL" in x for x in lines) and "1/1 load on the server" in lines[0]
+      and lines[-3:] == ["  not started (2, not counted):", "    b--b.jar: metadata for neoforge", "    c--c.jar: metadata for neoforge"],
+      f"mods the proof could not start are said apart and fail nothing: {lines}")
+# Nothing it can start (neoforge 1.20.2 -> 1.20.3: the one freed mod has no NeoForge metadata): it says so and passes.
+nothing = dict(proof, mods=0, loaded=0, verdicts={}, client={"mods": 0, "loaded": 0, "verdicts": {}}, notStarted={"a--a.jar": ["metadata for neoforge"]})
+lines, ok = portboard.portcheck.load_gate(nothing)
+check(ok and "nothing it can start" in lines[0] and "    a--a.jar: metadata for neoforge" in lines, f"a proof that could start nothing says so and passes: {lines}")
+# The receipt says where the proof's time went, each side's starts summed with mmt's stages in them, and the gate says it.
+times = {"port": 53.2, **portboard.gameload.start_times([{"side": "server", "seconds": 70.0, "stages": {"server-start": 50.0, "read": 12.0}},
+                                         {"side": "client", "seconds": 60.5, "stages": {"read": 30.0}},
+                                         {"side": "client", "seconds": 45.0, "stages": {"read": 2.0, "client": 40.0}}])}
+check(times["client"] == {"starts": 2, "seconds": 105.5, "stages": {"read": 32.0, "client": 40.0}}, f"each side's starts are summed: {times}")
+check(portboard.portcheck.load_gate(dict(proof, time=times))[0][1] == "  time: port 53 s; server 1 start 70 s (server-start 50 s, read 12 s); client 2 starts 106 s (client 40 s, read 32 s)",
+      f"the gate says where the proof's time went: {portboard.portcheck.load_gate(dict(proof, time=times))[0]}")
+# A client-only mod that fails in the client is one started mod that does not load (fabric 1.18.1 -> 1.18.2), and the
+# first line counts it as client-only on the server, so the lines agree with the FAIL.
+client_only = dict(proof, mods=1, loaded=0, verdicts={"b--b.jar": "client-only: its own metadata"}, scope=["b"],
+                   client={"mods": 1, "loaded": 0, "verdicts": {"b--b.jar": "failed: Description: Rendering screen"}})
+lines, ok = portboard.portcheck.load_gate(client_only)
+check(not ok and "0/1 load on the server (1 client-only, not loaded by a server), 0/1 in the client" in lines[0]
+      and lines[-1] == "FAIL: 1 of the 1 mods the check started do not load in game", f"a client-only mod failing in the client fails the check: {lines}")
+clashed = dict(proof, clashOnly=["a--a.jar"], verdicts={**proof["verdicts"], "a--a.jar": "clash: loads alone, fails next to the other mods: x"})
+check(portboard.portcheck.load_gate(clashed)[1], "a mod that loads alone and fails only next to the others is said and passes")
+
+# A game proof reads the whole update's report unless it proves some mods and a newer part-run read each of them: a part
+# of the update never stands for the whole.
+with tempfile.TemporaryDirectory() as tmp:
+    work = Path(tmp)
+    whole, part = work / "report.json", work / "report-part.json"
+    whole.write_text(json.dumps({"mods": [{"mod": "a--a.jar"}, {"mod": "b--b.jar"}]}), encoding="utf-8")
+    part.write_text(json.dumps({"mods": [{"mod": "b--b.jar"}]}), encoding="utf-8")
+    os.utime(whole, (1, 1))
+    check(portboard.gameload.proof_report(work, None) == whole, "a proof of every mod reads the whole report though a part-run's is newer")
+    check(portboard.gameload.proof_report(work, ["b"]) == part, "a proof of the mods a newer part-run read reads that run's report")
+    check(portboard.gameload.proof_report(work, ["a", "b"]) == whole, "a proof of a mod the part-run did not read reads the whole report")
+
+# Two sweep jobs from one release, side by side in one process, read the jars' names into reports of their own.
+with tempfile.TemporaryDirectory() as tmp:
+    saved = portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed
+    portboard.settings.ROOT, portboard.settings.HOME = Path(tmp), Path(tmp) / "home"
+    portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed = (lambda: "classes"), (lambda loader, version: True), (lambda kind, *names: Path(tmp) / kind)
+    reports, both = [], threading.Barrier(2)
+
+    def named(command, jars, report):
+        reports.append(report)
+        both.wait(5)
+        return []
+    portboard.porter.side_by_side = named
+    try:
+        jar = Path(tmp) / "m.jar"
+        jar.write_bytes(b"x")
+        threads = [threading.Thread(target=portboard.porter.mojang_names, args=("fabric", "1.0", [jar])) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed = saved
+check(len(set(reports)) == 2, f"two reads of one release's names at once write two reports: {reports}")
+
+# A sweep of an old commit (--at) runs in its unpacked tree, which has no reader of main's table: it compares with nothing
+# and still keeps its summaries.
+with tempfile.TemporaryDirectory() as tmp:
+    saved, kept_module = (portboard.settings.ROOT, dict(portboard.mainrecord.MAIN)), sys.modules.pop("generated", None)
+    portboard.settings.ROOT = Path(tmp)
+    (portboard.settings.ROOT / "bench").mkdir()
+    portboard.mainrecord.MAIN.clear()
+    try:
+        none = portboard.mainrecord.main_table()
+    finally:
+        portboard.settings.ROOT = saved[0]
+        portboard.mainrecord.MAIN.clear()
+        portboard.mainrecord.MAIN.update(saved[1])
+        if kept_module is not None:
+            sys.modules["generated"] = kept_module
+check(none is None, "a tree with no reader of main's table compares with no table")
 
 print(f"exposure: {checks} checks passed")

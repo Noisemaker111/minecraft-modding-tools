@@ -1,10 +1,12 @@
 """What real mods reference of the game, ported as jars and linked against the next release: the porter's scoreboard and its to-do list.
 
-    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE] [--save] [--out FILE]
+    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE | --mods SLUG,...] [--save] [--out FILE]
     python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--out FILE] [--verify]
     python bench/exposure.py all --at origin/main --out BASE.json    (any command, on another commit's porter)
     python bench/exposure.py join DIR [--out FILE]
     python bench/exposure.py compare BEFORE.json AFTER.json
+    python bench/exposure.py check-plan --changed FILES.txt [--body PR.md]    (a pull request's port check: what it runs)
+    python bench/exposure.py gate SUMMARY.json [--freed FILE]                 (and its verdict against main's row)
     python bench/exposure.py fetch --loader neoforge|fabric --version 1.21.1 [--repin]
     python bench/exposure.py pin [--loader neoforge|fabric] [--version 1.21.1] [--repin]
     python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--mods SLUG,...] [--save] [--out FILE]
@@ -27,18 +29,20 @@ all runs jars for every update a loader's jars can be read across (Fabric from 1
 hold the most mods back across every update. join does the joining for summaries made elsewhere (the cloud run,
 tools/cloud-run exposure). --out writes the table to a file.
 
-Main's table is kept on the generated branch as scoreboard/all.json, never on main (bench/generated.py): every push to
-main runs the cloud sweep (.github/workflows/cloud-exposure.yml), and its record job saves the table there with the
-commit it ran and adds its totals to the port.jar-links points in scoreboard/points.json. A commit to main for each would
-put every open pull request behind. `python bench/generated.py show scoreboard/all.json` prints the newest; compare
-prints what a branch's table changes against main's (tools/cloud-run exposure finds main's for the branch's base).
+Main's table is kept on the generated branch as scoreboard/all.json, never on main (bench/generated.py): the whole cloud
+sweep (.github/workflows/cloud-exposure.yml) runs on main by hand and with each release, and the record job of
+generated.yml saves the table there when it ends, with the commit it ran, and adds its totals to the port.jar-links
+points in scoreboard/points.json. A commit to main for each would put every open pull request behind. `python
+bench/generated.py show scoreboard/all.json` prints the newest; compare prints what a branch's table changes against it.
+A pull request runs the port check instead (.github/workflows/port-check.yml): check-plan picks the ports its change
+can move, jars runs each, and gate fails when a mod that links in main's row stops linking.
 
 Every stage is kept in ~/.mmt/exposure/ under the content of everything it reads (the porter's classes, the route map,
 the rules, the loaders' release lists, the JVM, each mod's jar), shared by every worktree and run on the machine, so a
 run computes only what an edit can change: an edit to JarPort ports every mod again (each one runs the code it touched),
 but reuses the downloads, the names, the map, the registry reports and most of Exposure's answers; an edit to anything else
-reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before, and the
-load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
+reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before and
+against main's row, and the load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
 
 --save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
 requests proving the same update keep two receipts instead of conflicting on one.
@@ -87,7 +91,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import port_tools  # noqa: E402
-from portboard import board, cachekeys, gameload, gamereleases, gamesteps, mainrecord, modrinth, settings  # noqa: E402
+from portboard import board, cachekeys, gameload, gamereleases, gamesteps, mainrecord, modrinth, portcheck, settings  # noqa: E402
 
 
 def tree_at(ref):
@@ -136,18 +140,29 @@ def main():
         j = sub.add_parser(name)
         j.add_argument("--loader", required=True, choices=sorted(settings.FIRST))
         j.add_argument("--from", dest="frm", required=True)
-        j.add_argument("--to", required=True)
+        j.add_argument("--to", required=True, help="the release to port to" + (" (jars: several, comma-separated, ported in one go)" if name == "jars" else ""))
         j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
-        j.add_argument("--out", type=Path, help="write the summary to this file")
+        j.add_argument("--out", type=Path, help="write the summary to this file (a folder that is there, or jars with several --to: LOADER-FROM-TO.json each in it)")
         if name == "jars":
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
             j.add_argument("--type", dest="kind", help="port only the mods the last whole run held back with this type of break (or part of its text)")
+            j.add_argument("--mods", help="port only these mods (Modrinth slugs, comma-separated)")
         if name == "load":
             j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated), with the libraries they need")
+    cp = sub.add_parser("check-plan", help="what a pull request's port check runs, as JSON {jobs, why} (port-check.yml's matrix)")
+    cp.add_argument("--changed", type=Path, required=True, help="a file listing the files the pull request changed, one a line")
+    cp.add_argument("--body", type=Path, help="a file with the pull request's description")
+    cp.add_argument("--base", help="the commit the pull request is compared with (main), whose change index tells which updates are new")
+    ga = sub.add_parser("gate", help="a port check's verdict: on a jars summary, fails when a mod that links in main's row stops; "
+                                     "on a load receipt, when a mod it started does not load in game")
+    ga.add_argument("summary", type=Path)
+    ga.add_argument("--freed", type=Path, help="write the slugs of the mods that newly link here, comma-separated")
+    ga.add_argument("--base", type=Path, help="the jars summary of the same pair and mods on the commit compared with (jars --at BASE); default main's saved row")
+    ga.add_argument("--base-name", default="the base", help="what the base is, for the lines (e.g. main at SHA)")
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     lp.add_argument("--mods", default="", help="the slugs the proof asks of every update; one that no update pins stops the plan")
-    ls = sub.add_parser("updates", help="every LOADER:FROM:TO all runs, updates and jumps, as JSON (the cloud run's matrix)")
+    ls = sub.add_parser("updates", help="the jobs all runs, each LOADER:FROM:TO,TO... (plan), as JSON (the cloud run's matrix)")
     ls.add_argument("--loader", choices=sorted(settings.FIRST))
     ls.add_argument("--only", help="LOADER:FROM or LOADER:FROM:TO, comma-separated")
     pn = sub.add_parser("pin")
@@ -174,16 +189,35 @@ def main():
     if a.command == "steps":
         gamesteps.steps(a.frm, a.to)
     elif a.command == "jars":
-        board.jars(a.loader, a.frm, a.to, a.save, a.out, kind=a.kind)
+        board.jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind,
+             only=[m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None)
+    elif a.command == "check-plan":
+        before = None
+        if a.base:
+            shown = subprocess.run(["git", "show", f"{a.base}:{settings.INDEX.relative_to(settings.ROOT).as_posix()}"], cwd=settings.ROOT, capture_output=True, text=True, encoding="utf-8")
+            before = json.loads(shown.stdout) if shown.returncode == 0 else {"allVersions": []}
+        jobs, why = portcheck.check_plan([f for f in a.changed.read_text(encoding="utf-8").splitlines() if f.strip()],
+                               a.body.read_text(encoding="utf-8") if a.body and a.body.is_file() else "", index_before=before)
+        print(json.dumps({"jobs": jobs, "why": why}))
+    elif a.command == "gate":
+        summary = json.loads(a.summary.read_text(encoding="utf-8"))
+        if "client" in summary:
+            lines, ok = portcheck.load_gate(summary)
+        else:
+            lines, freed, ok = portcheck.gate(summary, json.loads(a.base.read_text(encoding="utf-8")), a.base_name) if a.base else portcheck.gate(summary)
+            if a.freed:
+                a.freed.write_text(",".join(freed), encoding="utf-8")
+        print("\n".join(lines))
+        sys.exit(0 if ok else 1)
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
-        every = [(lo, x, y) for lo in ([a.loader] if a.loader else sorted(settings.FIRST)) for x, y in gamereleases.runs(lo)]
-        picked = [f"{lo}:{x}:{y}" for lo, x, y in every if not only or f"{lo}:{x}" in only or f"{lo}:{x}:{y}" in only]
+        loaders = [a.loader] if a.loader else sorted(settings.FIRST)
+        every = [(lo, x, y) for lo in loaders for x, y in gamereleases.runs(lo)]
         # A name that picks nothing ran an empty sweep that looked like a result (0 of 0); say which instead.
         unknown = sorted(o for o in only or () if not any(o in (f"{lo}:{x}", f"{lo}:{x}:{y}") for lo, x, y in every))
         if unknown:
             raise SystemExit(f"--only names no update: {', '.join(unknown)} (LOADER:FROM for every update from it, or LOADER:FROM:TO)")
-        print(json.dumps(picked))
+        print(json.dumps([f"{lo}:{x}:{','.join(tos)}" for lo in loaders for _, x, tos in board.plan(lo, only)]))
     elif a.command == "load":
         gameload.load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
     elif a.command == "load-plan":

@@ -6,8 +6,8 @@ wrong.
 
 **What works now that didn't:** one sentence. Before: what the user saw. After: what they see now.
 
-**Proof:** CI on this PR, plus the in-game run that proved it locally (command and receipt), and the cloud run link
-for a full sweep. "Not tested in-game" or "saved for the cloud" is not a result.
+**Proof:** CI on this PR (porting: its Port check, with a `Port check: LOADER:FROM:TO [mods=SLUG,...] [type=TEXT]`
+line here naming the ports), plus the in-game run that proved it (command and receipt). "Not tested in-game" or "saved for the cloud" is not a result.
 
 **Carries over:** what the next mod, of any kind, gets for free from this work: a general perf pattern, a tool or
 generator, a faster loop, or a workflow update. A win that only helps the mod it was made on is half a result.

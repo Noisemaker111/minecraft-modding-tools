@@ -8,6 +8,43 @@ from pathlib import Path
 
 from portboard import anyversion, settings
 
+
+MAIN = {}  # main's table, read once per run
+
+
+def main_table():
+    """Main's jar scoreboard (scoreboard/all.json on the generated branch), fetched once per run; None when there is none
+    (offline, or a clone with no generated branch)."""
+    if "table" not in MAIN and not (settings.ROOT / "bench" / "generated.py").is_file():
+        # A commit's tree unpacked for --at (tree_at) holds this file and not the generated branch's reader: a sweep of
+        # an old commit is the base a branch is compared with, not a branch to compare with main.
+        MAIN["table"] = None
+    if "table" not in MAIN:
+        sys.path.insert(0, str(settings.ROOT / "bench"))
+        import generated
+        generated.fetch()
+        text = generated.read(generated.TABLE)
+        MAIN["table"] = json.loads(text) if text else None
+    return MAIN["table"]
+
+
+def main_row(loader, frm, to, table=None):
+    """Main's row of one port (an update or a jump) that names its mods, with the commit the table is of; None when main's
+    table has none."""
+    table = main_table() if table is None else table
+    for r in (table or {}).get("updates", []) + (table or {}).get("jumps", []):
+        if (r["loader"], r["from"], r["to"]) == (loader, frm, to) and r.get("links") is not None:
+            return {**r, "commit": table.get("commit"), "run": table.get("run")}
+    return None
+
+
+def against_main(row, summary):
+    """Over the mods a run ported: those that link now and not in main's row, those main's row has linking that do not now.
+    A mod the run could not read or port (unreadable) was ported and does not link."""
+    read = set(summary["verdicts"]) | set(summary.get("unreadable", {}))
+    was, now = set(row["links"]) & read, set(summary["links"])
+    return {"newly link": sorted(now - was), "no longer link": sorted(was - now), "same": len(read) - len(now ^ was)}
+
 # The measures main's table is recorded in, each with its name in a comparison and the totals it reads: (value, of).
 MAIN_MEASURES = {
     "port.jar-links.every-update": ("every update", lambda t: (t["total"]["link"], t["total"]["mods"])),
@@ -63,6 +100,26 @@ def compare(before, after):
     return lines
 
 
+# The times a sweep of main found mods that linked in the sweep before and no longer did, before main's table kept them
+# (record_main adds each since): from the tables' history on main and the generated branch, 2026-11-22 to 11-23.
+LOSSES = settings.PINS.parent / "losses.json"
+
+
+def losses(table):
+    """Each time a sweep of main found mods that had stopped linking: {commit, ports: [LOADER:FROM:TO, ...]}, oldest first."""
+    if table and "losses" in table:
+        return table["losses"]
+    return json.loads(LOSSES.read_text(encoding="utf-8")) if LOSSES.is_file() else []
+
+
+def lost_ports(before, after):
+    """The ports (LOADER:FROM:TO) of after, a table, with a mod that links in before and not in after."""
+    def links(t):
+        return {f"{r['loader']}:{r['from']}:{r['to']}": set(r["links"]) for r in t.get("updates", []) + t.get("jumps", []) if r.get("links") is not None}
+    was, now = links(before), links(after)
+    return sorted(p for p in now if p in was and was[p] - now[p])
+
+
 def record_main(table_path, commit, run, folder, day=None):
     """Saves a sweep of a main commit as main's table (FOLDER/all.json) and adds its totals to the port.jar-links points
     (FOLDER/points.json), each point's note saying what moved against the table it replaces. FOLDER is scoreboard/ in a
@@ -85,12 +142,15 @@ def record_main(table_path, commit, run, folder, day=None):
     pr = re.search(r"\(#(\d+)\)\s*$", subject)
     at = f"main at {commit[:10]}" + (f" (#{pr.group(1)})" if pr else "")
     moved = [line for line in compare(previous, table)[HEADS:] if not line.startswith(("no update", "  "))] if previous else []
+    # Main's losses travel with its table: the port check's sample is the fewest ports that would have caught each.
+    lost = lost_ports(previous, table) if previous else []
+    table["losses"] = losses(previous) + ([{"commit": commit, "ports": lost}] if lost else [])
     for mid, (_, read) in MAIN_MEASURES.items():
         link, mods = read(table)
         points = kept.setdefault(mid, [])
         last = points[-1] if points else None
         note = (f"{link - last['value']:+,} on {last['value']:,}" if last and last["value"] != link else "the same") + (": " + "; ".join(moved) if moved else "")
-        points.append({"date": day or date.today().isoformat(), "value": link, "n": mods, "note": note[:600], "source": f"tools/cloud-run exposure {run} on {at}"})
+        points.append({"date": day or date.today().isoformat(), "value": link, "n": mods, "note": note[:600], "source": f"the jar scoreboard {run} on {at}"})
     points_path.write_text(M.dump(kept), encoding="utf-8", newline="\n")
     main_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
     (folder / anyversion.ANY_VERSION_PAGE).write_text(anyversion.any_version_page(table), encoding="utf-8", newline="\n")

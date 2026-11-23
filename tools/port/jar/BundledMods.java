@@ -38,35 +38,7 @@ final class BundledMods {
         if (kept != null) {
             return kept;
         }
-        Map<String, String> out = new TreeMap<>();
-        if (!port.loader.equals("fabric")) {
-            return out;
-        }
-        String from = port.origin != null ? port.origin : port.a.version;
-        String until = port.portTo != null ? port.portTo : port.to;
-        Map<String, Object> ranges = new TreeMap<>();
-        for (String n : JarEntries.nested(entries)) {
-            Object range = fabricMinecraft(entries.get(n));
-            if (range != null) {
-                ranges.put(n, range);
-            }
-        }
-        String forNew = null;
-        for (var e : ranges.entrySet()) {
-            if (forNew == null && fabricAccepts(e.getValue(), until) && !fabricAccepts(e.getValue(), from)) {
-                forNew = e.getKey();
-            }
-        }
-        for (var e : ranges.entrySet()) {
-            boolean old = fabricAccepts(e.getValue(), from);
-            boolean now = fabricAccepts(e.getValue(), until);
-            String range = "minecraft " + Json.write(e.getValue());
-            if (!old && !now) {
-                out.put(e.getKey(), "not loaded on " + from + " or " + until + " (" + range + ")");
-            } else if (old && !now && forNew != null) {
-                out.put(e.getKey(), "for " + from + " (" + range + "); the loader runs " + forNew.substring(forNew.lastIndexOf('/') + 1) + " on " + until + " instead");
-            }
-        }
+        Map<String, String> out = port.loader.equals("fabric") ? JarPort.fabricNotLoaded(entries, port.origin != null ? port.origin : port.a.version, port.portTo != null ? port.portTo : port.to) : new TreeMap<>();
         if (port.decided != null) {
             port.decided.put(name, out);
         }
