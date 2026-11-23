@@ -1218,6 +1218,7 @@ public final class GameDiff {
                 descCache = new HashMap<>();
                 fingerprintB();
                 nested();
+                signatureClasses();
                 fuzzyClasses();
                 descCache = new HashMap<>();
                 publishedMembers();
@@ -1654,6 +1655,117 @@ public final class GameDiff {
                 boolean empty = names.get(ca).size() + names.get(cb).size() <= 2;
                 if (sc != null && (sc.s() >= 0.2 || (empty && Objects.equals(ca.sup, clsBA(cb.sup == null ? "" : cb.sup))))) {
                     link(ca, cb, "simple-name");
+                }
+            }
+        }
+
+        /**
+         * A class follows the type the game's own signatures switched to in its place: each linked method's parameters
+         * and result and each linked field's type, place by place. 26.3 split GpuTexture, GpuDevice and the other device
+         * classes into an API interface (what every caller's signature names) and a backend base class (what holds the
+         * old bodies); by body likeness alone the class went to the base class, and every mod call on it broke.
+         * Kept with three votes and 80% agreement for a type no other old class is voted to; it takes over a link made by
+         * likeness, never one made by name or published by the loader.
+         */
+        void signatureClasses() {
+            Map<Cls, Map<Cls, Integer>> votes = new LinkedHashMap<>();
+            for (var e : mAB.entrySet()) {
+                MethodTypeDesc da = MethodTypeDesc.ofDescriptor(e.getKey().desc);
+                MethodTypeDesc db = MethodTypeDesc.ofDescriptor(e.getValue().desc);
+                if (da.parameterCount() == db.parameterCount()) {
+                    for (int i = 0; i < da.parameterCount(); i++) {
+                        signatureVote(votes, da.parameterType(i).descriptorString(), db.parameterType(i).descriptorString());
+                    }
+                }
+                signatureVote(votes, da.returnType().descriptorString(), db.returnType().descriptorString());
+            }
+            for (var e : fAB.entrySet()) {
+                signatureVote(votes, e.getKey().desc, e.getValue().desc);
+            }
+            Map<Cls, Cls> picks = new LinkedHashMap<>();
+            Map<Cls, Integer> claimed = new HashMap<>();
+            for (var e : votes.entrySet()) {
+                Cls best = null;
+                int top = 0;
+                int of = 0;
+                for (var v : e.getValue().entrySet()) {
+                    of += v.getValue();
+                    if (v.getValue() > top || v.getValue() == top && best != null && v.getKey().name.compareTo(best.name) < 0) {
+                        top = v.getValue();
+                        best = v.getKey();
+                    }
+                }
+                if (top >= 3 && top * 10 >= of * 8) {
+                    picks.put(e.getKey(), best);
+                    claimed.merge(best, 1, Integer::sum);
+                }
+            }
+            for (var e : picks.entrySet()) {
+                Cls ca = e.getKey();
+                Cls best = e.getValue();
+                Cls had = cAB.get(ca);
+                // A type several old classes now go through is what they share (1.21.2's AbstractCubeMob for Slime and
+                // MagmaCube), not where any one of them went.
+                if (best == had || cBA.containsKey(best) || claimed.get(best) > 1) {
+                    continue;
+                }
+                if (had != null) {
+                    // Signatures widened to a parent keep voting for it (1.21's UniformInt to IntProvider): a link made by
+                    // likeness is taken over only by the class that kept the old one's name, as fuzzyClasses' namesake rule.
+                    String why = how.get(ca);
+                    boolean likeness = "fuzzy".equals(why) || "simple-name".equals(why);
+                    if (!likeness || !best.simple().equals(ca.simple()) || had.simple().equals(ca.simple())) {
+                        continue;
+                    }
+                    unlink(ca);
+                }
+                link(ca, best, "signatures");
+            }
+        }
+
+        /** a's type at one place of a linked member and b's there: a vote when b's is not a's own link already. */
+        void signatureVote(Map<Cls, Map<Cls, Integer>> votes, String had, String got) {
+            while (had.startsWith("[") && got.startsWith("[")) {
+                had = had.substring(1);
+                got = got.substring(1);
+            }
+            if (!had.startsWith("L") || !got.startsWith("L")) {
+                return;
+            }
+            Cls ca = a.classes.get(had.substring(1, had.length() - 1));
+            Cls cb = b.classes.get(got.substring(1, got.length() - 1));
+            if (ca == null || cb == null || anonymous(ca.name) || ca.loader != cb.loader || !kindFollows(ca, cb)) {
+                return;
+            }
+            Cls linked = cAB.get(ca);
+            if (linked == null && cBA.containsKey(cb)) {
+                return;
+            }
+            votes.computeIfAbsent(ca, k -> new HashMap<>()).merge(cb, 1, Integer::sum);
+        }
+
+        /** The same kind of class, or a class the release made an interface of (26.3's GpuTexture). */
+        static boolean kindFollows(Cls ca, Cls cb) {
+            return ca.kind() == cb.kind() || ca.kind() == 0 && cb.kind() == ACC_INTERFACE;
+        }
+
+        /** Takes back a class link and the links of its members, so a better class can take them. */
+        void unlink(Cls ca) {
+            Cls cb = cAB.remove(ca);
+            cBA.remove(cb);
+            how.remove(ca);
+            for (Meth ma : ca.methods.values()) {
+                Meth mb = mAB.remove(ma);
+                if (mb != null) {
+                    mBA.remove(mb);
+                    how.remove(ma);
+                }
+            }
+            for (Fld fa : ca.fields.values()) {
+                Fld fb = fAB.remove(fa);
+                if (fb != null) {
+                    fBA.remove(fb);
+                    how.remove(fa);
                 }
             }
         }
