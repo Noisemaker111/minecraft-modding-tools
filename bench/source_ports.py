@@ -379,17 +379,19 @@ def built_jar(work, row, since):
     return max(jars, key=lambda j: j.stat().st_size) if jars else None
 
 
-def build_task(row):
-    return (row["project"].rstrip(":") + ":build") if row.get("project") and row["project"] != ":" else "build"
+def jar_task(row):
+    """assemble, not build: build also runs the mod's own checks (its unit tests, linters), which are not what a port is
+    asked; Biomes O' Plenty's NeoForge test task has no JUnit engine, MidnightLib's 1.20.1 tests don't compile."""
+    return (row["project"].rstrip(":") + ":assemble") if row.get("project") and row["project"] != ":" else "assemble"
 
 
 def baseline_one(loader, row, out, timeout):
-    """Does the pinned source build its jar on its own release, with mmt compile and the project's build task?"""
+    """Does the pinned source build its jar on its own release, with mmt compile and the project's assemble task?"""
     rec = {"slug": row["slug"], "loader": loader, "builds": row["builds"]}
     started = time.time()
     try:
         work = checkout(row)
-        code, stdout, err = SW.sh(MMT + ["compile", "--root", work, "--task", build_task(row), "--json"] + project_args(row), timeout=timeout)
+        code, stdout, err = SW.sh(MMT + ["compile", "--root", work, "--task", jar_task(row), "--json"] + project_args(row), timeout=timeout)
         res = SW.last_json(stdout) or {}
         r = res.get("result", res)
         jar = built_jar(work, row, started) if code == 0 else None
@@ -417,7 +419,7 @@ def port_one(loader, row, to, out, timeout):
         work = checkout(row)
         if to == row["builds"]:
             # The source's own release (a jar built on 1.21 published for 1.21.1): its build is the port.
-            cmd = MMT + ["compile", "--root", work, "--task", build_task(row), "--json"] + project_args(row)
+            cmd = MMT + ["compile", "--root", work, "--task", jar_task(row), "--json"] + project_args(row)
         else:
             cmd = MMT + ["port", "--root", work, "--from", row["builds"], "--to", to, "--fix", "--json"] + project_args(row)
         code, stdout, err = SW.sh(cmd, timeout=timeout)

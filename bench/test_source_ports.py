@@ -51,6 +51,11 @@ check(S.source_name("fabric-api--src0123456789--fabric-api-0.92.12+1.20.1.jar") 
 
 # The table: mods of a loader whose ports all ran, one with a target that did not, one with no source, one whose source
 # does not build on its own release, and one that missed the newest release and so was not run on the other newer ones.
+# The jar is the question, not the mod's own tests: assemble, for the pinned project or the whole build.
+check(S.jar_task({"project": ":NeoForge"}) == ":NeoForge:assemble" and S.jar_task({"project": ""}) == "assemble",
+      f"a source builds its jar with assemble: {S.jar_task({'project': ':NeoForge'})}")
+
+
 def table(drop_target=False):
     with tempfile.TemporaryDirectory() as folder:
         folder = Path(folder)
