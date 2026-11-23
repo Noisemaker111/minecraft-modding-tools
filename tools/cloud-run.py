@@ -23,8 +23,10 @@ downloads every artifact to .runs/cloud/WORKFLOW-RUNID/ (--out). A summary artif
 Exit 0 when the run succeeded, 1 when it failed, 124 on the timeout. Needs the GitHub CLI (gh), logged in.
 
 exposure on a branch runs only the branch. Main's table for the branch's base is made once, by the sweep every push to
-main starts (cloud-exposure.yml); main_table finds that run, or one for a commit that changed nothing the table reads
-(the workflow's paths-ignore), waits for it if it is still going, and dispatches one for the base only when none ran.
+main starts (cloud-exposure.yml), or by a pull request's sweep of the same tree; main_table finds that run, or one for a
+commit that changed nothing the table reads (the workflow's paths-ignore), waits for it if it is still going, and
+dispatches one for the base only when none ran. Every exposure run is named with the tree it sweeps (-f tree=), and a
+sweep of a tree that already has a whole table reuses it without running a job.
 When both are in, python bench/exposure.py compare prints what the branch changes. main-table does the finding alone.
 
 load is cloud-load.yml, the game proof of a port (python bench/exposure.py load), one job per update: the update's mods
@@ -181,17 +183,28 @@ def same_table(commit, globs=None, git=git):
     return out
 
 
-def full_runs_of(runs, commits):
-    """The listed whole sweeps (no only=) that ran one of the commits, finished and successful ones first, then running
-    ones; a run dispatched for a commit names it in its title (... at SHA), any other ran its head."""
-    def ran(r):
-        named = re.search(r" at ([0-9a-f]{40})\b", r.get("displayTitle", ""))
-        return named.group(1) if named else r.get("headSha")
-    whole = [r for r in runs if "every update" in r.get("displayTitle", "") and ran(r) in commits]
+def full_runs_of(runs, commits, trees=()):
+    """The listed whole sweeps (no only=) that ran one of the commits or one of their trees (trees[i] is commits[i]'s),
+    finished and successful ones first, then running ones; a run names the tree it swept in its title (... tree TREE), a
+    run dispatched for a commit names the commit (... at SHA), any other ran its head. A tree is the table: a pull
+    request's sweep of its head is main's table once it merges, its squash having the same tree."""
+    def where(r):
+        title = r.get("displayTitle", "")
+        tree = re.search(r" tree ([0-9a-f]{40})\b", title)
+        if tree and tree.group(1) in trees:
+            return list(trees).index(tree.group(1))
+        named = re.search(r" at ([0-9a-f]{40})\b", title)
+        ran = named.group(1) if named else r.get("headSha")
+        return commits.index(ran) if ran in commits else None
+    whole = [r for r in runs if "every update" in r.get("displayTitle", "") and where(r) is not None]
     done = [r for r in whole if r.get("status") == "completed" and r.get("conclusion") == "success"]
     going = [r for r in whole if r.get("status") != "completed"]
-    rank = lambda r: commits.index(ran(r))  # noqa: E731
-    return sorted(done, key=rank) + sorted(going, key=rank)
+    return sorted(done, key=where) + sorted(going, key=where)
+
+
+def tree_of(commit, git=git):
+    """The commit's tree, what a sweep's table is of; empty when this clone does not have the commit."""
+    return git("rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}")
 
 
 def main_table(commit, gh=None, git=git, dispatch=True):
@@ -199,16 +212,17 @@ def main_table(commit, gh=None, git=git, dispatch=True):
     dispatched on main for the commit. Returns (run id, how it was found)."""
     gh = gh or globals()["gh"]
     commits = same_table(commit, git=git)
+    trees = [tree_of(c, git=git) for c in commits]
     runs = json.loads(gh("run", "list", "--workflow", EXPOSURE, "--limit", "200",
                          "--json", "databaseId,headSha,displayTitle,status,conclusion,url"))
-    found = full_runs_of(runs, commits)
+    found = full_runs_of(runs, commits, trees)
     if found:
         r = found[0]
         return r["databaseId"], ("saved" if r.get("status") == "completed" else "running") + f": {r.get('url', r['databaseId'])}"
     if not dispatch:
         return None, "none"
     request = "req-" + uuid.uuid4().hex[:12]
-    gh("workflow", "run", EXPOSURE, "--ref", "main", "-f", f"commit={commit}", "-f", f"request={request}")
+    gh("workflow", "run", EXPOSURE, "--ref", "main", "-f", f"commit={commit}", "-f", f"tree={trees[0]}", "-f", f"request={request}")
     run = find_run(EXPOSURE, request, time.strftime("%H:%M:%S"))
     return run["databaseId"], f"dispatched for {commit[:10]}, none had run: {run['url']}"
 
@@ -319,6 +333,9 @@ def main(argv=None):
         commit = ref_on_origin(ref, args.allow_unpushed)
         request = "req-" + uuid.uuid4().hex[:12]
         fields = [x for f in args.field for x in ("-f", f)]
+        if workflow == EXPOSURE and not any(f.startswith("tree=") for f in args.field):
+            git("fetch", "--quiet", "origin", commit)
+            fields += ["-f", f"tree={tree_of(commit)}"]
         gh("workflow", "run", workflow, "--ref", ref, *fields, "-f", f"request={request}")
         run = find_run(workflow, request, time.strftime("%H:%M:%S"))
         run_id = run["databaseId"]

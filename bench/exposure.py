@@ -28,8 +28,8 @@ hold the most mods back across every update. join does the joining for summaries
 tools/cloud-run exposure). --out writes the table to a file.
 
 Main's table is kept on the generated branch as scoreboard/all.json, never on main (bench/generated.py): every push to
-main runs the cloud sweep (.github/workflows/cloud-exposure.yml), and its record job saves the table there with the
-commit it ran and adds its totals to the port.jar-links points in scoreboard/points.json. A commit to main for each would
+main runs the cloud sweep (.github/workflows/cloud-exposure.yml, which reuses a whole sweep of the same tree), and the
+record job of generated.yml saves the table there when it ends, with the commit it ran, and adds its totals to the port.jar-links points in scoreboard/points.json. A commit to main for each would
 put every open pull request behind. `python bench/generated.py show scoreboard/all.json` prints the newest; compare
 prints what a branch's table changes against main's (tools/cloud-run exposure finds main's for the branch's base).
 
@@ -476,12 +476,11 @@ def piles(jars):
     return [pile for _, pile in dealt]
 
 
-def side_by_side(command, jars, report, one=False):
+def side_by_side(command, jars, report):
     """Runs a tool that reads jars one at a time (ModNames) on every processor at once: a jar's result does not depend on
-    the jars beside it, and one process used one of this machine's processors (150 mods took 140 s on one of 24). one: a
-    tool that uses every processor itself (JarPort) gets every jar in one process. Returns the reports' rows in the order
-    the jars were given."""
-    dealt = [list(jars)] if one else piles(jars)
+    the jars beside it, and one process used one of this machine's processors (150 mods took 140 s on one of 24). Returns
+    the reports' rows in the order the jars were given."""
+    dealt = piles(jars)
     if len(dealt) > 1:
         # The piles share the memory one process had.
         command = [f"-Xmx{max(3, HEAP // len(dealt))}g" if c.startswith("-Xmx") else c for c in command]
@@ -574,58 +573,77 @@ def standins_key(loader, frm, to):
 
 
 def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False):
-    """Ports jars with tools/JarPort.java into out_dir and returns its report. runtime: in the names the loader runs
-    (a Fabric jar handed back in the target release's intermediary), for a game to start them. cache: only the report is
-    wanted, so a mod whose port (port_key and its jar's content) was made before, by any run on this machine, is read from
-    ~/.mmt/exposure/ports/ instead of ported again; only the rest go to JarPort."""
-    classpath = jar_tools()
-    steps = stops(loader, frm, to)
-    maps = routes(loader, frm, to)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows, todo, keys, checked = {}, [], {}, 0
-    if cache:
-        folder = keyed_at("ports", port_key(loader, frm, to, runtime))
+    """Ports jars with tools/JarPort.java into out_dir and returns its report: jar_ports with one target."""
+    return jar_ports(loader, frm, [(to, out_dir, report)], jars, runtime, cache)[to]
+
+
+def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
+    """Ports jars from frm to each (to, out_dir, report) of targets with tools/JarPort.java, in one process that ports the
+    steps the targets share once (JarPort.portAll), and returns each target's report. runtime: in the names the loader
+    runs (a Fabric jar handed back in the target release's intermediary), for a game to start them. cache: only the
+    reports are wanted, so a mod whose port to a target (port_key and its jar's content) was made before, by any run on
+    this machine, is read from ~/.mmt/exposure/ports/; a mod with no kept port to some target is ported to all of them,
+    and where a kept port is there too the two must be the same, as --verify checks for every mod."""
+    plan, keys, rows, todo, checked = [], {}, {}, set(), 0
+    for to, out_dir, report in targets:
+        steps = stops(loader, frm, to)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        plan.append({"to": to, "via": steps[1:-1], "maps": [str(m) for m in routes(loader, frm, to)], "out": str(out_dir), "report": str(report)})
+        rows[to] = {}
+        folder = keyed_at("ports", port_key(loader, frm, to, runtime)) if cache else None
         for jar in jars:
-            keys[jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
-            if keys[jar.name].is_file() and not VERIFY:
-                rows[jar.name] = json.loads(keys[jar.name].read_text(encoding="utf-8"))
+            if cache:
+                keys[to, jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
+            if cache and keys[to, jar.name].is_file() and not VERIFY:
+                rows[to][jar.name] = json.loads(keys[to, jar.name].read_text(encoding="utf-8"))
             else:
-                todo.append(jar)
-    else:
-        todo = list(jars)
+                todo.add(jar.name)
+    todo = [j for j in jars if j.name in todo]
     if todo:
-        args = [java(), f"-Xmx{HEAP}g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--fixes", str(ROOT / "knowledge" / "fixes.json"),
-                "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else [])
-        if len(steps) > 2:
-            args += ["--via", ",".join(steps[1:-1])]
-        for route in maps:
-            args += ["--map", str(route)]
+        written = Path(targets[0][2]).with_name(f"plan-{os.getpid()}.json")
+        written.write_text(json.dumps({"ports": plan}), encoding="utf-8")
+        args = [java(), f"-Xmx{HEAP}g", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(ROOT / "knowledge" / "fixes.json"),
+                "--loader", loader] + (["--runtime-names"] if runtime else [])
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
             args += ["--originals", str(HOME / "jars" / f"{loader}-{frm}")]
         # One process: JarPort ports the jars of each step on every processor, and each process read every step's releases.
-        for m in side_by_side(args, todo, report, one=True):
-            rows[m["mod"]] = m
-            if cache:
+        code = jarport(args + [str(j) for j in todo])
+        written.unlink()
+        if code:
+            raise SystemExit(f"JarPort failed on {loader} {frm} -> {', '.join(t[0] for t in targets)} (exit {code}); its output is above")
+        for to, _, report in targets:
+            for m in json.loads(Path(report).read_text(encoding="utf-8"))["mods"]:
+                if not cache:
+                    rows[to][m["mod"]] = m
+                    continue
                 kept = {k: v for k, v in m.items() if k != "out"}  # where this run wrote it, not part of the answer
-                if VERIFY and keys[m["mod"]].is_file():
+                if keys[to, m["mod"]].is_file():
                     checked += 1
-                if VERIFY and keys[m["mod"]].is_file() and json.loads(keys[m["mod"]].read_text(encoding="utf-8")) != kept:
-                    raise SystemExit(f"the cached port of {m['mod']} ({loader} {frm} -> {to}, {keys[m['mod']]}) differs from porting it again: "
-                                     "the cache key misses an input of the port, or the port is not the same run to run")
-                part = part_of(keys[m["mod"]])
+                    if json.loads(keys[to, m["mod"]].read_text(encoding="utf-8")) != kept:
+                        raise SystemExit(f"the cached port of {m['mod']} ({loader} {frm} -> {to}, {keys[to, m['mod']]}) differs from porting it again: "
+                                         "the cache key misses an input of the port, or the port is not the same run to run")
+                rows[to][m["mod"]] = kept
+                part = part_of(keys[to, m["mod"]])
                 part.write_text(json.dumps(kept), encoding="utf-8")
-                publish(part, keys[m["mod"]])
-    rows = [rows[j.name] for j in jars if j.name in rows]
-    counts = {}
-    for m in rows:
-        for member in left(m):
-            counts[member] = counts.get(member, 0) + 1
-    merged = {"from": frm, "to": to, "loader": loader, "linked": sum(1 for m in rows if "error" not in m and not m["unlinked"]), "mods": rows,
-              "unlinkedByMods": [{"member": k, "mods": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))],
-              "ported": len(todo), "verified": checked}
-    report.write_text(json.dumps(merged, indent=1), encoding="utf-8")
+                publish(part, keys[to, m["mod"]])
+    merged = {}
+    for to, _, report in targets:
+        found = [rows[to][j.name] for j in jars if j.name in rows[to]]
+        counts = {}
+        for m in found:
+            for member in left(m):
+                counts[member] = counts.get(member, 0) + 1
+        merged[to] = {"from": frm, "to": to, "loader": loader, "linked": sum(1 for m in found if "error" not in m and not m["unlinked"]), "mods": found,
+                      "unlinkedByMods": [{"member": k, "mods": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))],
+                      "ported": len(todo), "verified": checked}
+        Path(report).write_text(json.dumps(merged[to], indent=1), encoding="utf-8")
     return merged
+
+
+def jarport(command):
+    """Runs JarPort and returns its exit code; its rows are in each target's report."""
+    return subprocess.run(command, stdout=subprocess.DEVNULL).returncode
 
 
 def classes_key(classpath, names):
@@ -1007,45 +1025,74 @@ def receipt(kind, loader, frm, to):
     return ROOT / "bench" / "exposure" / f"{kind}-{loader}-{frm}-{to}-{commit}.json"
 
 
-def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
-    """The jar scoreboard: what every top mod's classes and mixins reference, linked against the new release as the JVM and Mixin do.
+def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
+    """The jar scoreboard: what every top mod's classes and mixins reference, ported from frm to each release of tos and
+    linked against it as the JVM and Mixin do; a summary for each.
 
-    A mod whose port was made before with the same inputs is read from the cache (jar_port), so a run after an edit ports
-    only what the edit can change. Each run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the
-    porter's inputs differ from the last run's, that one becomes before.json, and the run prints which mods newly link,
-    stopped linking or changed their port against it. kind: port only the mods the last run held back with a type of break
-    (its text, or part of it), the answer for those mods in seconds; the summary is then partial and is not kept."""
+    The targets share what reads the release ported from: its mods are downloaded and read into Mojang's names once, every
+    map is built in one process, and one JarPort ports the steps the ports share once (jar_ports). A mod whose port was made
+    before with the same inputs is read from the cache, so a run after an edit ports only what the edit can change. Each
+    run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the porter's inputs differ from the last
+    run's, that one becomes before.json, and the run prints which mods newly link, stopped linking or changed their port
+    against it. kind: port only the mods the last run held back with a type of break (its text, or part of it), the answer
+    for those mods in seconds; the summary is then partial and is not kept. out: the summary's file, or a folder (one that
+    is there, or any with several targets) that gets LOADER-FROM-TO.json for each."""
     seconds = {}
+    timed = timer(seconds)
+    if kind and len(tos) > 1:
+        raise SystemExit("--type answers one update at a time: give one --to")
+    pinned = timed("download", fetch, loader, frm)
+    works = {to: ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" for to in tos}
+    if kind:
+        last = works[tos[0]] / "last.json"
+        if not last.is_file():
+            raise SystemExit(f"--type needs a run of the whole update first: python bench/exposure.py jars --loader {loader} --from {frm} --to {tos[0]}")
+        held = {mod for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items() if any(kind in t for t in v.get("types", []))}
+        pinned = [p for p in pinned if p.name in held]
+        if not pinned:
+            raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
+    compile_tools()  # once, before the threads below that run it
+    # Every step of every target, so one GameDiff process builds the maps that are missing.
+    segments = list(dict.fromkeys((x, y) for to in tos for x, y in zip(stops(loader, frm, to), stops(loader, frm, to)[1:])))
+    # Reading the jars' names, the game's change maps and the data reports need nothing from each other.
+    with ThreadPoolExecutor(3) as pool:
+        named = pool.submit(timed, "names", mojang_names, loader, frm, pinned)
+        mapped = pool.submit(timed, "map", route_maps, segments, loader, compile_tools())
+        checked = pool.submit(timed, "data", lambda: {to: data_check(frm, to, pinned) for to in tos})
+        (mods, unread), datas = named.result(), checked.result()
+        mapped.result()
+    # A run of some mods only (kind) keeps its report apart: load reads the whole update's.
+    written = {to: works[to] / ("report.json" if not kind else "report-type.json") for to in tos}
+    for work in works.values():
+        work.mkdir(parents=True, exist_ok=True)
+    empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
+    reports = timed("port", jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
+    for work in works.values():
+        shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
+    summaries = {}
+    for to in tos:
+        # What the targets shared, and each one's own questions to the game after it.
+        own = dict(seconds)
+        target = out if out is None or (len(tos) == 1 and not Path(out).is_dir()) else Path(out) / f"{loader}-{frm}-{to}.json"
+        summaries[to] = summarize(loader, frm, to, mods, unread, datas[to], reports[to], written[to], works[to], kind, save, target, quiet, timer(own), own)
+    return summaries
 
+
+def timer(seconds):
+    """A function that runs work and adds the seconds it took to seconds[stage]."""
     def timed(stage, work, *args):
         started = time.monotonic()
         try:
             return work(*args)
         finally:
             seconds[stage] = round(seconds.get(stage, 0) + time.monotonic() - started, 1)
+    return timed
 
-    pinned = timed("download", fetch, loader, frm)
-    work = ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}"
+
+def summarize(loader, frm, to, mods, unread, data, report, written, work, kind, save, out, quiet, timed, seconds):
+    """One target's summary from its port's report: what still breaks, by type and by the mods nearest to done, printed
+    unless quiet and written to out."""
     last = work / "last.json"
-    if kind:
-        if not last.is_file():
-            raise SystemExit(f"--type needs a run of the whole update first: python bench/exposure.py jars --loader {loader} --from {frm} --to {to}")
-        held = {mod for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items() if any(kind in t for t in v.get("types", []))}
-        pinned = [p for p in pinned if p.name in held]
-        if not pinned:
-            raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
-    compile_tools()  # once, before the threads below that run it
-    # Reading the jars' names, the game's change maps and the data reports need nothing from each other.
-    with ThreadPoolExecutor(3) as pool:
-        named = pool.submit(timed, "names", mojang_names, loader, frm, pinned)
-        mapped = pool.submit(timed, "map", routes, loader, frm, to)
-        checked = pool.submit(timed, "data", data_check, frm, to, pinned)
-        (mods, unread), data = named.result(), checked.result()
-        mapped.result()
-    # A run of some mods only (kind) keeps its report apart: load reads the whole update's.
-    written = work / ("report.json" if not kind else "report-type.json")
-    report = timed("port", jar_port, loader, frm, to, mods, work / "mods", written, False, True) if mods else {"linked": 0, "mods": [], "unlinkedByMods": []}
-    shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
     if mods:
         report = without_platform_copies(report, platform_ids(loader, to), {m.name: m for m in mods})
         report = with_hidden_code_unread(report, {m.name: m for m in mods})
@@ -1149,8 +1196,9 @@ def verdicts_moved(before, after):
 
 
 def every_update(loaders, only, jobs, out_file=None):
-    """jars for every update, every jump and every any-version target of each loader, side by side; joined into one table."""
-    todo = [(lo, a, b) for lo in loaders for a, b in runs(lo) if not only or f"{lo}:{a}" in only]
+    """jars for every update, every jump and every any-version target of each loader, side by side, in the jobs the cloud
+    sweep runs (plan); joined into one table."""
+    todo = [job for lo in loaders for job in plan(lo, only)]
     jar_tools()
     compile_tools()
     global CORES
@@ -1159,33 +1207,59 @@ def every_update(loaders, only, jobs, out_file=None):
     out.mkdir(parents=True, exist_ok=True)
 
     def one(job):
-        lo, a, b = job
+        lo, a, tos = job
         started = time.monotonic()
         try:
-            s = jars(lo, a, b, out=out / f"{lo}-{a}-{b}.json", quiet=True)
-            print(f"  {lo} {a} -> {b}: {s['modsThatLink']}/{s['modsRead']} link ({time.monotonic() - started:.0f} s)", flush=True)
+            for b, s in jars(lo, a, tos, out=out, quiet=True).items():
+                print(f"  {lo} {a} -> {b}: {s['modsThatLink']}/{s['modsRead']} link ({time.monotonic() - started:.0f} s)", flush=True)
         except (SystemExit, subprocess.CalledProcessError, OSError) as failed:
-            print(f"  {lo} {a} -> {b}: failed: {failed}", flush=True)
+            print(f"  {lo} {a} -> {', '.join(tos)}: failed: {failed}", flush=True)
 
-    # Two updates next to each other share a release, and their first run downloads its files to the same cache: each
-    # wave holds updates that share none, so no two runs write one file.
-    for loader in loaders:
-        single = updates(loader)
-        for parity in (0, 1):
-            wave = [t for t in todo if t[0] == loader and t[1:] in single and single.index(t[1:]) % 2 == parity]
-            with ThreadPoolExecutor(max(1, jobs)) as pool:
-                list(pool.map(one, wave))
-        # A jump reads every release on its way. The updates above fetched them, so jumps side by side write no file
-        # twice; one that crosses an update that did not run (--only) goes alone.
-        fetched = {v for t in todo if t[0] == loader and t[1:] in single for v in t[1:]}
-        far = [t for t in todo if t[0] == loader and t[1:] not in single]
-        warm = [t for t in far if set(chain(*t[1:])) <= fetched]
-        with ThreadPoolExecutor(max(1, jobs)) as pool:
-            list(pool.map(one, warm))
-        for t in far:
-            if t not in warm:
-                one(t)
+    # Runs side by side share the caches safely: every file is written under a name of its own and moved into place.
+    with ThreadPoolExecutor(max(1, jobs)) as pool:
+        list(pool.map(one, todo))
     return join(out, out_file)
+
+
+# What a job costs, in steps of a port (about 40 s on GitHub's 4-processor runners, measured on the sweep of 2026-11-23):
+# a job's own start (the runner, the download, reading the mods into Mojang's names and the first release) about 2.5,
+# and each target after the first about 1.8 (its last step, its map, its questions to Exposure).
+JOB, TARGET = 2.5, 1.8
+
+
+def planned_steps(loader, frm, to):
+    """About the steps JarPort takes from frm to to: one for each update with stand-ins (JarPort.hops), and one for the
+    updates between. Only a job's cost is planned from it; what is ported is JarPort's plan."""
+    folder = ROOT / "knowledge" / "standins"
+    c = chain(frm, to)
+    return 1 + sum(1 for x, y in zip(c, c[1:]) if (folder / f"{x}-{y}").is_dir() or (folder / f"{x}-{y}.{loader}").is_dir())
+
+
+def plan(loader, only=None):
+    """The scoreboard's jobs for a loader: every pair runs() lists, as (loader, from, [to, ...]). The pairs from one release
+    in one direction are one fan: a port to a later release passes every stop of a port to an earlier one, so one JarPort
+    ports the shared steps once and each target adds its last step (jar_ports), and the mods are read once. A fan is cut,
+    nearest targets first, into jobs that take at most as long as the longest single port and four more targets: the far
+    end of the most-used release's fan cannot be shorter than its own port, and longer jobs saved little more (one job a
+    fan: 291 runner minutes a sweep against 322, with a 36-minute job).
+    only: LOADER:FROM or LOADER:FROM:TO names; the pairs they name."""
+    pairs = [(frm, to) for frm, to in runs(loader) if not only or f"{loader}:{frm}" in only or f"{loader}:{frm}:{to}" in only]
+    cost = lambda frm, tos: JOB + planned_steps(loader, frm, tos[-1]) + TARGET * (len(tos) - 1)
+    budget = max((cost(frm, [to]) for frm, to in runs(loader)), default=0) + 4 * TARGET
+    fans = {}
+    for frm, to in pairs:
+        fans.setdefault((frm, vkey(to) > vkey(frm)), []).append(to)
+    jobs = []
+    for (frm, _), tos in fans.items():
+        tos.sort(key=lambda to: len(chain(frm, to)))
+        job = []
+        for to in tos:
+            if job and cost(frm, job + [to]) > budget:
+                jobs.append((loader, frm, job))
+                job = []
+            job.append(to)
+        jobs.append((loader, frm, job))
+    return jobs
 
 
 def join(folder, out=None):
@@ -2234,7 +2308,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only."""
     report = ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" / "report.json"
     if not report.is_file():
-        jars(loader, frm, to)
+        jars(loader, frm, [to])
     linked = [m["mod"] for m in json.loads(report.read_text(encoding="utf-8"))["mods"] if "error" not in m and not m["unlinked"]]
     skipped = {}
     if mods:
@@ -2541,9 +2615,9 @@ def main():
         j = sub.add_parser(name)
         j.add_argument("--loader", required=True, choices=sorted(FIRST))
         j.add_argument("--from", dest="frm", required=True)
-        j.add_argument("--to", required=True)
+        j.add_argument("--to", required=True, help="the release to port to" + (" (jars: several, comma-separated, ported in one go)" if name == "jars" else ""))
         j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
-        j.add_argument("--out", type=Path, help="write the summary to this file")
+        j.add_argument("--out", type=Path, help="write the summary to this file (a folder that is there, or jars with several --to: LOADER-FROM-TO.json each in it)")
         if name == "jars":
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
             j.add_argument("--type", dest="kind", help="port only the mods the last whole run held back with this type of break (or part of its text)")
@@ -2552,7 +2626,7 @@ def main():
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     lp.add_argument("--mods", default="", help="the slugs the proof asks of every update; one that no update pins stops the plan")
-    ls = sub.add_parser("updates", help="every LOADER:FROM:TO all runs, updates and jumps, as JSON (the cloud run's matrix)")
+    ls = sub.add_parser("updates", help="the jobs all runs, each LOADER:FROM:TO,TO... (plan), as JSON (the cloud run's matrix)")
     ls.add_argument("--loader", choices=sorted(FIRST))
     ls.add_argument("--only", help="LOADER:FROM or LOADER:FROM:TO, comma-separated")
     pn = sub.add_parser("pin")
@@ -2580,16 +2654,16 @@ def main():
     if a.command == "steps":
         steps(a.frm, a.to)
     elif a.command == "jars":
-        jars(a.loader, a.frm, a.to, a.save, a.out, kind=a.kind)
+        jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind)
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
-        every = [(lo, x, y) for lo in ([a.loader] if a.loader else sorted(FIRST)) for x, y in runs(lo)]
-        picked = [f"{lo}:{x}:{y}" for lo, x, y in every if not only or f"{lo}:{x}" in only or f"{lo}:{x}:{y}" in only]
+        loaders = [a.loader] if a.loader else sorted(FIRST)
+        every = [(lo, x, y) for lo in loaders for x, y in runs(lo)]
         # A name that picks nothing ran an empty sweep that looked like a result (0 of 0); say which instead.
         unknown = sorted(o for o in only or () if not any(o in (f"{lo}:{x}", f"{lo}:{x}:{y}") for lo, x, y in every))
         if unknown:
             raise SystemExit(f"--only names no update: {', '.join(unknown)} (LOADER:FROM for every update from it, or LOADER:FROM:TO)")
-        print(json.dumps(picked))
+        print(json.dumps([f"{lo}:{x}:{','.join(tos)}" for lo in loaders for _, x, tos in plan(lo, only)]))
     elif a.command == "load":
         load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
     elif a.command == "load-plan":

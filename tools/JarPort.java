@@ -344,7 +344,7 @@ public final class JarPort {
     static final long PORT_WORKER = 400L << 20;
 
     public static void main(String[] args) throws Exception {
-        String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null;
+        String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null, plan = null;
         boolean runtime = false, hopsOnly = false;
         Path originalsDir = null;
         List<String> via = new ArrayList<>(), maps = new ArrayList<>();
@@ -364,6 +364,7 @@ public final class JarPort {
                 case "--fixes" -> book = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
                 case "--originals" -> originalsDir = Path.of(args[++i]);
+                case "--plan" -> plan = args[++i];
                 default -> jars.add(Path.of(args[i]));
             }
         }
@@ -375,18 +376,60 @@ public final class JarPort {
             System.out.println(String.join(",", hops(List.of(chain.split(",")), Path.of(book).resolveSibling("standins"), loader == null ? "" : loader)));
             return;
         }
-        List<String> stops = new ArrayList<>();
-        stops.add(from);
-        stops.addAll(via);
-        stops.add(to);
-        if (from == null || to == null || maps.size() != stops.size() - 1 || out == null || jars.isEmpty()) {
+        List<Target> targets = new ArrayList<>();
+        if (plan != null) {
+            for (Object o : Json.array(Json.read(Path.of(plan)).get("ports"))) {
+                Map<String, Object> t = Json.object(o);
+                List<String> stops = new ArrayList<>();
+                stops.add(from);
+                for (Object v : Json.array(t.getOrDefault("via", List.of()))) {
+                    stops.add(v.toString());
+                }
+                stops.add(Json.text(t, "to", ""));
+                targets.add(new Target(stops, Json.array(t.get("maps")).stream().map(Object::toString).toList(), Path.of(Json.text(t, "out", "")),
+                    t.get("report") == null ? null : Json.text(t, "report", "")));
+            }
+        } else if (to != null && out != null) {
+            List<String> stops = new ArrayList<>();
+            stops.add(from);
+            stops.addAll(via);
+            stops.add(to);
+            targets.add(new Target(stops, maps, Path.of(out), report));
+        }
+        if (from == null || targets.isEmpty() || jars.isEmpty() || targets.stream().anyMatch(t -> t.maps().size() != t.stops().size() - 1)) {
             System.err.println("usage: JarPort --from V [--via V,...] --to V --map route.json (one per step) [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...");
+            System.err.println("       JarPort --from V --plan PLAN.json ... IN.jar ...   (PLAN: {\"ports\": [{\"to\", \"via\", \"maps\", \"out\", \"report\"}, ...]}, ports that share their steps before the last)");
             System.exit(2);
         }
-        Path target = Path.of(out);
-        boolean folder = jars.size() > 1 || Files.isDirectory(target);
-        if (folder) {
-            Files.createDirectories(target);
+        portAll(targets, jars, loader, runtime, book, originalsDir);
+    }
+
+    /** One port of a plan: the releases it stops at (the first the release ported from), each step's route map, and where its jars and report go. */
+    record Target(List<String> stops, List<String> maps, Path out, String report) {
+        String to() {
+            return stops.get(stops.size() - 1);
+        }
+    }
+
+    /**
+     * Ports the jars to every target of a plan in one process. The targets share every step before their last (a port to
+     * a later release passes the stops of a port to an earlier one: JarPort.hops), so those steps run once, as one trunk,
+     * and each target branches off it with its own last step: the most-used release's mods ported to every release
+     * after it took one step per release instead of one per release times the releases before it. A branch reads its
+     * own copy of its release and of every result before it, so what one target's last step adds is never seen by
+     * another, and each target's jars and report are what a port to it alone writes.
+     */
+    static void portAll(List<Target> targets, List<Path> jars, String loader, boolean runtime, String book, Path originalsDir) throws Exception {
+        Target longest = targets.stream().max(Comparator.comparingInt((Target t) -> t.stops().size())).orElseThrow();
+        List<String> trunk = longest.stops().subList(0, longest.stops().size() - 1);
+        List<String> trunkMaps = longest.maps().subList(0, longest.maps().size() - 1);
+        Map<Integer, List<Target>> branches = new TreeMap<>();
+        for (Target t : targets) {
+            int at = t.stops().size() - 2;
+            if (!t.stops().subList(0, at + 1).equals(trunk.subList(0, at + 1)) || !t.maps().subList(0, at).equals(trunkMaps.subList(0, at))) {
+                throw new IllegalArgumentException("the ports of a plan share every step before their last: " + t.stops() + " and " + longest.stops());
+            }
+            branches.computeIfAbsent(at, k -> new ArrayList<>()).add(t);
         }
         // Step by step, every jar through one step before the next: each step holds two releases of the game, and a port
         // across a dozen updates would not fit holding all of them. Within a step the jars are ported on every processor,
@@ -397,111 +440,216 @@ public final class JarPort {
         }
         Integer asked = Integer.getInteger("jarport.workers");
         int workers = asked != null ? Math.max(1, Math.min(jars.size(), asked)) : GameDiff.workers(jars.size(), PORT_WORKER, RELEASES_HEAP + JAR_HEAP * jarBytes);
-        Map<Path, byte[]> bytes = new java.util.concurrent.ConcurrentHashMap<>();
-        Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
-        Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
-        Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
         // Biggest first, so no big jar starts when the others are done.
         List<Path> order = new ArrayList<>(jars);
         order.sort(Comparator.comparingLong((Path j) -> j.toFile().length()).reversed().thenComparing(Path::toString));
-        // Each release is read once: the new release of one step is the old of the next, and the next step's new release
-        // is read while this step ports.
-        String platform = loader;
-        java.util.concurrent.ExecutorService reader = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        // The releases in the order the steps read them, each read while the step before it ports: a branch's release,
+        // then the trunk's next one, which is also the old release of the next branches.
+        List<String> reads = new ArrayList<>();
+        for (int p = 0; p < trunk.size(); p++) {
+            for (Target t : branches.getOrDefault(p, List.of())) {
+                reads.add(t.to());
+            }
+            if (p + 1 < trunk.size()) {
+                reads.add(trunk.get(p + 1));
+            }
+        }
+        Reads reader = new Reads(reads, loader);
+        Trunk state = new Trunk();
+        GameDiff.Snap was = Exposure.snap(trunk.get(0), loader);
+        for (int p = 0; p < trunk.size(); p++) {
+            for (Target t : branches.getOrDefault(p, List.of())) {
+                Trunk mine = state.copy();
+                GameDiff.Snap now = reader.next();
+                step(was, now, t.maps().get(p), trunk.get(p), t.to(), true, p == 0, mine, order, workers, loader, runtime, book, originalsDir);
+                write(t, jars, mine, loader);
+                done(t.to(), reader);
+            }
+            if (p + 1 < trunk.size()) {
+                GameDiff.Snap now = reader.next();
+                step(was, now, trunkMaps.get(p), trunk.get(p), trunk.get(p + 1), false, p == 0, state, order, workers, loader, runtime, book, originalsDir);
+                done(trunk.get(p), reader);
+                was = now;
+            }
+        }
+        reader.shutdown();
+    }
+
+    /** Every jar's port so far: its bytes after the last step, each step's results, and the step it failed at. */
+    static final class Trunk {
+        final Map<Path, byte[]> bytes = new java.util.concurrent.ConcurrentHashMap<>();
+        final Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
+        final Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
+        final Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
+
+        /** A copy a branch ports on: the bytes are never written in place, but each step adds to and edits its last results. */
+        Trunk copy() {
+            Trunk c = new Trunk();
+            c.bytes.putAll(bytes);
+            c.originals.putAll(originals);
+            c.errors.putAll(errors);
+            for (var e : nested.entrySet()) {
+                List<Map<String, Object>> results = new ArrayList<>();
+                for (Map<String, Object> r : e.getValue()) {
+                    @SuppressWarnings("unchecked") Map<String, Object> copied = (Map<String, Object>) copied(r);
+                    results.add(copied);
+                }
+                c.nested.put(e.getKey(), results);
+            }
+            return c;
+        }
+    }
+
+    /** A step's result as it was: maps and lists copied, sorted maps kept sorted. */
+    static Object copied(Object value) {
+        if (value instanceof Map<?, ?> m) {
+            Map<Object, Object> c = m instanceof SortedMap ? new TreeMap<>() : new LinkedHashMap<>();
+            m.forEach((k, v) -> c.put(k, copied(v)));
+            return c;
+        }
+        if (value instanceof List<?> l) {
+            List<Object> c = new ArrayList<>();
+            for (Object v : l) {
+                c.add(copied(v));
+            }
+            return c;
+        }
+        return value;
+    }
+
+    /** Releases read one ahead of the step that needs them, on a thread of their own. */
+    static final class Reads {
+        final java.util.concurrent.ExecutorService thread = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r);
             t.setDaemon(true);
             return t;
         });
-        java.util.concurrent.Future<GameDiff.Snap> coming = reader.submit(() -> Exposure.snap(stops.get(1), platform));
-        GameDiff.Snap was = Exposure.snap(stops.get(0), loader);
-        for (int i = 0; i + 1 < stops.size(); i++) {
-            int step = i;
-            boolean last = i + 2 == stops.size();
-            GameDiff.Snap now;
+        final Deque<String> upcoming;
+        final String loader;
+        java.util.concurrent.Future<GameDiff.Snap> coming;
+
+        Reads(List<String> versions, String loader) {
+            upcoming = new ArrayDeque<>(versions);
+            this.loader = loader;
+            ahead();
+        }
+
+        void ahead() {
+            String version = upcoming.peekFirst();
+            coming = version == null ? null : thread.submit(() -> Exposure.snap(version, loader));
+        }
+
+        GameDiff.Snap next() throws Exception {
             try {
-                now = coming.get();
+                return coming.get();
             } catch (java.util.concurrent.ExecutionException failed) {
                 throw failed.getCause() instanceof Exception e ? e : failed;
+            } finally {
+                upcoming.pollFirst();
+                ahead();
             }
-            if (!last) {
-                String after = stops.get(i + 2);
-                coming = reader.submit(() -> Exposure.snap(after, platform));
-            }
-            // What making the porters adds to the new release (the step's stand-ins, libraries carried from the old one) is
-            // taken out again after the step, so the next step reads the release as it was read.
-            Set<String> read = new HashSet<>(now.classes.keySet());
-            // Made one after another: making a porter adds the step's stand-ins and carried library classes to the releases.
-            List<JarPort> porters = new ArrayList<>();
-            for (int w = 0; w < workers; w++) {
-                JarPort port = new JarPort(was, now, Path.of(maps.get(i)));
-                if (loader != null) {
-                    port.loader = loader;
-                }
-                port.runtimeNames = runtime && last;
-                port.between = !last;
-                port.originalsDir = originalsDir;
-                if ("fabric".equals(loader)) {
-                    port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
-                }
-                if (book != null) {
-                    port.fixes(Path.of(book));
-                }
-                porters.add(port);
-            }
-            java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
-            List<Thread> running = new ArrayList<>();
-            for (JarPort port : porters) {
-                running.add(Thread.ofPlatform().start(() -> {
-                    for (int j; (j = next.getAndIncrement()) < order.size(); ) {
-                        Path jar = order.get(j);
-                        if (errors.containsKey(jar)) {
-                            continue;
-                        }
-                        String name = jar.getFileName().toString();
-                        try {
-                            byte[] in = step == 0 ? Files.readAllBytes(jar) : bytes.get(jar);
-                            if (step == 0) {
-                                originals.put(jar, port.originals(in, name));
-                            }
-                            List<Map<String, Object>> results = nested.computeIfAbsent(jar, k -> new ArrayList<>());
-                            bytes.put(jar, port.port(in, name, results, originals.get(jar), last));
-                        } catch (IOException | RuntimeException failed) {
-                            errors.put(jar, String.valueOf(failed));
-                            bytes.remove(jar);
-                        }
-                    }
-                }));
-            }
-            for (Thread t : running) {
-                t.join();
-            }
-            now.classes.keySet().retainAll(read);
-            Exposure.forget(stops.get(i));
-            Object[] gone = GameCode.READ.remove(stops.get(i));
-            if (gone != null) {
-                synchronized (GameCode.CALLERS) {
-                    GameCode.CALLERS.remove(gone[0]);
-                }
-            }
-            was = now;
         }
-        reader.shutdown();
+
+        boolean later(String version) {
+            return upcoming.contains(version);
+        }
+
+        void shutdown() {
+            thread.shutdown();
+        }
+    }
+
+    /** Lets go of what was read for a release no step still to come reads. */
+    static void done(String version, Reads reader) {
+        if (reader.later(version)) {
+            return;
+        }
+        Exposure.forget(version);
+        Object[] gone = GameCode.READ.remove(version);
+        if (gone != null) {
+            synchronized (GameCode.CALLERS) {
+                GameCode.CALLERS.remove(gone[0]);
+            }
+        }
+    }
+
+    /** Every jar of state through one step from was to now; last: the step into the release a target asked for. */
+    static void step(GameDiff.Snap was, GameDiff.Snap now, String map, String from, String to, boolean last, boolean first, Trunk state, List<Path> order,
+                     int workers, String loader, boolean runtime, String book, Path originalsDir) throws Exception {
+        // What making the porters adds to the new release (the step's stand-ins, libraries carried from the old one) is
+        // taken out again after the step, so the next step reads the release as it was read.
+        Set<String> read = new HashSet<>(now.classes.keySet());
+        // Made one after another: making a porter adds the step's stand-ins and carried library classes to the releases.
+        List<JarPort> porters = new ArrayList<>();
+        for (int w = 0; w < workers; w++) {
+            JarPort port = new JarPort(was, now, Path.of(map));
+            if (loader != null) {
+                port.loader = loader;
+            }
+            port.runtimeNames = runtime && last;
+            port.between = !last;
+            port.originalsDir = originalsDir;
+            if ("fabric".equals(loader)) {
+                port.platform(Exposure.fabricApi(from), Exposure.fabricApi(to));
+            }
+            if (book != null) {
+                port.fixes(Path.of(book));
+            }
+            porters.add(port);
+        }
+        java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+        List<Thread> running = new ArrayList<>();
+        for (JarPort port : porters) {
+            running.add(Thread.ofPlatform().start(() -> {
+                for (int j; (j = next.getAndIncrement()) < order.size(); ) {
+                    Path jar = order.get(j);
+                    if (state.errors.containsKey(jar)) {
+                        continue;
+                    }
+                    String name = jar.getFileName().toString();
+                    try {
+                        byte[] in = first ? Files.readAllBytes(jar) : state.bytes.get(jar);
+                        if (first && !state.originals.containsKey(jar)) {
+                            state.originals.put(jar, port.originals(in, name));
+                        }
+                        List<Map<String, Object>> results = state.nested.computeIfAbsent(jar, k -> new ArrayList<>());
+                        state.bytes.put(jar, port.port(in, name, results, state.originals.get(jar), last));
+                    } catch (IOException | RuntimeException failed) {
+                        state.errors.put(jar, String.valueOf(failed));
+                        state.bytes.remove(jar);
+                    }
+                }
+            }));
+        }
+        for (Thread t : running) {
+            t.join();
+        }
+        now.classes.keySet().retainAll(read);
+    }
+
+    /** A target's ported jars and its report: each jar's references that did not link, at every step. */
+    static void write(Target t, List<Path> jars, Trunk state, String loader) throws IOException {
+        Path target = t.out();
+        boolean folder = jars.size() > 1 || Files.isDirectory(target);
+        if (folder) {
+            Files.createDirectories(target);
+        }
         List<Object> rows = new ArrayList<>();
         int linked = 0;
         Map<String, Set<String>> byMods = new HashMap<>();
         for (Path jar : jars) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("mod", jar.getFileName().toString());
-            if (errors.containsKey(jar)) {
-                row.put("error", errors.get(jar));
+            if (state.errors.containsKey(jar)) {
+                row.put("error", state.errors.get(jar));
             } else try {
-                byte[] ported = bytes.get(jar);
+                byte[] ported = state.bytes.get(jar);
                 Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
                 Files.write(dest, ported);
                 // Every step's results: a reference one step could not link stays as it was, in that step's names, and breaks there.
                 Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>();
                 Map<String, Integer> changed = new TreeMap<>();
-                for (Map<String, Object> n : nested.getOrDefault(jar, List.of())) {
+                for (Map<String, Object> n : state.nested.getOrDefault(jar, List.of())) {
                     for (Object u : Json.array(n.get("unlinked"))) {
                         if (unlinked.add(n.get("jar") + ": " + u)) {
                             byMods.computeIfAbsent(u.toString().replaceAll(" \\(in [^)]*\\)$", ""), k -> new TreeSet<>()).add(jar.getFileName().toString());
@@ -525,18 +673,18 @@ public final class JarPort {
                 row.put("silent", new ArrayList<>(silent));
                 row.put("refused", new ArrayList<>(refused));
                 linked += unlinked.isEmpty() ? 1 : 0;
-            } catch (IOException | RuntimeException failed) {
+            } catch (IOException | RuntimeException | java.security.NoSuchAlgorithmException failed) {
                 row.put("error", String.valueOf(failed));
             }
             rows.add(row);
             System.out.println(row.get("mod") + ": " + (row.containsKey("error") ? row.get("error")
                 : Json.array(row.get("unlinked")).size() + " unlinked, changed " + row.get("changed")));
         }
-        System.out.printf("%d of %d jars link against %s%n", linked, jars.size(), to);
-        if (report != null) {
+        System.out.printf("%d of %d jars link against %s%n", linked, jars.size(), t.to());
+        if (t.report() != null) {
             Map<String, Object> r = new LinkedHashMap<>();
-            r.put("from", from);
-            r.put("to", to);
+            r.put("from", t.stops().get(0));
+            r.put("to", t.to());
             r.put("loader", loader == null ? "" : loader);
             r.put("linked", linked);
             r.put("mods", rows);
@@ -546,7 +694,7 @@ public final class JarPort {
                 .sorted(Comparator.comparing((Map.Entry<String, Set<String>> e) -> -e.getValue().size()).thenComparing(Map.Entry::getKey))
                 .forEach(e -> ranked.add(Map.of("member", e.getKey(), "mods", e.getValue().size())));
             r.put("unlinkedByMods", ranked);
-            Files.writeString(Path.of(report), Json.write(r), StandardCharsets.UTF_8);
+            Files.writeString(Path.of(t.report()), Json.write(r), StandardCharsets.UTF_8);
         }
     }
 

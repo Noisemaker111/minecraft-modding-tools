@@ -3,8 +3,10 @@ name: Generated files
 # The website (docs/, served by GitHub Pages from the generated branch) and ROADMAP.md are written from main's coverage/
 # and main's jar scoreboard after every push to main, and committed to the generated branch, never to main
 # (bench/generated.py). main requires a pull request to be up to date before it merges, so a bot commit on main put every
-# open pull request behind; on their own branch they cost a pull request nothing. The scoreboard's record job
-# (cloud-exposure.yml) publishes the same way when its sweep ends.
+# open pull request behind; on their own branch they cost a pull request nothing. The record job publishes main's jar
+# scoreboard the same way when the sweep of a push to main (cloud-exposure.yml) ends: started by that event, it runs
+# main's workflow on main's code, where a step inside the sweep ran the pushed commit's steps on main's newer code and
+# failed when the command it called was renamed (run 45123319240).
 # The push uses the DOCS_DEPLOY_KEY deploy key, so GitHub Pages builds the branch (a push by GITHUB_TOKEN may not start it).
 
 on:
@@ -17,18 +19,22 @@ on:
       - "knowledge/fixes.json"
       - "tools/cli/Support.java"
       - ".github/workflows/generated.yml"
+  workflow_run:
+    workflows: [Cloud jar scoreboard]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: read
-
-# A waiting run is replaced by a newer one: each builds from main as it is then, so the newest has everything.
-concurrency:
-  group: generated-files
-  cancel-in-progress: false
+  actions: read
 
 jobs:
   regenerate:
+    if: github.event_name != 'workflow_run'
+    # A waiting run is replaced by a newer one: each builds from main as it is then, so the newest has everything.
+    concurrency:
+      group: generated-files
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -45,3 +51,37 @@ jobs:
           python-version: "3.12"
       - name: Write the site and ROADMAP.md to the generated branch
         run: python bench/generated.py publish --dir .runs/generated
+  record:
+    # Only a whole sweep of a push to main is main's table; one with a failed job is not recorded. Never replaced by a newer
+    # run as regenerate is: publish takes another run's push and builds again on top, so no sweep's point is lost.
+    if: >-
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # main as it is now builds the site; its history tells whether the table there is of a newer commit than this one.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: generated
+          path: .runs/generated
+          ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: summary
+          path: ${{ runner.temp }}/summary
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Save main's table and points to the generated branch
+        env:
+          TABLE: ${{ runner.temp }}/summary/all.json
+          COMMIT: ${{ github.event.workflow_run.head_sha }}
+          RUN: ${{ github.event.workflow_run.html_url }}
+        run: python bench/generated.py publish --dir .runs/generated --table "$TABLE" --commit "$COMMIT" --run "$RUN"

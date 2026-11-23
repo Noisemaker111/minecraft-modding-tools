@@ -62,6 +62,11 @@ listed = [{"databaseId": 1, "headSha": A, "displayTitle": "Cloud jar scoreboard:
           {"databaseId": 4, "headSha": D, "displayTitle": "Cloud jar scoreboard: every update ", "status": "completed", "conclusion": "success"}]
 check([r["databaseId"] for r in C.full_runs_of(listed, [A])] == [2], "a partial sweep is no table; one dispatched for the commit is, even while it runs")
 check([r["databaseId"] for r in C.full_runs_of(listed, [B, D])] == [4], "a sweep that ran the commit as its head counts, a failed one does not")
+T, U = "1" * 40, "2" * 40
+named = [{"databaseId": 5, "headSha": B, "displayTitle": f"Cloud jar scoreboard: every update tree {T} req-y", "status": "completed", "conclusion": "success"},
+         {"databaseId": 6, "headSha": B, "displayTitle": f"Cloud jar scoreboard: fabric:1.20.1 tree {U} req-z", "status": "completed", "conclusion": "success"}]
+check([r["databaseId"] for r in C.full_runs_of(named, [D], [T])] == [5], "a pull request's whole sweep of the tree is the table of a commit with that tree")
+check(C.full_runs_of(named, [D], [U]) == [], "a partial sweep of the tree is not")
 asked = []
 
 
@@ -73,6 +78,7 @@ def fake_gh(*a):
 
 
 C.same_table = lambda commit, globs=None, git=None: [commit]
+C.tree_of = lambda commit, git=None: ""
 check(C.main_table(D, gh=fake_gh)[0] == 4 and asked == [("run", "list")], f"a saved table is found without dispatching a sweep of main: {asked}")
 check(C.main_table("e" * 40, gh=fake_gh, dispatch=False) == (None, "none"), "a commit with no sweep has no table yet")
 

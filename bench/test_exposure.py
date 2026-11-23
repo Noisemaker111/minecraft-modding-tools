@@ -48,6 +48,17 @@ check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1
 check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
 check("names no update: fabric:1.20.1:99.9" in plan("fabric:1.20.1:99.9"), f"--only naming no update stops: {plan('fabric:1.20.1:99.9')}")
 
+# The sweep's jobs: every pair runs() lists is in exactly one job, a job's targets are one release's ports in one
+# direction (so JarPort ports the steps they share once), and --only keeps only the pairs it names.
+for lo in E.FIRST:
+    jobs = E.plan(lo)
+    pairs = [(frm, to) for _, frm, tos in jobs for to in tos]
+    check(sorted(pairs) == sorted(E.runs(lo)) and len(pairs) == len(set(pairs)), f"{lo}: every pair runs in one job")
+    check(all(len({E.vkey(to) > E.vkey(frm) for to in tos}) == 1 for _, frm, tos in jobs), f"{lo}: a job's targets lie one way from its release")
+    check(len(jobs) < len(pairs), f"{lo}: ports from one release share jobs ({len(jobs)} jobs for {len(pairs)} pairs)")
+    frm, to = E.runs(lo)[-1]
+    check([(f, t) for _, f, tos in E.plan(lo, {f"{lo}:{frm}:{to}"}) for t in tos] == [(frm, to)], f"{lo}: --only LOADER:FROM:TO runs that pair alone")
+
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
@@ -705,7 +716,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # scoreboard after every edit, and porting every mod again is most of a run.
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
-    saved = (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
+    saved = (E.ROOT, E.HOME, E.jarport, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops)
     E.ROOT, E.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     fixes = root / "knowledge" / "fixes.json"
@@ -721,16 +732,21 @@ with tempfile.TemporaryDirectory() as tmp:
 
     commands = []
 
-    def fake_side_by_side(command, given, report, one=False):
+    def fake_jarport(command):
+        given = [Path(c) for c in command if c.endswith(".jar")]
+        plan = json.loads(Path(command[command.index("--plan") + 1]).read_text(encoding="utf-8"))
         ported.append([j.name for j in given])
-        commands.append(command)
-        return [{"mod": j.name, "out": str(report.parent / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]), "silent": []} for j in given]
+        commands.append(plan)
+        for target in plan["ports"]:
+            Path(target["report"]).write_text(json.dumps({"mods": [{"mod": j.name, "out": str(Path(target["out"]) / j.name), "unlinked": answer.get(j.name, ["call: a.B.c()V"]),
+                                                                      "silent": []} for j in given]}), encoding="utf-8")
+        return 0
 
     # A port from 1.0 to 1.2 stops at 1.1, as JarPort plans it when 1.1 -> 1.2 has stand-ins: each step has a map of its own.
     step_routes = {("1.0", "1.1"): route, ("1.1", "1.2"): root / "route-1.1-1.2.json"}
     step_routes[("1.1", "1.2")].write_text("{}", encoding="utf-8")
     E.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
-    E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools = fake_side_by_side, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
+    E.jarport, E.route_maps, E.jar_tools, E.compile_tools = fake_jarport, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
     E.tools_classes_key, E.platform_key, E.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
 
     def port():
@@ -761,9 +777,32 @@ with tempfile.TemporaryDirectory() as tmp:
         return E.jar_port("neoforge", "1.0", "1.2", jars, root / "out", root / "report.json", cache=True)
 
     long_port()
-    command = commands[-1]
-    check(command[command.index("--via") + 1] == "1.1" and [command[i + 1] for i, c in enumerate(command) if c == "--map"] == [str(route), str(step_routes[("1.1", "1.2")])],
-          f"a port across several updates gives JarPort its stops and each step's map: {command}")
+    target = commands[-1]["ports"][0]
+    check(target["via"] == ["1.1"] and target["maps"] == [str(route), str(step_routes[("1.1", "1.2")])],
+          f"a port across several updates gives JarPort its stops and each step's map: {target}")
+    # Ports from one release to several go to one JarPort, which ports the steps they share once; a mod kept for one
+    # target and not the other is ported to both, and the kept port must be what porting it again gives.
+    runs = len(ported)
+    both = E.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+    check(len(ported) == runs and sorted(both) == ["1.1", "1.2"] and both["1.2"]["linked"] == 1,
+          f"two targets whose ports were kept are read, not ported: {ported[runs:]}")
+    jars[2].write_bytes(b"jar 2, edited")
+    E.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+    both = E.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+    check(ported[-1] == ["m2.jar"] and [t["to"] for t in commands[-1]["ports"]] == ["1.1", "1.2"] and both["1.1"]["verified"] == 1,
+          f"a mod with no kept port to one target goes to one JarPort with every target, and its kept port to the other is checked: {commands[-1]}")
+    answer["m2.jar"] = ["field: a.B.d"]
+    jars[2].write_bytes(b"jar 2, edited again")
+    E.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+    answer["m2.jar"] = ["field: a.B.e"]
+    try:
+        E.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+        caught = False
+    except SystemExit as failed:
+        caught = "m2.jar" in str(failed) and "1.1" in str(failed)
+    check(caught, "a kept port that differs from the same port made beside another target fails the run")
+    answer.pop("m2.jar")
+    jars[2].write_bytes(b"jar 2, as the checks below have it")
     later = root / "knowledge" / "standins" / "1.1-1.2" / "a" / "C.java"
     for change in (lambda: (later.parent.mkdir(parents=True, exist_ok=True), later.write_text("package mmt.standin.a; public final class C {}", encoding="utf-8")),
                    lambda: step_routes[("1.1", "1.2")].write_text('{"rewrites": []}', encoding="utf-8")):
@@ -781,7 +820,7 @@ with tempfile.TemporaryDirectory() as tmp:
     except SystemExit as failed:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
-    (E.ROOT, E.HOME, E.side_by_side, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
+    (E.ROOT, E.HOME, E.jarport, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}
@@ -885,5 +924,6 @@ skipped = E.not_loaded({"findings": [
     {"kind": "loader-mismatch", "severity": "warning", "summary": "a.jar is written for another loader (META-INF/neoforge.mods.toml)", "jars": ["a.jar"]},
     {"kind": "java", "severity": "warning", "suspects": [{"jar": "b.jar", "why": ["Java 21"]}]}]})
 check(list(skipped) == ["a.jar"] and "another loader" in skipped["a.jar"], f"a jar the loader skips is named, a Java warning is not: {skipped}")
+
 
 print(f"exposure: {checks} checks passed")
