@@ -1,6 +1,5 @@
 package mmt.standin.net.minecraft.world.level;
 
-import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.core.Direction;
 
 /**
