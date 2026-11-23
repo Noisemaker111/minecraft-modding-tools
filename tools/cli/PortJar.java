@@ -227,7 +227,7 @@ final class PortJar {
     /** JarPort and what it reads, compiled once per version of their sources. */
     static Path compile(Path home, Runtimes.Jdk jdk, Mmt.Report report) throws Exception {
         List<Path> sources = new ArrayList<>();
-        List<String> files = List.of("tools/JarPort.java", "tools/ModNames.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
+        List<String> files = List.of("tools/JarPort.java", "tools/DataIds.java", "tools/ModNames.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
             "tools/GameDiff.java", "tools/VersionMap.java", "tools/cli/Json.java", "tools/cli/Versions.java");
         for (String s : files) {
             sources.add(home.resolve(s));
