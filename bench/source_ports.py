@@ -1,4 +1,4 @@
-"""Any mod, any version, from source: the jar scoreboard's any-version count (bench/exposure.py any_version) asked of the
+"""Any mod, any version, from source: the jar scoreboard's any-version count (bench/portboard/anyversion.py) asked of the
 same mods' own source, ported with `mmt port` instead of as jars.
 
     python bench/source_ports.py pin [--loader fabric|neoforge] [--only SLUG,...]   find each mod's source and pin a commit
@@ -20,14 +20,14 @@ port; nothing in it becomes a rule (rules come only from the game, the loaders a
 
 A port counts when `mmt port --fix` builds it with no hand edits (its verdict includes Mixin itself applying the mod's
 mixins against the target game, and the metadata check) and the jar it built passes the jar scoreboard's own check
-against the target (exposure.jar_port from the target to itself, then exposure's Java, hidden-code and data checks), so
+against the target (portboard.porter.jar_port from the target to itself, with its Java, hidden-code and data checks), so
 "works" means the same on both sides. That check reports what an update broke: references the old release has and the
 new one lacks. On a jar compiled for its own release that half finds nothing (a 1.20.1 jar checked as if built for
 1.21.5 passes it), and javac and Mixin's own check stand in for it; what it adds there is the JVM's verifier, the
 classes' Java against the release's and the game ids in the mod's data the source release had and the target lacks. A mod counts when every target passes. A target that did not run counts as not
 reached, and so does every target of a mod with no published source, no commit for its jar, or a pinned source that
 does not build on its own release (the baseline). join ranks what holds the rest back by type of break, as the jar
-count does (exposure.any_version_table).
+count does (anyversion.any_version_table).
 
 On GitHub's runners: tools/cloud-run source (the source-* jobs of .github/workflows/cloud-ports.yml, corpus=source),
 one job per group of mods for the baseline and one per loader, target and group of mods for the ports: first to the
@@ -52,9 +52,10 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import exposure as E  # noqa: E402
+import port_tools  # noqa: E402
+from portboard import anyversion, gamereleases, javalevels, modrinth, porter, settings  # noqa: E402
 
-ROOT = E.ROOT
+ROOT = port_tools.ROOT
 SOURCES = ROOT / "bench" / "exposure" / "sources"
 WORK = ROOT / ".runs" / "source-ports"
 WINDOWS = os.name == "nt"
@@ -88,7 +89,7 @@ def repo_url(link):
 def jar_links(jar, loader):
     """The links a jar's own metadata gives for the loader, sources first: [(field, link)]."""
     with zipfile.ZipFile(jar) as z:
-        meta = E.metadata(z, loader)
+        meta = javalevels.metadata(z, loader)
         manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace") if "META-INF/MANIFEST.MF" in z.namelist() else ""
     if not meta:
         return [], None, manifest
@@ -109,7 +110,7 @@ def modrinth(kind, ids):
     out = {}
     ids = list(dict.fromkeys(ids))
     for i in range(0, len(ids), 100):
-        for row in E.api(kind, {"ids": json.dumps(ids[i:i + 100])}):
+        for row in modrinth.api(kind, {"ids": json.dumps(ids[i:i + 100])}):
             out[row["id"]] = row
     return out
 
@@ -146,7 +147,7 @@ def version_words(*versions):
     """The version strings a tag may carry for this jar, longest first, each also without a leading v, and each also as the
     mod's own number alone: without the game releases and loader names a Modrinth version number puts around it. A word
     that is only a game release (1.21.1, mc1.21.1) names every build of that release, so it is never one."""
-    game = {r for r in E.releases()} | {".".join(r.split(".")[:2]) for r in E.releases()}
+    game = {r for r in gamereleases.releases()} | {".".join(r.split(".")[:2]) for r in gamereleases.releases()}
     loaders = r"fabric|neoforge|forge|quilt|neo"
     out = set()
     for v in versions:
@@ -224,9 +225,9 @@ def project_of(names, loader, game):
 
 def same_family(game, games):
     """A release of the game's family among games (the jar is published for its whole family), or None."""
-    family = E.families()
+    family = gamereleases.families()
     here = family.get(game, {}).get("id")
-    return next((g for g in sorted(games, key=E.vkey, reverse=True) if here and family.get(g, {}).get("id") == here), None)
+    return next((g for g in sorted(games, key=gamereleases.vkey, reverse=True) if here and family.get(g, {}).get("id") == here), None)
 
 
 def release_of(game, games):
@@ -286,11 +287,11 @@ def pin_commit(url, words, game, loader, published):
 def pin(loader, only=None):
     """bench/exposure/sources/LOADER-FROM.json: for each pinned mod of the loader's most-used release, its repository
     and the commit of its pinned jar, or why there is none."""
-    frm = E.most_used(loader)
-    pinned = json.loads((E.PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"]
+    frm = gamereleases.most_used(loader)
+    pinned = json.loads((settings.PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"]
     if only:
         pinned = [m for m in pinned if m["slug"] in only]
-    jars = {p.name.split("--", 1)[0]: p for p in E.fetch(loader, frm)}
+    jars = {p.name.split("--", 1)[0]: p for p in modrinth.fetch(loader, frm)}
     projects = modrinth("projects", [m["project"] for m in pinned])
     versions = modrinth("versions", [m["version"] for m in pinned])
 
@@ -321,9 +322,9 @@ def pin(loader, only=None):
     if only and path.is_file():
         kept = {r["slug"]: r for r in json.loads(path.read_text(encoding="utf-8"))["mods"]}
         kept.update({r["slug"]: r for r in rows})
-        rows = [kept[m["slug"]] for m in json.loads((E.PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"] if m["slug"] in kept]
+        rows = [kept[m["slug"]] for m in json.loads((settings.PINS / f"{loader}-{frm}.json").read_text(encoding="utf-8"))["mods"] if m["slug"] in kept]
     path.parent.mkdir(parents=True, exist_ok=True)
-    E.write_pin(path, {"loader": loader, "version": frm, "date": date.today().isoformat(), "mods": rows})
+    modrinth.write_pin(path, {"loader": loader, "version": frm, "date": date.today().isoformat(), "mods": rows})
     have = sum(1 for r in rows if "commit" in r)
     print(f"{loader} {frm}: {have} of {len(rows)} mods have source pinned to their jar's commit; "
           f"{sum(1 for r in rows if 'repo' in r)} publish a repository; kept in {path.relative_to(ROOT)}")
@@ -331,7 +332,7 @@ def pin(loader, only=None):
 
 
 def pins(loader):
-    path = SOURCES / f"{loader}-{E.most_used(loader)}.json"
+    path = SOURCES / f"{loader}-{gamereleases.most_used(loader)}.json"
     return json.loads(path.read_text(encoding="utf-8"))["mods"] if path.is_file() else []
 
 
@@ -466,20 +467,21 @@ def source_name(jar_name):
 
 def link(loader, frm, to, jars, work):
     """The jar scoreboard's check on jars built for to: JarPort from to to itself (what an update broke, which on a jar
-    compiled for to is nothing, and the JVM's verifier over every class), the classes' Java against the release's, code
-    in a jar no loader lists, and the game ids in the mod's data that frm has and to lacks. {pinned name: {left, types}}."""
+    compiled for to is nothing; the JVM's verifier over every class; the classes' Java against the release's; code in a
+    jar no loader lists; and, judged against frm with --data-from, the game ids in the mod's data that frm has and to
+    lacks). {pinned name: {left, types}}."""
     if not jars:
         return {}
-    E.compile_tools()
-    named, unread = E.mojang_names(loader, to, jars)
+    porter.compile_tools()
+    named, unread = porter.mojang_names(loader, to, jars)
     report_path = work / "link.json"
-    report = E.jar_port(loader, to, to, named, work / "linked", report_path, False, False) if named else {"mods": [], "unlinkedByMods": [], "linked": 0}
+    report = (porter.jar_port(loader, to, to, named, work / "linked", report_path, False, False, data_from=frm if frm != to else None) if named
+              else {"mods": [], "unlinkedByMods": [], "linked": 0})
     shutil.rmtree(work / "linked", ignore_errors=True)
     by_name = {j.name: j for j in named}
-    report = E.without_platform_copies(report, E.platform_ids(loader, to), by_name)
-    report = E.with_hidden_code_unread(report, by_name)
-    report = E.with_target_java(report, by_name, to)
-    data = E.data_check(frm, to, named) if frm != to else {}
+    report = javalevels.without_platform_copies(report, javalevels.platform_ids(loader, to), by_name)
+    rows = [m for m in report["mods"] if "error" not in m]
+    data = {m["mod"]: [u.split(": ", 1)[1] for u in m.get("data", [])] for m in rows}
     out = {}
     for name, why in unread.items():
         out[source_name(name)] = {"left": [f"unreadable: {why}"[:300]], "types": ["built jar unreadable by the link check"]}
@@ -487,7 +489,7 @@ def link(loader, frm, to, jars, work):
         if "error" in m:
             out[source_name(m["mod"])] = {"left": [m["error"][:300]], "types": ["built jar unreadable by the link check"]}
             continue
-        refs = sorted(E.left(m, data))
+        refs = sorted(porter.left(m, data))
         out[source_name(m["mod"])] = {"left": refs, "types": sorted({f"builds, does not link: {r.split(': ', 1)[0]}" for r in refs})}
     return out
 
@@ -505,7 +507,7 @@ def port_job(loader, to, slugs, out, timeout, budget):
     jar scoreboard's summary shape (verdicts keyed by the pinned jar's name). Mods left when the job's time budget runs
     out are not run: they count as not reached."""
     rows = {r["slug"]: r for r in pins(loader) if "commit" in r}
-    frm = E.most_used(loader)
+    frm = gamereleases.most_used(loader)
     started = time.time()
     verdicts, records, built = {}, [], []
     work = out / f"work-{loader}-{to}"
@@ -569,13 +571,13 @@ def baselines(folder):
 def ends(loader):
     """The two targets every mod is ported to first: the newest release and the oldest. A port across the most updates
     in its direction fails first, and a mod that misses either cannot go to any version."""
-    targets = [b for _, b in E.any_version(loader)]
+    targets = [b for _, b in gamereleases.any_version(loader)]
     return [targets[-1], targets[0]]
 
 
 def side(loader, target):
     """newer or older: the direction of a port from the loader's most-used release to target."""
-    return "newer" if E.vkey(target) > E.vkey(E.most_used(loader)) else "older"
+    return "newer" if gamereleases.vkey(target) > gamereleases.vkey(gamereleases.most_used(loader)) else "older"
 
 
 def summaries(folder):
@@ -605,13 +607,13 @@ def port_plan(folder, size, loaders, phase="ends"):
     done = summaries(folder)
     todo = {}
     for lo in loaders:
-        frm = E.most_used(lo)
+        frm = gamereleases.most_used(lo)
         rows = {r["slug"]: r for r in pins(lo) if "commit" in r and built.get((lo, r["slug"]), {}).get("ok")}
         if phase == "ends":
             todo.update({(lo, t): list(rows) for t in ends(lo) if rows})
             continue
         passed = {t: {n.split("--", 1)[0] for n, v in (done.get((lo, frm, t)) or {}).get("verdicts", {}).items() if not v["left"]} for t in ends(lo)}
-        for _, t in E.any_version(lo):
+        for _, t in gamereleases.any_version(lo):
             end = ends(lo)[0] if side(lo, t) == "newer" else ends(lo)[1]
             mods = [m for m in rows if m in passed[end]]
             if mods and t not in ends(lo):
@@ -626,15 +628,15 @@ def port_plan(folder, size, loaders, phase="ends"):
 def join(folder, out=None):
     """The any-version table of the source ports: every pinned mod of each loader, with the targets its port built and
     linked on; the mods with no source, no commit or a source that does not build on its own release held back on every
-    target by that. Ranked by exposure.any_version_table, as the jar count is."""
+    target by that. Ranked by anyversion.any_version_table, as the jar count is."""
     folder = Path(folder)
     built = baselines(folder)
     found = summaries(folder)
     counts, by_pair = {}, {}
-    for lo in E.FIRST:
-        frm = E.most_used(lo)
+    for lo in settings.FIRST:
+        frm = gamereleases.most_used(lo)
         rows = pins(lo)
-        pinned = json.loads((E.PINS / f"{lo}-{frm}.json").read_text(encoding="utf-8"))["mods"]
+        pinned = json.loads((settings.PINS / f"{lo}-{frm}.json").read_text(encoding="utf-8"))["mods"]
         by_slug = {r["slug"]: r for r in rows}
         held = {}
         for m in pinned:
@@ -650,7 +652,7 @@ def join(folder, out=None):
         counts[lo] = {"pinned": len(pinned), "repository": sum(1 for r in rows if r.get("repo")), "source": sum(1 for r in rows if "commit" in r),
                       "builds": sum(1 for (l, _), b in built.items() if l == lo and b["ok"]), "baselines": sum(1 for (l, _) in built if l == lo)}
         first = {t: (found.get((lo, frm, t)) or {}).get("verdicts", {}) for t in ends(lo)}
-        for _, t in E.any_version(lo):
+        for _, t in gamereleases.any_version(lo):
             s = found.get((lo, frm, t))
             verdicts = dict(held)
             ran = (s or {}).get("verdicts", {})
@@ -666,12 +668,12 @@ def join(folder, out=None):
                 else:
                     verdicts[name] = ran.get(name) or {"left": ["not run"], "types": ["not run"]}
             by_pair[(lo, frm, t)] = {"loader": lo, "from": frm, "to": t, "verdicts": verdicts, "unreadable": {}}
-    anyv = E.any_version_table(by_pair)
+    anyv = anyversion.any_version_table(by_pair)
     builds_on = {}
     for (lo, _, t), s in by_pair.items():
         builds_on.setdefault(lo, {})[t] = sum(1 for v in s["verdicts"].values() if not v["left"])
     table = {"date": date.today().isoformat(), "kind": "source", "sources": counts, "anyVersion": anyv, "perTarget": builds_on,
-             "ports": sorted((p for s in found.values() for p in s.get("ports", [])), key=lambda p: (p["slug"], E.vkey(p["to"])))}
+             "ports": sorted((p for s in found.values() for p in s.get("ports", [])), key=lambda p: (p["slug"], gamereleases.vkey(p["to"])))}
     for line in lines(table):
         print(line)
     if out:
@@ -686,7 +688,7 @@ def headline(table):
 
 
 def lines(table, top=10):
-    """The source count as lines: the headline, how many have source and build, then exposure's any-version lines."""
+    """The source count as lines: the headline, how many have source and build, then the jar count's any-version lines."""
     a = table.get("anyVersion") or {}
     every, mods = headline(table)
     out = [f"{every} of {mods} mods go to any version from source (mmt port builds them with no hand edits and the built jar links on every release)"]
@@ -695,7 +697,7 @@ def lines(table, top=10):
                    f"{c['builds']} of the {c['baselines']} built build on their own release")
     for lo, per in (table.get("perTarget") or {}).items():
         out.append(f"  {NAMES[lo]} per target: " + ", ".join(f"{t} {n}" for t, n in per.items()))
-    out += E.any_version_lines(a, top)[1:]
+    out += anyversion.any_version_lines(a, top)[1:]
     return out
 
 
@@ -781,14 +783,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("pin", help="find each mod's source and pin the commit of its jar")
-    p.add_argument("--loader", choices=sorted(E.FIRST))
+    p.add_argument("--loader", choices=sorted(settings.FIRST))
     p.add_argument("--only", help="slugs, comma-separated")
     p = sub.add_parser("plan", help="the baseline jobs, as JSON")
-    p.add_argument("--loader", choices=sorted(E.FIRST))
+    p.add_argument("--loader", choices=sorted(settings.FIRST))
     p.add_argument("--only", help="slugs, comma-separated")
     p.add_argument("--size", type=int, default=4)
     p = sub.add_parser("baseline", help="build each pinned source on its own release")
-    p.add_argument("--loader", required=True, choices=sorted(E.FIRST))
+    p.add_argument("--loader", required=True, choices=sorted(settings.FIRST))
     p.add_argument("--mods", required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--timeout", type=int, default=2400)
@@ -796,10 +798,10 @@ def main(argv=None):
     p.add_argument("folder", type=Path)
     p.add_argument("--phase", choices=("ends", "rest"), default="ends")
     p.add_argument("--size", type=int, default=8)
-    p.add_argument("--loader", choices=sorted(E.FIRST))
+    p.add_argument("--loader", choices=sorted(settings.FIRST))
     p.add_argument("--to", help="only these targets, comma-separated")
     p = sub.add_parser("port", help="port each mod to one target and link the jars that built")
-    p.add_argument("--loader", required=True, choices=sorted(E.FIRST))
+    p.add_argument("--loader", required=True, choices=sorted(settings.FIRST))
     p.add_argument("--to", required=True)
     p.add_argument("--mods", required=True)
     p.add_argument("--out", type=Path, required=True)
@@ -809,12 +811,12 @@ def main(argv=None):
     p.add_argument("folder", type=Path)
     p.add_argument("--out", type=Path)
     p = sub.add_parser("prove", help="port one mod and start it in a hidden real game")
-    p.add_argument("--loader", required=True, choices=sorted(E.FIRST))
+    p.add_argument("--loader", required=True, choices=sorted(settings.FIRST))
     p.add_argument("--to", required=True)
     p.add_argument("--mod", required=True)
     p.add_argument("--timeout", type=int, default=3600)
     args = ap.parse_args(argv)
-    loaders = [args.loader] if getattr(args, "loader", None) else sorted(E.FIRST)
+    loaders = [args.loader] if getattr(args, "loader", None) else sorted(settings.FIRST)
     if args.cmd == "pin":
         for lo in loaders:
             pin(lo, set(args.only.split(",")) if args.only else None)

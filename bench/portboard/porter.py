@@ -163,7 +163,7 @@ def routes(loader, frm, to):
     return route_maps(list(zip(steps, steps[1:])), loader, compile_tools())
 
 
-def port_key(loader, frm, to, runtime=False):
+def port_key(loader, frm, to, runtime=False, data_from=None):
     """Everything one port reads beside the mod's own jar: the porter's classes, each step's route map and stand-ins, the
     port rules, the loaders' release lists, the JVM and the update. A mod's port with an equal key and an equal jar is the same port."""
     # The hand-back of an obfuscated release reads the jars as they came too: the release's pinned files.
@@ -171,10 +171,11 @@ def port_key(loader, frm, to, runtime=False):
     steps = stops(loader, frm, to)
     maps = routes(loader, frm, to)
     # The registry reports the data pass reads (DataIds), or that a release has none.
-    reports = [(settings.HOME / "registries" / f"{v}.json").read_bytes() if (settings.HOME / "registries" / f"{v}.json").is_file() else b"none" for v in steps]
+    reports = [(settings.HOME / "registries" / f"{v}.json").read_bytes() if (settings.HOME / "registries" / f"{v}.json").is_file() else b"none"
+               for v in steps + ([data_from] if data_from else [])]
     return cachekeys.content_key(tools_classes_key(), *(r.read_bytes() for r in maps), (settings.ROOT / "knowledge" / "fixes.json").read_bytes(),
                        *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), standins_key(loader, "jdk", None), *(cachekeys.platform_key(loader, r) for r in maps),
-                       *reports, javalevels.java_check_key(), java_version(), loader, frm, to, runtime, pinned)
+                       *reports, javalevels.java_check_key(), java_version(), loader, frm, to, runtime, pinned, *([data_from] if data_from else []))
 
 
 def registry_reports(versions):
@@ -198,19 +199,20 @@ def standins_key(loader, frm, to):
     return cachekeys.content_key(*parts)
 
 
-def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False):
+def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False, data_from=None):
     """Ports jars with tools/port/jar/JarPort.java into out_dir and returns its report. runtime: in the names the loader runs
     (a Fabric jar handed back in the target release's intermediary), for a game to start them. cache: only the report is
     wanted, so a mod whose port (port_key and its jar's content) was made before, by any run on this machine, is read from
-    ~/.mmt/exposure/ports/ instead of ported again; only the rest go to JarPort."""
+    ~/.mmt/exposure/ports/ instead of ported again; only the rest go to JarPort. data_from: the release the jars' data was
+    written for, when not frm (a jar built from source for to, checked from to to itself)."""
     classpath = jar_tools()
     steps = stops(loader, frm, to)
     maps = routes(loader, frm, to)
-    registry_reports(steps)
+    registry_reports(steps + ([data_from] if data_from else []))
     out_dir.mkdir(parents=True, exist_ok=True)
     rows, todo, keys, checked = {}, [], {}, 0
     if cache:
-        folder = cachekeys.keyed_at("ports", port_key(loader, frm, to, runtime))
+        folder = cachekeys.keyed_at("ports", port_key(loader, frm, to, runtime, data_from))
         for jar in jars:
             keys[jar.name] = folder / (hashlib.sha256(jar.read_bytes()).hexdigest()[:24] + ".json")
             if keys[jar.name].is_file() and not settings.VERIFY:
@@ -221,7 +223,7 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
         todo = list(jars)
     if todo:
         args = [java(), f"-Xmx{settings.HEAP}g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--fixes", str(settings.ROOT / "knowledge" / "fixes.json"),
-                "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else [])
+                "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else []) + (["--data-from", data_from] if data_from else [])
         if len(steps) > 2:
             args += ["--via", ",".join(steps[1:-1])]
         for route in maps:

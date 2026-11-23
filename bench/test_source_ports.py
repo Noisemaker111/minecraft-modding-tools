@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import exposure as E  # noqa: E402
+from portboard import gamereleases, settings  # noqa: E402
 import source_ports as S  # noqa: E402
 
 checks = 0
@@ -59,15 +59,15 @@ def table(drop_target=False):
         runs.mkdir()
         mods = ["ok", "late", "missing", "nosource", "nobuild", "far"]
         loader = "neoforge"
-        frm = E.most_used(loader)
+        frm = gamereleases.most_used(loader)
         (pins_dir / f"{loader}-{frm}.json").write_text(json.dumps({"mods": [{"slug": m, "file": f"{m}-1.jar"} for m in mods]}), encoding="utf-8")
-        (pins_dir / f"fabric-{E.most_used('fabric')}.json").write_text(json.dumps({"mods": []}), encoding="utf-8")
+        (pins_dir / f"fabric-{gamereleases.most_used('fabric')}.json").write_text(json.dumps({"mods": []}), encoding="utf-8")
         rows = [{"slug": m, "file": f"{m}-1.jar", "repo": "https://github.com/o/" + m, "commit": "c" * 40, "builds": frm} for m in ("ok", "late", "missing", "nobuild", "far")]
         rows.append({"slug": "nosource", "file": "nosource-1.jar", "none": "no published source"})
         for m in ("ok", "late", "missing", "nobuild", "far"):
             ok = m != "nobuild"
             (runs / f"baseline-{loader}-{m}.json").write_text(json.dumps({"slug": m, "loader": loader, "ok": ok, "class": None if ok else "compile-errors", "detail": ""}), encoding="utf-8")
-        targets = [t for _, t in E.any_version(loader)]
+        targets = [t for _, t in gamereleases.any_version(loader)]
         for i, t in enumerate(targets):
             if drop_target and i == 0:
                 continue  # this target's job never ran
@@ -76,20 +76,20 @@ def table(drop_target=False):
             if i == len(targets) - 1:
                 verdicts["late--late-1.jar"] = {"left": ["signature-change: X: y"], "types": ["does not build: signature-change"]}
                 verdicts["far--far-1.jar"] = {"left": ["mixin: X"], "types": ["does not build: mixin-target-change"]}
-            elif E.vkey(t) < E.vkey(frm):
+            elif gamereleases.vkey(t) < gamereleases.vkey(frm):
                 verdicts["far--far-1.jar"] = {"left": [], "types": []}
             # "missing" was in the job's group but its verdict is not in the summary (the job lost it).
             (runs / f"source-{loader}-{t}-ok.json").write_text(json.dumps({"kind": "source", "loader": loader, "from": frm, "to": t, "verdicts": verdicts}), encoding="utf-8")
-        old_pins, old_dir = S.pins, E.PINS
+        old_pins, old_dir = S.pins, settings.PINS
         S.pins = lambda lo: rows if lo == loader else []
-        E.PINS = pins_dir
+        settings.PINS = pins_dir
         try:
             import io
             import contextlib
             with contextlib.redirect_stdout(io.StringIO()):
                 return S.join(runs)
         finally:
-            S.pins, E.PINS = old_pins, old_dir
+            S.pins, settings.PINS = old_pins, old_dir
 
 
 t = table()
@@ -101,7 +101,7 @@ check(held["late"]["reached"] == held["late"]["of"] - 1, "a mod that misses one 
 check(list(held["nosource"]["types"]) == ["no published source"], f"a mod with no source is held by that on every target: {held['nosource']['types']}")
 check(list(held["nobuild"]["types"]) == ["source does not build on its own release: compile-errors"], f"{held['nobuild']['types']}")
 check(list(held["missing"]["types"]) == ["not run"] and held["missing"]["reached"] == 0, "a mod whose verdicts are missing is not reached, not dropped")
-older = [x for _, x in E.any_version("neoforge") if E.vkey(x) < E.vkey(E.most_used("neoforge"))]
+older = [x for _, x in gamereleases.any_version("neoforge") if gamereleases.vkey(x) < gamereleases.vkey(gamereleases.most_used("neoforge"))]
 check(held["far"]["types"] == {"does not build: mixin-target-change": 1} and held["far"]["reached"] == len(older),
       f"a mod not run past the end it missed is held by that end's break alone: {held['far']}")
 check(any(k["type"] == "does not build: mixin-target-change" and k["finishes"] == 1 for k in a["types"]), "the end's break frees that mod in the ranking")
