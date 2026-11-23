@@ -482,6 +482,9 @@ public final class JarPort {
                 synchronized (GameCode.CALLERS) {
                     GameCode.CALLERS.remove(gone[0]);
                 }
+                synchronized (GameCode.MADE) {
+                    GameCode.MADE.remove(gone[0]);
+                }
             }
             was = now;
         }
@@ -4964,6 +4967,23 @@ public final class JarPort {
             boolean[] unread = unread(mod, key.substring(0, key.indexOf('.')), handler.name, handler.desc, (handler.flags & Opcodes.ACC_STATIC) != 0, captured);
             boolean[] args = unread == null ? null : Arrays.copyOfRange(unread, r, captured);
             int[] conv = convert(now, was, args);
+            String[][] via = new String[captured][];
+            if (conv == null) {
+                // An argument that changed type: what the game's code reads from the new one wherever it used the old one
+                // as it was (Retype.follow).
+                conv = pair(now, was);
+                for (int k = 0; k < was.length && conv != null; k++) {
+                    String[] seen = conv[k] >= 0 ? null : retype.follow(oldDecl.owner(), m.group(2), m.group(3), k);
+                    if (seen != null && Integer.parseInt(seen[0]) >= 0) {
+                        conv[k] = Integer.parseInt(seen[0]);
+                        via[r + k] = Arrays.copyOfRange(seen, 1, seen.length);
+                    } else if (conv[k] < 0 && args != null && args[k]) {
+                        conv[k] = -1;
+                    } else if (conv[k] < 0) {
+                        conv = null;
+                    }
+                }
+            }
             if (conv == null) {
                 why(key, label + "9 it reads an argument the new call does not take");
                 return;
@@ -4984,7 +5004,7 @@ public final class JarPort {
             for (int k = 0; k < rest; k++) {
                 desc[r + now.length + k] = hp[captured + k];
             }
-            mod.adapters.put(key, new Adapter(Type.getMethodDescriptor(result, desc), from, captured, new String[captured][]));
+            mod.adapters.put(key, new Adapter(Type.getMethodDescriptor(result, desc), from, captured, via));
         } else {
             why(key, label + "0 this injector passes the call's arguments on");
             return;
@@ -6651,6 +6671,60 @@ public final class JarPort {
         /** Each release's callers index, by the classes it was read from: every worker's porter reads the same release. */
         static final Map<Map<String, byte[]>, Map<String, Set<String>>> CALLERS = new IdentityHashMap<>();
 
+        /** What makes a lambda or method reference: the method it runs and how many values it captures (Mojang names). */
+        record Made(String owner, String name, String desc, int tag, int captures, String in) {}
+
+        Map<String, List<Made>> made;
+
+        /**
+         * Every lambda and method reference the whole release makes for one interface method (owner.name+desc, its erased
+         * descriptor): what each runs. Read once per release, and only where the whole jar was read.
+         */
+        List<Made> made(String owner, String name, String desc) {
+            if (all == null) {
+                return null;
+            }
+            if (made == null) {
+                synchronized (MADE) {
+                    made = MADE.get(all);
+                }
+            }
+            if (made == null) {
+                Map<String, List<Made>> index = new HashMap<>();
+                for (var e : all.entrySet()) {
+                    String jarOwner = e.getKey();
+                    new ClassReader(e.getValue()).accept(new ClassVisitor(Opcodes.ASM9) {
+                        @Override
+                        public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                            String in = names.cls(jarOwner) + "." + names.method(jarOwner, n, d) + names.desc(d);
+                            return new MethodVisitor(Opcodes.ASM9) {
+                                @Override
+                                public void visitInvokeDynamicInsn(String sam, String d2, Handle bsm, Object... args) {
+                                    if (!bsm.getOwner().equals("java/lang/invoke/LambdaMetafactory") || args.length < 2
+                                        || !(args[0] instanceof Type erased) || !(args[1] instanceof Handle h)) {
+                                        return;
+                                    }
+                                    String iface = Type.getReturnType(d2).getInternalName();
+                                    String key = names.cls(iface) + "." + names.method(declarer(iface, sam, erased.getDescriptor(), false), sam, erased.getDescriptor())
+                                        + names.desc(erased.getDescriptor());
+                                    String o = declarer(h.getOwner(), h.getName(), h.getDesc(), false);
+                                    index.computeIfAbsent(key, k -> new ArrayList<>()).add(new Made(names.cls(o), names.method(o, h.getName(), h.getDesc()),
+                                        names.desc(h.getDesc()), h.getTag(), Type.getArgumentTypes(d2).length, in));
+                                }
+                            };
+                        }
+                    }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                }
+                made = index;
+                synchronized (MADE) {
+                    MADE.put(all, index);
+                }
+            }
+            return made.getOrDefault(owner + "." + name + desc, List.of());
+        }
+
+        static final Map<Map<String, byte[]>, Map<String, List<Made>>> MADE = new IdentityHashMap<>();
+
         /**
          * What a game method's new code has where its old code had an injection point. game says what the game did:
          * "ordinal" (the same instruction, now the ordinal-th of its kind), "overload" (a call of the same method with other
@@ -6892,7 +6966,22 @@ public final class JarPort {
             for (int i = 0; i < was.length; i++) {
                 // A primitive too: 1.21's float tick delta is deltaTracker.getGameTimeDeltaPartialTick(false) wherever the game
                 // reads it from the DeltaTracker that took its place.
-                if (paired[i] >= 0 || out[i] != null || was[i].getSort() == Type.VOID) {
+                if (paired[i] >= 0 || was[i].getSort() == Type.VOID) {
+                    continue;
+                }
+                // What the game's code has wherever it used this very parameter as it was, followed through calls and
+                // callers; where those places read it two ways, what the method's own statements show is not enough.
+                String seen = followed(owner, name, desc, i, 0);
+                if (seen.equals(CONFLICT)) {
+                    out[i] = null;
+                    continue;
+                }
+                if (!seen.isEmpty() && stepsLink(seen)) {
+                    out[i] = seen.split(" ");
+                    any = true;
+                    continue;
+                }
+                if (out[i] != null) {
                     continue;
                 }
                 String wanted = desc(was[i].getDescriptor());
@@ -7104,8 +7193,13 @@ public final class JarPort {
          * passed as it is to a call that changed with it, or other code) is no conversion.
          */
         String reading(GameDiff.Node m, Map<Integer, Integer> newParam, Type wanted) {
-            if (!(m.type.equals(desc(wanted.getDescriptor())) || wanted.getSort() == Type.OBJECT && m.type.startsWith("L")
-                && subtype(b, m.type.substring(1, m.type.length() - 1), cls(wanted.getInternalName())))) {
+            return reading(m, newParam, desc(wanted.getDescriptor()));
+        }
+
+        /** reading, for a value of type want (a descriptor in the new release's names). */
+        String reading(GameDiff.Node m, Map<Integer, Integer> newParam, String want) {
+            if (!(m.type.equals(want) || want.startsWith("L") && m.type.startsWith("L")
+                && subtype(b, m.type.substring(1, m.type.length() - 1), want.substring(1, want.length() - 1)))) {
                 return null;
             }
             Deque<String> steps = new ArrayDeque<>();
@@ -7131,7 +7225,7 @@ public final class JarPort {
             }
             // The new parameter itself is a conversion only where it is the old one's very type at another place
             // (mouseDragged's drag distances after the event that replaced x, y and button).
-            if (j == null || steps.isEmpty() && !m.type.equals(desc(wanted.getDescriptor()))) {
+            if (j == null || steps.isEmpty() && !m.type.equals(want)) {
                 return null;
             }
             return steps.isEmpty() ? String.valueOf(j) : j + " " + String.join(" ", steps);
@@ -7154,6 +7248,377 @@ public final class JarPort {
                 }
             }
             return true;
+        }
+
+        static final int FOLLOW_DEPTH = 8, FOLLOW_CALLERS = 64;
+        static final String CONFLICT = "!";
+        final Map<String, String> followed = new HashMap<>(); // "owner.name+desc#i" -> a reading, CONFLICT, or "" for nothing shown
+        final Set<String> following = new HashSet<>();
+        final Map<String, Optional<GameDiff.Body>> bodies = new HashMap<>();
+        boolean cut; // a reading was cut short by a loop or the depth: what it found is not kept
+
+        /**
+         * Old parameter i of a game method (old owner, name, desc) as its new method reads it, {j, steps...} for new
+         * parameter j read through Retype.reading's steps, from every place the game's own code used the old parameter as
+         * it was, the value itself and not something worked out from it:
+         * - in the method's body and its overrides', an argument of a call: the same call (each one called as often on
+         *   both sides, taken in order) has the new parameter there read through steps, or passes the new parameter on
+         *   to a parameter of its own that is followed so in turn;
+         * - in a caller, the caller's own old parameter passed as it was, where its new code passes its new one: what
+         *   that parameter of the caller is followed to;
+         * - for an interface or abstract method, each lambda and method reference the game makes for it.
+         * Only where every place agrees: one that has the new parameter in another form, or a second reading, answers
+         * nothing. 1.21's DeltaTracker is read as getGameTimeDeltaPartialTick(true) and as (false); the float a method
+         * took before matches the reading the game's code has wherever that float was used as it was (GameRenderer
+         * .renderLevel's: true; the HUD's: false), and a method whose float reached both is not converted.
+         */
+        String[] follow(String owner, String name, String desc, int i) {
+            String r = followed(owner, name, desc, i, 0);
+            return r.isEmpty() || r.equals(CONFLICT) || !stepsLink(r) ? null : r.split(" ");
+        }
+
+        String followed(String owner, String name, String desc, int i, int depth) {
+            String key = owner + "." + name + desc + "#" + i;
+            String known = followed.get(key);
+            if (known != null) {
+                return known;
+            }
+            if (depth > FOLLOW_DEPTH || !following.add(key)) {
+                cut = true;
+                return "";
+            }
+            boolean outer = cut;
+            cut = false;
+            String out;
+            try {
+                Map<String, Integer> votes = new HashMap<>();
+                gather(owner, name, desc, i, depth, votes);
+                out = votes.containsKey(CONFLICT) || votes.size() > 1 ? CONFLICT : votes.isEmpty() ? "" : votes.keySet().iterator().next();
+            } finally {
+                following.remove(key);
+            }
+            if (!cut) {
+                followed.put(key, out);
+            }
+            cut |= outer;
+            if (!LOG.isEmpty()) {
+                log("  ".repeat(depth) + key + " followed: " + out + "\n");
+            }
+            return out;
+        }
+
+        void log(String line) {
+            try {
+                Files.writeString(Path.of(LOG), line, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        void gather(String owner, String name, String desc, int i, int depth, Map<String, Integer> votes) {
+            GameDiff.Cls decl = Exposure.declaring(a, owner, 'm', name, desc);
+            GameDiff.Meth m = decl == null ? null : decl.methods.get(name + desc);
+            GameCode oldCode = code(a), newCode = code(b);
+            if (m == null || oldCode == null || newCode == null) {
+                return;
+            }
+            String[] moved = route.method(decl.name, name, desc);
+            GameDiff.Cls nowDecl = Exposure.declaring(b, moved[0], 'm', moved[1], moved[2]);
+            GameDiff.Meth now = nowDecl == null ? null : nowDecl.methods.get(moved[1] + moved[2]);
+            Type[] was = Type.getArgumentTypes(desc), fresh = Type.getArgumentTypes(moved[2]);
+            if (now == null || m.isStatic() != now.isStatic() || i >= was.length) {
+                return;
+            }
+            int first = m.isStatic() ? 0 : 1;
+            int hole = slots(was, first)[i];
+            Map<Integer, Integer> newParam = new HashMap<>();
+            int[] at = slots(fresh, first);
+            for (int j = 0; j < fresh.length; j++) {
+                newParam.put(at[j], j);
+            }
+            String want = desc(was[i].getDescriptor());
+            // Parameters that kept their type stand for themselves where the statements are lined up.
+            Map<Integer, Integer> same = new HashMap<>();
+            if (first == 1) {
+                same.put(0, 0);
+            }
+            int[] paired = pair(fresh, Arrays.stream(was).map(t -> Type.getType(desc(t.getDescriptor()))).toArray(Type[]::new));
+            int[] oldAt = slots(was, first);
+            for (int k = 0; k < was.length; k++) {
+                if (paired[k] >= 0 && k != i) {
+                    same.put(oldAt[k], at[paired[k]]);
+                }
+            }
+            // The method's own code, and each override's: its calls, and its statements lined up as Retype.learn lines them.
+            for (String c : overriders(decl.name, name, desc)) {
+                GameDiff.Body x = body(oldCode, c, name + desc, true), y = body(newCode, cls(c), moved[1] + moved[2], false);
+                if (x != null && y != null) {
+                    along(x, y, hole, newParam, want, depth, votes);
+                    new Lining(Map.of(hole, i), same).pair(x, y, (s, there) -> {
+                        // The new parameter passed on as it is goes to a call that changed with it, which along follows.
+                        String r = reading(there, newParam, want);
+                        vote(votes, r != null && !r.startsWith(THIS + " ") ? r : there.op != 'p' && uses(there, newParam) ? CONFLICT : "");
+                    });
+                }
+            }
+            // Each lambda and method reference the game makes for it.
+            if ((m.flags & Opcodes.ACC_ABSTRACT) != 0) {
+                made(oldCode, newCode, decl.name, name, desc, moved, nowDecl.name, i, depth, votes);
+            }
+            // Each caller that passed its own parameter as it was.
+            Set<String> callers = oldCode.callers(decl.name, name, desc);
+            if (callers == null || callers.size() > FOLLOW_CALLERS) {
+                return;
+            }
+            String self = nowDecl.name + "." + moved[1] + moved[2];
+            for (String c : new TreeSet<>(callers)) {
+                int p = c.indexOf('(');
+                int dot = c.lastIndexOf('.', p);
+                String co = c.substring(0, dot), cn = c.substring(dot + 1, p), cd = c.substring(p);
+                GameDiff.Cls cdecl = Exposure.declaring(a, co, 'm', cn, cd);
+                GameDiff.Meth caller = cdecl == null ? null : cdecl.methods.get(cn + cd);
+                String[] cm = route.method(co, cn, cd);
+                GameDiff.Body x = body(oldCode, co, cn + cd, true), y = body(newCode, cm[0], cm[1] + cm[2], false);
+                if (caller == null || x == null || y == null) {
+                    continue;
+                }
+                List<GameDiff.Node> before = calls(x, true).get(self), after = calls(y, false).get(self);
+                if (before == null || after == null || before.size() != after.size()) {
+                    continue;
+                }
+                Type[] cwas = Type.getArgumentTypes(cd), cnow = Type.getArgumentTypes(cm[2]);
+                int cfirst = caller.isStatic() ? 0 : 1;
+                int[] cslots = slots(cwas, cfirst), nslots = slots(cnow, cfirst);
+                for (int k = 0; k < before.size(); k++) {
+                    GameDiff.Node old = before.get(k), fresh2 = after.get(k);
+                    GameDiff.Node arg = old.kids[receiver(old) + i];
+                    int q = arg.op == 'p' && arg.value instanceof Integer s ? indexOf(cslots, s) : -1;
+                    if (q < 0) {
+                        continue; // a value worked out in the caller says nothing of the parameter as it was
+                    }
+                    String sub = followed(cdecl.name, cn, cd, q, depth + 1);
+                    if (sub.isEmpty() || sub.equals(CONFLICT)) {
+                        vote(votes, sub);
+                        continue;
+                    }
+                    String[] parts = sub.split(" ", 2);
+                    int q2 = Integer.parseInt(parts[0]);
+                    if (q2 < 0 || q2 >= nslots.length) {
+                        continue; // what the caller's object answers is not this method's
+                    }
+                    int found = -1;
+                    for (int j = 0; j < fresh.length; j++) {
+                        GameDiff.Node there = fresh2.kids[receiver(fresh2) + j];
+                        if (there.op == 'p' && Integer.valueOf(nslots[q2]).equals(there.value)) {
+                            found = found == -1 ? j : -2;
+                        }
+                    }
+                    if (found >= 0) {
+                        vote(votes, found + (parts.length > 1 ? " " + parts[1] : ""));
+                    }
+                }
+            }
+        }
+
+        static void vote(Map<String, Integer> votes, String reading) {
+            if (!reading.isEmpty()) {
+                votes.merge(reading, 1, Integer::sum);
+            }
+        }
+
+        static int indexOf(int[] slots, int slot) {
+            for (int i = 0; i < slots.length; i++) {
+                if (slots[i] == slot) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        /** How many of a call node's kids come before its arguments: the receiver of an instance call. */
+        static int receiver(GameDiff.Node call) {
+            return call.op == 'v' || call.op == 'S' ? 1 : 0;
+        }
+
+        /**
+         * Lining up an old body (x) and a new one (y) by the calls they make: where an old call takes the hole parameter
+         * as it was, what the same call in the new body takes there.
+         */
+        void along(GameDiff.Body x, GameDiff.Body y, int hole, Map<Integer, Integer> newParam, String want, int depth, Map<String, Integer> votes) {
+            Map<String, List<GameDiff.Node>> before = calls(x, true), after = calls(y, false);
+            for (var e : before.entrySet()) {
+                List<GameDiff.Node> was = e.getValue(), now = after.get(e.getKey());
+                for (int n = 0; n < was.size(); n++) {
+                    GameDiff.Node co = was.get(n);
+                    for (int k = receiver(co); k < co.kids.length; k++) {
+                        GameDiff.Node arg = co.kids[k];
+                        if (arg.op != 'p' || !Integer.valueOf(hole).equals(arg.value)) {
+                            continue;
+                        }
+                        if (now == null || now.size() != was.size()) {
+                            break; // the call is made another number of times: nothing lines up
+                        }
+                        place(co, now.get(n), k - receiver(co), newParam, want, depth, votes);
+                    }
+                }
+            }
+        }
+
+        /** What the new call cn has where the old call co took the hole parameter as its argument k. */
+        void place(GameDiff.Node co, GameDiff.Node cn, int k, Map<Integer, Integer> newParam, String want, int depth, Map<String, Integer> votes) {
+            int on = receiver(cn);
+            if (desc(co.ref.desc()).equals(cn.ref.desc())) {
+                GameDiff.Node there = cn.kids[on + k];
+                String r = reading(there, newParam, want);
+                vote(votes, r != null && !r.startsWith(THIS + " ") ? r : uses(there, newParam) ? CONFLICT : "");
+                return;
+            }
+            // The call's own parameter changed with it: what the callee's new code reads from it.
+            GameDiff.Cls decl = Exposure.declaring(a, co.ref.owner(), 'm', co.ref.name(), co.ref.desc());
+            if (decl == null) {
+                return;
+            }
+            String sub = followed(decl.name, co.ref.name(), co.ref.desc(), k, depth + 1);
+            if (sub.isEmpty() || sub.equals(CONFLICT)) {
+                vote(votes, sub);
+                return;
+            }
+            String[] parts = sub.split(" ", 2);
+            int k2 = Integer.parseInt(parts[0]);
+            Type[] params = Type.getArgumentTypes(cn.ref.desc());
+            if (k2 < 0 || k2 >= params.length) {
+                return;
+            }
+            GameDiff.Node there = cn.kids[on + k2];
+            String r = reading(there, newParam, params[k2].getDescriptor());
+            if (r == null || r.startsWith(THIS + " ")) {
+                vote(votes, uses(there, newParam) ? CONFLICT : "");
+                return;
+            }
+            vote(votes, r + (parts.length > 1 ? " " + parts[1] : ""));
+        }
+
+        /**
+         * The lambdas and method references the game makes for an abstract method: each one the old release made that
+         * reads the parameter is followed into what it runs, where the new release makes it from the same method (a
+         * method reference); one of a lambda, whose name each release numbers anew, answers nothing.
+         */
+        void made(GameCode oldCode, GameCode newCode, String owner, String name, String desc, String[] moved, String nowOwner, int i, int depth, Map<String, Integer> votes) {
+            List<GameCode.Made> before = oldCode.made(owner, name, desc), after = newCode.made(nowOwner, moved[1], moved[2]);
+            if (before == null || after == null) {
+                return;
+            }
+            for (GameCode.Made o : before) {
+                int shift = shift(o);
+                int p = i + shift;
+                Type[] params = Type.getArgumentTypes(o.desc());
+                if (p < 0 || p >= params.length) {
+                    continue; // the receiver of an unbound reference, not a parameter
+                }
+                boolean isStatic = o.tag() == Opcodes.H_INVOKESTATIC || o.tag() == Opcodes.H_NEWINVOKESPECIAL;
+                GameDiff.Body x = body(oldCode, o.owner(), o.name() + o.desc(), true);
+                if (x == null || !mentions(x, slots(params, isStatic ? 0 : 1)[p])) {
+                    continue; // it never reads it
+                }
+                GameCode.Made n = o.name().startsWith("lambda$") ? lambda(before, after, o) : null;
+                if (!o.name().startsWith("lambda$")) {
+                    String[] went = route.method(o.owner(), o.name(), o.desc());
+                    n = after.stream().filter(m -> m.owner().equals(went[0]) && m.name().equals(went[1]) && m.desc().equals(went[2]) && m.tag() == o.tag())
+                        .findFirst().orElse(null);
+                }
+                if (n == null) {
+                    if (!LOG.isEmpty()) {
+                        log("  ".repeat(depth) + "unpaired " + o + "\n");
+                    }
+                    vote(votes, CONFLICT);
+                    continue;
+                }
+                String sub = followed(o.owner(), o.name(), o.desc(), p, depth + 1);
+                if (sub.isEmpty() || sub.equals(CONFLICT)) {
+                    vote(votes, sub);
+                    continue;
+                }
+                String[] parts = sub.split(" ", 2);
+                int j = Integer.parseInt(parts[0]) - shift(n);
+                if (j >= 0) {
+                    vote(votes, j + (parts.length > 1 ? " " + parts[1] : ""));
+                }
+            }
+        }
+
+        /**
+         * The new release's lambda for an old one: the one in the same place, where the method that makes the old lambda
+         * (route-mapped) makes as many for the interface method in the new release, taken in order. Javac numbers a
+         * class's lambdas anew in each release, so the name says nothing.
+         */
+        GameCode.Made lambda(List<GameCode.Made> before, List<GameCode.Made> after, GameCode.Made o) {
+            int p = o.in().indexOf('(');
+            int dot = o.in().lastIndexOf('.', p);
+            String[] went = route.method(o.in().substring(0, dot), o.in().substring(dot + 1, p), o.in().substring(p));
+            String in = went[0] + "." + went[1] + went[2];
+            List<GameCode.Made> was = before.stream().filter(m -> m.in().equals(o.in())).toList();
+            List<GameCode.Made> now = after.stream().filter(m -> m.in().equals(in)).toList();
+            return was.size() == now.size() && now.get(was.indexOf(o)).name().startsWith("lambda$") ? now.get(was.indexOf(o)) : null;
+        }
+
+        /** Where the interface method's first parameter stands among the parameters of the method a lambda runs. */
+        static int shift(GameCode.Made m) {
+            boolean instance = m.tag() != Opcodes.H_INVOKESTATIC && m.tag() != Opcodes.H_NEWINVOKESPECIAL;
+            return instance ? m.captures() == 0 ? -1 : m.captures() - 1 : m.captures();
+        }
+
+        /** Whether a tree reads one of the new parameters at all. */
+        static boolean uses(GameDiff.Node n, Map<Integer, Integer> newParam) {
+            if (n.op == 'p' && n.value instanceof Integer s && newParam.containsKey(s)) {
+                return true;
+            }
+            for (GameDiff.Node k : n.kids) {
+                if (uses(k, newParam)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static boolean mentions(GameDiff.Body body, int slot) {
+            Map<Integer, Integer> one = Map.of(slot, 0);
+            return body.statements.stream().anyMatch(s -> uses(s, one));
+        }
+
+        /**
+         * A body's calls by the method each one calls in the new release (owner.name+desc, its declaring class), each list in
+         * the order the code makes them.
+         */
+        Map<String, List<GameDiff.Node>> calls(GameDiff.Body body, boolean old) {
+            Map<String, List<GameDiff.Node>> out = new LinkedHashMap<>();
+            Deque<GameDiff.Node> todo = new ArrayDeque<>();
+            for (int s = body.statements.size() - 1; s >= 0; s--) {
+                todo.push(body.statements.get(s));
+            }
+            while (!todo.isEmpty()) {
+                GameDiff.Node n = todo.pop();
+                if (n.ref != null && n.ref.kind() == 'm' && n.ref.desc() != null && (n.op == 'v' || n.op == 's' || n.op == 'w' || n.op == 'S' && "init".equals(n.value))) {
+                    out.computeIfAbsent(callKey(n.ref, old), k -> new ArrayList<>()).add(n);
+                }
+                for (int k = n.kids.length - 1; k >= 0; k--) {
+                    todo.push(n.kids[k]);
+                }
+            }
+            return out;
+        }
+
+        String callKey(GameDiff.Ref r, boolean old) {
+            if (!old) {
+                return declarer(r.owner(), r.name(), r.desc()) + "." + r.name() + r.desc();
+            }
+            GameDiff.Cls decl = Exposure.declaring(a, r.owner(), 'm', r.name(), r.desc());
+            String[] moved = route.method(decl == null ? r.owner() : decl.name, r.name(), r.desc());
+            return declarer(moved[0], moved[1], moved[2]) + "." + moved[1] + moved[2];
+        }
+
+        /** A game method's body (body), read once. */
+        GameDiff.Body body(GameCode code, String owner, String key, boolean old) {
+            return bodies.computeIfAbsent((old ? "a " : "b ") + owner + "." + key, k -> Optional.ofNullable(body(code, owner, key))).orElse(null);
         }
 
         final Map<String, List<String>> overridersOf = new HashMap<>();
@@ -8797,6 +9262,22 @@ public final class JarPort {
             return false;
         }
 
+        /**
+         * Whether the mod's moved method body works out each argument this moved body passes it from a new parameter the
+         * way this body does (the same steps): one helper moved for a HUD handler's partial tick, read as (false), is not
+         * what a world handler's (true) wants.
+         */
+        boolean sameReadings(Bridge body, String desc) {
+            Integer[] src = moved.track.sources(Type.getArgumentTypes(desc));
+            for (int k = 0; src != null && k < src.length; k++) {
+                String[] mine = src[k] == null ? null : moved.br.via()[src[k]];
+                if (mine != null && (body.via() == null || k >= body.via().length || !Arrays.equals(mine, body.via()[k]))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         void call(int opcode, String owner, String name, String desc, boolean itf) {
             String[] own = mod.renamedDecl.get(owner + "." + name + desc);
             // An override moved under a final game method is still reached through it; only super calls go straight there.
@@ -8813,7 +9294,8 @@ public final class JarPort {
                 .filter(br -> br.via() != null && br.target().equals(name) && br.targetDesc().equals(desc)).findFirst().orElse(null);
             if (body != null) {
                 // The mod's own method moved to the game's new parameter types: a call made where they are at hand follows it.
-                if (moved == null || !given(opcode, owner, desc, List.<String[]>of(new String[] { decl.owner(), body.name(), body.desc(), "mod" }))) {
+                // Only where it works out each old argument as this body does: two handlers may read one tracker two ways.
+                if (moved == null || !sameReadings(body, desc) || !given(opcode, owner, desc, List.<String[]>of(new String[] { decl.owner(), body.name(), body.desc(), "mod" }))) {
                     if (DEBUG) {
                         System.err.println("kept " + name + desc + " for a call in " + where + " moved=" + (moved != null) + " src=" + (moved == null ? "" : Arrays.toString(moved.track.sources(Type.getArgumentTypes(desc)))));
                     }
