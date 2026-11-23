@@ -29,9 +29,9 @@ The port sweep, for what is missing across many mods rather than one:
 
 - `python bench/rule_test.py [--only RULE_ID] [--write]` gives each port rule without a test one from real mod source: the first code in the pinned mods its `find` matches, and what the porter's own rewrite makes of it. `--source DIR:yarn|mojmap:LABEL` searches another checkout too.
 
-Generated, on main only (`.github/workflows/generated.yml` runs these after every merge and commits the result):
+Generated after every merge and committed to the `generated` branch, never to main (`.github/workflows/generated.yml`, `bench/generated.py`):
 
-- `python bench/bench_page.py` renders `docs/index.html` (the existing dashboard and porting map) and recreates `ROADMAP.md`; `--roadmap` writes only `ROADMAP.md`. The generators and their output are unchanged by this documentation cleanup.
+- `python bench/generated.py build` writes the site (`docs/index.html`, the dashboard and porting map) and `ROADMAP.md` into `.runs/generated/` as main would publish them, with main's scoreboard from the `generated` branch.
 - `python bench/test_measures.py`, `python bench/test_record.py` and `python bench/test_ledger_rule.py` are the PR checks for all of the above.
 
 What a game session costs:
