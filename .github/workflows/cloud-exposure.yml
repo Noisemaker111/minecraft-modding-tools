@@ -4,7 +4,9 @@ name: Cloud jar scoreboard
 # with JarPort and linking them against the next release; the summary job joins them into the all-updates table
 # (python bench/exposure.py join). A job downloads about 1 GB (the game twice, its loader, 150 mods) in under a minute, so
 # only small kept answers are cached: each release's registry report (its data generator, a third of a job's time) and the
-# ports and Exposure answers of the sweep before. The sweep ports every mod and asks Exposure everything again (--verify)
+# ports and Exposure answers of the sweep before. The published files the porter downloads (intermediary, Mojang's
+# mappings, Fabric API) are kept one cache entry each (.github/actions/downloads): Fabric's maven reset connections when a
+# sweep's jobs all downloaded them at once. The sweep ports every mod and asks Exposure everything again (--verify)
 # and fails where a kept answer with the same key differs: the check that the cache agents use locally is exact.
 #
 # Main's table is made once per commit: every push to main runs this, and the record job saves the table as
@@ -90,6 +92,11 @@ jobs:
             ~/.mmt/exposure/maps
           key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: exposure-kept-${{ matrix.update }}-
+      # The published files the porter downloads (intermediary, Mojang's mappings and jars, Fabric API), one cache entry each.
+      - uses: ./.github/actions/downloads
+        with:
+          mode: restore
+          job: exposure-${{ matrix.update }}
       - name: Port and link this update's mods
         # Under the job's 40 so the save below still runs when the port runs out of time.
         timeout-minutes: 36
@@ -99,6 +106,11 @@ jobs:
           IFS=: read -r LOADER FROM TO <<< "$UPDATE"
           mkdir -p summary
           python bench/exposure.py jars --verify --loader "$LOADER" --from "$FROM" --to "$TO" --out "summary/$LOADER-$FROM-$TO.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: ./.github/actions/downloads
+        if: always()
+        with:
+          mode: save
+          job: exposure-${{ matrix.update }}
       # Saved when the port fails or runs out of time too: the route maps and finished ports are right either way, and a
       # long port that never finished never kept them, so every run after it started cold and ran out of time again.
       - uses: actions/cache/save@v4

@@ -1,0 +1,37 @@
+name: Kept downloads
+description: >-
+  Restores (mode restore) or keeps (mode save) the published files the porter downloads into ~/.mmt/mappings, one Actions
+  cache entry per file keyed by its name, so a cold job downloads only what no job kept before (downloads.cjs).
+inputs:
+  mode:
+    description: restore, before the job's work; save, after it (with if always())
+    required: true
+  job:
+    description: What the list of files a job used is kept under, the same in every run of that job (workflow and update)
+    required: true
+runs:
+  using: composite
+  steps:
+    - if: inputs.mode == 'restore'
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.mmt/downloads.txt
+        key: downloads-${{ inputs.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: downloads-${{ inputs.job }}-
+    - shell: bash
+      run: |
+        [ -d "$RUNNER_TEMP/kept-downloads/node_modules/@actions/cache" ] \
+          || npm install --prefix "$RUNNER_TEMP/kept-downloads" --no-audit --no-fund --silent @actions/cache@4
+    - uses: actions/github-script@v7
+      env:
+        MODE: ${{ inputs.mode }}
+        SCRIPT: ${{ github.action_path }}/downloads.cjs
+      with:
+        script: |
+          const cache = require(`${process.env.RUNNER_TEMP}/kept-downloads/node_modules/@actions/cache`);
+          await require(process.env.SCRIPT)[process.env.MODE](cache, core);
+    - if: inputs.mode == 'save'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.mmt/downloads.txt
+        key: downloads-${{ inputs.job }}-${{ github.run_id }}-${{ github.run_attempt }}

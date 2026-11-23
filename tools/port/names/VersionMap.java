@@ -315,10 +315,13 @@ public final class VersionMap {
             r = HTTP.send(HttpRequest.newBuilder(URI.create(url)).build(), HttpResponse.BodyHandlers.ofByteArray());
         } catch (IOException failed) {
             // The client's own messages name no address (a refused connection's is empty).
-            throw new IOException("download of " + url + " failed: " + failed, failed);
+            throw new IOException("network failure downloading " + url + ": " + failed, failed);
+        }
+        if (r.statusCode() == 404) {
+            throw new NotPublished(url);
         }
         if (r.statusCode() != 200) {
-            throw new IOException("HTTP " + r.statusCode() + " for " + url);
+            throw new IOException("the server answered HTTP " + r.statusCode() + " for " + url);
         }
         Path tmp = Files.createTempFile(cache, "dl", ".part");
         Files.write(tmp, r.body());
@@ -328,6 +331,21 @@ public final class VersionMap {
             Files.delete(tmp); // a run beside this one fetched the same file first; replacing it could break its reads
         }
         return p;
+    }
+
+    /** Fabric's maven; a test points it at a server of its own. */
+    static String fabricMaven = "https://maven.fabricmc.net/";
+
+    /** Fabric's intermediary names of a release (official to intermediary), as published. */
+    static Path intermediary(String version) throws IOException, InterruptedException {
+        return fetch(fabricMaven + "net/fabricmc/intermediary/" + version + "/intermediary-" + version + "-v2.jar", "intermediary-" + version + "-v2.jar");
+    }
+
+    /** The server answered 404: nothing is published there. A network failure or another answer is a plain IOException. */
+    static final class NotPublished extends IOException {
+        NotPublished(String url) {
+            super("not published: HTTP 404 for " + url);
+        }
     }
 
     static String fetchText(String url, String name) throws IOException, InterruptedException {
@@ -405,15 +423,8 @@ public final class VersionMap {
             String versionJson = fetchText(jsonString(manifest, "url", at), "version-" + version + ".json");
             Path inter;
             try {
-                inter = fetch(
-                    "https://maven.fabricmc.net/net/fabricmc/intermediary/" +
-                    version +
-                    "/intermediary-" +
-                    version +
-                    "-v2.jar",
-                    "intermediary-" + version + "-v2.jar"
-                );
-            } catch (IOException e) {
+                inter = intermediary(version);
+            } catch (NotPublished e) {
                 throw new IOException(
                     "Minecraft " +
                     version +
@@ -1013,10 +1024,7 @@ public final class VersionMap {
 
         static Bridge at() throws Exception {
             Tiny srg = Table.mcpNames(SEAM, null).keys();
-            Path inter = fetch(
-                "https://maven.fabricmc.net/net/fabricmc/intermediary/" + SEAM + "/intermediary-" + SEAM + "-v2.jar",
-                "intermediary-" + SEAM + "-v2.jar"
-            );
+            Path inter = intermediary(SEAM);
             Tiny it = Tiny.parse(zipEntry(inter, "mappings/mappings.tiny"));
             Proguard[] pgs = proguardsFor(SEAM);
             return join(srg, it, pgs[0], pgs[1]);

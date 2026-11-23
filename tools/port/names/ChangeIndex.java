@@ -215,7 +215,7 @@ public final class ChangeIndex {
 				String[] m = download(vj, "client_mappings");
 				if (m != null) {
 					verified(m, "client-" + id + ".txt");
-					VersionMap.fetch("https://maven.fabricmc.net/net/fabricmc/intermediary/" + id + "/intermediary-" + id + "-v2.jar", "intermediary-" + id + "-v2.jar");
+					VersionMap.intermediary(id);
 				}
 				return null;
 			}));
@@ -264,7 +264,7 @@ public final class ChangeIndex {
 				source = mn.source();
 			} else if (m != null) {
 				pg = VersionMap.Proguard.parse(Files.readString(verified(m, "client-" + id + ".txt"), StandardCharsets.UTF_8));
-				Path inter = VersionMap.fetch("https://maven.fabricmc.net/net/fabricmc/intermediary/" + id + "/intermediary-" + id + "-v2.jar", "intermediary-" + id + "-v2.jar");
+				Path inter = VersionMap.intermediary(id);
 				it = VersionMap.Tiny.parse(VersionMap.zipEntry(inter, "mappings/mappings.tiny"));
 			}
 			Snap s = new Snap(id, pg != null, srgLane, source);
