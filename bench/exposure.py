@@ -84,6 +84,8 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# Gigabytes of heap for the Java tools; lower it when other work shares the machine.
+HEAP = int(os.environ.get("MMT_HEAP_GB") or 10)
 HOME = Path(os.environ.get("MMT_EXPOSURE_HOME") or Path(os.path.expanduser("~")) / ".mmt" / "exposure")
 # --verify: port every mod and ask Exposure every reference as if nothing were cached, and fail where a cached answer with
 # the same key differs. Main's sweep runs so, with the answers of main's sweep before it, as the check that the cache is exact.
@@ -408,7 +410,7 @@ def route_maps(updates, loader, classes):
     missing = {t: (frm, to) for t, (frm, to) in zip(targets, updates) if not t.is_file()}
     if missing:
         parts = {t: part_of(t) for t in missing}
-        args = [java(), "-Xmx10g", "-cp", str(classes), "GameDiff"] + (["--loader", loader] if loader else [])
+        args = [java(), f"-Xmx{HEAP}g", "-cp", str(classes), "GameDiff"] + (["--loader", loader] if loader else [])
         for t, (frm, to) in missing.items():
             args += ["--chain", ",".join(chain(frm, to)), "--out", str(parts[t])]
         subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
@@ -481,7 +483,7 @@ def side_by_side(command, jars, report, one=False):
     dealt = [list(jars)] if one else piles(jars)
     if len(dealt) > 1:
         # The piles share the memory one process had.
-        command = [f"-Xmx{max(3, 10 // len(dealt))}g" if c.startswith("-Xmx") else c for c in command]
+        command = [f"-Xmx{max(3, HEAP // len(dealt))}g" if c.startswith("-Xmx") else c for c in command]
     parts = [report.with_name(f"{report.stem}.{i}{report.suffix}") for i in range(len(dealt))]
     running = [subprocess.Popen(command + ["--report", str(part)] + [str(j) for j in pile], stdout=subprocess.DEVNULL) for part, pile in zip(parts, dealt)]
     codes = [process.wait() for process in running]
@@ -509,7 +511,7 @@ def mojang_names(loader, version, jars):
         # ModNames writes each jar under a name of its own and moves it into place, so a run beside this one never reads half a jar.
         report = ROOT / ".runs" / "exposure" / f"names-{loader}-{version}-{os.getpid()}.json"
         report.parent.mkdir(parents=True, exist_ok=True)
-        rows = side_by_side([java(), "-Xmx4g", "-cp", jar_tools(), "ModNames", "--version", version, "--loader", loader, "--out", str(out)], missing, report)
+        rows = side_by_side([java(), f"-Xmx{min(4, HEAP)}g", "-cp", jar_tools(), "ModNames", "--version", version, "--loader", loader, "--out", str(out)], missing, report)
         failed = {m["mod"]: m["error"] for m in rows if "error" in m}
     return [out / j.name for j in jars if (out / j.name).is_file()], failed
 
@@ -591,7 +593,7 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
     else:
         todo = list(jars)
     if todo:
-        args = [java(), "-Xmx10g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--fixes", str(ROOT / "knowledge" / "fixes.json"),
+        args = [java(), f"-Xmx{HEAP}g", "-cp", classpath, "JarPort", "--from", frm, "--to", to, "--fixes", str(ROOT / "knowledge" / "fixes.json"),
                 "--out", str(out_dir), "--loader", loader] + (["--runtime-names"] if runtime else [])
         if len(steps) > 2:
             args += ["--via", ",".join(steps[1:-1])]
@@ -652,7 +654,7 @@ def game_says(loader, frm, to, report):
     if VERIFY or not set(asked) <= set(said["answered"]):
         out = report.with_name("game.json")
         log = report.with_name("game-classes.log")
-        subprocess.run([java(), "-Xmx10g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
+        subprocess.run([java(), f"-Xmx{HEAP}g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
                         "--report", str(report), "--out", str(out), "--loader", loader], check=True, stdout=subprocess.DEVNULL)
         own = Path(classes.split(os.pathsep)[0]).resolve()
         names = sorted({m.group(1) for m in map(LOADED.search, log.read_text(encoding="utf-8", errors="replace").splitlines())
@@ -2394,7 +2396,7 @@ def steps(frm, to):
     target = ROOT / ".runs" / "exposure" / f"steps-{frm}-{to}-{tools_key(*MAP_SOURCES)}.json"
     if not target.is_file():
         target.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run([java(), "-Xmx10g", "-cp", str(classes), "GameDiff", "--chain", ",".join(versions), "--out", str(target)], check=True)
+        subprocess.run([java(), f"-Xmx{HEAP}g", "-cp", str(classes), "GameDiff", "--chain", ",".join(versions), "--out", str(target)], check=True)
     route = json.loads(target.read_text(encoding="utf-8"))
     # Rows per kind of replacement, and each member with no counterpart counted once whatever gave it one ("learned"
     # also lists members whose signature changed: those have a counterpart, so they are not in "gone").
