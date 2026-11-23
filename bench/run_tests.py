@@ -57,9 +57,16 @@ class Together(list):
 BUILT = {".gradle", "build", ".mmt", ".runs"}
 
 
+# These checks run mmt on one copy of the demo mod, one after another in this order: they would refuse each other's
+# project lock, and each would set Gradle up cold on a copy of its own (fast 20 s and port-plan 14 s alone on CI became
+# 96 s and 132 s that way). The other checks run beside them.
+SHARED = ("fast", "port-plan", "legacy-agent")
+
+
 def fixture(check):
-    """A copy of the demo mod for one check, its sources the fixture's own; the path relative to the checkout."""
-    copy = ROOT / ".runs" / "checks" / check / "prism-lab"
+    """A copy of the demo mod for a check (the SHARED checks share one), its sources the fixture's own; the path
+    relative to the checkout."""
+    copy = ROOT / ".runs" / "checks" / ("shared" if check in SHARED else check) / "prism-lab"
     copy.mkdir(parents=True, exist_ok=True)
     for entry in copy.iterdir():
         if entry.name not in BUILT:
@@ -150,13 +157,13 @@ def on_fixture(check, *command):
 CHECKS = {
     "package": (False, None, [java("tools/cli/Bootstrap.java", ".", "package", "--json")]),
     "self-test": (True, None, [(java("-jar", JAR, "self-test", "--root", "."), {} if WINDOWS else {"LC_ALL": "C"})]),
-    "fastlane-isolation": (True, None, [java("tools/tests/FastLaneIsolationTest.java", ".", JAR)]),
-    "port-plan": (True, None, on_fixture("port-plan", *java("tools/tests/PortPlanCacheTest.java", "{root}", JAR))),
     "fast": (True, None, on_fixture("fast", *java("-jar", JAR, "fast", "--root", "{root}", "--json"))),
+    "port-plan": (True, None, on_fixture("port-plan", *java("tools/tests/PortPlanCacheTest.java", "{root}", JAR))),
+    "legacy-agent": (True, ("nt",), legacy_agent),
+    "fastlane-isolation": (True, None, [java("tools/tests/FastLaneIsolationTest.java", ".", JAR)]),
     "jar-port": (False, None, jar_port),
     "fingerprint": (True, None, [[sys.executable, "bench/test_fingerprint.py", JAR]]),
     "runtime-natives": (True, ("posix",), [java("tools/tests/RuntimeNativesTest.java", ".", JAR)]),
-    "legacy-agent": (True, ("nt",), legacy_agent),
     "hidden-window": (True, None, on_fixture("hidden-window", *java("tools/tests/BackgroundWindowsTest.java", "{root}", JAR))),
     "python": (False, None, [Together([sys.executable, p] for p in PYTHON)]),
     "port-preflight": (False, None, port_preflight),
@@ -283,8 +290,11 @@ def run_all(names, suites):
             print(f"FAIL not run, as package failed: {', '.join(jar)}", flush=True)
             failed.extend(jar)
         rest = [n for n in rest if n not in jar]
+    # Each lane runs its checks in order; the SHARED checks are one lane, started where the first of them is listed.
+    shared = [n for n in SHARED if n in rest]
+    lanes = [shared if shared and n == shared[0] else [n] for n in rest if n not in shared[1:]]
     with ThreadPoolExecutor(CORES) as pool:
-        list(pool.map(one, rest))
+        list(pool.map(lambda lane: [one(n) for n in lane], lanes))
     return [n for n in names if n in failed]
 
 
