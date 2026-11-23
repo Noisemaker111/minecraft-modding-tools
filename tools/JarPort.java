@@ -8424,6 +8424,14 @@ public final class JarPort {
                         return;
                     }
                 }
+                if (opcode == Opcodes.INVOKESPECIAL && !name.equals("<init>")) {
+                    String[] added = fix(superFixes, List.of(owner, decl.owner()), name, desc, "(L" + owner + ";" + desc.substring(1), true);
+                    if (added != null) {
+                        invokeAdded(added);
+                        mod.change("super call answered by a stand-in");
+                        return;
+                    }
+                }
                 String unlinked = "call: " + Exposure.dotted(decl.owner()) + "." + name + desc + (WHERE ? " @ " + where + (Sites.this.moved != null ? " (moved)" : "") : "");
                 if (converted(opcode, owner, decl.owner(), name, desc)) {
                     return;
@@ -9568,8 +9576,11 @@ public final class JarPort {
                 for (int i = receiver ? 0 : 1; i < (receiver ? params.length : params.length + 1); i++) {
                     args.append(args.isEmpty() ? "" : ", ").append('$').append(i);
                 }
-                fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, new Fix("standin " + Exposure.dotted(old) + "." + member, Pattern.compile(Pattern.quote(member)),
-                    matched, target + "(" + args + ")"));
+                Fix answer = new Fix("standin " + Exposure.dotted(old) + "." + member, Pattern.compile(Pattern.quote(member)), matched, target + "(" + args + ")");
+                fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
+                if (receiver && matched != null && !member.equals("<init>")) {
+                    superFixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
+                }
             }
         }
     }
@@ -10013,6 +10024,12 @@ public final class JarPort {
     }
 
     final Map<String, List<Fix>> fixes = new HashMap<>(); // old owner (internal) -> replacements its rules give
+    /**
+     * The stand-ins for old instance methods, which also answer a mod's super call to one (super.handleComponentClicked(
+     * style) in a screen): the old method is gone from every class above the mod's, and the stand-in is that old game
+     * code written on the new release, which is what the super call ran.
+     */
+    final Map<String, List<Fix>> superFixes = new HashMap<>();
 
     static final Pattern DESCRIBED = Pattern.compile("([\\w$<>]+)(\\((?:\\[*(?:[ZBCSIJFD]|L[\\w/$]+;))*\\)\\S*)");
 
