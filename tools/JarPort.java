@@ -9152,6 +9152,10 @@ public final class JarPort {
             if (t == null && moved != null) {
                 List<String[]> now = new ArrayList<>();
                 String[] m = route.method(decl.owner(), name, desc);
+                String retyped = name.equals("<init>") ? retypedConstructor(decl.owner(), desc) : null;
+                if (retyped != null) {
+                    m = new String[] { cls(decl.owner()), name, retyped }; // a moved constructor's super(...)
+                }
                 now.add(new String[] { m[0], m[1], m[2], opcode == Opcodes.INVOKESTATIC ? "static" : "" });
                 for (Call c : rewrites.getOrDefault(key, List.of())) {
                     now.add(new String[] { c.owner(), c.name(), c.desc(), c.isStatic() ? "static" : "" });
