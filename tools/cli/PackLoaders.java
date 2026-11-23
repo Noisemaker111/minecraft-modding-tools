@@ -805,6 +805,37 @@ final class PackLoaders {
         return versions.stream().map(v -> root.resolve(v).resolve("MmtPackGame.java")).toList();
     }
 
+    /**
+     * The server agent (tools/packcheck/spawn/SpawnArea.java) that cuts the spawn area a new world generates before it
+     * opens to the spawn chunk, built once per content of its source and ASM into cache/agents. Its ASM is renamed
+     * (Relocate) so it never meets the ASM a loader ships, and built for Java 8, the oldest a release runs on.
+     */
+    static Path spawnAgent(Context context) throws Exception {
+        Path source = context.harness().resolve("tools/packcheck/spawn/SpawnArea.java"), asm = context.harness().resolve("tools/perf/lib/asm-9.9.jar");
+        MessageDigest hash = MessageDigest.getInstance("SHA-256");
+        for (Path p : List.of(source, asm, context.harness().resolve("tools/cli/Relocate.java"))) hash.update(Files.readAllBytes(p));
+        Path dir = context.cache().resolve("agents").resolve("spawn-area-" + HexFormat.of().formatHex(hash.digest()).substring(0, 16));
+        Path jar = dir.resolve("spawn-area.jar");
+        if (Files.isRegularFile(jar)) return jar;
+        // Built in a folder of this run's own: pack-checks run side by side on one machine.
+        Files.createDirectories(dir);
+        Path classes = Files.createTempDirectory(dir, "classes-");
+        try {
+            String javac = Runtimes.ensureAtLeast(context.harness(), 17).home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString();
+            var result = Run.command(List.of(javac, "--release", "8", "-nowarn", "-cp", asm.toString(), "-d", classes.toString(), source.toString()),
+                dir, Map.of(), context.report().log("spawn-agent-compile"), 120);
+            context.report().stage("spawn-agent-compile", result, Map.of());
+            if (result.exit() != 0) throw new IOException("Could not build the spawn-area agent: " + Run.tail(result.log()));
+            java.util.jar.Manifest manifest = new java.util.jar.Manifest();
+            manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
+            manifest.getMainAttributes().putValue("Premain-Class", "SpawnArea");
+            Relocate.agentJar(classes, asm, manifest, jar);
+        } finally {
+            PackCheck.deleteTree(classes);
+        }
+        return jar;
+    }
+
     static String javac(Context context) {
         return context.java().home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString();
     }

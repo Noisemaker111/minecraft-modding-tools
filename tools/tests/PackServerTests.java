@@ -23,6 +23,7 @@ public final class PackServerTests extends PackCheckFixtures {
             agentSignals(harness, scratch);
             assets(scratch);
             installsSideBySide(scratch);
+            spawnArea(harness, scratch);
             System.out.println(
                 count +
                 " pack server checks passed: which jars a server gets (client-side jars a kept mod requires, dependants of client-only ones, a --focus set)," +
@@ -30,7 +31,8 @@ public final class PackServerTests extends PackCheckFixtures {
                 " the client launch built from a loader's version file over the game's (one version of a library, this system's rules, the agent built on the launch's ASM)," +
                 " the client agent's ready and failed signals whatever the game does to its output, a fatal loading line ends the wait," +
                 " snippets open screens wherever the game keeps them, the game's assets fetched into one shared store and checked," +
-                " two installs of one loader at once each keep their own files and leave one whole install"
+                " two installs of one loader at once each keep their own files and leave one whole install,"
+                " the server agent cuts a pre-1.20.5 spawn wait to the spawn chunk and leaves any other shape alone"
             );
         } finally {
             System.setProperty("user.home", home);
@@ -85,6 +87,59 @@ public final class PackServerTests extends PackCheckFixtures {
         }
         try (var left = Files.list(dir.getParent())) {
             expect(left.count() == 1, "a failed install leaves no part folder");
+        }
+    }
+
+    // ------------------------------------------------------------------ the spawn area
+    /**
+     * The server agent (tools/packcheck/spawn/SpawnArea.java), built as pack-check builds it, rewrites a class shaped like
+     * a pre-1.20.5 MinecraftServer start: a START ticket at distance 11, then a wait for 441 ticking chunks. Run, the
+     * rewritten start asks for distance 1 and stops waiting once 1 or more chunks tick, even when the count skips past
+     * 1 (a mod loading chunks of its own); the shape as shipped would never stop on that count. A class without the
+     * shape (1.20.5 on: the distance comes from a game rule) comes back unchanged.
+     */
+    static void spawnArea(Path harness, Path scratch) throws Exception {
+        Path source = scratch.resolve("spawn-src/net/minecraft/server/MinecraftServer.java");
+        Files.createDirectories(source.getParent());
+        Files.writeString(source, String.join("\n",
+            "package net.minecraft.server;",
+            "public class MinecraftServer {",
+            "    public int distance, ticking, step = 2;",
+            "    void addRegionTicket(int distance) { this.distance = distance; }",
+            "    public void prepareLevels() { addRegionTicket(11); while (ticking != 441 && ticking < 10000) ticking += step; }",
+            "    public int ruleDistance = 2;",
+            "    public void fromRule() { addRegionTicket(ruleDistance); while (ticking < ruleDistance * ruleDistance) ticking += step; }",
+            "}"));
+        Path classes = scratch.resolve("spawn-classes");
+        Runtimes.Jdk jdk = Runtimes.ensureAtLeast(harness, 17);
+        Process javac = new ProcessBuilder(jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(), "-d", classes.toString(), source.toString())
+            .inheritIO().start();
+        expect(javac.waitFor() == 0, "the server-shaped class compiles");
+        byte[] shipped = Files.readAllBytes(classes.resolve("net/minecraft/server/MinecraftServer.class"));
+        var context = new PackLoaders.Context(harness, scratch.resolve("spawn-cache"), new Mmt.Report(scratch.resolve("spawn-report"), "pack-check"), jdk);
+        Path agent = PackLoaders.spawnAgent(context);
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] { agent.toUri().toURL() }, null)) {
+            var rewrite = loader.loadClass("SpawnArea").getDeclaredMethod("spawnWait", byte[].class);
+            rewrite.setAccessible(true);
+            byte[] cut = (byte[]) rewrite.invoke(null, (Object) shipped);
+            expect(cut != null, "a start that waits for 441 spawn chunks is rewritten");
+            Class<?> server = new ClassLoader(null) {
+                Class<?> define() { return defineClass("net.minecraft.server.MinecraftServer", cut, 0, cut.length); }
+            }.define();
+            Object start = server.getConstructor().newInstance();
+            server.getMethod("prepareLevels").invoke(start);
+            expect(server.getField("distance").getInt(start) == 1 && server.getField("ticking").getInt(start) == 2,
+                "the rewritten start asks for the spawn chunk alone and stops once it ticks, past 1 too: distance "
+                    + server.getField("distance").getInt(start) + ", ticking " + server.getField("ticking").getInt(start));
+            server.getMethod("fromRule").invoke(start);
+            expect(server.getField("ticking").getInt(start) == 4, "a wait with another shape is left as it was");
+            String spare = "package net.minecraft.server; public class MinecraftServer { int t; public void prepareLevels(int r) { while (t < r * r) t++; } }";
+            Files.writeString(source, spare);
+            javac = new ProcessBuilder(jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(), "-d", classes.toString(), source.toString())
+                .inheritIO().start();
+            expect(javac.waitFor() == 0, "the 1.20.5-shaped class compiles");
+            expect(rewrite.invoke(null, (Object) Files.readAllBytes(classes.resolve("net/minecraft/server/MinecraftServer.class"))) == null,
+                "a start whose spawn area comes from a game rule (1.20.5 on) is left as it came");
         }
     }
 
