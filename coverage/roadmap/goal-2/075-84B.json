@@ -1,0 +1,12 @@
+{
+ "id": "84B",
+ "title": "The game proof judges every mod when some are built for a newer Java",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "On Fabric 1.14.4 -> 1.15 the game proof (tools/cloud-run load) gave no mod a verdict (cloud-load 45168999181, PR #206). Some of the pinned mods are built for Java 11 to 25, and 1.15 runs on Java 8. When one of them has a mixin into a game class, the class the mixin is merged into is too new for Java 8 as well (LivingEntity, 'class file version 61.0'), so the server crashes and the log names no mod. The halving fallback could not help, because its baseline start failed too, and the run stopped. On 1.16 the same mods failed one start at a time, with 'built for Java 17; Minecraft 1.16 runs on Java 8' added to whatever else the log said.",
+ "start": "2026-11-23",
+ "target": "2026-11-23",
+ "finish": "tools/cloud-run load -f updates=fabric:1.14.4:1.15 gives every mod it starts a server verdict, and names each mod built for a newer Java than 1.15's Java 8 with that reason, without starting it",
+ "wrongIf": "a mod the class-file check fails loads on the release's own Java, or a start still crashes on a class file version and names no mod",
+ "result": ""
+}

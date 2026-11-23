@@ -798,4 +798,35 @@ with tempfile.TemporaryDirectory() as tmp:
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
           f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
 
+# A jar whose classes need a newer Java than the release runs on is failed before any start, with the Java of its newest
+# class and the release's (version.json's javaVersion). Its multi-release versions/ and nested jars are not what the release
+# loads, so they do not count. On Fabric 1.15 (Java 8) one such mod crashed every start naming no mod (PR #206).
+def class_file(major):
+    return b"\xca\xfe\xba\xbe\x00\x00" + bytes([major >> 8, major & 0xff]) + b"\x00" * 8
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    real_home = E.HOME
+    E.HOME = Path(tmp) / "home"
+    try:
+        for version, java in {"1.15": 8, "1.20.4": 17}.items():
+            (E.HOME / "versions").mkdir(parents=True, exist_ok=True)
+            (E.HOME / "versions" / f"{version}.json").write_text(json.dumps({"javaVersion": {"majorVersion": java}}), encoding="utf-8")
+        folder = Path(tmp) / "mods"
+        folder.mkdir()
+        (folder / "old.jar").write_bytes(jar({"a/A.class": class_file(52), "META-INF/versions/17/a/A.class": class_file(61),
+                                              "META-INF/jars/new.jar": jar({"b/B.class": class_file(61)})}))
+        (folder / "new.jar").write_bytes(jar({"a/A.class": class_file(52), "a/B.class": class_file(61)}))
+        (folder / "newest.jar").write_bytes(jar({"a/A.class": class_file(65)}))
+        (folder / "data.jar").write_bytes(jar({"fabric.mod.json": "{}"}))
+        names = ["old.jar", "new.jar", "newest.jar", "data.jar"]
+        found = E.newer_java(folder, names, "1.15")
+        check(sorted(found) == ["new.jar", "newest.jar"] and found["new.jar"].startswith("built for Java 17; Minecraft 1.15 runs on Java 8")
+              and "Java 21" in found["newest.jar"],
+              f"the jars whose own newest class needs a newer Java than 1.15's are named with both Javas: {found}")
+        found = E.newer_java(folder, names, "1.20.4")
+        check(list(found) == ["newest.jar"], f"the release's own Java decides: on 1.20.4 (Java 17) only the Java 21 jar: {found}")
+    finally:
+        E.HOME = real_home
+
 print(f"exposure: {checks} checks passed")

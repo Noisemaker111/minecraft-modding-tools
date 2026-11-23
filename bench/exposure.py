@@ -653,6 +653,51 @@ def game_says(loader, frm, to, report):
     return {m: said["said"][m] for m in asked if m in said["said"]}
 
 
+def version_meta(version):
+    """The release's own version.json from Mojang, kept in ~/.mmt/exposure/versions/."""
+    cache = HOME / "versions" / f"{version}.json"
+    if cache.is_file():
+        return json.loads(cache.read_text(encoding="utf-8"))
+    manifest = json.load(urllib.request.urlopen(urllib.request.Request("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", headers=AGENT), timeout=60))
+    url = next(v["url"] for v in manifest["versions"] if v["id"] == version)
+    meta = json.load(urllib.request.urlopen(urllib.request.Request(url, headers=AGENT), timeout=60))
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    part = part_of(cache)
+    part.write_text(json.dumps(meta), encoding="utf-8")
+    publish(part, cache)
+    return meta
+
+
+def release_java(version):
+    """The Java the release ships for (its version.json's javaVersion), as the launcher and pack-check run it."""
+    return version_meta(version).get("javaVersion", {}).get("majorVersion", 8)
+
+
+def class_java(jar):
+    """The Java release the jar's newest class needs, read from each class file's version as pack-check reads it: the
+    jar's own classes outside META-INF (a multi-release jar's versions/ and the nested jars aside), 0 when it has none."""
+    import zipfile
+    newest = 0
+    with zipfile.ZipFile(jar) as z:
+        for n in z.namelist():
+            if n.endswith(".class") and not n.startswith("META-INF/") and "/" in n:
+                with z.open(n) as f:
+                    head = f.read(8)
+                if head[:4] == b"\xca\xfe\xba\xbe":
+                    newest = max(newest, (head[6] << 8 | head[7]) - 44)
+    return newest
+
+
+def newer_java(folder, names, version):
+    """{jar: why} for the jars whose classes need a newer Java than the release runs on. Such a jar cannot load there: a
+    mixin of it merged into a game class makes that game class too new as well, so the start crashes naming no mod and
+    every other mod in it goes without a verdict. The proof leaves these out before any start."""
+    runs = release_java(version)
+    found = {n: class_java(folder / n) for n in names}
+    return {n: f"built for Java {v}; Minecraft {version} runs on Java {runs} (its newest class file), so it is not started"
+            for n, v in found.items() if v > runs}
+
+
 def registry_ids(version):
     """Every id the release registers in its built-in registries, by registry, from its own data generator's report
     (the vanilla server run with --reports), kept in ~/.mmt/exposure/registries/; None when that release's generator does
@@ -660,9 +705,7 @@ def registry_ids(version):
     cache = HOME / "registries" / f"{version}.json"
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
-    manifest = json.load(urllib.request.urlopen(urllib.request.Request("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", headers=AGENT), timeout=60))
-    url = next(v["url"] for v in manifest["versions"] if v["id"] == version)
-    meta = json.load(urllib.request.urlopen(urllib.request.Request(url, headers=AGENT), timeout=60))
+    meta = version_meta(version)
     work = ROOT / ".runs" / "exposure" / "registries" / version
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
@@ -1977,6 +2020,26 @@ def named_in_errors(receipt, mods, present, logs="*server*.log"):
     return blamed
 
 
+def start_culprits(result, pack, present, in_pack, loader, start_server):
+    """{jar: why} for a failed server start: the jars its findings name, else the ones its log's errors name, else the
+    one halving finds."""
+    res = result.get("result", {})
+    culprits = {}
+    for finding in res.get("findings", []):
+        if finding.get("severity") != "problem":
+            continue
+        for s in finding.get("suspects", []):
+            top = s.get("jar", "").split("!")[0] or next((n for n in present + in_pack if s.get("mod") in mod_ids(pack / "mods" / n)), "")
+            if top in present + in_pack:
+                culprits.setdefault(top, "; ".join(s.get("why", []))[:400])
+    if not culprits:
+        culprits = named_in_errors(result.get("receipt"), pack / "mods", present + in_pack)
+    if not culprits:
+        culprits = first_failing(pack, present + in_pack, loader, lambda: (start_server(), None),
+                                 str(res.get("details") or result.get("error"))[-300:], server_opened)
+    return culprits
+
+
 def built_for_newer_java(res):
     """{jar: why} for the jars pack-check's static warning says are built for a newer Java than the release runs on. It
     reads each jar's newest class, which the game may never load, so it is no evidence of a failure: it only says so
@@ -2069,7 +2132,7 @@ def load(loader, frm, to, save, mods=None, out=None):
         # and the run fails, so a proof that started no game never passes for one that did.
         why = "no mod to start: " + ("; ".join(f"{n}: {', '.join(w)}" for n, w in sorted(left.items())) or "none links")
         summary = {"loader": loader, "from": frm, "to": to, "scope": scope, "mods": 0, "loaded": 0, "linkedAndLoaded": 0, "linked": 0,
-                   "failedButLinked": [], "clashOnly": [], "failedDataOnly": [], "verdicts": {}, "libraries": {}, "notStarted": left,
+                   "newerJava": [], "failedButLinked": [], "clashOnly": [], "failedDataOnly": [], "verdicts": {}, "libraries": {}, "notStarted": left,
                    "client": {"mods": 0, "loaded": 0, "verdicts": {}}, "loadedOnServerFailedInClient": []}
         keep_load(summary, out, save)
         raise SystemExit(why)
@@ -2103,34 +2166,31 @@ def load(loader, frm, to, save, mods=None, out=None):
         at = done.stdout.find("{")
         return json.loads(done.stdout[at:]) if at >= 0 else {}
 
+    # A jar built for a newer Java than the release runs on is failed from its class files before the first start, a
+    # library with the mods that need it, so the starts hold only jars the release's Java can load.
+    present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
+    misfits = newer_java(pack / "mods", present + list(libraries), to)
+    for name, why in sorted(misfits.items()):
+        print(f"  {name}: {why}")
+    culprits = dict(misfits)
+    result, res, done = {}, {}, None
     # Each failed start takes at least one jar out or stops the proof with why, so the starts end without a budget.
     while True:
-        done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace")
-        text = done.stdout[done.stdout.find("{"):]
-        result = json.loads(text) if text else {}
-        res = result.get("result", {})
         present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
-        for name, why in (res.get("game", {}).get("leftOut") or {}).items():
-            verdicts[name] = "client-only: " + str(why)[:200]
-        if result.get("ok"):
-            for name in present:
-                verdicts.setdefault(name, "loaded")
-            break
         in_pack = [n for n in libraries if (pack / "mods" / n).is_file()]
-        culprits = {}
-        for finding in res.get("findings", []):
-            if finding.get("severity") != "problem":
-                continue
-            for s in finding.get("suspects", []):
-                top = s.get("jar", "").split("!")[0] or next((n for n in present + in_pack if s.get("mod") in mod_ids(pack / "mods" / n)), "")
-                if top in present + in_pack:
-                    culprits.setdefault(top, "; ".join(s.get("why", []))[:400])
         if not culprits:
-            culprits = named_in_errors(result.get("receipt"), pack / "mods", present + in_pack)
-        if not culprits:
-            culprits = first_failing(pack, present + in_pack, loader, lambda: (start_server(), None),
-                                     str(res.get("details") or result.get("error"))[-300:], server_opened)
+            done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
+            text = done.stdout[done.stdout.find("{"):]
+            result = json.loads(text) if text else {}
+            res = result.get("result", {})
+            for name, why in (res.get("game", {}).get("leftOut") or {}).items():
+                verdicts[name] = "client-only: " + str(why)[:200]
+            if result.get("ok"):
+                for name in present:
+                    verdicts.setdefault(name, "loaded")
+                break
+            culprits = start_culprits(result, pack, present, in_pack, loader, start_server)
         blamed = {n: why for n, why in culprits.items() if n in present}
         for top in (n for n in culprits if n in in_pack):
             # A library that fails takes the mods that need it along; each is failed with the library's reason.
@@ -2141,18 +2201,23 @@ def load(loader, frm, to, save, mods=None, out=None):
                 asked = needs(pack / "mods" / name, loader) or set()
                 if asked and len(unmet(asked, gives)) < len(asked):
                     blamed.setdefault(name, f"needs the library {top}, which fails: " + culprits[top][:300])
+                    if top in misfits:
+                        misfits.setdefault(name, blamed[name])
         if not culprits:
             print(res.get("details", done.stdout[-2000:]))
             raise SystemExit(f"a start failed and named no mod; receipt {result.get('receipt')}")
         java = built_for_newer_java(res)
         for name, why in blamed.items():
-            verdicts[name] = "failed: " + (java[name] + "; " if name in java else "") + why
+            verdicts[name] = "failed: " + (java[name] + "; " if name in java and name not in misfits else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
-            print(f"  {name}: failed")
+            if name not in misfits:
+                print(f"  {name}: failed")
+        culprits = {}
     # A failed start can name a bystander along with the mod at fault, so each dropped mod that links gets one more start
-    # with the mods that loaded; it counts as loaded only if that start opens a world too.
+    # with the mods that loaded; it counts as loaded only if that start opens a world too. One its class files fail is
+    # not started again: the release's Java refuses it whatever else is in the pack.
     if result.get("ok"):
-        for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n)):
+        for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and n not in misfits):
             (pack / "dropped" / name).rename(pack / "mods" / name)
             done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -2178,10 +2243,13 @@ def load(loader, frm, to, save, mods=None, out=None):
     summary = {
         "loader": loader, "from": frm, "to": to, "scope": scope, "mods": len(chosen), "loaded": len(loaded),
         "linkedAndLoaded": sum(1 for n in loaded if links.get(n)), "linked": sum(links.values()),
-        "failedButLinked": sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and has_code(folder / n)),
+        # Built for a newer Java than the release runs on, read from their class files and not started: no port of
+        # their game references makes them load, so the lists below that judge the port leave them out.
+        "newerJava": sorted(misfits),
+        "failedButLinked": sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and has_code(folder / n) and n not in misfits),
         "clashOnly": sorted(n for n, v in verdicts.items() if v.startswith("clash") and links.get(n)),
         # A mod with no game code links trivially; what fails it is its data, which the link check does not read.
-        "failedDataOnly": sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and not has_code(folder / n)),
+        "failedDataOnly": sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and not has_code(folder / n) and n not in misfits),
         "verdicts": verdicts,
         "libraries": libraries,
         "notStarted": left,
@@ -2197,7 +2265,8 @@ def load(loader, frm, to, save, mods=None, out=None):
     print(f"{summary['loaded']}/{summary['mods']} load on a real {to} server; {summary['linked']} link, "
           f"{summary['linkedAndLoaded']} of them load; failed although they link: {summary['failedButLinked'] or 'none'}"
           + (f"; failed on their data, with no game code: {summary['failedDataOnly']}" if summary["failedDataOnly"] else "")
-          + (f"; load alone but fail next to the others: {summary['clashOnly']}" if summary["clashOnly"] else ""))
+          + (f"; load alone but fail next to the others: {summary['clashOnly']}" if summary["clashOnly"] else "")
+          + (f"; built for a newer Java than {to} runs on, not started: {summary['newerJava']}" if summary["newerJava"] else ""))
     keep_load(summary, out, save)
     return summary
 
