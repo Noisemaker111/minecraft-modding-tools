@@ -28,7 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      updates: ${{ steps.plan.outputs.updates }}
+      first: ${{ steps.plan.outputs.first }}
+      rest: ${{ steps.plan.outputs.rest }}
     steps:
       - uses: actions/checkout@v4
       - id: plan
@@ -38,23 +39,25 @@ jobs:
         run: |
           set -o pipefail
           plan=$(python3 bench/exposure.py load-plan "$UPDATES" --mods "$MODS" 2>&1) || { echo "$plan" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }
-          echo "updates=$plan" >> "$GITHUB_OUTPUT"
+          python3 bench/smallest_first.py updates "$plan"
   load:
-    needs: plan
+    # The plan's other updates, once load-first (the same steps on its smallest) passed: bench/smallest_first.py.
+    needs: [plan, load-first]
+    if: needs.plan.outputs.rest != '[]'
     name: ${{ matrix.update }}
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
-        update: ${{ fromJSON(needs.plan.outputs.updates) }}
+        update: ${{ fromJSON(needs.plan.outputs.rest) }}
     runs-on: ubuntu-latest
     # Cold: the scoreboard's port of the update (about 2 minutes), then one server start per failure and the client
     # starts on software OpenGL.
     timeout-minutes: 120
-    env:
+    env: &load-env
       UPDATE: ${{ matrix.update }}
       MODS: ${{ inputs.mods }}
-    steps:
+    steps: &load-steps
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -109,7 +112,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: load-${{ strategy.job-index }}
+          name: load-${{ github.job }}-${{ strategy.job-index }}
           path: |
             summary/
             logs/
@@ -118,3 +121,13 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+  load-first:
+    needs: plan
+    name: ${{ matrix.update }} (first)
+    strategy:
+      matrix:
+        update: ${{ fromJSON(needs.plan.outputs.first) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env: *load-env
+    steps: *load-steps

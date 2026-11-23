@@ -50,6 +50,9 @@ kind of thing (`final class MixinPoints { final JarPort port; … }`), and the h
 - a second list of the porter's sources appears: `bench/test_architecture.py`.
 - a porter source would compile here and not in the shipped package: `CheckoutDataTest`.
 - a moved name is used the old way: the compiler.
+- a cloud workflow's matrix starts before one job of the same steps has run its smallest real case, or a workflow runs
+  Python whose import is not there: `bench/test_smallest_first.py` (the plan step checks the same, and every entry's
+  cache keys, before any job starts).
 
 Nothing limits how long a file may be. A file that every change edits is one that holds a list or several kinds of
 thing: give the list a folder to read, or move each kind to its own file, in the pull request that noticed.

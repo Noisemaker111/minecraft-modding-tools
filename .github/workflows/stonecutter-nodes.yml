@@ -14,25 +14,39 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      nodes: ${{ steps.nodes.outputs.nodes }}
+      first: ${{ steps.nodes.outputs.first }}
+      rest: ${{ steps.nodes.outputs.rest }}
     steps:
       - uses: actions/checkout@v7
       - id: nodes
-        run: echo "nodes=$(python3 bench/real-mods/run.py --only diorama-all,ias-all --matrix)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -o pipefail
+          python3 bench/real-mods/run.py --only diorama-all,ias-all --matrix > "$RUNNER_TEMP/nodes.json"
+          python3 - "$RUNNER_TEMP/nodes.json" <<'EOF'
+          import json
+          import sys
+          sys.path.insert(0, "bench")
+          import smallest_first
+          # Forge's nodes decompile the game; the others set up in minutes.
+          size = lambda t: ("forge" in t["node"].split("-")[1:], smallest_first.version(t["node"].split("-")[0]))
+          smallest_first.plan(json.load(open(sys.argv[1], encoding="utf-8")), size, "a node that does not decompile, on the oldest game")
+          EOF
   node:
-    needs: plan
+    # The plan's other nodes, once node-first (the same steps on its smallest) passed: bench/smallest_first.py.
+    needs: [plan, node-first]
+    if: needs.plan.outputs.rest != '[]'
     name: ${{ matrix.target.mod }} ${{ matrix.target.node }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        target: ${{ fromJSON(needs.plan.outputs.nodes) }}
+        target: ${{ fromJSON(needs.plan.outputs.rest) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
+    env: &node-env
       MOD: ${{ matrix.target.mod }}
       NODE: ${{ matrix.target.node }}
-    steps:
+    steps: &node-steps
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
@@ -61,3 +75,14 @@ jobs:
             ${{ runner.temp }}/real-mods/*/.runs/portable/*/result.json
           include-hidden-files: true
           if-no-files-found: ignore
+  node-first:
+    needs: plan
+    name: ${{ matrix.target.mod }} ${{ matrix.target.node }} (${{ matrix.os }}, first)
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        target: ${{ fromJSON(needs.plan.outputs.first) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env: *node-env
+    steps: *node-steps

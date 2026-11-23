@@ -49,7 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      updates: ${{ steps.plan.outputs.updates }}
+      first: ${{ steps.plan.outputs.first }}
+      rest: ${{ steps.plan.outputs.rest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,20 +58,25 @@ jobs:
       - id: plan
         env:
           ONLY: ${{ inputs.only }}
-        run: echo "updates=$(python3 bench/exposure.py updates ${ONLY:+--only "$ONLY"})" >> "$GITHUB_OUTPUT"
+        run: |
+          set -o pipefail
+          updates=$(python3 bench/exposure.py updates ${ONLY:+--only "$ONLY"})
+          python3 bench/smallest_first.py updates "$updates"
   update:
-    needs: plan
+    # The plan's other updates, once update-first (the same steps on its smallest) passed: bench/smallest_first.py.
+    needs: [plan, update-first]
+    if: needs.plan.outputs.rest != '[]'
     name: ${{ matrix.update }}
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
-        update: ${{ fromJSON(needs.plan.outputs.updates) }}
+        update: ${{ fromJSON(needs.plan.outputs.rest) }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
+    env: &update-env
       UPDATE: ${{ matrix.update }}
-    steps:
+    steps: &update-steps
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit || github.sha }}
@@ -113,13 +119,23 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: exposure-${{ strategy.job-index }}
+          name: exposure-${{ github.job }}-${{ strategy.job-index }}
           path: summary/
           if-no-files-found: ignore
           retention-days: 14
+  update-first:
+    needs: plan
+    name: ${{ matrix.update }} (first)
+    strategy:
+      matrix:
+        update: ${{ fromJSON(needs.plan.outputs.first) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env: *update-env
+    steps: *update-steps
   summary:
-    needs: update
-    if: always() && needs.update.result != 'skipped'
+    needs: [update-first, update]
+    if: always() && needs.update-first.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -146,8 +162,8 @@ jobs:
           retention-days: 90
   record:
     # Only a whole sweep of a push to main is main's table; a partial one (an update failed) is not recorded.
-    needs: [update, summary]
-    if: github.event_name == 'push' && needs.update.result == 'success' && needs.summary.result == 'success'
+    needs: [update-first, update, summary]
+    if: github.event_name == 'push' && needs.update-first.result == 'success' && needs.update.result == 'success' && needs.summary.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -28,7 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      cases: ${{ steps.plan.outputs.cases }}
+      first: ${{ steps.plan.outputs.first }}
+      rest: ${{ steps.plan.outputs.rest }}
     steps:
       - uses: actions/checkout@v4
       - id: plan
@@ -36,9 +37,11 @@ jobs:
           CASES: ${{ inputs.cases }}
           CORPUS: ${{ inputs.corpus }}
         run: |
-          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          python3 - <<'EOF'
           import json, os
           import sys
+          sys.path.insert(0, "bench")
+          import smallest_first
           sweep = os.environ["CORPUS"] == "sweep"
           if sweep:
               mods = json.load(open("bench/sweep/corpus.json", encoding="utf-8"))["mods"]
@@ -53,26 +56,31 @@ jobs:
               cases = wanted
           if sweep:
               # One job per mod and jump, so a big mod's jumps run side by side instead of one after another.
-              sys.path.insert(0, "bench")
               import sweep as S
               cases = [f"{m['id']}@{to}" for m in mods if m["id"] in cases for to, _ in S.plan(m)]
-          print("cases=" + json.dumps(cases))
+              by_id = {m["id"]: m for m in mods}
+              size = lambda c: smallest_first.update_size(by_id[c.split("@")[0]]["loader"], by_id[c.split("@")[0]]["from"], c.split("@")[1])
+          else:
+              by_id = {c["id"]: c for c in json.load(open("bench/port-cases.json", encoding="utf-8"))["cases"]}
+              size = lambda c: smallest_first.update_size(by_id[c]["loader"], by_id[c]["from"], by_id[c]["to"])
+          smallest_first.plan(cases, size, "Fabric before NeoForge's decompiling, then a port within one release family, then the oldest game")
           EOF
   port:
-    needs: plan
-    if: inputs.corpus != 'sweep'
+    # The plan's other cases, once port-first (the same steps on its smallest) passed: bench/smallest_first.py.
+    needs: [plan, port-first]
+    if: inputs.corpus != 'sweep' && needs.plan.outputs.rest != '[]'
     name: ${{ matrix.case }}
     strategy:
       fail-fast: false
       max-parallel: 12
       matrix:
-        case: ${{ fromJSON(needs.plan.outputs.cases) }}
+        case: ${{ fromJSON(needs.plan.outputs.rest) }}
     runs-on: ubuntu-latest
     # A cold NeoForge port decompiles the game for both versions; port_board.py's own limit per port is 2 hours.
     timeout-minutes: 60
-    env:
+    env: &port-env
       CASE: ${{ matrix.case }}
-    steps:
+    steps: &port-steps
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -100,21 +108,33 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
-  sweep:
+  port-first:
     needs: plan
-    if: inputs.corpus == 'sweep'
+    if: inputs.corpus != 'sweep'
+    name: ${{ matrix.case }} (first)
+    strategy:
+      matrix:
+        case: ${{ fromJSON(needs.plan.outputs.first) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env: *port-env
+    steps: *port-steps
+  sweep:
+    # The plan's other jumps, once sweep-first (the same steps on its smallest) passed: bench/smallest_first.py.
+    needs: [plan, sweep-first]
+    if: inputs.corpus == 'sweep' && needs.plan.outputs.rest != '[]'
     name: sweep ${{ matrix.mod }}
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
-        mod: ${{ fromJSON(needs.plan.outputs.cases) }}
+        mod: ${{ fromJSON(needs.plan.outputs.rest) }}
     runs-on: ubuntu-latest
     # One jump of one mod (MOD@TO), a fresh port; a cold NeoForge port of a big mod to 26.3 can take over an hour.
     timeout-minutes: 150
-    env:
+    env: &sweep-env
       CASE: ${{ matrix.mod }}
-    steps:
+    steps: &sweep-steps
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -144,9 +164,20 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+  sweep-first:
+    needs: plan
+    if: inputs.corpus == 'sweep'
+    name: sweep ${{ matrix.mod }} (first)
+    strategy:
+      matrix:
+        mod: ${{ fromJSON(needs.plan.outputs.first) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env: *sweep-env
+    steps: *sweep-steps
   sweep-summary:
-    needs: sweep
-    if: always() && needs.sweep.result != 'skipped'
+    needs: [sweep-first, sweep]
+    if: always() && needs.sweep-first.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -169,8 +200,8 @@ jobs:
             sweep.json
           retention-days: 14
   summary:
-    needs: port
-    if: always() && needs.port.result != 'skipped'
+    needs: [port-first, port]
+    if: always() && needs.port-first.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
