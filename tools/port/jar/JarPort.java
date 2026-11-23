@@ -51,6 +51,7 @@ public final class JarPort {
     final NewerCode newerCode = new NewerCode(this);
     final RuleCode ruleCode = new RuleCode(this);
     final Conversions conversions = new Conversions(this);
+    final EveryStart everyStart = new EveryStart(this);
 
     final GameDiff.Snap a, b;
     String loader; // "neoforge" or "fabric": the loader ported for, which a rule may name
@@ -696,6 +697,7 @@ public final class JarPort {
             }
         }
         MixinPoints.requires(mod, entries);
+        everyStart.check(mod, entries);
         PLANNING.set(mod);
         try {
             plan(mod);

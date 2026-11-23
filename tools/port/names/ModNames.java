@@ -166,10 +166,12 @@ public final class ModNames {
             }
             out.put(name, data);
         }
-        if (!nested.isEmpty() && !out.containsKey("META-INF/jarjar/metadata.json")) {
-            // The port reads nested jars where NeoForge lists them; a Fabric mod lists them in fabric.mod.json.
+        Set<String> listed = new TreeSet<>(JarEntries.listed(entries));
+        if (!listed.isEmpty() && !out.containsKey("META-INF/jarjar/metadata.json")) {
+            // The port reads nested jars where NeoForge lists them; a Fabric mod lists them in fabric.mod.json. A jar the
+            // mod's own code loads stays unlisted: listed, the port would take it for one a loader reads in the release's names.
             List<Object> list = new ArrayList<>();
-            for (String file : nested) {
+            for (String file : listed) {
                 list.add(Map.of("path", file));
             }
             out.put("META-INF/jarjar/metadata.json", Json.write(Map.of("jars", list)).getBytes(StandardCharsets.UTF_8));
