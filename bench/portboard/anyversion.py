@@ -111,6 +111,15 @@ def any_version_lines(a, top=10):
     return lines
 
 
+def types_section(a):
+    """The page section that leads the porting work, for the jar and the source counts alike: the types of break that
+    remove the most breaks left."""
+    out = ["## What removes the most breaks", "", "Types of break, by the mods each holds on some release: a way to handle the "
+           "type on every release removes that many breaks left. *Frees* counts the mods it alone keeps from every release.", "",
+           "| Mods | Mod-releases | Frees | Type of break |", "|---|---|---|---|"]
+    return out + [f"| {t['mods']} | {t['releases']} | {t['finishes']} | {t['type']} |" for t in by_breaks(a.get("types", []))[:30]]
+
+
 ANY_VERSION_PAGE = "any-version.md"
 
 
@@ -125,10 +134,7 @@ def any_version_page(table):
            "the loader has, forward and back, and linked against it (classes, mixins, access transformers, data). It says "
            "the port links, not that it runs: the game proof is `tools/cloud-run load`.", "",
            "**" + any_version_lines(a)[0] + "**", "", "**" + any_version_lines(a)[1] + "**", ""]
-    out += ["## What removes the most breaks", "", "Types of break, by the mods each holds on some release: a way to handle the "
-            "type on every release removes that many breaks left. *Frees* counts the mods it alone keeps from every release.", "",
-            "| Mods | Mod-releases | Frees | Type of break |", "|---|---|---|---|"]
-    out += [f"| {t['mods']} | {t['releases']} | {t['finishes']} | {t['type']} |" for t in by_breaks(a.get("types", []))[:30]]
+    out += types_section(a)
     out += ["", "Releases. *Frees* counts the mods that miss only this release.", "", "| Frees | Mods missing it | Loader | Release |", "|---|---|---|---|"]
     out += [f"| {t['finishes']} | {t['mods']} | {t['loader']} | {t['release']} |" for t in a.get("releases", [])[:30]]
     out += ["", "## Every mod that misses a release, nearest first", "", "| Loader | Mod | Reaches | Misses | Held by |", "|---|---|---|---|---|"]
