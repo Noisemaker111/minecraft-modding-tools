@@ -8,8 +8,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * A mod's own source builds through mmt as its author's checkout stands, on real Gradle: a checkout without its
  * gradle-wrapper.jar (Freecam, GeckoLib), a project selected by its folder's name that settings renamed
- * (Biomes O' Plenty's :neoforge is :NeoForge), and a build script that reads a publishing secret while it loads
- * (YUNG's API's `username ossrhToken`). Each of the three alone stopped the build before any source compiled.
+ * (Biomes O' Plenty's :neoforge is :NeoForge), a build script that reads a publishing secret while it loads
+ * (YUNG's API's `username ossrhToken`), and a NeoForge artifact asked of NeoForged's repository root (Embeddium).
+ * Each alone stopped the build before any source compiled.
  */
 public final class BuildSetupTest {
 
@@ -32,7 +33,14 @@ public final class BuildSetupTest {
         Files.createDirectories(root.resolve("neoforge/src/main/java/setup"));
         Files.writeString(
             root.resolve("neoforge/build.gradle"),
-            "plugins { id 'java' }\n// Only the author has it; read while the build loads.\ndef publisher = ossrhToken\n"
+            """
+            plugins { id 'java' }
+            // Only the author has it; read while the build loads.
+            def publisher = ossrhToken
+            // NeoForged's repository root, which once served what it now serves from /releases only.
+            repositories { maven { url = 'https://maven.neoforged.net' } }
+            dependencies { compileOnly('net.neoforged:mergetool:2.0.0') { transitive = false } }
+            """
         );
         Files.writeString(root.resolve("neoforge/src/main/java/setup/Mod.java"), "package setup; class Mod { }\n");
 
@@ -57,7 +65,7 @@ public final class BuildSetupTest {
         if (Files.exists(root.resolve("gradle/wrapper/gradle-wrapper.jar"))) throw new AssertionError(
             "mmt added a wrapper jar to the checkout's own files; it belongs in .mmt/wrapper/"
         );
-        System.out.println("PASS a checkout with no wrapper jar, a renamed project and a publishing secret builds: " + built);
+        System.out.println("PASS a checkout with no wrapper jar, a renamed project, a publishing secret and NeoForged's old repository address builds: " + built);
     }
 
     static boolean isWindows() {

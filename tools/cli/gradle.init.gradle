@@ -45,6 +45,26 @@ if (portedLibraries) {
         if (!settingsRepositories) p.repositories.maven { url = new File(portedLibraries).toURI(); content { includeVersionByRegex('.*', '.*', '.*-mmt-.*') } }
     }
 }
+// A loader's own artifacts live on its own Maven repository, and builds once found them elsewhere: in the repository's
+// root (https://maven.neoforged.net, Embeddium) or through another loader's or Architectury's maven that no longer
+// mirrors them (Moonlight, Model Gap Fix). NeoForged serves NeoForge and NeoGradle from /releases, the repository its
+// MDKs declare; the root, Forge's and Architectury's mavens answer 404 for them (checked 2026-11-23). So that repository
+// is added last wherever a build already declares repositories, for those groups alone: what resolved before still
+// resolves from where it did (Gradle takes the first repository that has a module).
+def loaderMavens = ['https://maven.neoforged.net/releases': 'net\\.neoforged(\\..*)?']
+def addLoaderMavens = { handler ->
+    loaderMavens.each { address, groups ->
+        if (handler.any { it.hasProperty('url') && it.url.toString().startsWith(address) }) return
+        handler.maven { repository -> repository.name = 'mmt ' + address; repository.url = address; repository.content { includeGroupByRegex(groups) } }
+    }
+}
+gradle.settingsEvaluated { s ->
+    // Declaring one plugin repository replaces Gradle's default, the plugin portal, so it stays first when none is declared.
+    if (s.pluginManagement.repositories.isEmpty()) s.pluginManagement.repositories.gradlePluginPortal()
+    addLoaderMavens(s.pluginManagement.repositories)
+    try { if (!s.dependencyResolutionManagement.repositories.isEmpty()) addLoaderMavens(s.dependencyResolutionManagement.repositories) } catch (Throwable older) {}
+}
+gradle.allprojects { p -> p.afterEvaluate { if (!p.repositories.isEmpty()) addLoaderMavens(p.repositories) } }
 def partFile = { File state, String path -> new File(state, 'model-parts/' + Base64.urlEncoder.withoutPadding().encodeToString(path.bytes) + '.json') }
 def metadataPath = { String path -> (path == ':' ? '' : path) + ':mmtProjectMetadata' }
 gradle.rootProject { root ->
