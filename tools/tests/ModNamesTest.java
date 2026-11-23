@@ -5,7 +5,7 @@ import java.util.zip.*;
 import org.objectweb.asm.*;
 
 /**
- * A Fabric mod jar read in Mojang's names (tools/ModNames.java), as the jar scoreboard and the port read it: classes,
+ * A Fabric mod jar read in Mojang's names (tools/port/names/ModNames.java), as the jar scoreboard and the port read it: classes,
  * members, lambda targets, record components, mixin strings through the refmap (an accessor with no value too), the
  * access widener and its access transformer form, a nested jar, and a NeoForge access transformer Fabric never reads.
  * Each check fails if that part is left in intermediary names or given the developer's name instead of Mojang's.
