@@ -1,0 +1,16 @@
+{
+ "id": "79C",
+ "title": "A subclass's super call to a constructor the update reshaped",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "A mod class that extends a game class calls super(...) to a constructor the update reshaped or removed (1.17's EntityRenderer and LivingEntityRenderer taking an EntityRendererProvider.Context for the dispatcher, BlockEntityRenderer becoming an interface, 1.20.3's AbstractArrow). Three answers, each from the game's or Mixin's own files: a mixin's constructor super call, which Mixin never runs or resolves (Bytecode.findDelegateInit matches only owner and name, and only what follows the call is merged), goes to the reshaped constructor with each argument its type's zero, or to what the target extends now when the class became an interface (the mixin then implements it). A real subclass's constructor moves whole to take the new type in place of its parameter of the old one, as the game's own subclasses' constructors did (most of those that took the old type take the new one now), the old value read first as the game's code reads it (EntityRenderer's own two bodies line up dispatcher with context.getEntityRenderDispatcher(), followed up through MobRenderer and LivingEntityRenderer, which only pass it on); its super call is given the new value, and so is each call that makes the class from a moved lambda or override; a call with no new value at hand keeps the old constructor, whose super call stays reported. A mod class's constructor follows its mod superclass's that moved.",
+ "start": "2026-11-23",
+ "target": "2026-11-23",
+ "finish": "the mods these breaks alone held link on 1.16.5 -> 1.17 and 1.20.2 -> 1.20.3 (both loaders), no update loses a mod on the full sweep, and the freed mods load in a real game",
+ "wrongIf": "a freed mod fails in game at a rewritten constructor, or a moved constructor stores something other than what the old one did",
+ "measures": [
+  "port.jar-links.every-update",
+  "port.jar-links.big-updates",
+  "port.jar-links.newest"
+ ]
+}
