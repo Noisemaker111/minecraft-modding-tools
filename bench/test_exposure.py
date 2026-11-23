@@ -1037,6 +1037,88 @@ run["links"] = ["a--1.jar", "b--1.jar"]
 run["againstMain"] = E.against_main(row, {**run, "verdicts": {"a--1.jar": {}, "b--1.jar": {}}})
 check(E.gate(run)[2] and E.gate(run)[1] == ["b"], "a check of some mods compares only those, and passes when none stops linking")
 check(E.gate({**run, "againstMain": None})[2], "a port main has no row for passes, and says there was nothing to compare")
+run["againstMain"] = E.against_main(row, {**run, "links": ["b--1.jar"], "verdicts": {"b--1.jar": {}}, "unreadable": {"a--1.jar": "ZipException"}})
+check(not E.gate(run)[2] and run["againstMain"]["no longer link"] == ["a--1.jar"],
+      f"a mod that links on main and that the port can no longer read fails the check: {run['againstMain']}")
+
+
+# A changed change index runs every update it makes, beside the sample: a release newly indexed between two others makes
+# two updates main's index did not have.
+index_now = json.loads(E.INDEX.read_text(encoding="utf-8"))
+middle = next(b for (a, b), (_, c) in zip(lo_f, lo_f[1:]) if (E.PINS / f"fabric-{a}.json").is_file() and (E.PINS / f"fabric-{b}.json").is_file())
+index_main = {**index_now, "allVersions": [v for v in index_now["allVersions"] if v["id"] != middle]}
+jobs, why = E.check_plan(["coverage/changes/index.json"], "", table, index_main)
+made = {(j["from"], j["to"]) for j in jobs if j["loader"] == "fabric" and "change index" in j["why"]}
+before_middle = next(a for a, b in lo_f if b == middle)
+check(made == {(before_middle, middle), (middle, dict(lo_f)[middle])} and any("sample" in w for w in why),
+      f"a change to the change index runs the updates it makes and the sample: {made} {why}")
+
+# The game proof of a port check: every mod it started loads on the server and in the client, or the check fails.
+proof = {"loader": "fabric", "from": "1.0", "to": "1.1", "scope": ["a", "b"], "mods": 3, "loaded": 3, "clashOnly": [],
+         "verdicts": {"a--a.jar": "loaded", "b--b.jar": "client-only: no server", "lib--lib.jar": "loaded"}, "notStarted": {},
+         "client": {"mods": 3, "loaded": 3, "verdicts": {"a--a.jar": "loaded", "b--b.jar": "loaded", "lib--lib.jar": "loaded"}}}
+check(E.load_gate(proof)[1], f"a proof whose mods load on both sides passes: {E.load_gate(proof)[0]}")
+for broken, what in ((dict(proof, verdicts={**proof["verdicts"], "a--a.jar": "failed: mixin"}), "a mod that fails on the server"),
+                     (dict(proof, client={**proof["client"], "verdicts": {**proof["client"]["verdicts"], "b--b.jar": "failed: crash"}}), "a mod that fails in the client"),
+                     (dict(proof, client={**proof["client"], "notRun": "no display"}), "a client that could not be run"),
+                     (dict(proof, notStarted={"a--a.jar": ["it does not link after the port"]}), "an asked mod that was not started")):
+    lines, ok = E.load_gate(broken)
+    check(not ok and any("FAIL" in x for x in lines), f"{what} fails the check: {lines}")
+clashed = dict(proof, clashOnly=["a--a.jar"], verdicts={**proof["verdicts"], "a--a.jar": "clash: loads alone, fails next to the other mods: x"})
+check(E.load_gate(clashed)[1], "a mod that loads alone and fails only next to the others is said and passes")
+
+# A game proof reads the whole update's report unless it proves some mods and a newer part-run read each of them: a part
+# of the update never stands for the whole.
+with tempfile.TemporaryDirectory() as tmp:
+    work = Path(tmp)
+    whole, part = work / "report.json", work / "report-part.json"
+    whole.write_text(json.dumps({"mods": [{"mod": "a--a.jar"}, {"mod": "b--b.jar"}]}), encoding="utf-8")
+    part.write_text(json.dumps({"mods": [{"mod": "b--b.jar"}]}), encoding="utf-8")
+    os.utime(whole, (1, 1))
+    check(E.proof_report(work, None) == whole, "a proof of every mod reads the whole report though a part-run's is newer")
+    check(E.proof_report(work, ["b"]) == part, "a proof of the mods a newer part-run read reads that run's report")
+    check(E.proof_report(work, ["a", "b"]) == whole, "a proof of a mod the part-run did not read reads the whole report")
+
+# Two sweep jobs from one release, side by side in one process, read the jars' names into reports of their own.
+with tempfile.TemporaryDirectory() as tmp:
+    saved = E.ROOT, E.HOME, E.side_by_side, E.jar_tools, E.shipped_obfuscated, E.keyed
+    E.ROOT, E.HOME = Path(tmp), Path(tmp) / "home"
+    E.jar_tools, E.shipped_obfuscated, E.keyed = (lambda: "classes"), (lambda loader, version: True), (lambda kind, *names: Path(tmp) / kind)
+    reports, both = [], threading.Barrier(2)
+
+    def named(command, jars, report):
+        reports.append(report)
+        both.wait(5)
+        return []
+    E.side_by_side = named
+    try:
+        jar = Path(tmp) / "m.jar"
+        jar.write_bytes(b"x")
+        threads = [threading.Thread(target=E.mojang_names, args=("fabric", "1.0", [jar])) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        E.ROOT, E.HOME, E.side_by_side, E.jar_tools, E.shipped_obfuscated, E.keyed = saved
+check(len(set(reports)) == 2, f"two reads of one release's names at once write two reports: {reports}")
+
+# A sweep of an old commit (--at) runs in its unpacked tree, which has no reader of main's table: it compares with nothing
+# and still keeps its summaries.
+with tempfile.TemporaryDirectory() as tmp:
+    saved, kept_module = (E.ROOT, dict(E.MAIN)), sys.modules.pop("generated", None)
+    E.ROOT = Path(tmp)
+    (E.ROOT / "bench").mkdir()
+    E.MAIN.clear()
+    try:
+        none = E.main_table()
+    finally:
+        E.ROOT = saved[0]
+        E.MAIN.clear()
+        E.MAIN.update(saved[1])
+        if kept_module is not None:
+            sys.modules["generated"] = kept_module
+check(none is None, "a tree with no reader of main's table compares with no table")
 
 
 print(f"exposure: {checks} checks passed")

@@ -2,12 +2,12 @@ name: Port check
 # A pull request's check of the ports its change can move, in about one port's time: python bench/exposure.py
 # check-plan reads the files the PR changed (against main), the "Port check:" line of its description and main's jar
 # scoreboard (the generated branch), and picks the ports: the ones the description names (only its mods, or the mods a
-# type of break holds back on main), the update whose stand-ins or pinned mods changed, and, when the porter or its rules
-# changed, which every port reads, a sample per loader (the big and the small update with the most mods linking on main,
+# type of break holds back on main), the update whose stand-ins or pinned mods changed, the updates a changed change index
+# makes, and, when the porter, its rules or the change index changed, which every port reads, a sample per loader (the big and the small update with the most mods linking on main,
 # and the most-used release to the newest), never every port; its output says which and why. One job per port, side by
 # side: it ports and links those mods (jars --mods) and fails when a mod that links in main's row stops linking (gate),
 # then starts the mods that newly link on a real server and in a real client of the new release (load --mods), the game
-# proof at its smallest scope. The whole scoreboard (cloud-exposure.yml) runs only by hand and with each release.
+# proof at its smallest scope, which fails when a mod it started does not load (gate on the load receipt). The whole scoreboard (cloud-exposure.yml) runs only by hand and with each release.
 #
 # Started by the PR's own events: marked ready, or a push to a ready PR; a draft starts nothing, and a newer push
 # replaces the run of the older head. A pull_request run from a fork runs the fork's copy of this file with a read-only
@@ -40,7 +40,7 @@ jobs:
           set -o pipefail
           git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
           printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
-          python3 bench/exposure.py check-plan --changed "$RUNNER_TEMP/changed.txt" --body "$RUNNER_TEMP/body.md" > "$RUNNER_TEMP/plan.json"
+          python3 bench/exposure.py check-plan --changed "$RUNNER_TEMP/changed.txt" --body "$RUNNER_TEMP/body.md" --base HEAD^1 > "$RUNNER_TEMP/plan.json"
           python3 -c "import json,sys; print('\n'.join(json.load(open(sys.argv[1]))['why']))" "$RUNNER_TEMP/plan.json" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "jobs=$(python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['jobs']))" "$RUNNER_TEMP/plan.json")" >> "$GITHUB_OUTPUT"
   port:
@@ -94,9 +94,12 @@ jobs:
         run: |
           set -o pipefail
           status=0
+          receipt="summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json"
           PYTHONUNBUFFERED=1 python bench/exposure.py load --loader "$LOADER" --from "$FROM" --to "$TO" --mods "$FREED" \
-            --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" 2>&1 | tee load.txt || status=$?
+            --out "$receipt" 2>&1 | tee load.txt || status=$?
           { echo '```'; grep -A 1000 '^mod  ' load.txt || tail -n 5 load.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # load ends well when its starts ran, whatever they found; the check fails when a mod it started does not load.
+          if [ "$status" = 0 ]; then python bench/exposure.py gate "$receipt" | tee -a "$GITHUB_STEP_SUMMARY" || status=$?; fi
           exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()

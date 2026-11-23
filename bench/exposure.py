@@ -208,8 +208,9 @@ def fetch(loader, version, repin=False):
     return jars
 
 
-def releases():
-    data = json.loads(INDEX.read_text(encoding="utf-8"))
+def releases(data=None):
+    """The indexed releases of the change index (coverage/changes/index.json), or of data, another copy of it."""
+    data = json.loads(INDEX.read_text(encoding="utf-8")) if data is None else data
     return [v["id"] for v in data["allVersions"] if v.get("status") == "indexed"]
 
 
@@ -225,9 +226,10 @@ def chain(frm, to):
     return span if vkey(frm) <= vkey(to) else list(reversed(span))
 
 
-def updates(loader):
-    """Every update from one indexed release to the next whose mod jars are read for this loader."""
-    every = [v for v in sorted(releases(), key=vkey) if vkey(v) >= vkey(FIRST[loader])]
+def updates(loader, index=None):
+    """Every update from one indexed release to the next whose mod jars are read for this loader (index: another copy of
+    the change index)."""
+    every = [v for v in sorted(releases(index), key=vkey) if vkey(v) >= vkey(FIRST[loader])]
     return list(zip(every, every[1:]))
 
 
@@ -514,7 +516,8 @@ def mojang_names(loader, version, jars):
     failed = {}
     if missing:
         # ModNames writes each jar under a name of its own and moves it into place, so a run beside this one never reads half a jar.
-        report = ROOT / ".runs" / "exposure" / f"names-{loader}-{version}-{os.getpid()}.json"
+        # Named for this call: the sweep's jobs run side by side in one process, two of them from the same release.
+        report = ROOT / ".runs" / "exposure" / f"names-{loader}-{version}-{os.getpid()}-{uuid.uuid4().hex[:12]}.json"
         report.parent.mkdir(parents=True, exist_ok=True)
         rows = side_by_side([java(), f"-Xmx{min(4, HEAP)}g", "-cp", jar_tools(), "ModNames", "--version", version, "--loader", loader, "--out", str(out)], missing, report)
         failed = {m["mod"]: m["error"] for m in rows if "error" in m}
@@ -616,7 +619,7 @@ def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
                 todo.add(jar.name)
     todo = [j for j in jars if j.name in todo]
     if todo:
-        written = Path(targets[0][2]).with_name(f"plan-{os.getpid()}.json")
+        written = Path(targets[0][2]).with_name(f"plan-{os.getpid()}-{uuid.uuid4().hex[:12]}.json")
         written.write_text(json.dumps({"ports": plan}), encoding="utf-8")
         args = [java(), f"-Xmx{HEAP}g", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(ROOT / "knowledge" / "fixes.json"),
                 "--loader", loader] + (["--runtime-names"] if runtime else [])
@@ -1277,6 +1280,10 @@ MAIN = {}  # main's table, read once per run
 def main_table():
     """Main's jar scoreboard (scoreboard/all.json on the generated branch), fetched once per run; None when there is none
     (offline, or a clone with no generated branch)."""
+    if "table" not in MAIN and not (ROOT / "bench" / "generated.py").is_file():
+        # A commit's tree unpacked for --at (tree_at) holds this file and not the generated branch's reader: a sweep of
+        # an old commit is the base a branch is compared with, not a branch to compare with main.
+        MAIN["table"] = None
     if "table" not in MAIN:
         sys.path.insert(0, str(ROOT / "bench"))
         import generated
@@ -1297,19 +1304,21 @@ def main_row(loader, frm, to, table=None):
 
 
 def against_main(row, summary):
-    """Over the mods a run read: those that link now and not in main's row, those main's row has linking that do not now."""
-    read = set(summary["verdicts"])
+    """Over the mods a run ported: those that link now and not in main's row, those main's row has linking that do not now.
+    A mod the run could not read or port (unreadable) was ported and does not link."""
+    read = set(summary["verdicts"]) | set(summary.get("unreadable", {}))
     was, now = set(row["links"]) & read, set(summary["links"])
     return {"newly link": sorted(now - was), "no longer link": sorted(was - now), "same": len(read) - len(now ^ was)}
 
 
-# What every port reads: the porter's sources, the port rules and this file. A change to one can move any mod of any port.
-SHARED = {"knowledge/fixes.json", "bench/exposure.py"} | {f"tools/{n}" for n in (*JAR_SOURCES, *MAP_SOURCES, *NAME_SOURCES)}
+# What every port reads: the porter's sources, the port rules, this file and the change index (the releases a port crosses,
+# and which updates are big). A change to one can move any mod of any port.
+SHARED = {"knowledge/fixes.json", "bench/exposure.py", INDEX.relative_to(ROOT).as_posix()} | {f"tools/{n}" for n in (*JAR_SOURCES, *MAP_SOURCES, *NAME_SOURCES)}
 NAMED = re.compile(r"^[ \t*_>-]*port check:?[*_]*\s*(.+)$", re.I | re.M)
 PAIR = re.compile(r"\b(fabric|neoforge):(\d[\w.]*)(?::(\d[\w.]*))?\b")
 
 
-def check_plan(changed, body="", table=None):
+def check_plan(changed, body="", table=None, index_before=None):
     """What a pull request's port check runs: a list of jobs {loader, from, to, mods, why} (mods: Modrinth slugs, empty
     for all the release pins) and the lines that say why, from the files it changed, the ports its description names and
     main's table. Each job ports one pair and compares it with main's row, so the check takes about one port's time.
@@ -1320,7 +1329,7 @@ def check_plan(changed, body="", table=None):
     - A changed pin list (bench/exposure/mods/LOADER-FROM.json): the update from that release.
     - A change to what every port reads (SHARED): a sample, not every port, and the lines say so: per loader the big
       update and the small update with the most mods linking on main, and the jump from the most-used release to the
-      newest, every mod of each.
+      newest, every mod of each. A changed change index also runs each update it makes (index_before: main's copy).
     Anything else changes nothing the scoreboard reads, and runs nothing."""
     jobs, why = {}, []
 
@@ -1362,6 +1371,11 @@ def check_plan(changed, body="", table=None):
         pins = re.fullmatch(r"bench/exposure/mods/(fabric|neoforge)-([\w.]+)\.json", f)
         if pins and dict(updates(pins.group(1))).get(pins.group(2)):
             add(pins.group(1), pins.group(2), dict(updates(pins.group(1)))[pins.group(2)], [], f"its pinned mods changed ({f})")
+    if index_before is not None and INDEX.relative_to(ROOT).as_posix() in changed:
+        for lo in sorted(FIRST):
+            for frm, to in sorted(set(updates(lo)) - set(updates(lo, index_before)), key=lambda u: vkey(u[0])):
+                if (PINS / f"{lo}-{frm}.json").is_file():
+                    add(lo, frm, to, [], "the change index makes it an update")
     if shared:
         for lo in sorted(FIRST):
             rows = [r for r in (table or {}).get("updates", []) if r["loader"] == lo]
@@ -1395,6 +1409,41 @@ def gate(summary):
     if m["no longer link"]:
         lines.append(f"FAIL: {len(m['no longer link'])} mods that link on main stop linking")
     return lines, sorted({n.split("--", 1)[0] for n in m["newly link"]}), not m["no longer link"]
+
+
+def load_gate(summary):
+    """A port check's verdict on its game proof (a load receipt): its lines and whether it passes, which it does when
+    every mod it was asked to start (its scope) loads on the server, or is client-only there, and then loads in the
+    client. A mod that loads alone and fails only next to the others (clash) is said and does not fail it; one the
+    proof did not start, or a client that could not be run, fails it: a check that proved nothing in game never passes."""
+    asked = set(summary["scope"]) if isinstance(summary.get("scope"), list) else None
+    client = summary.get("client") or {}
+    clash = set(summary.get("clashOnly", []))
+    pair = f"{summary['loader']} {summary['from']} -> {summary['to']}"
+    failed = []
+    for name, why in sorted((summary.get("notStarted") or {}).items()):
+        if asked is None or name.split("--", 1)[0] in asked:
+            failed.append(f"{name}: not started: {'; '.join(why)}")
+    for name, verdict in sorted(summary.get("verdicts", {}).items()):
+        if asked is not None and name.split("--", 1)[0] not in asked:
+            continue  # a library an asked mod needs: a failing one fails the mods that need it
+        if verdict.startswith("failed"):
+            failed.append(f"{name}: server {verdict}"[:500])
+            continue
+        if not (verdict == "loaded" or verdict.startswith("client-only")):
+            continue
+        if client.get("notRun"):
+            failed.append(f"{name}: the client was not run: {client['notRun']}"[:500])
+        elif not str(client.get("verdicts", {}).get(name, "")).startswith("loaded"):
+            failed.append(f"{name}: client {client.get('verdicts', {}).get(name, 'gave no verdict')}"[:500])
+    lines = [f"{pair}: game proof of {', '.join(sorted(asked)) if asked else 'every mod that links'}: "
+             f"{summary.get('loaded', 0)}/{summary.get('mods', 0)} load on the server, {client.get('loaded', 0)}/{client.get('mods', 0)} in the client"]
+    if clash & {n for n in summary.get("verdicts", {}) if asked is None or n.split("--", 1)[0] in asked}:
+        lines.append(f"  load alone but fail next to the others: {', '.join(sorted(clash))}")
+    lines += [f"  {f}" for f in failed]
+    if failed:
+        lines.append(f"FAIL: {len(failed)} mods the check started do not load in game")
+    return lines, not failed
 
 
 def every_update(loaders, only, jobs, out_file=None):
@@ -2546,6 +2595,17 @@ def load_plan(spec, mods=None):
     return out
 
 
+def proof_report(work, mods):
+    """The jars report a game proof reads: the whole update's, or for a proof of some mods (mods: slugs) a newer report of
+    some mods (jars --mods or --type, as a port check runs it) when it read every one of them."""
+    whole, part = work / "report.json", work / "report-part.json"
+    if mods and part.is_file() and (not whole.is_file() or part.stat().st_mtime >= whole.stat().st_mtime):
+        read = {m["mod"].split("--", 1)[0] for m in json.loads(part.read_text(encoding="utf-8"))["mods"]}
+        if set(mods) <= read:
+            return part
+    return whole
+
+
 def load(loader, frm, to, save, mods=None, out=None):
     """The mods the jar scoreboard says link, ported as jars and started on a real server of the new release with the library
     mods they need (choose), then in a real client of it (client_starts), with both verdicts side by side. mods: only these
@@ -2554,8 +2614,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     One start holds them all; a start that fails drops the jar its log names and starts again, until a start opens a world,
     places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only."""
     work = ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}"
-    # The newer of the whole update's report and a report of some of its mods (jars --mods, as a port check runs it).
-    report = max((r for r in (work / "report.json", work / "report-part.json") if r.is_file()), key=lambda r: r.stat().st_mtime, default=work / "report.json")
+    report = proof_report(work, mods)
     if not report.is_file():
         jars(loader, frm, [to])
     linked = [m["mod"] for m in json.loads(report.read_text(encoding="utf-8"))["mods"] if "error" not in m and not m["unlinked"]]
@@ -2884,7 +2943,9 @@ def main():
     cp = sub.add_parser("check-plan", help="what a pull request's port check runs, as JSON {jobs, why} (port-check.yml's matrix)")
     cp.add_argument("--changed", type=Path, required=True, help="a file listing the files the pull request changed, one a line")
     cp.add_argument("--body", type=Path, help="a file with the pull request's description")
-    ga = sub.add_parser("gate", help="a port check's verdict on a jars summary against main's row: fails when a mod stops linking")
+    cp.add_argument("--base", help="the commit the pull request is compared with (main), whose change index tells which updates are new")
+    ga = sub.add_parser("gate", help="a port check's verdict: on a jars summary, fails when a mod that links in main's row stops; "
+                                     "on a load receipt, when a mod it started does not load in game")
     ga.add_argument("summary", type=Path)
     ga.add_argument("--freed", type=Path, help="write the slugs of the mods that newly link here, comma-separated")
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
@@ -2921,14 +2982,22 @@ def main():
         jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind,
              only=[m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None)
     elif a.command == "check-plan":
+        before = None
+        if a.base:
+            shown = subprocess.run(["git", "show", f"{a.base}:{INDEX.relative_to(ROOT).as_posix()}"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+            before = json.loads(shown.stdout) if shown.returncode == 0 else {"allVersions": []}
         jobs, why = check_plan([f for f in a.changed.read_text(encoding="utf-8").splitlines() if f.strip()],
-                               a.body.read_text(encoding="utf-8") if a.body and a.body.is_file() else "")
+                               a.body.read_text(encoding="utf-8") if a.body and a.body.is_file() else "", index_before=before)
         print(json.dumps({"jobs": jobs, "why": why}))
     elif a.command == "gate":
-        lines, freed, ok = gate(json.loads(a.summary.read_text(encoding="utf-8")))
+        summary = json.loads(a.summary.read_text(encoding="utf-8"))
+        if "client" in summary:
+            lines, ok = load_gate(summary)
+        else:
+            lines, freed, ok = gate(summary)
+            if a.freed:
+                a.freed.write_text(",".join(freed), encoding="utf-8")
         print("\n".join(lines))
-        if a.freed:
-            a.freed.write_text(",".join(freed), encoding="utf-8")
         sys.exit(0 if ok else 1)
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
