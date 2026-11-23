@@ -89,6 +89,7 @@ final class JarPortStandinTest {
 
         Map<String, byte[]> modFiles = new HashMap<>();
         modFiles.put("n9/Mod.class", mod());
+        modFiles.put("n9/Sub.class", sub());
         modFiles.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n9\"\n".getBytes(StandardCharsets.UTF_8));
         List<Map<String, Object>> runs = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(modFiles), "standin.jar", runs));
@@ -128,11 +129,14 @@ final class JarPortStandinTest {
             Object book7 = mod.getMethod("isBook", Object.class).invoke(null, item.getConstructor(int.class).newInstance(7));
             Object book3 = mod.getMethod("isBook", Object.class).invoke(null, item.getConstructor(int.class).newInstance(3));
             Object zone = mod.getMethod("zone", gauge).invoke(null, gauge.getConstructor().newInstance());
-            trace = read + ";" + book7 + ";" + book3 + ";" + zone;
+            // The subclass overrides the old read() with 99 of its own; its super.read() ran the game's old read(), which is
+            // the stand-in now, not the subclass's own method.
+            Object viaSuper = loader.loadClass("n9.Sub").getMethod("viaSuper").invoke(loader.loadClass("n9.Sub").getConstructor().newInstance());
+            trace = read + ";" + book7 + ";" + book3 + ";" + zone + ";" + viaSuper;
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(trace.equals("42;true;false;45"), "the ported mod runs the stand-ins against the new release: " + trace);
+        JarPortTest.expect(trace.equals("42;true;false;45;42"), "the ported mod runs the stand-ins against the new release, a super call to a gone method included: " + trace);
 
         nested(port);
 
@@ -412,6 +416,30 @@ final class JarPortStandinTest {
         zone.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "s9/Gauge", "zone", "(Ls9/Zone;)I", false);
         zone.visitInsn(Opcodes.IRETURN);
         zone.visitMaxs(0, 0);
+        return end(w);
+    }
+
+    /** A mod class extending Gauge that overrides the old read() and calls super.read(), as a screen calls super.handleComponentClicked(style). */
+    static byte[] sub() {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
+        w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "n9/Sub", null, "s9/Gauge", null);
+        MethodVisitor init = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        init.visitCode();
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Gauge", "<init>", "()V", false);
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        MethodVisitor own = w.visitMethod(Opcodes.ACC_PUBLIC, "read", "()I", null, null);
+        own.visitCode();
+        own.visitIntInsn(Opcodes.BIPUSH, 99);
+        own.visitInsn(Opcodes.IRETURN);
+        own.visitMaxs(0, 0);
+        MethodVisitor viaSuper = w.visitMethod(Opcodes.ACC_PUBLIC, "viaSuper", "()I", null, null);
+        viaSuper.visitCode();
+        viaSuper.visitVarInsn(Opcodes.ALOAD, 0);
+        viaSuper.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Gauge", "read", "()I", false);
+        viaSuper.visitInsn(Opcodes.IRETURN);
+        viaSuper.visitMaxs(0, 0);
         return end(w);
     }
 
