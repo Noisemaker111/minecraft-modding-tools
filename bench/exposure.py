@@ -5,7 +5,6 @@
     python bench/exposure.py all --at origin/main --out BASE.json    (any command, on another commit's porter)
     python bench/exposure.py join DIR [--out FILE]
     python bench/exposure.py compare BEFORE.json AFTER.json
-    python bench/exposure.py record-main TABLE.json --commit SHA --run URL
     python bench/exposure.py fetch --loader neoforge|fabric --version 1.21.1 [--repin]
     python bench/exposure.py pin [--loader neoforge|fabric] [--version 1.21.1] [--repin]
     python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--mods SLUG,...] [--save] [--out FILE]
@@ -28,9 +27,10 @@ all runs jars for every update a loader's jars can be read across (Fabric from 1
 hold the most mods back across every update. join does the joining for summaries made elsewhere (the cloud run,
 tools/cloud-run exposure). --out writes the table to a file.
 
-bench/exposure/all.json is main's table, written only on main: every push to main runs the cloud sweep
-(.github/workflows/cloud-exposure.yml), and record-main saves its table there, with the commit it ran, and adds its
-totals to the port.jar-links measures. A pull request never writes either, so two never conflict on them; compare
+Main's table is kept on the generated branch as scoreboard/all.json, never on main (bench/generated.py): every push to
+main runs the cloud sweep (.github/workflows/cloud-exposure.yml), and its record job saves the table there with the
+commit it ran and adds its totals to the port.jar-links points in scoreboard/points.json. A commit to main for each would
+put every open pull request behind. `python bench/generated.py show scoreboard/all.json` prints the newest; compare
 prints what a branch's table changes against main's (tools/cloud-run exposure finds main's for the branch's base).
 
 Every stage is kept in ~/.mmt/exposure/ under the content of everything it reads (the porter's classes, the route map,
@@ -1221,7 +1221,6 @@ def join(folder, out=None):
     return table
 
 
-MAIN_TABLE = ROOT / "bench" / "exposure" / "all.json"
 # The measures main's table is recorded in, each with the totals it reads: (link, mods).
 MAIN_MEASURES = {
     "port.jar-links.every-update": lambda t: (t["total"]["link"], t["total"]["mods"]),
@@ -1274,12 +1273,15 @@ def compare(before, after):
     return lines
 
 
-def record_main(table_path, commit, run, measures_path=None, main_table=MAIN_TABLE, day=None):
-    """Saves a sweep of a main commit as main's table and adds its totals to the port.jar-links measures, each point's
-    note saying what moved against the table it replaces. Run by the cloud sweep a push to main started, never by hand."""
+def record_main(table_path, commit, run, folder, day=None):
+    """Saves a sweep of a main commit as main's table (FOLDER/all.json) and adds its totals to the port.jar-links points
+    (FOLDER/points.json), each point's note saying what moved against the table it replaces. FOLDER is scoreboard/ in a
+    checkout of the generated branch; bench/generated.py publish runs this for the cloud sweep a push to main started."""
     sys.path.insert(0, str(ROOT / "bench"))
     import measures as M
-    measures_path = Path(measures_path or M.MEASURES)
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    main_table, points_path = folder / "all.json", folder / "points.json"
     table = json.loads(Path(table_path).read_text(encoding="utf-8"))
     table = {"commit": commit, "run": run, **{k: v for k, v in table.items() if k not in ("commit", "run")}}
     previous = json.loads(main_table.read_text(encoding="utf-8")) if main_table.is_file() else None
@@ -1288,19 +1290,18 @@ def record_main(table_path, commit, run, measures_path=None, main_table=MAIN_TAB
         # Sweeps of main can finish out of order: a newer commit's table is already there.
         print(f"main's table already holds {previous['commit'][:10]}, which {commit[:10]} does not follow; not recorded")
         return None
-    data = json.loads(measures_path.read_text(encoding="utf-8"))
-    by_id = {m["id"]: m for m in data["measures"]}
+    kept = json.loads(points_path.read_text(encoding="utf-8")) if points_path.is_file() else {}
     subject = subprocess.run(["git", "log", "-1", "--format=%s", commit], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     pr = re.search(r"\(#(\d+)\)\s*$", subject)
     at = f"main at {commit[:10]}" + (f" (#{pr.group(1)})" if pr else "")
     moved = [line for line in compare(previous, table)[3:] if not line.startswith(("no update", "  "))] if previous else []
     for mid, read in MAIN_MEASURES.items():
         link, mods = read(table)
-        points = by_id[mid].setdefault("points", [])
+        points = kept.setdefault(mid, [])
         last = points[-1] if points else None
         note = (f"{link - last['value']:+,} on {last['value']:,}" if last and last["value"] != link else "the same") + (": " + "; ".join(moved) if moved else "")
         points.append({"date": day or date.today().isoformat(), "value": link, "n": mods, "note": note[:600], "source": f"tools/cloud-run exposure {run} on {at}"})
-    measures_path.write_text(M.dump(data), encoding="utf-8", newline="\n")
+    points_path.write_text(M.dump(kept), encoding="utf-8", newline="\n")
     main_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
     print(f"main's table is {at}: " + "; ".join(compare(previous, table)[:3] if previous else [f"{read(table)[0]:,}" for read in MAIN_MEASURES.values()]))
     return table
@@ -2354,17 +2355,13 @@ def main():
     al.add_argument("--only", help="LOADER:FROM,... the updates to run (default every one)")
     al.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
     al.add_argument("--jobs", type=int, default=4, help="updates run side by side (each JarPort takes up to 10 GB)")
-    al.add_argument("--out", type=Path, help="write the table to this file (bench/exposure/all.json is main's, written on main)")
+    al.add_argument("--out", type=Path, help="write the table to this file (main's is on the generated branch, scoreboard/all.json)")
     jo = sub.add_parser("join")
     jo.add_argument("folder")
     jo.add_argument("--out", type=Path, help="write the table to this file")
     co = sub.add_parser("compare", help="what one table (a branch's) changes against another (main's)")
     co.add_argument("before", type=Path)
     co.add_argument("after", type=Path)
-    rm = sub.add_parser("record-main", help="save a main commit's sweep as main's table and measures (the cloud sweep on main runs this)")
-    rm.add_argument("table", type=Path)
-    rm.add_argument("--commit", required=True)
-    rm.add_argument("--run", required=True, help="the sweep's run URL")
     st = sub.add_parser("steps")
     st.add_argument("--from", dest="frm", default="1.14.4")
     st.add_argument("--to", default="26.3")
@@ -2401,8 +2398,6 @@ def main():
     elif a.command == "compare":
         before, after = (json.loads(f.read_text(encoding="utf-8")) for f in (a.before, a.after))
         print("\n".join((compare_loads if "verdicts" in after else compare)(before, after)))
-    elif a.command == "record-main":
-        record_main(a.table, a.commit, a.run)
     else:
         print(f"{len(fetch(a.loader, a.version, a.repin))} {a.loader} mods for {a.version} in {HOME / 'jars' / f'{a.loader}-{a.version}'}")
 

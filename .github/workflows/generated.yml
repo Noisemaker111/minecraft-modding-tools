@@ -1,10 +1,11 @@
 name: Generated files
 
-# ROADMAP.md and docs/ (the website) are written from coverage/ by two scripts. This runs them on main
-# after every push and commits the result when it changed, so a branch never regenerates them: a PR that
-# only edits coverage/ cannot conflict on a 480 KB page, and the site is never behind the data.
-# The commit is pushed with the DOCS_DEPLOY_KEY deploy key, the main ruleset's only bypass. That push runs CI on it
-# and not this workflow again (its paths leave out ROADMAP.md and docs/).
+# The website (docs/, served by GitHub Pages from the generated branch) and ROADMAP.md are written from main's coverage/
+# and main's jar scoreboard after every push to main, and committed to the generated branch, never to main
+# (bench/generated.py). main requires a pull request to be up to date before it merges, so a bot commit on main put every
+# open pull request behind; on their own branch they cost a pull request nothing. The scoreboard's record job
+# (cloud-exposure.yml) publishes the same way when its sweep ends.
+# The push uses the DOCS_DEPLOY_KEY deploy key, so GitHub Pages builds the branch (a push by GITHUB_TOKEN may not start it).
 
 on:
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - "coverage/**"
       - "bench/**"
+      - "docs/**"
       - "knowledge/fixes.json"
       - "tools/cli/Support.java"
       - ".github/workflows/generated.yml"
@@ -20,6 +22,7 @@ on:
 permissions:
   contents: read
 
+# A waiting run is replaced by a newer one: each builds from main as it is then, so the newest has everything.
 concurrency:
   group: generated-files
   cancel-in-progress: false
@@ -29,38 +32,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # main is protected (required checks: linux, windows). The deploy key is the ruleset's only bypass, so this
-      # job pushes over SSH with it; the regenerated files are written from coverage/ that CI already checked.
       - uses: actions/checkout@v4
         with:
+          ref: main
+      - uses: actions/checkout@v4
+        with:
+          ref: generated
+          path: .runs/generated
           ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Write ROADMAP.md and docs/
-        run: |
-          python bench/bench_page.py
-          python bench/porting_map.py
-      - name: Commit what changed
-        run: |
-          if git diff --quiet -- ROADMAP.md docs; then
-            echo "ROADMAP.md and docs/ already match coverage/."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ROADMAP.md docs
-          git commit -m "Regenerate ROADMAP.md and the website from coverage/"
-          # Another merge may have landed while this ran: take it and write the files again on top.
-          for attempt in 1 2 3; do
-            if git push; then exit 0; fi
-            git fetch origin main
-            git reset --hard origin/main
-            python bench/bench_page.py
-            python bench/porting_map.py
-            if git diff --quiet -- ROADMAP.md docs; then exit 0; fi
-            git add ROADMAP.md docs
-            git commit -m "Regenerate ROADMAP.md and the website from coverage/"
-          done
-          echo "::error::Could not push the regenerated files to main. Check that the DOCS_DEPLOY_KEY secret holds a write deploy key and that the main ruleset lets deploy keys bypass it."
-          exit 1
+      - name: Write the site and ROADMAP.md to the generated branch
+        run: python bench/generated.py publish --dir .runs/generated
