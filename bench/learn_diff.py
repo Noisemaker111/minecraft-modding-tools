@@ -47,7 +47,7 @@ def base_classes(ref):
 def learned(classes, frm, to, loader, out):
     if not out.is_file():
         part = out.with_suffix(".part")
-        subprocess.run([exposure.java(), "-Xmx8g", "-cp", classes, "GameDiff", "--chain", f"{frm},{to}", "--loader", loader, "--out", str(part)],
+        subprocess.run([exposure.java(), f"-Xmx{min(8, exposure.HEAP)}g", "-cp", classes, "GameDiff", "--chain", f"{frm},{to}", "--loader", loader, "--out", str(part)],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         part.replace(out)
     lines = {}
