@@ -1,0 +1,15 @@
+{
+ "id": "86C",
+ "title": "Ports to older releases fill in what the older game lacks",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "Step 86 found that a port back meets the reverse of a forward port's breaks: the mod calls classes, methods and fields the newer game added and the older one does not have yet. On a port back, JarPort now copies the newer game's own code for a method the older game lacks into a class the jar carries, where that code uses only what the older game has (or other such methods), and points the mod's calls at it; the copy is then ported with the mod's own classes, so a port across several updates copies on each step. Where the newer code needs a class, field or state the older game lacks, a stand-in in knowledge/standins/NEWER-OLDER/ writes the newer API on the older game from both releases' code and the loaders' notes (DeltaTracker and Minecraft.getTimer on 1.20.6, Biome.getPrecipitationAt on 1.19.3, Registries.DIMENSION on 1.19.2, Component.literal and translatable on 1.18.2). A member with no honest older form stays a break.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "JarPortBackTest fails without the copies; tools/cloud-run exposure against main for any version and the older-releases reach (everyOlder); tools/cloud-run load on NeoForge 1.21.1 -> 1.20.6 and Fabric 1.20.1 -> 1.19.4 with the freed mods loaded",
+ "wrongIf": "a freed mod fails in game where the copied code or a stand-in runs, or a mod that linked on main no longer links",
+ "measures": [
+  "port.jar-links.any-version"
+ ],
+ "result": "in progress"
+}

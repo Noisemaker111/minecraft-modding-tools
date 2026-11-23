@@ -48,7 +48,7 @@ import java.util.zip.*;
  *   java GameDiff --compare A B [--all] [--report file]   (validation only: an obfuscated pair, our
  *        linking scored against VersionMap's intermediary diff; --all includes private members)
  *
- * Compile with tools/VersionMap.java, JDK 25 (java.lang.classfile). Downloads are cached in
+ * Compile with tools/port/names/VersionMap.java, JDK 25 (java.lang.classfile). Downloads are cached in
  * VersionMap.cache (~/.mmt/mappings). Exit: 0 ok, 2 usage or I/O error.
  */
 public final class GameDiff {
@@ -331,6 +331,7 @@ public final class GameDiff {
 
         final String version;
         String loaderVersion;
+        int java; // the Java the release runs on (its version.json's javaVersion), 0 where not read from Mojang
         final Map<String, Cls> classes = new LinkedHashMap<>();
         final Set<String> fixPairs = new HashSet<>(); // "old\0new" ids from the game's own datafixes
         final Map<String, Origin> origins = new HashMap<>(); // class -> its bytes, so Learner can read a body again
@@ -943,6 +944,14 @@ public final class GameDiff {
         return l;
     }
 
+    static final Pattern JAVA_VERSION = Pattern.compile("\"javaVersion\"\\s*:\\s*\\{[^}]*\"majorVersion\"\\s*:\\s*(\\d+)");
+
+    /** The Java a release runs on, as its version.json names it; Java 8 for the releases from before it named one. */
+    static int javaOf(String versionJson) {
+        Matcher m = JAVA_VERSION.matcher(versionJson);
+        return m.find() ? Integer.parseInt(m.group(1)) : 8;
+    }
+
     /** One release from Mojang, plus a loader jar when given. */
     static Snap load(String version, Path loaderJar, String loaderVersion) throws Exception {
         return load(version, loaderJar == null ? List.of() : classes(loaderJar, "net/neoforged/"), loaderVersion);
@@ -961,6 +970,7 @@ public final class GameDiff {
        Snap s = read(version, classes(jar, null), pg, loader);
         addLibraries(s.libraries, libraries(vj));
         s.loaderVersion = loaderVersion;
+        s.java = javaOf(vj);
         System.out.printf(
             "  read %s%s: %,d classes, %,d methods, %,d fields (%s names, %.1fs)%n",
             version,
@@ -9391,7 +9401,7 @@ public final class GameDiff {
             }
             head.append(retyped.isEmpty() ? "],\n" : "\n  ],\n");
             if (loader != null) {
-                String source = "fabric".equals(loader) ? Exposure.FABRIC_API : NEOFORGE;
+                String source = "fabric".equals(loader) ? Exposure.FabricApi.MAVEN : NEOFORGE;
                 head.append("  \"loader\": { \"name\": ").append(VersionMap.Diff.q(loader)).append(", \"source\": ").append(VersionMap.Diff.q(source)).append(", \"versions\": {");
                 int i = 0;
                 for (var e : loaderUsed.entrySet()) {

@@ -6,108 +6,31 @@ import java.util.zip.*;
 
 final class Installation {
 
+    /**
+     * What a package carries beside its classes. An entry ending in / is a whole folder: a file added to it ships by
+     * being there (this list named every file once, and every new probe, porter source and test had to be added here).
+     * The self-test's sources are not named either: they follow from SUITES (testSources).
+     */
     static final List<String> RESOURCES = List.of(
         "tools/cli/gradle.init.gradle",
         "PERFORMANCE.md",
-        "tools/perf/PerfAgent.java",
-        "tools/perf/suite.html",
-        "tools/perf/lib/asm-9.9.jar",
-        "tools/perf/lib/asm-commons-9.9.jar",
-        "tools/perf/lib/ASM-LICENSE.txt",
         "tools/cli/Json.java",
+        "tools/cli/Route.java",
         "tools/cli/Versions.java",
         "tools/cli/Relocate.java",
         "tools/cli/QuietOptions.java",
-        "tools/agent/PortableAgent.java",
-        "tools/agent/BackgroundWindows.java",
-        "tools/agent/GameLaunchAgent.java",
-        "tools/agent/Console.java",
-        "tools/agent/HotReload.java",
-        "tools/runner/PureTests.java",
-        "tools/plugincheck/MmtPluginCheck.java",
-        "tools/servercheck/MmtServerCheck.java",
-        "tools/packcheck/MmtPackProbe.java",
-        "tools/packcheck/MmtPackProbeFabric.java",
-        "tools/packcheck/MmtPackOpener.java",
-        "tools/packcheck/stubs/net/minecraftforge/fml/common/Mod.java",
-        "tools/packcheck/stubs/net/neoforged/fml/common/Mod.java",
-        "tools/packcheck/stubs/net/fabricmc/api/DedicatedServerModInitializer.java",
-        "tools/packcheck/mods.toml",
-        "tools/packcheck/neoforge.mods.toml",
-        "tools/packcheck/fabric.mod.json",
-        "tools/packcheck/pack.mcmeta",
-        "tools/packcheck/game/1.14/MmtPackGame.java",
-        "tools/packcheck/game/1.16/MmtPackGame.java",
-        "tools/packcheck/game/1.16.2/MmtPackGame.java",
-        "tools/packcheck/game/1.18.2/MmtPackGame.java",
-        "tools/packcheck/game/1.19.3/MmtPackGame.java",
-        "tools/packcheck/game/1.21.2/MmtPackGame.java",
-        "tools/packcheck/game/1.21.5/MmtPackGame.java",
-        "tools/packcheck/game/1.21.9/MmtPackGame.java",
-        "tools/packcheck/game/1.21.11/MmtPackGame.java",
-        "tools/packcheck/game/26.1/MmtPackGame.java",
-        "tools/packcheck/MmtFingerprint.java",
-        "tools/packcheck/fingerprint/1.16/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.18.2/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.19/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.19.3/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.20/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.20.3/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.20.5/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.21.2/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.21.5/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/1.21.6/MmtFingerprintGame.java",
-        "tools/packcheck/fingerprint/26.1/MmtFingerprintGame.java",
-        "tools/VersionMap.java",
-        "tools/GameDiff.java",
-        "tools/JarPort.java",
-        "tools/ModNames.java",
-        "tools/FixExpr.java",
-        "tools/SourceAnswers.java",
-        "tools/PortChains.java",
-        "tools/Exposure.java",
+        "tools/agent/",
+        "tools/datacheck/",
+        "tools/mixincheck/",
+        "tools/packcheck/",
+        "tools/perf/",
+        "tools/plugincheck/",
+        "tools/runner/",
+        "tools/servercheck/",
+        "tools/port/",
         "tools/MixinAudit.java",
         "tools/MixinTriage.java",
-        "tools/mixincheck/MmtMixinCheck.java",
-        "tools/mixincheck/MmtMixinErrors.java",
-        "tools/mixincheck/MmtLaunchRecorder.java",
-        "tools/mixincheck/MmtNeoForgeTarget.java",
-        "tools/datacheck/MmtDataCheck.java",
-        "tools/datacheck/MmtDataProbe.java",
-        "tools/datacheck/mod/SkipShapeCache.java",
-        "tools/datacheck/mod/fabric.mod.json",
-        "tools/datacheck/mod/mmt_datacheck.mixins.json",
-        "tools/mixincheck/stubs/org/spongepowered/asm/mixin/extensibility/IMixinErrorHandler.java",
-        "tools/mixincheck/stubs/org/spongepowered/asm/mixin/extensibility/IMixinInfo.java",
-        "tools/mixincheck/stubs/org/spongepowered/asm/mixin/extensibility/IMixinConfig.java",
         "tools/GamePrep.java",
-        "tools/tests/PortTests.java",
-        "tools/tests/DesugarTests.java",
-        "tools/tests/PortScaffoldTests.java",
-        "tools/tests/PortRepairTests.java",
-        "tools/tests/ConvertTests.java",
-        "tools/tests/ConvertBridgeTests.java",
-        "tools/tests/ConvertNamesTests.java",
-        "tools/tests/ConvertDataTests.java",
-        "tools/tests/BuildScriptTests.java",
-        "tools/tests/CommandTests.java",
-        "tools/tests/GameTests.java",
-        "tools/tests/PerfTest.java",
-        "tools/tests/JdkDownloadsTest.java",
-        "tools/tests/DependenciesTest.java",
-        "tools/tests/FabricMetadataTest.java",
-        "tools/tests/HardeningTest.java",
-        "tools/tests/MixinCheckTest.java",
-        "tools/tests/TrustTest.java",
-        "tools/tests/ModFileTests.java",
-        "tools/tests/ErrorMessageTests.java",
-        "tools/tests/ProjectSafetyTests.java",
-        "tools/tests/PackCheckFixtures.java",
-        "tools/tests/PackMetadataTests.java",
-        "tools/tests/PackLogTests.java",
-        "tools/tests/PackServerTests.java",
-        "tools/tests/PackRepairTests.java",
-        "tools/tests/RulesTest.java",
         "knowledge/",
         "coverage/changes/index.json"
     );
@@ -122,7 +45,7 @@ final class Installation {
      * perf-optimize silently ran without them.
      */
     static List<String> resources(Path harness) throws IOException {
-        List<String> files = new ArrayList<>();
+        List<String> files = new ArrayList<>(testSources(harness));
         for (String name : RESOURCES) {
             if (!name.endsWith("/")) {
                 files.add(name);
@@ -150,7 +73,32 @@ final class Installation {
         return files;
     }
 
-    static Path home() throws Exception {
+    /**
+     * The self-test's sources: each suite's class, and every other file of tools/tests one of them names (a shared
+     * fixture, a suite another suite runs), followed until nothing new is named.
+     */
+    static List<String> testSources(Path harness) throws IOException {
+        Path tests = harness.resolve("tools/tests");
+        Map<String, String> sources = new TreeMap<>();
+        try (var list = Files.list(tests)) {
+            for (Path file : list.filter(p -> p.toString().endsWith(".java")).toList()) {
+                String name = file.getFileName().toString();
+                sources.put(name.substring(0, name.length() - 5), Files.readString(file));
+            }
+        }
+        Set<String> shipped = new TreeSet<>();
+        Deque<String> open = new ArrayDeque<>();
+        for (Suite suite : SUITES) open.add(suite.main());
+        while (!open.isEmpty()) {
+            String name = open.poll();
+            if (!sources.containsKey(name) || !shipped.add(name)) continue;
+            var words = java.util.regex.Pattern.compile("\\b[A-Z]\\w*\\b").matcher(sources.get(name));
+            while (words.find()) open.add(words.group());
+        }
+        return shipped.stream().map(name -> "tools/tests/" + name + ".java").toList();
+    }
+
+    static synchronized Path home() throws Exception {
         Path location = Path.of(Mmt.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         // A child started by perf-optimize (PerfOptimize.childJava) is handed its parent's resources; a test hands its own.
         // Not mmt.home: the portable launchers set that to the ZIP's folder, which has no resources.
@@ -165,7 +113,22 @@ final class Installation {
             ".mmt/packages",
             Fingerprints.bytes(Files.readAllBytes(location))
         );
-        try (var jar = new JarFile(location.toFile())) {
+        // The folder is named for the jar's bytes, so once unpacked whole it never changes: a command reads nothing more.
+        Path unpacked = directory.resolve(".unpacked");
+        if (Files.isRegularFile(unpacked)) return directory;
+        Files.createDirectories(directory);
+        // Commands from one package often start together (the checks, the desktop app): one unpacks while the others
+        // wait, so none sees a file another is replacing. The JVM's own threads share one lock, hence synchronized.
+        try (
+            var channel = java.nio.channels.FileChannel.open(
+                directory.resolve(".unpack.lock"),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE
+            );
+            var lock = channel.lock();
+            var jar = new JarFile(location.toFile())
+        ) {
+            if (Files.isRegularFile(unpacked)) return directory;
             List<String> names;
             try (var input = jar.getInputStream(jar.getJarEntry(RESOURCE_LIST))) {
                 names = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).lines().toList();
@@ -180,16 +143,11 @@ final class Installation {
                     Files.createDirectories(file.getParent());
                     Path temporary = Files.createTempFile(file.getParent(), "resource-", ".tmp");
                     Files.write(temporary, bytes);
-                    try {
-                        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (IOException busy) {
-                        // Two commands from one package starting at once both unpack it; on Windows the second cannot
-                        // replace a file the first just wrote and holds open. Those bytes are the same ones.
-                        Files.deleteIfExists(temporary);
-                        if (!Files.isRegularFile(file) || !Arrays.equals(Files.readAllBytes(file), bytes)) throw busy;
-                    }
+                    Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
+            // Last, so a folder an interrupted command left half unpacked is unpacked again.
+            Files.writeString(unpacked, "");
         }
         return directory;
     }
@@ -211,7 +169,7 @@ final class Installation {
                 classes.toString()
             )
         );
-        try (var files = Files.list(harness.resolve("tools/cli"))) {
+        try (var files = Files.walk(harness.resolve("tools/cli"))) {
             files
                 .filter(p -> p.toString().endsWith(".java") && !p.getFileName().toString().equals("Bootstrap.java"))
                 .sorted()
@@ -455,7 +413,9 @@ final class Installation {
     /** One self-test suite: a class in tools/tests with a main, and what it is given beside the classpath. */
     record Suite(String name, String main, boolean wantsHarness, boolean wantsScratch) {}
 
+    // perf is listed first: the suites run side by side and it takes longest (its captures last seconds), so it starts first.
     static final List<Suite> SUITES = List.of(
+        new Suite("perf", "PerfTest", true, true),
         new Suite("desugar", "DesugarTests", true, true),
         new Suite("port", "PortTests", true, true),
         new Suite("port-scaffold", "PortScaffoldTests", true, true),
@@ -464,7 +424,6 @@ final class Installation {
         new Suite("build-script", "BuildScriptTests", true, true),
         new Suite("command", "CommandTests", true, true),
         new Suite("game", "GameTests", true, true),
-        new Suite("perf", "PerfTest", true, true),
         new Suite("jdk", "JdkDownloadsTest", false, false),
         new Suite("dependency", "DependenciesTest", false, false),
         new Suite("manifest", "FabricMetadataTest", false, false),
@@ -527,15 +486,36 @@ final class Installation {
         report.stage("test-compile", compile, Map.of());
         if (compile.exit() != 0) throw new IOException(Run.tail(compile.log()));
 
+        // The suites share nothing (each makes its own scratch folder), so they run side by side, one per core; the
+        // report keeps their listed order.
+        List<Path> logs = new ArrayList<>();
+        for (Suite suite : suites) logs.add(report.log(suite.name() + "-tests"));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        List<java.util.concurrent.Future<Run.Result>> runs = new ArrayList<>();
+        try {
+            for (int i = 0; i < suites.size(); i++) {
+                Suite suite = suites.get(i);
+                Path log = logs.get(i);
+                List<String> command = new ArrayList<>(
+                    List.of(jdk.java().toString(), "-cp", own + File.pathSeparator + classes, suite.main())
+                );
+                if (suite.wantsHarness()) command.add(harness.toString());
+                if (suite.wantsScratch()) command.add(report.directory.resolve("fixtures").toString());
+                runs.add(pool.submit(() -> Run.command(command, report.root, Map.of(), log, 120)));
+            }
+        } finally {
+            pool.shutdown();
+        }
         List<Object> results = new ArrayList<>();
         List<String> failed = new ArrayList<>(), passedLines = new ArrayList<>(), failedText = new ArrayList<>();
-        for (Suite suite : suites) {
-            List<String> command = new ArrayList<>(
-                List.of(jdk.java().toString(), "-cp", own + File.pathSeparator + classes, suite.main())
-            );
-            if (suite.wantsHarness()) command.add(harness.toString());
-            if (suite.wantsScratch()) command.add(report.directory.resolve("fixtures").toString());
-            var run = Run.command(command, report.root, Map.of(), report.log(suite.name() + "-tests"), 120);
+        for (int i = 0; i < suites.size(); i++) {
+            Suite suite = suites.get(i);
+            Run.Result run;
+            try {
+                run = runs.get(i).get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw e.getCause() instanceof Exception cause ? cause : e;
+            }
             report.stage(suite.name() + "-tests", run, Map.of());
             boolean ok = run.exit() == 0;
             results.add(

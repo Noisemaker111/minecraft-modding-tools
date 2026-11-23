@@ -129,21 +129,10 @@ public final class ModNames {
         // Every string a refmap resolves is written into its mixin below, so the refmap is emptied: left as it was, Mixin
         // would turn a string that equals one of its keys back into an intermediary name of the old release.
         Set<String> refmapFiles = refmapFiles(entries);
-        Set<String> nested = new LinkedHashSet<>();
-        for (Object j : meta.get("jars") instanceof List<?> list ? list : List.of()) {
-            if (j instanceof Map<?, ?> m && m.get("file") instanceof String file && entries.containsKey(file)) {
-                nested.add(file);
-            }
-        }
-        // A NeoForge mod lists its nested jars in META-INF/jarjar/metadata.json, and the loader reads its access
-        // transformers, which name members as the mod's classes do (SRG ids before 1.20.5).
+        Set<String> nested = new TreeSet<>(JarPort.nested(entries));
+        // A NeoForge mod's loader reads its access transformers, which name members as the mod's classes do (SRG ids before 1.20.5).
         Set<String> transformers = new HashSet<>();
         if (fmj == null) {
-            for (String file : JarPort.nested(entries)) {
-                if (entries.containsKey(file)) {
-                    nested.add(file);
-                }
-            }
             transformers.addAll(JarPort.atFiles(entries));
         }
         String widener = meta.get("accessWidener") instanceof String w && entries.containsKey(w) ? w : null;
@@ -828,7 +817,7 @@ public final class ModNames {
         }
 
         byte[] jar(byte[] bytes, Map<String, Set<String>> originals) throws IOException {
-            return jar(bytes, new Jar(classesIn(bytes), originals));
+            return jar(bytes, new Jar(classesIn(bytes, game.version), originals));
         }
 
         Set<String> gameNames; // name + desc (Mojang) of every game method whose intermediary name is another
@@ -885,7 +874,7 @@ public final class ModNames {
                     }
                 });
             }
-            Jar jar = new Jar(classesIn(bytes), originals);
+            Jar jar = new Jar(classesIn(bytes, game.version), originals);
             List<String> out = new ArrayList<>();
             for (var e : jar.own.entrySet()) {
                 Own o = e.getValue();
@@ -945,35 +934,27 @@ public final class ModNames {
          * reads them all as one, and gives the outer jar and every nested one the same names.
          */
         static List<byte[]> classesIn(byte[] bytes) throws IOException {
+            return classesIn(bytes, null);
+        }
+
+        /** The classes of a jar and of the nested jars Fabric loads on release (null: on any release). */
+        static List<byte[]> classesIn(byte[] bytes, String release) throws IOException {
             List<byte[]> out = new ArrayList<>();
             Map<String, byte[]> jars = new LinkedHashMap<>();
-            byte[] meta = null;
             try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
                 for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
                     if (e.getName().endsWith(".class") && !e.getName().startsWith("META-INF/versions/")) {
                         out.add(zip.readAllBytes());
-                    } else if (e.getName().endsWith(".jar")) {
+                    } else if (e.getName().endsWith(".jar") || e.getName().equals("fabric.mod.json") || e.getName().equals("META-INF/jarjar/metadata.json")) {
                         jars.put(e.getName(), zip.readAllBytes());
-                    } else if (e.getName().equals("fabric.mod.json")) {
-                        meta = zip.readAllBytes();
                     }
                 }
             }
-            // Only the nested jars Fabric loads (fabric.mod.json's "jars"), after the jar's own classes, which win a name both have.
-            Set<String> listed = new HashSet<>();
-            try {
-                Object list = meta == null ? null : Json.object(Json.parse(new String(meta, StandardCharsets.UTF_8))).get("jars");
-                for (Object j : list instanceof List<?> l ? l : List.of()) {
-                    if (j instanceof Map<?, ?> m && m.get("file") instanceof String file) {
-                        listed.add(file);
-                    }
-                }
-            } catch (RuntimeException unreadable) {
-                // no nested jars Fabric would load
-            }
-            for (var e : jars.entrySet()) {
-                if (listed.contains(e.getKey())) {
-                    out.addAll(classesIn(e.getValue()));
+            // Only the nested jars that run (JarPort.nested) and that Fabric loads on release (JarPort.fabricLoads), after the
+            // jar's own classes, which win a name both have.
+            for (String n : new TreeSet<>(JarPort.nested(jars))) {
+                if (release == null || JarPort.fabricLoads(jars.get(n), release)) {
+                    out.addAll(classesIn(jars.get(n), release));
                 }
             }
             return out;
@@ -998,16 +979,12 @@ public final class ModNames {
                     // the classes are still the mod's
                 }
             }
-            Set<String> nested = new HashSet<>();
-            for (Object j : meta.get("jars") instanceof List<?> list ? list : List.of()) {
-                if (j instanceof Map<?, ?> m && m.get("file") instanceof String file) {
-                    nested.add(file);
-                }
-            }
+            Set<String> nested = JarPort.nested(entries);
+            Set<String> loadedByItself = JarPort.selfLoaded(entries, JarPort.listed(entries));
             String widener = meta.get("accessWidener") instanceof String w ? w : null;
             Set<String> refmaps = refmapFiles(entries);
             Jar jar = shared;
-            Map<String, byte[]> out = new LinkedHashMap<>();
+            Map<String, byte[]> out = new LinkedHashMap<>(), handed = new HashMap<>();
             for (var e : entries.entrySet()) {
                 String name = e.getKey();
                 byte[] data = e.getValue();
@@ -1022,8 +999,9 @@ public final class ModNames {
                     } catch (RuntimeException unreadable) {
                         // left as it is
                     }
-                } else if (nested.contains(name)) {
+                } else if (nested.contains(name) && !(loadedByItself.contains(name) && JarPort.notIn(data, game.classes::containsKey) != null)) {
                     data = jar(data, jar);
+                    handed.put(name, data);
                 } else if (name.equals(widener)) {
                     data = widener(new String(data, StandardCharsets.UTF_8), jar).getBytes(StandardCharsets.UTF_8);
                 } else if (refmaps.contains(name)) {
@@ -1031,6 +1009,7 @@ public final class ModNames {
                 }
                 out.put(name, data);
             }
+            JarPort.redigest(out, entries, handed);
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
                 for (var e : out.entrySet()) {

@@ -10,6 +10,7 @@ import java.util.regex.*;
 import java.util.zip.*;
 import org.objectweb.asm.*;
 import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.Remapper;
 import org.objectweb.asm.commons.SimpleRemapper;
 
 /**
@@ -54,7 +55,9 @@ public final class JarPort {
         final Set<String> widened = new HashSet<>(); // "owner.name" or "owner.name+desc" the mod's access transformer opens
         final Set<String> unlinked = new TreeSet<>();
         final Set<String> silent = new TreeSet<>(); // overrides the new release no longer calls: the mod loads, a hook is quiet
+        final Set<String> skipped = new TreeSet<>(); // nested jars the loader does not load on the new release, each with why: left as they are
         final Set<String> refused = new TreeSet<>(); // why a mixin handler did not follow its target (why), for the scoreboard
+        final Set<String> data = new TreeSet<>(); // game ids the mod's data names that the release lacks (DataIds), when judged
         final Map<String, Integer> changed = new TreeMap<>();
         String self; // the class being rewritten, and what a method added to it must respect
         boolean selfInterface;
@@ -82,6 +85,7 @@ public final class JarPort {
         final Map<String, Integer> requires = new HashMap<>(); // mixin class -> its config's injectors.defaultRequire
         final Map<String, String[]> supers = new HashMap<>(); // class -> {removed superclass (old name), what it extends now (new name)}
         final Set<String> foreign = new HashSet<>(); // entries of classes built for another loader (otherLoader), left as they are
+        int lowered; // the Java this jar's classes were lowered to (lowerJava), 0 when the new release's Java runs them as they came
 
         void change(String kind) {
             changed.merge(kind, 1, Integer::sum);
@@ -401,6 +405,7 @@ public final class JarPort {
         Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
         Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<String, Map<String, String>> decided = new java.util.concurrent.ConcurrentHashMap<>();
         // Biggest first, so no big jar starts when the others are done.
         List<Path> order = new ArrayList<>(jars);
         order.sort(Comparator.comparingLong((Path j) -> j.toFile().length()).reversed().thenComparing(Path::toString));
@@ -440,8 +445,11 @@ public final class JarPort {
                 port.runtimeNames = runtime && last;
                 port.between = !last;
                 port.originalsDir = originalsDir;
+                port.origin = from;
+                port.portTo = to;
+                port.decided = decided;
                 if ("fabric".equals(loader)) {
-                    port.platform(Exposure.fabricApi(stops.get(i)), Exposure.fabricApi(stops.get(i + 1)));
+                    port.platform(Exposure.FabricApi.of(stops.get(i)), Exposure.FabricApi.of(stops.get(i + 1)));
                 }
                 if (book != null) {
                     port.fixes(Path.of(book));
@@ -499,7 +507,8 @@ public final class JarPort {
                 Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
                 Files.write(dest, ported);
                 // Every step's results: a reference one step could not link stays as it was, in that step's names, and breaks there.
-                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), refused = new TreeSet<>();
+                Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), skipped = new TreeSet<>(), refused = new TreeSet<>(), data = new TreeSet<>();
+                boolean judged = false;
                 Map<String, Integer> changed = new TreeMap<>();
                 for (Map<String, Object> n : nested.getOrDefault(jar, List.of())) {
                     for (Object u : Json.array(n.get("unlinked"))) {
@@ -509,6 +518,15 @@ public final class JarPort {
                     }
                     for (Object u : Json.array(n.get("silent"))) {
                         silent.add(n.get("jar") + ": " + u);
+                    }
+                    for (Object u : n.get("skipped") == null ? List.of() : Json.array(n.get("skipped"))) {
+                        skipped.add(n.get("jar") + ": " + u);
+                    }
+                    if (n.get("data") != null) {
+                        judged = true;
+                        for (Object u : Json.array(n.get("data"))) {
+                            data.add(n.get("jar") + ": " + u);
+                        }
                     }
                     for (Object u : n.get("refused") == null ? List.of() : Json.array(n.get("refused"))) {
                         refused.add(u.toString());
@@ -523,7 +541,12 @@ public final class JarPort {
                 row.put("changed", changed);
                 row.put("unlinked", new ArrayList<>(unlinked));
                 row.put("silent", new ArrayList<>(silent));
+                row.put("skipped", new ArrayList<>(skipped));
                 row.put("refused", new ArrayList<>(refused));
+                if (judged) {
+                    // What the mod's data names that the release lacks: the server stops on it, which linking cannot show.
+                    row.put("data", new ArrayList<>(data));
+                }
                 linked += unlinked.isEmpty() ? 1 : 0;
             } catch (IOException | RuntimeException failed) {
                 row.put("error", String.valueOf(failed));
@@ -585,7 +608,7 @@ public final class JarPort {
             // Two of a class's methods the hand-back gives one intermediary name is a class the JVM refuses to load
             // (GeckoLib's GeoProjectilesRenderer on 1.19); only the names Fabric runs show it.
             byte[] handed = back == null ? null : back.jar(out, originals);
-            for (byte[] c : handed == null ? List.<byte[]>of() : ModNames.Back.classesIn(handed)) {
+            for (byte[] c : handed == null ? List.<byte[]>of() : ModNames.Back.classesIn(handed, b.version)) {
                 for (String twice : declaredTwice(c)) {
                     unlinked.add("does not verify in Fabric's names: method declared twice: " + twice);
                 }
@@ -994,23 +1017,23 @@ public final class JarPort {
     byte[] port(byte[] jar, String name, List<Map<String, Object>> results, Set<String> grants) throws IOException {
         Map<String, Long> times = new HashMap<>();
         Map<String, byte[]> entries = entries(jar, name, times);
-        // NeoForge's loader reads META-INF/mods.toml up to 1.20.4 (FML 2) and only META-INF/neoforge.mods.toml from 1.20.5
-        // (FML 3); a jar keeping the old name is skipped without a word.
-        boolean renamed = false;
-        if (loader.equals("neoforge") && compareVersions(to, "1.20.5") >= 0 && entries.containsKey("META-INF/mods.toml")
-            && !entries.containsKey("META-INF/neoforge.mods.toml")) {
-            Map<String, byte[]> moved = new LinkedHashMap<>();
-            entries.forEach((k, v) -> moved.put(k.equals("META-INF/mods.toml") ? "META-INF/neoforge.mods.toml" : k, v));
-            entries = moved;
-            times.put("META-INF/neoforge.mods.toml", times.getOrDefault("META-INF/mods.toml", 0L));
-            renamed = true;
+        String renamed = null;
+        if (loader.equals("neoforge")) {
+            String wanted = metadataFile(), other = wanted.equals(NEW_TOML) ? OLD_TOML : NEW_TOML;
+            if (entries.containsKey(other) && !entries.containsKey(wanted)) {
+                renamed = wanted.substring(wanted.lastIndexOf('/') + 1);
+                entries = moved(entries, times, other, wanted);
+            }
         }
+        Map<String, String> notLoaded = notLoaded(entries, name);
         Set<String> nested = nested(entries);
+        nested.removeAll(notLoaded.keySet());
+        List<String> copied = copyNewer(entries, name);
         boolean outermost = grants == null;
         if (outermost) {
             typesUsed = false;
             Map<String, List<byte[]>> all = new HashMap<>();
-            carried(entries, all);
+            carried(entries, name, all);
             tree = new Carried(all);
             grants = new HashSet<>();
             for (String text : accessTransformers(entries, name)) {
@@ -1018,15 +1041,20 @@ public final class JarPort {
             }
         }
         Mod mod = new Mod();
-        if (renamed) {
-            mod.change("metadata renamed to neoforge.mods.toml");
+        if (renamed != null) {
+            mod.change("metadata renamed to " + renamed);
+        }
+        notLoaded.forEach((n, why) -> mod.skipped.add(n + ": " + why));
+        if (!copied.isEmpty()) {
+            mod.change("newer game code copied for: " + copied);
         }
         mod.widened.addAll(grants);
-        // NeoForge's loader (FML 4 to 11) reads the access transformers neoforge.mods.toml lists, or else
+        boolean judged = data(mod, entries);
+        // NeoForge's loader (FML 1 to 11) reads the access transformers its metadata lists, or else
         // META-INF/accesstransformer.cfg, for every mod file, nested ones included.
         // Fabric's reads the access widener fabric.mod.json names, for every mod file too.
         byte[] fmj = entries.get("fabric.mod.json");
-        mod.canWiden = entries.containsKey("META-INF/neoforge.mods.toml") || fmj != null;
+        mod.canWiden = loader.equals("neoforge") && entries.containsKey(metadataFile()) || fmj != null;
         boolean nativeGame = false; // a class naming the game as this loader's build does
         Map<String, byte[]> jarEntries = entries;
         for (var e : entries.entrySet()) {
@@ -1052,7 +1080,7 @@ public final class JarPort {
             if (name.contains("!")) {
                 // A jar nested for the other loader of a jar for several (Fabric API's modules beside the NeoForge classes)
                 // is never loaded by this one.
-                mod.silent.add("nested jar for another loader, not loaded here: " + name);
+                mod.skipped.add("nested jar for another loader, not loaded here: " + name);
             } else {
                 mod.unlinked.add("built for another loader: every class names the game as another loader's build does");
             }
@@ -1111,6 +1139,9 @@ public final class JarPort {
             mod.changed.clear();
             mod.changed.putAll(wasChanged);
         }
+        if (!between) {
+            lowerJava(mod, rewritten, entries, name);
+        }
         verify(mod, rewritten, entries);
         bundle(mod, rewritten, entries, name);
         List<String> atFiles = atFiles(entries);
@@ -1131,12 +1162,29 @@ public final class JarPort {
         }
         // Nested jars first: whether any jar of the tree uses a stand-in type decides what the outermost one carries.
         Map<String, byte[]> portedNested = new HashMap<>();
+        Set<String> loadedByItself = selfLoaded(entries, listed(entries));
         for (var e : entries.entrySet()) {
             String n = e.getKey();
-            if ((nested.contains(n) || n.startsWith("META-INF/jarjar/") && n.endsWith(".jar")) && platformModule(e.getValue()) == null) {
+            boolean own = loadedByItself.contains(n);
+            if (own && !loader.equals("fabric") && compareVersions(a.version, UNOBFUSCATED) < 0 && intermediary(e.getValue())) {
+                // Written in Fabric's intermediary names in a mod for a loader that runs Mojang's: its own code renames it at
+                // start. Read in Mojang's names, ported, and handed back in the new release's intermediary.
+                byte[] read = fabricIn().jar(e.getValue(), new ModNames.Counts());
+                byte[] ported = port(read, name + "!" + n.substring(n.lastIndexOf('/') + 1), results, grants);
+                ModNames.Back back = compareVersions(b.version, UNOBFUSCATED) < 0 ? handBack() : null;
+                portedNested.put(n, back == null ? ported : back.jar(ported, ModNames.Back.methodNames(e.getValue())));
+                mod.change("jar in Fabric's intermediary names its own code renames at start, ported through Mojang's");
+                continue;
+            }
+            String foreignName = own ? notIn(e.getValue(), a.classes::containsKey) : null;
+            if (foreignName != null) {
+                portedNested.put(n, e.getValue());
+                mod.change("jar its own code renames at start left as it came: " + n + " names " + Exposure.dotted(foreignName) + ", which " + a.version + " lacks");
+            } else if ((nested.contains(n) || n.startsWith("META-INF/jarjar/") && n.endsWith(".jar")) && platformModule(e.getValue()) == null) {
                 portedNested.put(n, port(e.getValue(), name + "!" + n.substring(n.lastIndexOf('/') + 1), results, grants));
             }
         }
+        redigest(entries, entries, portedNested);
         String typesPath = null;
         if (outermost && typesUsed) {
             try {
@@ -1160,10 +1208,10 @@ public final class JarPort {
                 }
                 if (n.equals("META-INF/MANIFEST.MF")) {
                     data = unsigned(data);
-                } else if (n.equals("META-INF/neoforge.mods.toml") || n.equals("META-INF/mods.toml")) {
-                    data = metadata(new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
+                } else if (n.equals(NEW_TOML) || n.equals(OLD_TOML)) {
+                    data = metadata(mod, new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
                 } else if (n.equals("fabric.mod.json")) {
-                    data = fabricMetadata(data, widener, platformNested);
+                    data = runsOn(fabricMetadata(data, widener, platformNested), mod.lowered);
                 } else if (n.equals("pack.mcmeta")) {
                     data = packMetadata(mod, data);
                 } else if (n.equals(widener)) {
@@ -1178,7 +1226,7 @@ public final class JarPort {
                     if (nestedId != null) {
                         // The platform's own module (a Fabric API module a mod nests): the loader runs the platform's newer
                         // copy of that mod id instead, so this one is no part of the mod there.
-                        mod.silent.add("nested platform module, the platform's own runs instead: " + nestedId + " (" + n + ")");
+                        mod.skipped.add(n + ": the platform's own module, its copy of " + nestedId + " runs instead");
                     } else {
                         data = portedNested.get(n);
                     }
@@ -1191,6 +1239,9 @@ public final class JarPort {
                         mod.change("members opened through the mod's access transformer");
                     }
                     data = text.getBytes(StandardCharsets.UTF_8);
+                }
+                if (mod.lowered > 0 && n.endsWith(".json") && !n.equals("fabric.mod.json")) {
+                    data = mixinLevel(data, mod.lowered);
                 }
                 ZipEntry entry = new ZipEntry(n);
                 entry.setTime(times.getOrDefault(n, 0L));
@@ -1212,9 +1263,32 @@ public final class JarPort {
         result.put("changed", mod.changed);
         result.put("unlinked", new ArrayList<>(mod.unlinked));
         result.put("silent", new ArrayList<>(mod.silent));
+        result.put("skipped", new ArrayList<>(mod.skipped));
         result.put("refused", new ArrayList<>(mod.refused));
+        if (judged) {
+            result.put("data", new ArrayList<>(mod.data));
+        }
         results.add(result);
         return buffer.toByteArray();
+    }
+
+    /** The data pass (DataIds) on a jar's own entries; whether it judged the ids against the release ported to. */
+    boolean data(Mod mod, Map<String, byte[]> entries) {
+        if (dataStep == null && origin == null) {
+            return false; // a porter made in code (tests) has no releases to read reports of unless it is given a step
+        }
+        if (dataStep == null) {
+            dataStep = DataIds.Step.of(origin == null ? a.version : origin, a.version, b.version, !between);
+        }
+        if (dataStep.idle()) {
+            return false;
+        }
+        DataIds pass = new DataIds(dataStep);
+        pass.apply(entries);
+        pass.changed.forEach((kind, n) -> mod.changed.merge(kind, n, Integer::sum));
+        mod.silent.addAll(pass.silent);
+        mod.data.addAll(pass.left);
+        return dataStep.target() != null;
     }
 
     /** A jar's files by name (directories left out); times gets each file's time. An entry pointing outside the jar refuses it. */
@@ -1236,9 +1310,154 @@ public final class JarPort {
 
     /**
      * Jar-in-jar: nested jars are where META-INF/jarjar/metadata.json says ("path", often META-INF/jars/), in
-     * META-INF/jarjar/, or where fabric.mod.json lists them ("jars": [{"file": ...}]).
+     * META-INF/jarjar/, where fabric.mod.json lists them ("jars": [{"file": ...}]), and every other jar inside whose classes
+     * use the game (selfLoaded). Every reader of a mod's code (ModNames, the hand-back, the port) reads this one set.
      */
     static Set<String> nested(Map<String, byte[]> entries) {
+        Set<String> nested = listed(entries);
+        nested.addAll(selfLoaded(entries, nested));
+        return nested;
+    }
+
+    /**
+     * The jars inside a jar that no loader metadata lists and whose classes use the game: code the mod's own classes put on
+     * the class path at start (a mod locator, a language adapter, a loader of its own that unpacks it), which runs in the
+     * game as surely as a listed jar. A jar whose classes only name the game in text (a crash-log reader's patterns) is no
+     * game code.
+     */
+    static Set<String> selfLoaded(Map<String, byte[]> entries, Set<String> listed) {
+        Set<String> out = new TreeSet<>();
+        for (var e : entries.entrySet()) {
+            if (e.getKey().endsWith(".jar") && !listed.contains(e.getKey()) && usesGame(e.getValue())) {
+                out.add(e.getKey());
+            }
+        }
+        return out;
+    }
+
+    static final byte[] GAME_PACKAGE = "net/minecraft/".getBytes(StandardCharsets.ISO_8859_1), BLAZE3D_PACKAGE = "com/mojang/blaze3d/".getBytes(StandardCharsets.ISO_8859_1);
+    static final Map<byte[], Boolean> USES_GAME = Collections.synchronizedMap(new WeakHashMap<>());
+
+    /** Whether a jar's classes, or those of the jars inside it, refer to a class of the game (its class constants). */
+    static boolean usesGame(byte[] jar) {
+        Boolean known = USES_GAME.get(jar);
+        if (known != null) {
+            return known;
+        }
+        boolean uses = false;
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(jar))) {
+            for (ZipEntry e; !uses && (e = zip.getNextEntry()) != null; ) {
+                if (e.getName().endsWith(".class")) {
+                    uses = !gameClasses(zip.readAllBytes()).isEmpty();
+                } else if (e.getName().endsWith(".jar")) {
+                    uses = usesGame(zip.readAllBytes());
+                }
+            }
+        } catch (IOException notAJar) {
+            uses = false;
+        }
+        USES_GAME.put(jar, uses);
+        return uses;
+    }
+
+    /**
+     * The game classes (net/minecraft/, com/mojang/blaze3d/) a class refers to as types: in its references, descriptors,
+     * signatures and annotations, never in its text.
+     */
+    static Set<String> gameClasses(byte[] bytes) {
+        Set<String> out = new TreeSet<>();
+        if (indexOf(bytes, GAME_PACKAGE) < 0 && indexOf(bytes, BLAZE3D_PACKAGE) < 0) {
+            return out; // most library classes: no parse
+        }
+        try {
+            new ClassReader(bytes).accept(new ClassRemapper(new ClassVisitor(Opcodes.ASM9) { }, new Remapper(Opcodes.ASM9) {
+                @Override
+                public String map(String internalName) {
+                    if (internalName.startsWith("net/minecraft/") || internalName.startsWith("com/mojang/blaze3d/")) {
+                        out.add(internalName);
+                    }
+                    return internalName;
+                }
+            }), ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        } catch (RuntimeException unparsed) {
+            // a class the JVM refuses too
+        }
+        return out;
+    }
+
+    /**
+     * The first game class a jar's classes name that a release lacks, or null. A jar the mod's own code loads that names
+     * game classes its release lacks is not written in that release's names: its own code renames it at start, through a
+     * table of its own (one file for every release), so the port leaves it, and the hand-back too, as it came.
+     */
+    static String notIn(byte[] jar, java.util.function.Predicate<String> release) {
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(jar))) {
+            for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
+                if (e.getName().endsWith(".class") && !e.getName().startsWith("META-INF/versions/")) {
+                    for (String c : gameClasses(zip.readAllBytes())) {
+                        if (!release.test(c)) {
+                            return c;
+                        }
+                    }
+                }
+            }
+        } catch (IOException notAJar) {
+            return null;
+        }
+        return null;
+    }
+
+    static final Pattern DIGEST = Pattern.compile("(?i)\\b[0-9a-f]{32}(?:[0-9a-f]{8})?(?:[0-9a-f]{24})?\\b");
+
+    /**
+     * A jar that records the digest (MD5, SHA-1 or SHA-256, as hex) of a jar it carries in a text file beside it (a loader
+     * of its own checking the jar it unpacks) records the new jar's: the digest of what was ported is no longer that of the
+     * jar carried. files: the jar's files, rewritten in place; was and after: its nested jars by name, as they came and as
+     * they are written now.
+     */
+    static void redigest(Map<String, byte[]> files, Map<String, byte[]> was, Map<String, byte[]> after) {
+        Map<String, String> moved = new HashMap<>();
+        for (var e : after.entrySet()) {
+            byte[] before = was.get(e.getKey());
+            if (before == null || Arrays.equals(before, e.getValue())) {
+                continue;
+            }
+            for (String algorithm : List.of("MD5", "SHA-1", "SHA-256")) {
+                try {
+                    var digest = java.security.MessageDigest.getInstance(algorithm);
+                    moved.put(HexFormat.of().formatHex(digest.digest(before)), HexFormat.of().formatHex(digest.digest(e.getValue())));
+                } catch (java.security.NoSuchAlgorithmException missing) {
+                    throw new IllegalStateException(missing);
+                }
+            }
+        }
+        if (moved.isEmpty()) {
+            return;
+        }
+        for (var e : files.entrySet()) {
+            String n = e.getKey();
+            if (n.endsWith(".class") || n.endsWith(".jar") || e.getValue().length > 1 << 20) {
+                continue;
+            }
+            String text = new String(e.getValue(), StandardCharsets.ISO_8859_1);
+            Matcher m = DIGEST.matcher(text);
+            StringBuilder out = new StringBuilder();
+            boolean changed = false;
+            while (m.find()) {
+                String now = moved.get(m.group().toLowerCase(Locale.ROOT));
+                changed |= now != null;
+                String written = now == null ? m.group() : m.group().equals(m.group().toUpperCase(Locale.ROOT)) ? now.toUpperCase(Locale.ROOT) : now;
+                m.appendReplacement(out, written);
+            }
+            if (changed) {
+                m.appendTail(out);
+                e.setValue(out.toString().getBytes(StandardCharsets.ISO_8859_1));
+            }
+        }
+    }
+
+    /** The nested jars a loader reads from its metadata, and META-INF/jarjar/, where NeoForge's loader looks. */
+    static Set<String> listed(Map<String, byte[]> entries) {
         Set<String> nested = new HashSet<>();
         byte[] list = entries.get("META-INF/jarjar/metadata.json");
         if (list != null) {
@@ -1267,8 +1486,125 @@ public final class JarPort {
         return nested;
     }
 
+    /** The jars nested in a jar (named as port names it) that the loader loads on the release ported to. */
+    Set<String> loadedNested(Map<String, byte[]> entries, String name) {
+        Set<String> out = nested(entries);
+        out.removeAll(notLoaded(entries, name).keySet());
+        return out;
+    }
+
+    // The last release of the whole port, which with origin decides the nested jars it carries (notLoaded): a step between
+    // them would retarget a module it carries to a release its bundle has no module for. Null: this step's own releases.
+    String portTo;
+    // A port of several steps: each jar's choice of nested jars by its name as port names it (outer.jar!inner.jar), made
+    // at the first step and kept for every step after, where a module a step ported asks for that step's release. Null: chosen each time.
+    Map<String, Map<String, String>> decided;
+
+    /**
+     * The nested jars the loader passes over on the release ported to, each with why. They are left as they are, neither
+     * ported nor linked, and keep the releases their metadata names, so the loader goes on passing them over.
+     *
+     * Fabric Loader loads a nested mod where its own "minecraft" holds (fabricLoads), which is how a bundle of one module
+     * per release (ViaFabric's viafabric-mc1144 to -mc12111) runs only the module for the release it starts on. A module
+     * that accepts neither release is loaded on neither. One that accepts the old release only is passed over when the
+     * bundle carries a module that accepts the new release and not the old: the loader runs that one instead. With no
+     * such module, the old release's module is ported and asks for the new release, as every nested mod is.
+     *
+     * NeoForge's loader picks among nested jars by their artifacts' version ranges, and refuses a mod whose "minecraft"
+     * range fails instead of passing it over, so no jar's metadata picks a module per release there: every nested jar is
+     * ported, as before. A bundle that picks its module in its own code reads to the porter as modules loaded together.
+     */
+    Map<String, String> notLoaded(Map<String, byte[]> entries, String name) {
+        Map<String, String> kept = decided == null ? null : decided.get(name);
+        if (kept != null) {
+            return kept;
+        }
+        Map<String, String> out = new TreeMap<>();
+        if (!loader.equals("fabric")) {
+            return out;
+        }
+        String from = origin != null ? origin : a.version;
+        String until = portTo != null ? portTo : to;
+        Map<String, Object> ranges = new TreeMap<>();
+        for (String n : nested(entries)) {
+            Object range = fabricMinecraft(entries.get(n));
+            if (range != null) {
+                ranges.put(n, range);
+            }
+        }
+        String forNew = null;
+        for (var e : ranges.entrySet()) {
+            if (forNew == null && fabricAccepts(e.getValue(), until) && !fabricAccepts(e.getValue(), from)) {
+                forNew = e.getKey();
+            }
+        }
+        for (var e : ranges.entrySet()) {
+            boolean old = fabricAccepts(e.getValue(), from);
+            boolean now = fabricAccepts(e.getValue(), until);
+            String range = "minecraft " + Json.write(e.getValue());
+            if (!old && !now) {
+                out.put(e.getKey(), "not loaded on " + from + " or " + until + " (" + range + ")");
+            } else if (old && !now && forNew != null) {
+                out.put(e.getKey(), "for " + from + " (" + range + "); the loader runs " + forNew.substring(forNew.lastIndexOf('/') + 1) + " on " + until + " instead");
+            }
+        }
+        if (decided != null) {
+            decided.put(name, out);
+        }
+        return out;
+    }
+
+    /**
+     * Whether Fabric Loader loads a nested mod on a release, by the mod's own fabric.mod.json: its resolver takes a nested
+     * mod only when the mod's "depends" hold, and passes it over otherwise. A jar that names no "minecraft", or whose
+     * metadata cannot be read, is loaded.
+     */
+    static boolean fabricLoads(byte[] jar, String release) {
+        Object range = fabricMinecraft(jar);
+        return range == null || fabricAccepts(range, release);
+    }
+
+    /** The "minecraft" a jar's fabric.mod.json depends on, or null. */
+    static Object fabricMinecraft(byte[] jar) {
+        if (jar == null) {
+            return null;
+        }
+        try (ZipInputStream z = new ZipInputStream(new ByteArrayInputStream(jar))) {
+            for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
+                if (e.getName().equals("fabric.mod.json")) {
+                    Object meta = Json.parse(new String(z.readAllBytes(), StandardCharsets.UTF_8));
+                    return meta instanceof Map<?, ?> m && m.get("depends") instanceof Map<?, ?> d ? d.get("minecraft") : null;
+                }
+            }
+        } catch (IOException | RuntimeException unreadable) {
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Whether a fabric.mod.json version predicate accepts a release: a string of terms that must all hold ("||" between
+     * alternatives), or a list any one of which may. Build metadata after "+" never counts in Fabric's comparison.
+     */
+    static boolean fabricAccepts(Object range, String release) {
+        if (range instanceof List<?> any) {
+            for (Object r : any) {
+                if (fabricAccepts(r, release)) {
+                    return true;
+                }
+            }
+            return any.isEmpty();
+        }
+        for (String alternative : String.valueOf(range).split("\\|\\|")) {
+            if (Versions.matches(alternative.replaceAll("\\+[^\\s]*", ""), release)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Every access transformer in a jar and its nested jars. */
-    static List<String> accessTransformers(Map<String, byte[]> entries, String name) throws IOException {
+    List<String> accessTransformers(Map<String, byte[]> entries, String name) throws IOException {
         List<String> out = new ArrayList<>();
         for (String file : atFiles(entries)) {
             byte[] at = entries.get(file);
@@ -1276,18 +1612,22 @@ public final class JarPort {
                 out.add(new String(at, StandardCharsets.UTF_8));
             }
         }
-        for (String n : nested(entries)) {
-            out.addAll(accessTransformers(entries(entries.get(n), name + "!" + n, new HashMap<>()), name + "!" + n));
+        for (String n : loadedNested(entries, name)) {
+            String inner = name + "!" + n.substring(n.lastIndexOf('/') + 1);
+            out.addAll(accessTransformers(entries(entries.get(n), inner, new HashMap<>()), inner));
         }
         return out;
     }
 
     static final Pattern DECLARED_AT = Pattern.compile("\\[\\[accessTransformers\\]\\][^\\[]*?file\\s*=\\s*(?:\"([^\"]+)\"|'([^']+)')");
 
-    /** The access transformers the loader reads from a jar: those its neoforge.mods.toml lists, else the default one. */
+    /**
+     * The access transformers the loader reads from a jar: those its metadata lists (FML 1, NeoForge 20.2, already reads
+     * [[accessTransformers]]), else the default one.
+     */
     static List<String> atFiles(Map<String, byte[]> entries) {
         List<String> out = new ArrayList<>();
-        byte[] toml = entries.get("META-INF/neoforge.mods.toml");
+        byte[] toml = entries.getOrDefault(NEW_TOML, entries.get(OLD_TOML));
         if (toml != null) {
             Matcher m = DECLARED_AT.matcher(new String(toml, StandardCharsets.UTF_8));
             while (m.find()) {
@@ -1980,7 +2320,7 @@ public final class JarPort {
     }
 
     /** Every class in a jar and its nested jars, by name. */
-    static void carried(Map<String, byte[]> entries, Map<String, List<byte[]>> out) throws IOException {
+    void carried(Map<String, byte[]> entries, String name, Map<String, List<byte[]>> out) throws IOException {
         for (var e : entries.entrySet()) {
             if (e.getKey().endsWith(".class") && !e.getKey().startsWith("META-INF/versions/")) {
                 try {
@@ -1990,8 +2330,9 @@ public final class JarPort {
                 }
             }
         }
-        for (String n : nested(entries)) {
-            carried(entries(entries.get(n), n, new HashMap<>()), out);
+        for (String n : loadedNested(entries, name)) {
+            String inner = name + "!" + n.substring(n.lastIndexOf('/') + 1);
+            carried(entries(entries.get(n), inner, new HashMap<>()), inner, out);
         }
     }
 
@@ -6222,6 +6563,9 @@ public final class JarPort {
     }
 
     GameCode newCode, oldCode; // read when an injection point is first checked; tests set them
+
+    String origin; // the release the whole port started from: the data pass judges the mod's data ids against it, and with portTo it decides the nested jars carried
+    DataIds.Step dataStep; // the data pass of this step: made on first use; tests set it
     boolean codeTried;
 
     GameCode code(GameDiff.Snap s) {
@@ -10335,6 +10679,8 @@ public final class JarPort {
     static final String STANDIN = "mmt/standin/";
 
     final Map<String, byte[]> standins = new HashMap<>(); // stand-in class (internal, unrelocated) -> its bytes
+    /** Stand-ins for the JDK methods an older Java lacks (standins/jdk/), which a mod lowered to that Java calls instead. */
+    Downgrade.Standins jdkStandins = Downgrade.Standins.NONE;
 
     /**
      * Reads the stand-ins written for this update (knowledge/standins/FROM-TO/): Java sources, one class per old game
@@ -10794,6 +11140,62 @@ public final class JarPort {
     }
 
     /**
+     * The jar's classes lowered to the Java the new release runs on, when they were built for a newer one (Downgrade): the
+     * release's JVM refuses a newer class file outright. What that Java cannot run is reported, and the JDK stand-ins the
+     * classes call now are carried under a package of the jar's own.
+     */
+    void lowerJava(Mod mod, Map<String, byte[]> rewritten, Map<String, byte[]> entries, String jarName) {
+        int java = b.java > 0 ? b.java : standinJava(b.version);
+        Set<String> breaks = new TreeSet<>();
+        Map<String, Integer> changed = new TreeMap<>();
+        Map<String, byte[]> carried = new Downgrade(java, jdkStandins).lower(rewritten, standinHome(jarName, "java", "java" + java), breaks, changed);
+        if (changed.isEmpty()) {
+            return;
+        }
+        mod.lowered = java;
+        mod.unlinked.addAll(breaks);
+        changed.forEach((k, v) -> mod.changed.merge(k, v, Integer::sum));
+        entries.putAll(carried);
+        rewritten.putAll(carried);
+        if (!carried.isEmpty()) {
+            mod.change("JDK stand-ins carried: " + carried.keySet().stream().filter(n -> !n.matches(".*\\$\\d+\\.class$"))
+                .map(n -> Exposure.dotted(n.substring(n.indexOf("/java/") + 1, n.length() - 6))).toList());
+        }
+    }
+
+    static final Pattern MIXIN_LEVEL = Pattern.compile("(\"compatibilityLevel\"\\s*:\\s*\"JAVA_)(\\d+)(\")");
+
+    /**
+     * A Mixin config asking for a newer Java than the jar was lowered to asks for that one: Mixin refuses a level the JVM
+     * running it does not reach (JAVA_17 on Java 8), and the lowered classes need no more.
+     */
+    static byte[] mixinLevel(byte[] json, int java) {
+        String text = new String(json, StandardCharsets.UTF_8);
+        Matcher m = MIXIN_LEVEL.matcher(text);
+        if (!m.find() || Integer.parseInt(m.group(2)) <= java) {
+            return json;
+        }
+        return m.replaceFirst("$1" + java + "$3").getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** fabric.mod.json asking for the Java the jar was lowered to: Fabric Loader refuses a mod whose "java" dependency the JVM does not meet. */
+    static byte[] runsOn(byte[] fmj, int java) {
+        if (java == 0) {
+            return fmj;
+        }
+        try {
+            Map<String, Object> meta = Json.object(Json.parse(new String(fmj, StandardCharsets.UTF_8)));
+            if (meta.get("depends") instanceof Map<?, ?> depends && depends.containsKey("java")) {
+                Json.object(depends).put("java", ">=" + java);
+                return Json.write(meta).getBytes(StandardCharsets.UTF_8);
+            }
+        } catch (RuntimeException unreadable) {
+            // the loader cannot read it either
+        }
+        return fmj;
+    }
+
+    /**
      * The package a jar carries one update's stand-ins under, from the jar's whole name and the update: a jar nested in a
      * mod ("MOD.jar!INNER.jar") is a module of its own on NeoForge, which refuses one package in two modules, and a port
      * across several updates carries each one's stand-in for a class (Screen in 1.20 and again in 1.21.11) side by side.
@@ -10926,6 +11328,492 @@ public final class JarPort {
         return w.toByteArray();
     }
 
+    // ---- Copies of the newer game's code: a port back to an older release meets members the older one does not have yet.
+
+    /**
+     * On a port back to an older release (a newer than b): the game methods the jar calls that b does not have yet and
+     * nothing else answers (a route, a rule, a stand-in), copied from a's own code into a class the jar carries
+     * (copiedHome), where a's code uses only what b has, or other such methods. Calls to them are pointed at the copies,
+     * an instance method's receiver passed first, and the copies are then ported with the jar's own classes, which
+     * checks and opens what they use in b. The copy is the newer game's own code run on the older one: a method using a
+     * field, constructor, class or super call b lacks has no older form here, and its call stays a break. A port across
+     * several updates copies on each step, so a copy carried from one step is the jar's own code on the next. Returns
+     * the members copied (owner.name+desc, a's names), the jar's classes rewritten in entries.
+     */
+    List<String> copyNewer(Map<String, byte[]> entries, String jarName) {
+        if (compareVersions(a.version, b.version) <= 0) {
+            return List.of();
+        }
+        GameCode code = code(a);
+        if (code == null) {
+            return List.of();
+        }
+        Map<String, GameDiff.RawCls> own = new HashMap<>();
+        for (var e : entries.entrySet()) {
+            if (e.getKey().endsWith(".class") && !e.getKey().startsWith("META-INF/versions/")) {
+                try {
+                    GameDiff.RawCls rc = GameDiff.parse(e.getValue());
+                    own.put(rc.name, rc);
+                } catch (RuntimeException unreadable) {
+                    // read (and reported) with the jar's classes
+                }
+            }
+        }
+        Copier copier = new Copier(code, own, copiedHome(jarName));
+        Map<String, byte[]> redirected = new HashMap<>();
+        for (var e : entries.entrySet()) {
+            if (!e.getKey().endsWith(".class") || e.getKey().startsWith("META-INF/versions/") || otherLoader(e.getValue())) {
+                continue;
+            }
+            byte[] out = copier.redirect(e.getValue());
+            if (out != null) {
+                redirected.put(e.getKey(), out);
+            }
+        }
+        if (copier.copies.isEmpty()) {
+            return List.of();
+        }
+        entries.putAll(redirected);
+        entries.putAll(copier.write());
+        return copier.called.stream().sorted().map(Exposure::dotted).toList();
+    }
+
+    /**
+     * The package a jar carries one step's copies of the newer game's code under, its own (as standinHome): a jar nested
+     * in another is a module of its own on NeoForge, which refuses one package in two modules.
+     */
+    String copiedHome(String jarName) {
+        return standinHome(jarName, a.version, b.version) + "copied/";
+    }
+
+    /** One jar's copies of the newer game's methods (copyNewer): which methods can be copied, the copies, and the calls moved to them. */
+    final class Copier {
+        final GameCode code;
+        final Map<String, GameDiff.RawCls> own;
+        final String home;
+        final Map<String, String[]> copies = new LinkedHashMap<>(); // decl.name+desc (a's names) -> {copy class, copy name, copy desc}
+        final Set<String> refused = new HashSet<>();
+        final Set<String> called = new TreeSet<>(); // the copied methods the jar's own classes call
+        final Map<String, Set<String>> names = new HashMap<>(); // copy class -> name+desc taken
+
+        Copier(GameCode code, Map<String, GameDiff.RawCls> own, String home) {
+            this.code = code;
+            this.own = own;
+            this.home = home;
+        }
+
+        /** One of the jar's classes with its calls (and method references) to the newer game's methods pointed at their copies, or null when it calls none. */
+        byte[] redirect(byte[] bytes) {
+            boolean[] moved = { false };
+            ClassReader reader = new ClassReader(bytes);
+            ClassWriter writer = new ClassWriter(reader, 0);
+            reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                    return new MethodVisitor(Opcodes.ASM9, super.visitMethod(access, name, desc, signature, exceptions)) {
+                        @Override
+                        public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                            String[] to = target(op, owner, n, d);
+                            if (to != null) {
+                                moved[0] = true;
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, to[0], to[1], to[2], false);
+                                return;
+                            }
+                            super.visitMethodInsn(op, owner, n, d, itf);
+                        }
+
+                        @Override
+                        public void visitInvokeDynamicInsn(String n, String d, Handle bsm, Object... args) {
+                            Object[] now = args.clone();
+                            for (int i = 0; i < now.length; i++) {
+                                if (now[i] instanceof Handle h && h.getTag() >= Opcodes.H_INVOKEVIRTUAL && !h.getName().startsWith("<")) {
+                                    String[] to = target(h.getTag() == Opcodes.H_INVOKESTATIC ? Opcodes.INVOKESTATIC : Opcodes.INVOKEVIRTUAL, h.getOwner(), h.getName(), h.getDesc());
+                                    if (to != null) {
+                                        moved[0] = true;
+                                        now[i] = new Handle(Opcodes.H_INVOKESTATIC, to[0], to[1], to[2], false);
+                                    }
+                                }
+                            }
+                            super.visitInvokeDynamicInsn(n, d, bsm, now);
+                        }
+                    };
+                }
+            }, 0);
+            return moved[0] ? writer.toByteArray() : null;
+        }
+
+        /**
+         * The copy a call from the jar goes to ({class, name, desc}), made here when it can be; null when the call stays.
+         * A super call (op INVOKESPECIAL) runs the game's code whatever the jar's class overrides.
+         */
+        String[] target(int op, String owner, String name, String desc) {
+            if (name.startsWith("<") || owner.startsWith("[")) {
+                return null;
+            }
+            // A call on one of the jar's classes reaches the game's method through the game class it extends.
+            String game = owner;
+            Set<String> seen = new HashSet<>();
+            while (own.containsKey(game) && seen.add(game)) {
+                GameDiff.RawCls rc = own.get(game);
+                if (rc.methods.containsKey(name + desc) && op != Opcodes.INVOKESPECIAL || rc.sup == null) {
+                    return null; // the jar's own method, or one it overrides
+                }
+                game = rc.sup;
+            }
+            GameDiff.Cls decl = Exposure.declaring(a, game, 'm', name, desc);
+            if (decl == null || decl.library || decl.loader || !GameDiff.gameClass(decl.name) || handled(game, name, desc) || handled(decl.name, name, desc)
+                || Exposure.declaring(b, cls(game), 'm', name, desc(desc)) != null || Exposure.declaring(b, cls(decl.name), 'm', name, desc(desc)) != null) {
+                return null;
+            }
+            for (GameDiff.RawCls rc : op == Opcodes.INVOKESPECIAL || op == Opcodes.INVOKESTATIC ? List.<GameDiff.RawCls>of() : own.values()) {
+                if (rc.methods.containsKey(name + desc) && (rc.flags & Opcodes.ACC_INTERFACE) == 0 && reaches(rc.name, decl.name)) {
+                    return null; // a class of the jar overrides it: a call on the game type may run that override
+                }
+            }
+            String key = decl.name + "." + name + desc;
+            // A method copied on the way to one that cannot be (a cycle back to it) goes with it.
+            Set<String> before = new HashSet<>(copies.keySet());
+            if (!copyable(decl.name, name, desc, new LinkedHashSet<>())) {
+                copies.keySet().retainAll(before);
+                return null;
+            }
+            called.add(key);
+            return copies.get(key);
+        }
+
+        /** Whether c (the jar's or a's class) is decl or extends it. */
+        boolean reaches(String c, String decl) {
+            Deque<String> todo = new ArrayDeque<>(List.of(c));
+            Set<String> seen = new HashSet<>();
+            while (!todo.isEmpty()) {
+                String x = todo.pop();
+                if (x.equals(decl)) {
+                    return true;
+                }
+                if (!seen.add(x)) {
+                    continue;
+                }
+                GameDiff.RawCls rc = own.get(x);
+                GameDiff.Cls gc = rc == null ? a.classes.get(x) : null;
+                String sup = rc != null ? rc.sup : gc != null ? gc.sup : null;
+                if (sup != null) {
+                    todo.push(sup);
+                }
+                todo.addAll(rc != null ? rc.ifaces : gc != null ? gc.ifaces : List.of());
+            }
+            return false;
+        }
+
+        /**
+         * Whether a's method decl.name+desc (a's names) can be copied: it has code, and every class, field and method it
+         * uses is in b, is answered by the port (a route, rule or stand-in, which ports the copy as the jar's code), or
+         * is another method of a that can be copied. Each copyable method gets its copy's place in copies.
+         */
+        boolean copyable(String decl, String name, String desc, Set<String> closure) {
+            String key = decl + "." + name + desc;
+            if (copies.containsKey(key) || closure.contains(key)) {
+                return true;
+            }
+            if (refused.contains(key)) {
+                return false;
+            }
+            String jar = code.toJar.getOrDefault(decl, decl);
+            byte[] bytes = code.bytes.apply(jar);
+            if (bytes == null) {
+                refused.add(key);
+                return false;
+            }
+            for (Type t : Type.getArgumentTypes(desc)) {
+                if (!present(t)) {
+                    refused.add(key);
+                    return false;
+                }
+            }
+            if (!present(Type.getReturnType(desc))) {
+                refused.add(key);
+                return false;
+            }
+            closure.add(key);
+            List<String[]> calls = new ArrayList<>(); // {Mojang owner, name, desc} of a's methods it calls that b lacks
+            boolean[] ok = { false };
+            boolean[] instance = { false };
+            new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                    if (!(code.names.method(jar, n, d) + code.names.desc(d)).equals(name + desc) || (access & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0) {
+                        return null;
+                    }
+                    ok[0] = true;
+                    instance[0] = (access & Opcodes.ACC_STATIC) == 0;
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        void method(int op, String o, String n2, String d2) {
+                            if (!ok[0] || o.startsWith("[")) {
+                                return;
+                            }
+                            String declObf = code.declarer(o, n2, d2, false);
+                            String mo = code.names.cls(o), md = code.names.desc(d2);
+                            String mn = n2.startsWith("<") ? n2 : code.names.method(declObf, n2, d2);
+                            String md0 = code.names.cls(declObf);
+                            if (!GameDiff.gameClass(mo)) {
+                                GameDiff.Cls lib = a.classes.get(mo);
+                                ok[0] &= lib == null || Exposure.declaring(b, mo, 'm', mn, md) != null;
+                                return;
+                            }
+                            if (op == Opcodes.INVOKESPECIAL && !mn.equals("<init>") && !md0.equals(decl)) {
+                                ok[0] = false; // a super call, which only the class itself can make
+                                return;
+                            }
+                            if (Exposure.declaring(b, cls(mo), 'm', mn, desc(md)) != null || handled(mo, mn, md) || handled(md0, mn, md)) {
+                                return;
+                            }
+                            if (mn.startsWith("<")) {
+                                ok[0] = false; // a constructor b does not have
+                                return;
+                            }
+                            calls.add(new String[] { md0, mn, md });
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int op, String o, String n2, String d2, boolean itf) {
+                            method(op, o, n2, d2);
+                        }
+
+                        @Override
+                        public void visitFieldInsn(int op, String o, String n2, String d2) {
+                            String declObf = code.declarer(o, n2, d2, true);
+                            String mo = code.names.cls(declObf), mn = code.names.field(declObf, n2), md = code.names.desc(d2);
+                            if (!GameDiff.gameClass(mo)) {
+                                ok[0] &= a.classes.get(mo) == null || Exposure.declaring(b, mo, 'f', mn, null) != null;
+                                return;
+                            }
+                            GameDiff.Cls holder = Exposure.declaring(b, cls(mo), 'f', mn, null);
+                            ok[0] &= holder != null && holder.fields.get(mn).desc.equals(desc(md)) || handled(mo, mn, "");
+                        }
+
+                        @Override
+                        public void visitTypeInsn(int op, String t) {
+                            ok[0] &= present(Type.getObjectType(code.names.cls(t)));
+                        }
+
+                        @Override
+                        public void visitMultiANewArrayInsn(String d2, int dims) {
+                            ok[0] &= present(Type.getType(code.names.desc(d2)));
+                        }
+
+                        @Override
+                        public void visitLdcInsn(Object value) {
+                            if (value instanceof Type t) {
+                                ok[0] &= t.getSort() == Type.METHOD ? describedPresent(code.names.desc(t.getDescriptor())) : present(Type.getType(code.names.desc(t.getDescriptor())));
+                            } else if (value instanceof Handle || value instanceof ConstantDynamic) {
+                                ok[0] = false;
+                            }
+                        }
+
+                        @Override
+                        public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
+                            ok[0] &= type == null || present(Type.getObjectType(code.names.cls(type)));
+                        }
+
+                        @Override
+                        public void visitInvokeDynamicInsn(String n2, String d2, Handle bsm, Object... args) {
+                            ok[0] &= bsm.getOwner().startsWith("java/") && describedPresent(code.names.desc(d2));
+                            for (Object arg : args) {
+                                if (arg instanceof Handle h) {
+                                    int op = switch (h.getTag()) {
+                                        case Opcodes.H_INVOKESTATIC -> Opcodes.INVOKESTATIC;
+                                        case Opcodes.H_INVOKESPECIAL -> Opcodes.INVOKESPECIAL;
+                                        case Opcodes.H_NEWINVOKESPECIAL -> Opcodes.INVOKESPECIAL;
+                                        case Opcodes.H_INVOKEINTERFACE -> Opcodes.INVOKEINTERFACE;
+                                        case Opcodes.H_INVOKEVIRTUAL -> Opcodes.INVOKEVIRTUAL;
+                                        default -> -1;
+                                    };
+                                    if (op < 0) {
+                                        ok[0] = false;
+                                    } else {
+                                        method(op, h.getOwner(), h.getName(), h.getDesc());
+                                    }
+                                } else if (arg instanceof Type t) {
+                                    ok[0] &= t.getSort() == Type.METHOD ? describedPresent(code.names.desc(t.getDescriptor())) : present(Type.getType(code.names.desc(t.getDescriptor())));
+                                }
+                            }
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            boolean all = ok[0];
+            for (String[] c : calls) {
+                all = all && a.classes.containsKey(c[0]) && !a.classes.get(c[0]).library && copyable(c[0], c[1], c[2], closure);
+            }
+            if (!all) {
+                closure.remove(key);
+                refused.add(key);
+                return false;
+            }
+            String place = home + decl;
+            String copyDesc = instance[0] ? "(L" + decl + ";" + desc.substring(1) : desc;
+            Set<String> taken = names.computeIfAbsent(place, k -> new HashSet<>());
+            String copyName = name.replaceAll("[^\\w$]", "_");
+            for (int i = 1; !taken.add(copyName + copyDesc); i++) {
+                copyName = name.replaceAll("[^\\w$]", "_") + "$" + i;
+            }
+            copies.put(key, new String[] { place, copyName, copyDesc });
+            return true;
+        }
+
+        /** A type a copy names: the JDK's, or a class b has (under the route's name). */
+        boolean present(Type t) {
+            if (t.getSort() == Type.ARRAY) {
+                t = t.getElementType();
+            }
+            if (t.getSort() != Type.OBJECT) {
+                return true;
+            }
+            String n = t.getInternalName();
+            return n.startsWith("java/") || b.classes.containsKey(cls(n)) || !GameDiff.gameClass(n) && !a.classes.containsKey(n);
+        }
+
+        boolean describedPresent(String methodDesc) {
+            for (Type t : Type.getArgumentTypes(methodDesc)) {
+                if (!present(t)) {
+                    return false;
+                }
+            }
+            return present(Type.getReturnType(methodDesc));
+        }
+
+        /**
+         * The copies' classes, in a's names: each copied method public and static, an instance method's receiver its first
+         * parameter, its code as a's with calls among the copies pointed at each other and a private method of b's (the
+         * same class's own call) made an ordinary call, which the port then opens.
+         */
+        Map<String, byte[]> write() {
+            Map<String, ClassWriter> classes = new TreeMap<>();
+            for (var e : copies.entrySet()) {
+                String key = e.getKey();
+                String[] to = e.getValue();
+                int dot = key.indexOf('.');
+                String decl = key.substring(0, dot), member = key.substring(dot + 1);
+                String jar = code.toJar.getOrDefault(decl, decl);
+                byte[] bytes = code.bytes.apply(jar);
+                ClassWriter cw = classes.computeIfAbsent(to[0], place -> {
+                    ClassWriter w = new ClassWriter(0);
+                    w.visit(new ClassReader(bytes).readUnsignedShort(6), Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER | Opcodes.ACC_SYNTHETIC, place, null, "java/lang/Object", null);
+                    return w;
+                });
+                org.objectweb.asm.commons.Remapper mojang = new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
+                    @Override
+                    public String map(String internal) {
+                        return code.names.cls(internal);
+                    }
+
+                    @Override
+                    public String mapMethodName(String owner, String n, String d) {
+                        String declObf = n.startsWith("<") || owner.startsWith("[") ? null : code.declarer(owner, n, d, false);
+                        return declObf == null ? n : code.names.method(declObf, n, d);
+                    }
+
+                    @Override
+                    public String mapFieldName(String owner, String n, String d) {
+                        return code.names.field(code.declarer(owner, n, d, true), n);
+                    }
+
+                    @Override
+                    public String mapInvokeDynamicMethodName(String n, String d) {
+                        return n; // the functional interface's method: the JDK's or the game's, whose names a's mappings give below
+                    }
+                };
+                new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                    @Override
+                    public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                        if (!(code.names.method(jar, n, d) + code.names.desc(d)).equals(member)) {
+                            return null;
+                        }
+                        MethodVisitor out = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, to[1], to[2], null, null);
+                        return new org.objectweb.asm.commons.MethodRemapper(new MethodVisitor(Opcodes.ASM9, out) {
+                            @Override
+                            public void visitMethodInsn(int op, String owner, String n2, String d2, boolean itf) {
+                                String[] copy = copied(owner, n2, d2);
+                                if (copy != null) {
+                                    super.visitMethodInsn(Opcodes.INVOKESTATIC, copy[0], copy[1], copy[2], false);
+                                } else if (op == Opcodes.INVOKESPECIAL && !n2.equals("<init>")) {
+                                    super.visitMethodInsn(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, owner, n2, d2, itf);
+                                } else {
+                                    super.visitMethodInsn(op, owner, n2, d2, itf);
+                                }
+                            }
+
+                            @Override
+                            public void visitInvokeDynamicInsn(String n2, String d2, Handle bsm, Object... args) {
+                                Object[] now = args.clone();
+                                for (int i = 0; i < now.length; i++) {
+                                    if (now[i] instanceof Handle h && !h.getName().startsWith("<")) {
+                                        String[] copy = copied(h.getOwner(), h.getName(), h.getDesc());
+                                        if (copy != null) {
+                                            now[i] = new Handle(Opcodes.H_INVOKESTATIC, copy[0], copy[1], copy[2], false);
+                                        } else if (h.getTag() == Opcodes.H_INVOKESPECIAL) {
+                                            now[i] = new Handle(h.isInterface() ? Opcodes.H_INVOKEINTERFACE : Opcodes.H_INVOKEVIRTUAL, h.getOwner(), h.getName(), h.getDesc(), h.isInterface());
+                                        }
+                                    }
+                                }
+                                // The functional interface's method name: a's mapping of it on the interface the call site makes.
+                                Type made = Type.getReturnType(d2);
+                                String sam = n2;
+                                if (bsm.getOwner().equals("java/lang/invoke/LambdaMetafactory") && now.length > 0 && now[0] instanceof Type erased) {
+                                    String iface = code.toJar.getOrDefault(made.getInternalName(), made.getInternalName());
+                                    String obfDesc = mapDescToJar(erased.getDescriptor());
+                                    String named = code.names.method(code.declarer(iface, n2, obfDesc, false), n2, obfDesc);
+                                    sam = named;
+                                }
+                                super.visitInvokeDynamicInsn(sam, d2, bsm, now);
+                            }
+                        }, mojang);
+                    }
+                }, 0);
+            }
+            Map<String, byte[]> out = new LinkedHashMap<>();
+            classes.forEach((place, w) -> {
+                w.visitEnd();
+                out.put(place + ".class", w.toByteArray());
+            });
+            return out;
+        }
+
+        /** A descriptor in a's Mojang names written in its jar's names, for asking the mappings about it. */
+        String mapDescToJar(String d) {
+            return mapDesc(d, code.toJar);
+        }
+
+        /** The copy of a's method owner.name+desc (Mojang names), or null when it is not copied. */
+        String[] copied(String owner, String name, String desc) {
+            if (owner.startsWith("[")) {
+                return null;
+            }
+            // A lambda's body is no member the snapshot keeps: it is copied under its own class.
+            String[] own = copies.get(owner + "." + name + desc);
+            GameDiff.Cls decl = own != null ? null : Exposure.declaring(a, owner, 'm', name, desc);
+            return own != null ? own : decl == null ? null : copies.get(decl.name + "." + name + desc);
+        }
+    }
+
+    /** Whether the port answers a's member owner.name+desc (a field: desc empty) on its own: a route, a rule or a stand-in. */
+    boolean handled(String owner, String name, String desc) {
+        String key = owner + "." + name + desc;
+        if (rewrites.containsKey(key) || removals.containsKey(key) || chains.containsKey(key) || chains.containsKey(owner + "." + name) || defaults.containsKey(key)) {
+            return true;
+        }
+        for (Fix f : fixes.getOrDefault(owner, List.of())) {
+            if (f.name().matcher(name).matches() && (f.args() == null || desc.startsWith(f.args()))) {
+                return true;
+            }
+        }
+        for (RetypedCall c : retypedCalls.getOrDefault(owner, List.of())) {
+            if (c.name().equals(name) && c.desc().equals(desc)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ---- Port rules applied in the class.
 
     /** A port rule's replacement for game members of one old class ("inClass"): name is a regex, args a descriptor's start or null. */
@@ -10985,6 +11873,7 @@ public final class JarPort {
         if (!dirs.isEmpty()) {
             standins(dirs);
         }
+        jdkStandins = Downgrade.Standins.of(root.resolve("jdk"));
     }
 
     /**
@@ -11623,21 +12512,94 @@ public final class JarPort {
         return languageRange;
     }
 
+    static final String OLD_TOML = "META-INF/mods.toml", NEW_TOML = "META-INF/neoforge.mods.toml";
+
+    /** FancyModLoader versions from Forge's line (Forge 1.20.1 is FML 47) count as older than NeoForge's own FML 1. */
+    static final int FORGE_FML = 47;
+
+    /**
+     * The major version of the FancyModLoader the release's NeoForge runs, which decides the metadata it reads: from the
+     * loader's own pom (languageRange), else the FML each release's newest NeoForge ships (read from their poms: 1.20.2
+     * and 1.20.3 run FML 1, 1.20.4 FML 2, 1.20.5 and 1.20.6 FML 3, 1.21 and 1.21.1 FML 4; before 1.20.2 Forge's FML 47).
+     */
+    int fml() {
+        Matcher range = Pattern.compile("\\[(\\d+),").matcher(languageRange());
+        if (range.lookingAt()) {
+            int major = Integer.parseInt(range.group(1));
+            return major >= FORGE_FML ? 0 : major;
+        }
+        return compareVersions(to, "1.20.2") < 0 ? 0 : compareVersions(to, "1.20.4") < 0 ? 1 : compareVersions(to, "1.20.5") < 0 ? 2
+            : compareVersions(to, "1.21") < 0 ? 3 : 4;
+    }
+
+    /**
+     * The metadata file the release's NeoForge reads. FML 3 (NeoForge 20.5) renamed META-INF/mods.toml to
+     * META-INF/neoforge.mods.toml (NeoForge's 20.5 release notes, "mods.toml renamed"), and FML 1 and 2 read only the old
+     * name (their ModFileParser names "mods.toml", not "META-INF/neoforge.mods.toml"). A jar keeping the other name is
+     * skipped without a word, so the port writes the one the release reads.
+     */
+    String metadataFile() {
+        return fml() >= 3 ? NEW_TOML : OLD_TOML;
+    }
+
+    /** entries with from renamed to to, in the same place, keeping its time. */
+    static Map<String, byte[]> moved(Map<String, byte[]> entries, Map<String, Long> times, String from, String to) {
+        Map<String, byte[]> moved = new LinkedHashMap<>();
+        entries.forEach((k, v) -> moved.put(k.equals(from) ? to : k, v));
+        times.put(to, times.getOrDefault(from, 0L));
+        return moved;
+    }
+
+    /**
+     * Keys of a mod's [[mods]] entry that only newer NeoForge reads, each with the first FML that does. Read on an older
+     * one, the key is ignored and what it declares never happens, and nothing older says it another way: data-driven enum
+     * extensions came with FML 4 (NeoForge 21.0: net.neoforged.fml.common.asm.enumextension, which FML 3 lacks; it
+     * replaced IExtensibleEnum's create methods), and feature flags a mod declares with NeoForge 21.1's FeatureFlagLoader.
+     */
+    static final Map<String, String> NEWER_KEYS = Map.of("enumExtensions", "1.21", "featureFlags", "1.21.1");
+
+    /** Dependency types FML 1's mandatory flag can say; incompatible and discouraged (FML 2) it cannot. */
+    static final Map<String, String> MANDATORY = Map.of("required", "true", "optional", "false");
+
+    static final Pattern DEPENDENCY_TYPE = Pattern.compile("(?m)^(\\s*)type\\s*=\\s*\"([A-Za-z]+)\"[ \\t]*\\r?\\n?");
+    static final Pattern DEPENDENCY_MANDATORY = Pattern.compile("(?m)^(\\s*)mandatory\\s*=\\s*\"?(true|false)\"?[ \\t]*\\r?\\n?");
+
+    String metadata(String toml) {
+        return metadata(new Mod(), toml);
+    }
+
     /**
      * The loader metadata asks for the new release: the game's and the loader's version ranges of each dependency block,
-     * and the version of the loader's own language provider.
+     * and the version of the loader's own language provider. Each dependency says whether it is needed the way the
+     * release's FML reads it: FML 1 (NeoForge 20.2, 20.3) only by mandatory=true|false and fails a block without it
+     * ("Missing required field mandatory in dependency"); FML 2 and 3 read type="required|optional|incompatible|discouraged"
+     * and still the deprecated mandatory; FML 4 on reads only type, so a mandatory=false block is required there. A key
+     * only newer releases read is a break on an older one.
      */
-    String metadata(String toml) {
+    String metadata(Mod mod, String toml) {
         String language = languageRange();
         if (!language.isEmpty() && Pattern.compile("(?m)^\\s*modLoader\\s*=\\s*\"(javafml|lowcodefml)\"").matcher(toml).find()) {
             toml = toml.replaceFirst("(?m)^(\\s*loaderVersion\\s*=\\s*)\"[^\"]*\"", "$1" + Matcher.quoteReplacement("\"" + language + "\""));
         }
+        if (loader.equals("neoforge")) {
+            for (var key : NEWER_KEYS.entrySet()) {
+                if (compareVersions(to, key.getValue()) < 0 && Pattern.compile("(?m)^\\s*" + key.getKey() + "\\s*=").matcher(toml).find()) {
+                    mod.unlinked.add("metadata " + key.getKey() + " has no form before " + key.getValue() + ": NeoForge for " + to + " does not read it");
+                }
+            }
+        }
+        int fml = loader.equals("neoforge") ? fml() : -1;
         Matcher m = BLOCK.matcher(toml);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
             String block = m.group();
+            if (fml >= 0) {
+                block = dependencyType(mod, block, fml);
+            }
             Matcher id = Pattern.compile("modId\\s*=\\s*\"([^\"]+)\"").matcher(block);
-            if (id.find()) {
+            if (block.isEmpty()) {
+                // dropped: FML 1 cannot say it
+            } else if (id.find()) {
                 String range = switch (id.group(1)) {
                     case "minecraft" -> "[" + to + "]";
                     case "neoforge", "forge" -> loaderTo == null ? null : "[" + loaderTo.replaceAll("^(\\d+\\.\\d+).*", "$1") + ",)";
@@ -11651,10 +12613,41 @@ public final class JarPort {
                 if (id.group(1).equals("forge") && loader.equals("neoforge") && compareVersions(to, "1.20.2") >= 0) {
                     block = block.replaceFirst("modId\\s*=\\s*\"forge\"", "modId=\"neoforge\"");
                 }
+                // And the reverse: NeoForge for 1.20.1 (47.1) is Forge's line, which provides "forge".
+                if (id.group(1).equals("neoforge") && loader.equals("neoforge") && compareVersions(to, "1.20.2") < 0) {
+                    block = block.replaceFirst("modId\\s*=\\s*\"neoforge\"", "modId=\"forge\"");
+                }
             }
             m.appendReplacement(sb, Matcher.quoteReplacement(block));
         }
         return m.appendTail(sb).toString();
+    }
+
+    /**
+     * A dependency block saying whether it is needed as the release's FML reads it (metadata). A type FML 1 cannot say
+     * (incompatible, discouraged) drops the block, reported: the loader no longer refuses the pair, though the mod runs.
+     */
+    static String dependencyType(Mod mod, String block, int fml) {
+        Matcher type = DEPENDENCY_TYPE.matcher(block), mandatory = DEPENDENCY_MANDATORY.matcher(block);
+        boolean typed = type.find(), flagged = mandatory.find();
+        if (fml <= 1 && typed && !flagged) {
+            String kind = type.group(2).toLowerCase(Locale.ROOT);
+            String flag = MANDATORY.get(kind);
+            if (flag == null) {
+                Matcher id = Pattern.compile("modId\\s*=\\s*\"([^\"]+)\"").matcher(block);
+                mod.silent.add("dependency type " + kind + " has no form before NeoForge 20.4, left out: " + (id.find() ? id.group(1) : "?"));
+                mod.change("dependency type the release cannot read left out");
+                return "";
+            }
+            mod.change("dependency type written as mandatory");
+            return block.substring(0, type.start()) + type.group(1) + "mandatory=" + flag + "\n" + block.substring(type.end());
+        }
+        if (fml >= 2 && flagged && !typed) {
+            mod.change("dependency mandatory written as type");
+            return block.substring(0, mandatory.start()) + mandatory.group(1) + "type=\"" + (mandatory.group(2).equals("true") ? "required" : "optional") + "\"\n"
+                + block.substring(mandatory.end());
+        }
+        return block;
     }
 
     /** The access widener a fabric.mod.json names, or null. */
