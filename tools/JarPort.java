@@ -8757,6 +8757,44 @@ public final class JarPort {
             }
         }
 
+        /**
+         * A mixin constructor's super(...) to a constructor the update reshaped or removed. Mixin never runs or resolves it:
+         * it finds the call by owner and name alone (Bytecode.findDelegateInit) and merges only what follows into the
+         * target's constructors. So the call goes to the constructor the route map gives, else the superclass's one with
+         * the fewest parameters, each passed its type's zero, and what follows stays as it was.
+         */
+        boolean mixinSuper(String owner, String desc) {
+            GameDiff.RawCls self = mod.classes.get(mod.self);
+            if (!mod.mixinTargets.containsKey(mod.self) || self == null || !owner.equals(self.sup) || !key.contains(".<init>(")) {
+                return false;
+            }
+            String now = cls(owner);
+            GameDiff.Cls holder = b.classes.get(now);
+            if (holder == null) {
+                return false;
+            }
+            String[] moved = a.classes.containsKey(owner) ? route.method(owner, "<init>", desc) : null;
+            String chosen = moved != null && moved[0].equals(now) && holder.methods.containsKey("<init>" + moved[2]) ? moved[2] : null;
+            if (chosen == null) {
+                for (GameDiff.Meth m : holder.methods.values()) {
+                    if (m.name.equals("<init>") && (m.flags & Opcodes.ACC_PRIVATE) == 0
+                        && (chosen == null || Type.getArgumentTypes(m.desc).length < Type.getArgumentTypes(chosen).length)) {
+                        chosen = m.desc;
+                    }
+                }
+            }
+            if (chosen == null) {
+                return false;
+            }
+            drop(desc, new int[0]);
+            for (Type t : Type.getArgumentTypes(chosen)) {
+                pushDefault(mv, t);
+            }
+            extraStack = Math.max(extraStack, 2 * Type.getArgumentTypes(chosen).length);
+            super.visitMethodInsn(Opcodes.INVOKESPECIAL, owner, "<init>", oldDesc(chosen), false);
+            return true;
+        }
+
         /** super(...) of a class whose superclass the game removed: the same constructor of the class it extends now. */
         void superCall(String[] replaced, String desc, boolean itf) {
             GameDiff.Cls now = b.classes.get(replaced[1]);
@@ -8895,6 +8933,10 @@ public final class JarPort {
                         super.visitInsn(Opcodes.NOP);
                     }
                     mod.change("call removed");
+                    return;
+                }
+                if (opcode == Opcodes.INVOKESPECIAL && name.equals("<init>") && mixinSuper(owner, desc)) {
+                    mod.change("mixin's super call to its superclass's new constructor");
                     return;
                 }
                 if (opcode == Opcodes.INVOKESPECIAL && name.equals("<init>") && constructed(owner, decl.owner(), desc)) {
