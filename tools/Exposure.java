@@ -416,13 +416,13 @@ public final class Exposure {
     /**
      * The Fabric API a release runs, as players have it (every module nested in one jar): the newest build whose own
      * fabric.mod.json accepts the release and whose code names no game class the release lacks. Builds come from Fabric's
-     * maven, read by the release each is named for (+1.16, +build.373-1.16, +26.1.2): that release, its family, or a
-     * release of its family, since a name gives a family and not the releases a build runs on (0.42.0+1.16 needs 1.16.2;
-     * 0.155.3+26.1.2 runs on 26.1). A declared range is not enough alone: 0.14.2+build.373-1.16 declares 1.16 and fails
-     * to start on it, needing 1.16.1's class_5414. Nor are Modrinth's release tags: they give 1.15 the early 0.4.24,
-     * while 0.28.5+1.15 starts on 1.15. From 1.19.2 the maven jar is the released jar; before it, it is an empty parent
-     * (each module a separate artifact), so the released file is Fabric's own Modrinth file of that build. The link
-     * check, the route map, the port and the game a port is started in all read this one jar. Null when none runs.
+     * maven, read by the family of the release each is named for (+1.16, +build.373-1.16, +26.1.2), since a name gives a
+     * family and not the releases a build runs on (0.42.0+1.16 needs 1.16.2; 0.155.3+26.1.2 runs on 26.1 and 26.1.1).
+     * A declared range is not enough alone: 0.14.2+build.373-1.16 declares 1.16 and fails to start on it, needing
+     * 1.16.1's class_5414. Nor are Modrinth's release tags: they give 1.15 the early 0.4.24, while 0.28.5+1.15 starts on
+     * 1.15. From 1.19.2 the maven jar is the released jar; before it, it is an empty parent (each module a separate
+     * artifact), so the released file is Fabric's own Modrinth file of that build. The link check, the route map, the
+     * port and the game a port is started in all read this one jar. Null when none runs.
      */
     static Path fabricApi(String version) throws Exception {
         Path have = FABRIC_APIS.get(version);
@@ -430,20 +430,26 @@ public final class Exposure {
             return have;
         }
         String metadata = VersionMap.fetchText(FABRIC_API + "maven-metadata.xml", "fabric-api-maven-metadata.xml");
-        Map<String, List<String>> byRelease = new LinkedHashMap<>();
+        Map<String, List<String>> byRelease = new HashMap<>();
         Matcher m = Pattern.compile("<version>([^<]+\\+(?:build\\.\\d+-)?(\\d+(?:\\.\\d+)+))</version>").matcher(metadata);
         while (m.find()) {
-            String named = m.group(2);
-            if (named.equals(version) || version.startsWith(named + ".") || named.startsWith(version + ".")) {
-                byRelease.computeIfAbsent(named, k -> new ArrayList<>()).add(m.group(1));
+            if (family(m.group(2)).equals(family(version))) {
+                byRelease.computeIfAbsent(m.group(2), k -> new ArrayList<>()).add(m.group(1));
             }
         }
         // Within one release's builds the releases they accept only move forward, so the ones that accept a release are a
-        // run of builds; the newest of them is found by halving, reading a few small jars and not every build.
+        // run of builds; the newest is found by halving. Releases are taken newest build first, and once a release's
+        // newest build is older than an accepting one found, no build of it or of the releases after it can be newer.
+        List<List<String>> releases = new ArrayList<>(byRelease.values());
+        releases.forEach(builds -> builds.sort(Comparator.comparing(Exposure::apiNumber, Versions::compare)));
+        releases.sort(Comparator.comparing((List<String> builds) -> apiNumber(builds.get(builds.size() - 1)), Versions::compare).reversed());
         List<String> accepting = new ArrayList<>();
-        for (List<String> builds : byRelease.values()) {
-            builds.sort(Comparator.comparing(Exposure::apiNumber, Versions::compare));
+        String best = null;
+        for (List<String> builds : releases) {
             int top = builds.size() - 1;
+            if (best != null && Versions.compare(apiNumber(builds.get(top)), apiNumber(best)) < 0) {
+                break;
+            }
             if (!runsOn(builds.get(top), version)) {
                 if (!runsOn(builds.get(0), version)) {
                     continue;
@@ -460,6 +466,9 @@ public final class Exposure {
                 top = lo;
             }
             accepting.addAll(builds.subList(0, top + 1));
+            if (best == null || Versions.compare(apiNumber(builds.get(top)), apiNumber(best)) > 0) {
+                best = builds.get(top);
+            }
         }
         accepting.sort(Comparator.comparing(Exposure::apiNumber, Versions::compare).reversed());
         Set<String> gameClasses = compare(version, "26.1") < 0 ? Intermediary.of(version).classes.keySet() : null;
@@ -474,6 +483,11 @@ public final class Exposure {
             }
         }
         return null;
+    }
+
+    /** The family a release belongs to, its first two parts: 1.21 of 1.21.11, 26.1 of 26.1.2. */
+    static String family(String release) {
+        return release.replaceFirst("^(\\d+\\.\\d+).*", "$1");
     }
 
     /** A build's own version, before its "+": 0.14.2 of 0.14.2+build.373-1.16. */
