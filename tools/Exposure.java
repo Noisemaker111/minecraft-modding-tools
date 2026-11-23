@@ -687,6 +687,9 @@ public final class Exposure {
             if (kind == 'f' ? c.fields.containsKey(name) : c.methods.containsKey(name + desc)) {
                 return c;
             }
+            if (kind == 'm' && name.startsWith("<")) {
+                return null; // a constructor is the class's own: a super's with the same parameters does not make it
+            }
             if (c.sup != null) {
                 queue.add(c.sup);
             }

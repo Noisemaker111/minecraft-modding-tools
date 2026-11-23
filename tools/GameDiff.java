@@ -5707,6 +5707,10 @@ public final class GameDiff {
             if (n instanceof FixExpr.Lit l) {
                 return l.type() == null ? "null" : l.type();
             }
+            if (n instanceof FixExpr.Sum a) {
+                String l = typeIn(a.left(), types), r = typeIn(a.right(), types);
+                return l == null || r == null ? null : l.equals("J") && r.equals("J") ? "J" : "BSCI".contains(l) && "BSCI".contains(r) && l.length() == 1 && r.length() == 1 ? "I" : null;
+            }
             if (n instanceof FixExpr.Cast c) {
                 if (FixExpr.PRIMITIVES.contains(c.type())) {
                     return Map.of("boolean", "Z", "byte", "B", "char", "C", "short", "S", "int", "I", "long", "J", "float", "F", "double", "D").get(c.type());
@@ -7243,6 +7247,7 @@ public final class GameDiff {
         final Map<Meth, List<String>> solved = new LinkedHashMap<>();
         final Set<Meth> solving = new LinkedHashSet<>();
         final Map<String, List<Cls>> declaring = new HashMap<>(); // name + desc -> b's classes that declare it
+        final Map<String, String> readings = new HashMap<>(); // a's field "owner/name" -> what b reads on $0 for it ("getBottom()", "width")
         static final String WHY = System.getProperty("gamediff.samecall", ""); // a method name: why it is or is not solved
 
         SameCall(Hop h, Learner learner) {
@@ -7304,6 +7309,9 @@ public final class GameDiff {
             Set<String> have = new HashSet<>();
             for (Learner.Learned l : known) {
                 have.add(l.owner().replace('.', '/') + "." + l.name() + l.desc());
+                if (l.field() && l.expr().startsWith("$0.")) {
+                    readings.put(l.owner().replace('.', '/') + "." + l.name(), l.expr().substring(3));
+                }
             }
             List<Learner.Learned> out = new ArrayList<>();
             for (var e : h.mAB.entrySet()) {
@@ -7371,6 +7379,9 @@ public final class GameDiff {
             List<String> out = null;
             try {
                 out = work(x, y, depth);
+                if (out == null && x.name.equals("<init>")) {
+                    out = new Built(x, y).solve();
+                }
             } catch (RuntimeException unreadable) {
                 out = null;
             } finally {
@@ -7468,12 +7479,466 @@ public final class GameDiff {
             }
         }
 
+        /** A sum of atoms times whole numbers, plus a constant; an atom is a value's text (an old operand, "#j" the new j-th). */
+        record Lin(Map<String, Long> terms, long k, String type) {
+
+            static Lin of(long k, String type) {
+                return new Lin(Map.of(), k, type);
+            }
+
+            static Lin atom(String a, String type) {
+                return new Lin(Map.of(a, 1L), 0, type);
+            }
+
+            boolean numeric() {
+                return type != null && "BSIJCZ".contains(type) && type.length() == 1;
+            }
+
+            Lin plus(Lin o, long sign) {
+                if (o.terms.isEmpty() && o.k == 0) {
+                    return this;
+                }
+                if (!numeric() || !o.numeric()) {
+                    return null;
+                }
+                Map<String, Long> t = new TreeMap<>(terms);
+                o.terms.forEach((a, c) -> t.merge(a, sign * c, Long::sum));
+                t.values().removeIf(c -> c == 0);
+                return new Lin(t, k + sign * o.k, type);
+            }
+
+            Lin times(long c) {
+                if (!numeric()) {
+                    return null;
+                }
+                Map<String, Long> t = new TreeMap<>();
+                terms.forEach((a, v) -> t.put(a, v * c));
+                t.values().removeIf(v -> v == 0);
+                return new Lin(t, k * c, type);
+            }
+
+            boolean same(Lin o) {
+                return terms.equals(o.terms) && k == o.k;
+            }
+
+            /** As Java over the atoms: "$5 - $4", "$1". */
+            String text() {
+                StringBuilder s = new StringBuilder();
+                List<Map.Entry<String, Long>> order = new ArrayList<>(new TreeMap<>(terms).entrySet());
+                order.sort(Comparator.comparing(e -> e.getValue() < 0)); // "$5 - $4", not "-$4 + $5"
+                for (var e : order) {
+                    long c = e.getValue();
+                    String a = e.getKey().matches("[$#]?[\\w.]+") ? e.getKey() : "(" + e.getKey() + ")";
+                    s.append(s.isEmpty() ? (c < 0 ? "-" : "") : (c < 0 ? " - " : " + "));
+                    s.append(Math.abs(c) == 1 ? a : Math.abs(c) + " * " + a);
+                }
+                if (s.isEmpty()) {
+                    return Long.toString(k);
+                }
+                if (k != 0) {
+                    s.append(k < 0 ? " - " : " + ").append(Math.abs(k));
+                }
+                return s.toString();
+            }
+        }
+
+        /**
+         * A kept constructor whose parameters changed, called so the object it builds is the object the old one built
+         * (1.20.3's AbstractSelectionList(minecraft, width, height, y0, y1, itemHeight) became (minecraft, width, height, y,
+         * itemHeight) over AbstractWidget's fields). Both constructors are run over their parameters as sums, through the
+         * super constructors and this object's own methods they call, to the value each field ends with. Each field the old
+         * one set is read in the new release as the learner learned the game reads it ($0.y1 -> $0.getBottom()) or, kept in
+         * the same class, as itself; that reading, worked out over the new object's fields (getBottom() is getY() +
+         * getHeight()), must equal what the old constructor stored, and each new parameter is solved from those equations
+         * (height = y1 - y0). A field nothing in the new release reads (the old list's height: the screen's, which the
+         * game's own code stopped passing) constrains nothing; every new parameter must be solved, and every equation
+         * without one must hold, else nothing is learned.
+         */
+        final class Built {
+
+            final Meth x, y;
+            final Ctx c;
+
+            Built(Meth x, Meth y) {
+                this.x = x;
+                this.y = y;
+                this.c = new Ctx(x, y, 0);
+            }
+
+            List<String> solve() {
+                String[] tx = operands(x), ty = operands(y);
+                Lin[] xa = new Lin[tx.length], ya = new Lin[ty.length];
+                for (int i = 1; i < tx.length; i++) {
+                    xa[i] = Lin.atom("$" + i, tx[i]);
+                }
+                for (int j = 1; j < ty.length; j++) {
+                    ya[j] = Lin.atom("#" + j, ty[j]);
+                }
+                Map<String, Lin> was = new LinkedHashMap<>(), now = new LinkedHashMap<>();
+                Set<String> opaque = new HashSet<>();
+                if (!run(h.a, x, xa, was, opaque, true, 0) || !run(h.b, y, ya, now, new HashSet<>(), false, 0)) {
+                    why("not run");
+                    return null;
+                }
+                List<Lin[]> left = new ArrayList<>();
+                for (var e : was.entrySet()) {
+                    String read = reading(e.getKey());
+                    if (read == null) {
+                        continue;
+                    }
+                    if (opaque.contains(e.getKey())) {
+                        why("field " + e.getKey() + " holds what no sum says, and is read as " + read);
+                        return null;
+                    }
+                    if (e.getValue() == null) {
+                        continue; // set to a value that does not depend on the operands
+                    }
+                    Lin r = readOn(read, now, 0);
+                    if (r == null) {
+                        why("field " + e.getKey() + ", read as " + read + ", not worked out on the new object");
+                        return null;
+                    }
+                    left.add(new Lin[] {r, e.getValue()});
+                }
+                Map<String, Lin> sol = new HashMap<>();
+                for (boolean moved = true; moved && !left.isEmpty();) {
+                    moved = false;
+                    List<Lin[]> next = new ArrayList<>();
+                    for (Lin[] q : left) {
+                        Lin r = q[0];
+                        for (var s : sol.entrySet()) {
+                            Long cf = r == null ? null : r.terms().get(s.getKey());
+                            if (cf != null) {
+                                Lin rest = new Lin(without(r.terms(), s.getKey()), r.k(), r.type());
+                                Lin v = s.getValue().times(cf);
+                                r = v == null ? (cf == 1 && rest.terms().isEmpty() && rest.k() == 0 ? s.getValue() : null) : rest.plus(v, 1);
+                            }
+                        }
+                        if (r == null) {
+                            why("an equation mixes values that are not sums");
+                            return null;
+                        }
+                        List<String> unknown = r.terms().keySet().stream().filter(a -> a.startsWith("#")).toList();
+                        if (unknown.isEmpty()) {
+                            if (!r.same(q[1])) {
+                                why("the new object holds " + r.text() + " where the old one held " + q[1].text());
+                                return null;
+                            }
+                            moved = true;
+                        } else if (unknown.size() == 1 && Math.abs(r.terms().get(unknown.get(0))) == 1) {
+                            String u = unknown.get(0);
+                            long cu = r.terms().get(u);
+                            Lin rest = new Lin(without(r.terms(), u), r.k(), r.type());
+                            Lin v = q[1].plus(rest, -1);
+                            v = v == null ? null : cu == 1 ? v : v.times(-1);
+                            if (v == null) {
+                                why("no sum solves " + u);
+                                return null;
+                            }
+                            sol.put(u, v);
+                            moved = true;
+                        } else {
+                            next.add(q);
+                        }
+                    }
+                    left = next;
+                }
+                if (!left.isEmpty()) {
+                    why(left.size() + " equations left");
+                    return null;
+                }
+                List<String> out = new ArrayList<>();
+                out.add("$0");
+                for (int j = 1; j < ty.length; j++) {
+                    Lin v = sol.get("#" + j);
+                    if (v == null) {
+                        why("parameter " + j + " not solved");
+                        return null;
+                    }
+                    String f = ty[j].equals("Z") && v.terms().isEmpty() ? Boolean.toString(v.k() != 0)
+                        : fit(new R(v.text(), v.terms().size() == 1 && v.k() == 0 && v.terms().values().iterator().next() == 1 ? v.type() : v.numeric() ? v.type() : null, false), ty[j]);
+                    if (f == null) {
+                        why("parameter " + j + ": " + v.text() + " is not a " + ty[j]);
+                        return null;
+                    }
+                    out.add(f);
+                }
+                return out;
+            }
+
+            void why(String s) {
+                if (!WHY.isEmpty() && x.sig().contains(WHY)) {
+                    System.err.println("samecall   built: " + s);
+                }
+            }
+
+            static Map<String, Long> without(Map<String, Long> t, String a) {
+                Map<String, Long> m = new TreeMap<>(t);
+                m.remove(a);
+                return m;
+            }
+
+            /** How the new release reads a's field key on the object: the learner's reading, or the field the same class kept. */
+            String reading(String key) {
+                String r = readings.get(key);
+                if (r != null) {
+                    return r;
+                }
+                int dot = key.lastIndexOf('.');
+                Fld f = h.a.field(key.substring(0, dot), key.substring(dot + 1));
+                Fld fy = f == null ? null : h.fAB.get(f);
+                return fy != null && h.clsBA(fy.owner.name).equals(f.owner.name) ? fy.name : null;
+            }
+
+            /** A reading ("getBottom()", "width") worked out over the new object's fields after its constructor. */
+            Lin readOn(String read, Map<String, Lin> now, int depth) {
+                Matcher call = Pattern.compile("(\\w+)\\(\\)").matcher(read);
+                if (call.matches()) {
+                    Meth m = find(h.b, y.owner.name, call.group(1), null);
+                    return m == null ? null : got(h.b, m, now, depth);
+                }
+                if (read.matches("\\w+")) {
+                    String key = fieldKey(h.b, y.owner.name, read);
+                    Fld f = key == null ? null : h.b.field(key.substring(0, key.lastIndexOf('.')), read);
+                    return f == null ? null : field(key, f.desc, now);
+                }
+                return null;
+            }
+
+            /** What a field holds after the constructor: its value, or its type's zero when the constructor never set it. */
+            Lin field(String key, String desc, Map<String, Lin> state) {
+                if (state.containsKey(key)) {
+                    return state.get(key);
+                }
+                return desc.length() == 1 ? Lin.of(0, desc) : null;
+            }
+
+            /** What a method of this object that only returns a value gives, over the object's fields. */
+            Lin got(Snap s, Meth m, Map<String, Lin> state, int depth) {
+                if (depth > 4 || m.isStatic() || !MethodTypeDesc.ofDescriptor(m.desc).parameterList().isEmpty()) {
+                    return null;
+                }
+                Body b = learner.decode(s, m.owner.name, m.name + m.desc, false);
+                if (b == null || !b.whole || b.statements.size() != 1 || !"return".equals(b.statements.get(0).value) || b.statements.get(0).kids.length != 1) {
+                    return null;
+                }
+                return value(s, m, b.statements.get(0).kids[0], new Lin[1], state, false, depth + 1);
+            }
+
+            /** m named name (with desc, or any taking nothing) as the JVM finds it from cls: its class, supers, interfaces. */
+            Meth find(Snap s, String cls, String name, String desc) {
+                Deque<String> todo = new ArrayDeque<>(List.of(cls));
+                Set<String> seen = new HashSet<>();
+                while (!todo.isEmpty()) {
+                    Cls k = s.classes.get(todo.poll());
+                    if (k == null || !seen.add(k.name)) {
+                        continue;
+                    }
+                    for (Meth m : k.methods.values()) {
+                        if (m.name.equals(name) && (desc == null ? m.desc.startsWith("()") : m.desc.equals(desc)) && (m.flags & 0x0400) == 0 && m.hasCode) {
+                            return m;
+                        }
+                    }
+                    if (k.sup != null) {
+                        todo.add(k.sup);
+                    }
+                    todo.addAll(k.ifaces);
+                }
+                return null;
+            }
+
+            /** The declaring class and name of a field as the JVM resolves it from owner. */
+            String fieldKey(Snap s, String owner, String name) {
+                for (String o = owner; o != null;) {
+                    Cls k = s.classes.get(o);
+                    if (k == null) {
+                        return null;
+                    }
+                    if (k.fields.containsKey(name)) {
+                        return k.name + "." + name;
+                    }
+                    o = k.sup;
+                }
+                return null;
+            }
+
+            static boolean self(Node n) {
+                return n.op == 'p' && Integer.valueOf(0).equals(n.value);
+            }
+
+            static boolean param(Node n) {
+                if (n.op == 'p' && n.value instanceof Integer i && i > 0) {
+                    return true;
+                }
+                for (Node k : n.kids) {
+                    if (param(k)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            /**
+             * Runs a constructor, or a method of the object it calls, over args, to the value each field of the object
+             * ends with (null: not a sum of the operands). False when that is not one answer: a branch, a throw, a
+             * call into code that cannot be read.
+             */
+            boolean run(Snap s, Meth m, Lin[] args, Map<String, Lin> state, Set<String> opaque, boolean old, int depth) {
+                if (depth > 4) {
+                    return false;
+                }
+                Body b = learner.decode(s, m.owner.name, m.name + m.desc, false);
+                if (b == null || !b.whole) {
+                    return false;
+                }
+                for (Node st : b.statements) {
+                    switch (String.valueOf(st.value)) {
+                        case "put" -> {
+                            if (st.kids.length != 2 || !self(st.kids[0])) {
+                                continue; // a static field, or another object's
+                            }
+                            String key = fieldKey(s, st.ref.owner(), st.ref.name());
+                            if (key == null) {
+                                return false;
+                            }
+                            Lin v = value(s, m, st.kids[1], args, state, old && depth == 0, 0);
+                            state.put(key, v);
+                            if (v == null && param(st.kids[1])) {
+                                opaque.add(key);
+                            } else {
+                                opaque.remove(key);
+                            }
+                        }
+                        case "init" -> {
+                            if (st.kids.length == 0 || !self(st.kids[0])) {
+                                continue;
+                            }
+                            Meth callee = s.method(st.ref.owner(), "<init>", st.ref.desc());
+                            if (callee == null) {
+                                if (s.classes.containsKey(st.ref.owner())) {
+                                    return false;
+                                }
+                                continue; // Object's, or a library's: none of the fields read here
+                            }
+                            Lin[] a = new Lin[operands(callee).length];
+                            for (int i = 1; i < st.kids.length && i < a.length; i++) {
+                                a[i] = value(s, m, st.kids[i], args, state, old && depth == 0, 0);
+                            }
+                            if (!run(s, callee, a, state, opaque, old, depth + 1)) {
+                                return false;
+                            }
+                        }
+                        case "expr" -> {
+                            Node call = st.kids.length == 1 ? st.kids[0] : null;
+                            if (call != null && call.op == 'v' && call.kids.length > 0 && self(call.kids[0])) {
+                                // A method of this object may set its fields: followed through, or nothing is learned.
+                                Meth callee = find(s, call.ref.owner(), call.ref.name(), call.ref.desc());
+                                if (callee == null || callee.isStatic()) {
+                                    return false;
+                                }
+                                Lin[] a = new Lin[operands(callee).length];
+                                for (int i = 1; i < call.kids.length && i < a.length; i++) {
+                                    a[i] = value(s, m, call.kids[i], args, state, old && depth == 0, 0);
+                                }
+                                if (!run(s, callee, a, state, opaque, old, depth + 1)) {
+                                    return false;
+                                }
+                            }
+                        }
+                        case "return" -> {
+                            return true;
+                        }
+                        case "store", "astore" -> {
+                        }
+                        default -> {
+                            return false; // a branch or a throw: which fields end set is not one answer
+                        }
+                    }
+                }
+                return true;
+            }
+
+            /** A value of m's body as a sum over args and the object's fields; the old constructor's own other values as their text. */
+            Lin value(Snap s, Meth m, Node n, Lin[] args, Map<String, Lin> state, boolean text, int depth) {
+                Lin v = sum(s, m, n, args, state, depth);
+                if (v == null && text) {
+                    R r = c.ofX(n);
+                    v = r == null ? null : Lin.atom(r.text(), r.type());
+                }
+                return v;
+            }
+
+            Lin sum(Snap s, Meth m, Node n, Lin[] args, Map<String, Lin> state, int depth) {
+                if (depth > 8) {
+                    return null;
+                }
+                switch (n.op) {
+                    case 'p' -> {
+                        int i = operand(m, n.value);
+                        return i <= 0 || i >= args.length ? null : args[i];
+                    }
+                    case 'k' -> {
+                        if (n.value instanceof Integer || n.value instanceof Long || n.value instanceof Short || n.value instanceof Byte) {
+                            return Lin.of(((Number) n.value).longValue(), n.type);
+                        }
+                        String lit = Learner.literal(n, n.type);
+                        return lit == null ? null : Lin.atom(lit, n.type);
+                    }
+                    case 'f' -> {
+                        if (n.kids.length != 1 || !self(n.kids[0])) {
+                            return null;
+                        }
+                        String key = fieldKey(s, n.ref.owner(), n.ref.name());
+                        return key == null ? null : field(key, n.ref.desc(), state);
+                    }
+                    case 'v' -> {
+                        if (n.kids.length != 1 || !self(n.kids[0])) {
+                            return null;
+                        }
+                        Meth g = find(s, n.ref.owner(), n.ref.name(), n.ref.desc());
+                        return g == null ? null : got(s, g, state, depth + 1);
+                    }
+                    case 'x' -> {
+                        Lin a = n.kids.length == 1 ? sum(s, m, n.kids[0], args, state, depth + 1) : null;
+                        return a != null && a.numeric() && "IJ".contains(n.type) && n.type.length() == 1 ? new Lin(a.terms(), a.k(), n.type) : null;
+                    }
+                    case 'o' -> {
+                        String op = String.valueOf(n.value);
+                        if (n.kids.length == 1 && (op.equals("INEG") || op.equals("LNEG"))) {
+                            Lin a = sum(s, m, n.kids[0], args, state, depth + 1);
+                            return a == null ? null : a.times(-1);
+                        }
+                        if (n.kids.length != 2) {
+                            return null;
+                        }
+                        Lin a = sum(s, m, n.kids[0], args, state, depth + 1), b = sum(s, m, n.kids[1], args, state, depth + 1);
+                        if (a == null || b == null) {
+                            return null;
+                        }
+                        return switch (op) {
+                            case "IADD", "LADD" -> a.plus(b, 1);
+                            case "ISUB", "LSUB" -> a.plus(b, -1);
+                            case "IMUL", "LMUL" -> b.terms().isEmpty() ? a.times(b.k()) : a.terms().isEmpty() ? b.times(a.k()) : null;
+                            default -> null;
+                        };
+                    }
+                    default -> {
+                        return null;
+                    }
+                }
+            }
+        }
+
         List<String> work(Meth x, Meth y, int depth) {
             Body bx = learner.decode(h.a, x.owner.name, x.name + x.desc, false), by = learner.decode(h.b, y.owner.name, y.name + y.desc, false);
             if (bx == null || by == null || !bx.whole || !by.whole || bx.statements.size() > 400 || by.statements.size() > 400) {
                 return null;
             }
             List<Node> xs = bx.statements, ys = by.statements;
+            if (!WHY.isEmpty() && x.sig().contains(WHY)) {
+                xs.forEach(n -> System.err.println("samecall   old " + Retyped.show(n, 0)));
+                ys.forEach(n -> System.err.println("samecall   new " + Retyped.show(n, 0)));
+            }
             int[][] lcs = new int[xs.size() + 1][ys.size() + 1];
             for (int i = xs.size() - 1; i >= 0; i--) {
                 for (int j = ys.size() - 1; j >= 0; j--) {
@@ -7913,6 +8378,14 @@ public final class GameDiff {
                     }
                     yield new Typed("new " + Learner.dotted(mapped(owner)) + "(" + texts(args) + ")", "L" + owner + ";");
                 }
+                case FixExpr.Sum a -> {
+                    Typed l = e(a.left(), types), r = e(a.right(), types);
+                    boolean wide = l.type().equals("J") && r.type().equals("J");
+                    if (!wide && !(l.type().length() == 1 && "BSCI".contains(l.type()) && r.type().length() == 1 && "BSCI".contains(r.type()))) {
+                        throw new Stuck("a sum of " + l.type() + " and " + r.type());
+                    }
+                    yield new Typed("(" + l.text() + " " + a.op() + " " + r.text() + ")", wide ? "J" : "I");
+                }
                 case FixExpr.Ref r -> {
                     String owner = r.type().replace('.', '/');
                     if (cls(owner) == null) {
@@ -8244,6 +8717,7 @@ public final class GameDiff {
                 }
                 case FixExpr.Cast c -> "(" + c.type() + ") " + print(c.expr(), ops);
                 case FixExpr.Ref r -> r.type() + "::" + r.name();
+                case FixExpr.Sum a -> "(" + print(a.left(), ops) + " " + a.op() + " " + print(a.right(), ops) + ")";
             };
         }
 
