@@ -8424,7 +8424,9 @@ public final class JarPort {
                         return;
                     }
                 }
-                if (opcode == Opcodes.INVOKESPECIAL && !name.equals("<init>")) {
+                if (opcode == Opcodes.INVOKESPECIAL && !name.equals("<init>") && Sites.this.moved == null) {
+                    // Not in a body moved to a game method's new parameters: a stand-in that draws through the new method
+                    // (Renderable.render(pose) calls render(graphics)) would call that body back.
                     String[] added = fix(superFixes, List.of(owner, decl.owner()), name, desc, "(L" + owner + ";" + desc.substring(1), true);
                     if (added != null) {
                         invokeAdded(added);
