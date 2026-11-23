@@ -29,8 +29,10 @@ reached, and so does every target of a mod with no published source, no commit f
 does not build on its own release (the baseline). join ranks what holds the rest back by type of break, as the jar
 count does (exposure.any_version_table).
 
-On GitHub's runners: tools/cloud-run source (.github/workflows/cloud-source.yml), one job per group of mods for the
-baseline and one per loader, target and group of mods for the ports. Main's table is kept on the generated branch as
+On GitHub's runners: tools/cloud-run source (the source-* jobs of .github/workflows/cloud-ports.yml, corpus=source),
+one job per group of mods for the baseline and one per loader, target and group of mods for the ports: first to the
+newest and the oldest release (ends), then to every other release on the side a mod passed (rest), since a mod that
+misses an end cannot go to any version (port_plan). Main's table is kept on the generated branch as
 scoreboard/source.json next to the jar table, and its count is port.source.any-version (bench/generated.py).
 """
 import argparse
