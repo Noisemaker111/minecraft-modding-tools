@@ -1,0 +1,41 @@
+file bench/exposure.py
+package bench/portboard
+user bench/test_exposure.py E
+user bench/learn_diff.py exposure
+user bench/generated.py exposure
+
+module settings | Where the jar scoreboard reads and keeps things, and the numbers a run is sized by: every module here reads them, none is read by them.
+  ROOT HEAP HOME VERIFY AGENT INDEX PINS COUNT FIRST UNOBFUSCATED MOJANG_NEOFORGE MAPPINGS PLATFORM ASM PILE SPARE CORES CLASSES STOPS FABRIC_APIS MAP_SOURCES NAME_SOURCES KEY
+
+module modrinth | The mods a scoreboard reads: the most downloaded of a loader and release on Modrinth, pinned in bench/exposure/mods and downloaded once.
+  api project_versions pin write_pin fetch
+
+module gamereleases | The game's releases in order, and which updates and jumps between them the scoreboard runs.
+  releases vkey chain updates families big jumps hubs_of most_used any_version runs
+
+module cachekeys | Cache folders under ~/.mmt/exposure, named for the content of what made them, and finished whole or not at all.
+  tools_key keyed keyed_at publish part_of platform_bytes platform_key content_key
+
+module porter | The porter run on a pile of jars: its classes compiled once, the route maps, the jars read in Mojang's names, the port itself and what the game's code says about what is left.
+  java compile_tools java_version route_map route_maps tools_classes_key jar_tools piles side_by_side mojang_names shipped_obfuscated stops routes port_key registry_reports standins_key jar_port classes_key game_says LOADED WHERE left fabric_meta fabric_api fabric_apis
+
+module javalevels | Which Java a release runs on and which a mod's classes need, so a mod built for a newer Java is told apart from one that does not port.
+  version_meta release_java MOD_ANNOTATIONS start_classes admits_java newest_loaded_class newer_java LOADER_REF platform_ids nested_ids without_platform_copies java_check_key too_new_class JAVA_CHECK with_java_checked skipped_jars metadata
+
+module board | One update's scoreboard: every mod ported and linked, what holds each back by type of break, and the whole table over every update.
+  nearest ANSWERED kind_of held_by by_type shown receipt jars verdicts_moved every_update join
+
+module anyversion | The mods that port to every release, forward and back: the count, and what each of the others is missing.
+  any_version_table not_read any_version_lines ANY_VERSION_PAGE any_version_page
+
+module mainrecord | Main's saved table: what a branch's table changes against it, and the measures recorded from it.
+  MAIN_MEASURES HEADS compare record_main
+
+module dependencies | What a mod needs beside itself to start (libraries, loader APIs, language loaders), chosen from Modrinth for the release it is ported to.
+  BUILT_IN OWN_LOADERS LANGUAGE_SERVICES language_services needs constant_name language_loaders provides own_ids unmet version_info required_projects library ranges versions in_range pinned_ids projects_providing choose mod_ids has_code
+
+module gameload | The in-game proof: ported mods started on a real client and server of the new release, and who is to blame when it does not start.
+  client_starts client_culprits with_needs client_opened server_opened first_failing starts_alone display_name named_in_errors start_culprits not_loaded built_for_newer_java only_mods load_plan load keep_load kind compare_loads
+
+module gamesteps | How much of the game each update links (classes, methods, fields), update by update.
+  HOP steps

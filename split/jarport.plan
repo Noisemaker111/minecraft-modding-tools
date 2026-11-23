@@ -1,0 +1,105 @@
+release 25
+classpath tools/perf/lib/asm-9.9.jar tools/perf/lib/asm-commons-9.9.jar
+source tools/port/*.java tools/port/jar/*.java tools/port/jar/sites/*.java tools/port/learn/*.java tools/port/names/*.java tools/port/source/*.java
+source tools/cli/Json.java tools/cli/Versions.java tools/cli/Route.java
+source tools/tests/JarPort*Test.java tools/tests/Game*Test.java tools/tests/ModNames*Test.java tools/tests/SourceAnswers*Test.java tools/tests/PortPreflightTest.java tools/tests/ChainMapTest.java tools/tests/LegacyMapTest.java
+
+host JarPort port
+
+part JarEntries jarEntries tools/port/jar/JarEntries.java | What a mod's jar holds as a file: its entries, the jars nested in it, its signatures, and which of them use the game.
+  entries() nested() selfLoaded() usesGame() gameClasses() notIn() redigest() DIGEST listed() unsafe() GAME_PACKAGE BLAZE3D_PACKAGE USES_GAME declaredTwice() unsigned() indexOf()
+
+part LoaderNames loaderNames tools/port/jar/LoaderNames.java | The names a jar is written in (Fabric's intermediary, Forge's SRG, Mojang's): read in, handed back, and told apart.
+  fabricIn() fabricOut() handBack() handBackMissing in out intermediary() originals() originalsDir otherLoader() SRG INTERMEDIARY srgAnywhere() INTERMEDIARY_CLASS intermediaryAnywhere()
+
+part ModMetadata modMetadata tools/port/jar/ModMetadata.java | A mod's metadata moved to the new release: mods.toml, fabric.mod.json, pack.mcmeta and the loader modules it names.
+  packFormats packFormats() LAST_FORMATS_WITHOUT_MINOR packMetadata() platformIds platformAliases platform() modules() platformModule() BLOCK languageRange languageRange() metadata() widenerFile() fabricMetadata()
+  OLD_TOML NEW_TOML FORGE_FML fml() metadataFile() NEWER_KEYS MANDATORY DEPENDENCY_TYPE DEPENDENCY_MANDATORY dependencyType()
+
+part BundledMods bundledMods tools/port/jar/BundledMods.java | Jars a mod nests for several releases or loaders: which of them the game it is ported to loads.
+  loadedNested() notLoaded() fabricLoads() fabricMinecraft() fabricAccepts()
+
+part OlderJava olderJava tools/port/jar/OlderJava.java | Ports to a release on an older Java: the mod's classes lowered to it (Downgrade), with stand-ins for the JDK classes it lacks.
+  jdkStandins lowerJava() MIXIN_LEVEL mixinLevel() runsOn()
+
+part AccessFiles accessFiles tools/port/jar/AccessFiles.java | A mod's access transformer and access widener: read, moved to the new names, and widened for what the port opens.
+  accessWidener() widenerLines() widen() accessTransformer() accessTransformers() DECLARED_AT atFiles()
+
+part EventBuses eventBuses tools/port/jar/EventBuses.java | Event subscribers the loader now splits by bus: which bus each listener is on, and the companion class the mod-bus ones move to.
+  SUBSCRIBER LISTENER Listener buses() companion() modBus()
+
+part PortVerifier verifier tools/port/jar/PortVerifier.java | The check a ported class gets before it is written: verified as the JVM will, and its failures blamed on the reference that caused them.
+  unfit fitting() Porting without() TYPE_NAME verify() NOT_ASSIGNABLE blamed() headers() known() verifiedMethod() verifyReason()
+
+part Linking links tools/port/jar/Linking.java | Whether a reference links in the new release, as the JVM links it: where the old release declares it, where it went, and whether the mod may reach it.
+  successors successor() becameInterface() superOf() declaringOld() linksNew() classOpen() memberOpen() opened() pkg() subclass() isA() functional() FieldHit fieldNow() unwrap() fieldNew() sameKind() target() widens() usable() unchangedLibrary() gameDeclared() declaringBy declaring() jdk() isInterface() present() lambda() Member provided() packagesB packagesB() subtype() OBJECT
+
+part Overrides overrides tools/port/jar/Overrides.java | A mod's override of a game method the update renamed, retyped or replaced: moved to the new method, with a bridge where callers still use the old one.
+  gameRoot() gameParents() override() tookOver() takeovers takeover() callsSuper() bridge() onlyPassed() passedOnly() lambdas() lambdaBody() moved() movedStatics alike() pair() convert() unread() bridgeCode() Bridge
+
+part FinalOverrides finalOverrides tools/port/jar/FinalOverrides.java | A mod's override of a game method the update made final: its body moved under the hook the game now calls.
+  finalHook() finalBefore() moveToHook() defaultBody() copyable() copyBody() callsSuperDirectly() callsOnSelf() Copy
+
+part AbstractMethods abstractMethods tools/port/jar/AbstractMethods.java | Abstract methods the update added to a class a mod extends: filled in as the game's own subclasses fill them.
+  abstracts() alreadyAbstract() gameDefault() EMPTY tookWork tookWork() handsTo() finals() unwrittenBefore() UNMAPPED generic() narrows()
+
+part Constructors constructors tools/port/jar/Constructors.java | A mod's constructor that hands on to a game constructor the update reshaped.
+  constructor() retypedConstructor() reading() sameShape() takes() delegate()
+
+part MixinMembers mixinMembers tools/port/jar/MixinMembers.java | The game members a mixin names in strings (shadows, accessors, method and @At targets): found in the old release and written for the new one.
+  SHADOW ACCESSORS MEMBER_KEYS REFERENCE STATIC_CALL STATIC_FIELD MEMBER accessor() shadowField() shadowMethod() mixinStrings() at() member() Found lambdaTarget() constructorChanged() takesExactly() keep() find() named() selfCasts() SelfCast oldMethod()
+
+part MixinRetargets mixinRetargets tools/port/jar/MixinRetargets.java | Mixin handlers whose target method changed its parameters: the handler re-declared, its locals and sugar followed.
+  INJECT AT CALLBACKS INJECTORS Injector Adapter injection() THIS kept() staticizes() WRAP_CONDITION REDIRECT MODIFY_RECEIVER MODIFY_VALUE MODIFY_ARG followCall() retargetOther() openTo() cancels() callbackAt() SUGAR sugarFollows() PRIMITIVE_REFS localRef() localFound() localsFollow() intLike() retarget() replacedAt() arguments()
+
+part MixinMovedCode mixinMovedCode tools/port/jar/MixinMovedCode.java | Mixin targets whose code the game moved to another method: where the injected code went.
+  movedCode codeMoved() deeper() entered() cameIn() reaches() handsOver() hadNone() within() likeness()
+
+part MixinPoints mixinPoints tools/port/jar/MixinPoints.java | A mixin's injection points (@At) in a target the update changed: kept, moved, or reported gone.
+  PACKAGE_KEY ESCAPE requires() MODIFY_VARIABLE locals() params() pointsGone() moveAt() most() selected() pointsKept() pointKept() enclosing() uses()
+
+part StandinClasses standIn tools/port/jar/StandinClasses.java | Stand-in classes for game classes an update rewrote (knowledge/standins): compiled, bundled into the ported jar, and opened to it.
+  STANDIN standins standins() becameType() oldMember() oldField() extendable() standinCls() compileStandins() standinJava() readClasses() writeStubs() open() openFor() bundle() standinHome() typesUsed standinTypes() types typesHome() typesTag() carryTypes() typesJar() relocate()
+
+part NewerCode newerCode tools/port/jar/NewerCode.java | Ports back to an older release: the newer game's code the older one lacks, copied into the mod.
+  copyNewer() copiedHome() handled()
+
+part RuleCode ruleCode tools/port/jar/RuleCode.java | A port rule's replacement expression (knowledge/fixes.json) as bytecode: parsed, checked against the new release, and added to the class.
+  parsed parsed() answerLinks() dropsUnnamed() NULL WIDER CONVERSIONS Code Refused Added
+
+part Conversions conversions tools/port/jar/Conversions.java | The steps that turn a value of an old type into the type the new release takes.
+  CONVERT slots() steps() pushDefault()
+
+promote Sites tools/port/jar/Sites.java
+promote GameCode tools/port/jar/GameCode.java
+promote Retype tools/port/jar/Retype.java
+promote Lining tools/port/jar/Lining.java
+promote Staticize tools/port/jar/Staticize.java
+promote Split tools/port/jar/Split.java
+promote ReadUses tools/port/jar/ReadUses.java
+promote Constants tools/port/jar/Constants.java
+promote Marked tools/port/jar/Marked.java
+promote Track tools/port/jar/Track.java
+promote Shift tools/port/jar/Shift.java
+promote Dropped tools/port/jar/Dropped.java
+promote Copier tools/port/jar/Copier.java
+promote Lowering tools/port/jar/Lowering.java
+
+host GameDiff diff
+promote Hop tools/port/learn/GameHop.java as GameHop
+promote Decoder tools/port/learn/BodyDecoder.java as BodyDecoder
+promote Learner tools/port/learn/GameLearner.java as GameLearner
+promote Retyped tools/port/learn/RetypedLearner.java as RetypedLearner
+promote SameCall tools/port/learn/SameCallLearner.java as SameCallLearner
+promote Carry tools/port/learn/LearnedCarry.java as LearnedCarry
+promote Driver tools/port/learn/GameDriver.java as GameDriver
+promote Compare tools/port/learn/GameCompare.java as GameCompare
+
+host VersionMap map
+promote Chain tools/port/names/MapChain.java as MapChain
+promote Known tools/port/source/MapKnown.java as MapKnown
+promote Explain tools/port/source/MapExplain.java as MapExplain
+promote Fix tools/port/source/MapFix.java as MapFix
+promote Preflight tools/port/source/MapPreflight.java as MapPreflight
+promote ApiFix tools/port/source/ApiFix.java
+promote Learn tools/port/source/MapLearn.java as MapLearn

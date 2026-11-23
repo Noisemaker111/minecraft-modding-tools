@@ -1,0 +1,147 @@
+release 17
+classpath tools/perf/lib/asm-9.9.jar tools/perf/lib/asm-commons-9.9.jar
+sourcepath tools/tests tools
+source tools/cli/*.java
+source tools/tests/*.java
+exclude tools/tests/JarPort*Test.java tools/tests/Game*Test.java tools/tests/ModNames*Test.java tools/tests/SourceAnswers*Test.java
+exclude tools/tests/GameTests.java tools/tests/ConsoleAccessorTest.java tools/tests/AgentWorldOpenTest.java tools/tests/PortPreflightTest.java tools/tests/ChainMapTest.java tools/tests/LegacyMapTest.java
+host Port port
+
+part PortJournal journal tools/cli/port/PortJournal.java | What a port changed, written down as it goes, so port --undo (or a port that was interrupted) puts every file back.
+  transaction before planned plannedRemovals saveInProgress() track() finishTransaction() undo() transactions() interruptedText() JOURNAL withJournal() changedSince() deleteWithEmptiedFolders() undoInterrupted() interrupted()
+
+part PortDevPlugins devPlugins tools/cli/port/PortDevPlugins.java | Build plugins a mod needs only while developing, set aside for the port and put back after.
+  DEV_ONLY_PLUGINS deadDevPlugin() removeDevPlugin() pendingOriginals() restorePending() deletePending()
+
+part PortMaps maps tools/cli/port/PortMaps.java | The name maps a source port follows from the old release to the new one: composed, saved, and read back.
+  composeMaps() yarnClassRewrites() yarnRewrites() descriptor() saveMap() withoutMeaningChanges() inferNames() targetNames() mapFile mapMethods mappedClasses mappedClasses() mapClassesFrom mapRenames()
+
+part PortHierarchy hierarchy tools/cli/port/PortHierarchy.java | Which game classes each of the mod's classes extends, for the fixes that depend on it.
+  supertypeIndex supertypes() gameSupertypes() overridingClasses() sourceParents()
+
+part PortCarriedClasses carriedClasses tools/cli/port/PortCarriedClasses.java | Game classes the update removed or closed that the mod still uses: carried into the mod's own source.
+  importMissingClasses() carryRemovedClasses() carryInaccessible() undiamond() oldGameSource() nestedDeclaration() topLevel()
+
+part PortAnswers answers tools/cli/port/PortAnswers.java | What the jar porter learned, applied to source (SourceAnswers): planned, written, and taken back when the compiler rejects one.
+  ownCompile() answersWritten revertRejectedAnswers() sourceAnswers() answerPlan applyAnswerPlan()
+
+part PortMixins sourceMixins tools/cli/port/PortMixins.java | A mod's mixins in source: targets renamed or removed with the game's, accessors written for members the update closed, and the mixin config kept in step.
+  mixinTargetRename() removeDeadMixinTargets() removeDeadTarget() repairMixins() renameMixinTarget() repairMixinSource() descriptorTypes() javaType() mixinConstructors() placeholders() applyAccessor() accessorSource() registerMixin() newMixinFolder newMixinPackage newMixinConfig() mainMixinConfig() accessorMethod() accessorCalls() mixinCheck() mixinSummary() auditSummary()
+
+part PortAccess access tools/cli/port/PortAccess.java | The mod's access transformer in source: moved to the new names, and widened for what the port needs opened.
+  repairAccess() withoutTypeArguments() parameters() portAccessTransformer() followMap() dropMissingAccessTargets() accessTransformer()
+
+part PortMetadata metadata tools/cli/port/PortMetadata.java | The mod's metadata files checked against the new release and loader, and old formats (mcmod.info) moved to the current one.
+  verifyLoaderVersion() verifyModMetadata() verifyFabricMetadata() migrateLegacyMetadata() legacyModInfo() gradleProperties() tomlModTable() canonicalModKey() quotedValue() quotedUntil() substitute() fabricModTable()
+
+part PortRules rules tools/cli/port/PortRules.java | The port rules (knowledge/fixes.json) applied to the mod's source: which rule fits which compiler error, and the edit it makes.
+  applySilentRules() applyRules() ownRule() loaderFits() GAME_CLASS targetHas() provenance() learnFromMods rewrite() SourceTransform keepingLineEndings() rewriteLf() NOTHING rewriteReported() helperCalls() insertHelper() expandReplacement() reportedLines() pendingImports deferImports() flushImports() crosses() repairGuides() renameClassesInStrings() classNamesInStrings() ownedJava() buildRoot() buildFiles() buildSources() singleModId()
+
+part JavaText javaText tools/cli/port/JavaText.java | Reading Java source as text: where a call's arguments, a string or a block ends.
+  closeParen() arguments() closingBrace() closingParen() stringEnd() topLevelArguments() statementEnd() addImport() simpleName() receiverStart() splitArgs() chainEnd()
+
+part RegistryIdMigration registryIdMigration tools/cli/port/migrations/RegistryIdMigration.java | Registry ids the game now takes as a ResourceKey.
+  registryIds()
+
+part GuiColorMigration guiColorMigration tools/cli/port/migrations/GuiColorMigration.java | GUI colours that need their alpha written out since the game stopped assuming it.
+  COLOR_ARGUMENT opaqueGuiColors()
+
+part FoodMigration foodMigration tools/cli/port/migrations/FoodMigration.java | Food properties the game moved to the consumable component.
+  foodConsumables() foodOwner() foodUses() foodEffects()
+
+part ToastMigration toastMigration tools/cli/port/migrations/ToastMigration.java | Toasts, whose visibility the game now asks for instead of taking from render.
+  toastVisibility()
+
+part EntityRenderStateMigration entityRenderStateMigration tools/cli/port/migrations/EntityRenderStateMigration.java | Entity renderers and models the game moved to render states.
+  entityModelRenderState() entityRenderState()
+
+part CallArgumentMigration callArgumentMigration tools/cli/port/migrations/CallArgumentMigration.java | Calls a rule gives new arguments.
+  callArguments()
+
+part PayloadMigration payloadMigration tools/cli/port/migrations/PayloadMigration.java | Network packets the loader moved to custom payloads.
+  payloadCalls() applyPayloadBytes()
+
+part NeoConfigMigration neoConfigMigration tools/cli/port/migrations/NeoConfigMigration.java | Forge config specs moved to NeoForge's ModConfigSpec.
+  applyNeoConfig() configKind() defineKind() configDefault() configLoad() configField() neoConfigConvert()
+
+part NeoEntryMigration neoEntryMigration tools/cli/port/migrations/NeoEntryMigration.java | A mod's entry class and event subscribers moved to NeoForge's event buses.
+  subscriberMethod() matchForward() injectSpan() neoSubscriberConvert() barsModern() findSource() applyNeoEntry() wireModEntry() forgetConvertedMixins() stripConvertedMixins() mixinsRemain() repairedAway
+
+part PortExplain explainer tools/cli/port/PortExplain.java | port --explain: each compiler error left after a port, named by the game change behind it.
+  namedErrors() explain() byName() listOf() hopName() hopRecords()
+
+part PortDesugar desugarer tools/cli/port/PortDesugar.java | Ports to releases on older Java: newer language features written the old way (Desugar), and the annotation libraries they need.
+  desugar() targetsLegacyRelease() isLegacyRelease() compileClasspath() ANNOTATION_LIBRARIES restoreAnnotationLibraries() withCompileOnly()
+
+host Convert convert
+
+part ConvertFiles projectFiles tools/cli/convert/ConvertFiles.java | The project's files as a conversion reads and writes them: staged, tracked for undo, and listed by kind.
+  transaction before left dryRun staged crlf texts saveInProgress() relative() track() read() current() exists() write() delete() leave() javaFiles() testJavaFiles() classFile() readQuiet()
+  SOURCE
+
+part ConvertAccess access tools/cli/convert/ConvertAccess.java | Access wideners and access transformers turned into each other, with the game's field types they need.
+  widenerToTransformer() withOwners() transformerToWidener() gameFieldTypes() accessWideners() widenerToMojang() fabricApiWideners() neoforgeAccessTransformers() usedNeoForgeAccess() accessTransformers AT_FILE gameVersionUrl()
+  mappingFieldTypes() mappingMembers() descriptor() transitiveEntries()
+
+part ConvertNames names tools/cli/convert/ConvertNames.java | A Fabric mod written in Yarn's names moved to Mojang's, refmaps included.
+  yarnNames() renamedFromYarn originalRefmaps refmapNames yarnToMojang() gameAndIntermediaryMappings()
+
+part ToNeoForge asNeoForge tools/cli/convert/ToNeoForge.java | A Fabric mod's sources and metadata as a NeoForge mod: entry points, menus, datagen and neoforge.mods.toml.
+  toNeoForge() entryToNeoForge() datagenToNeoForge() menuToNeoForge() modsToml() dropSideOnly() unbridge() unbridgeEntry() neoforgeModId()
+  sharedEntrypoints ownEntrypoints STATIC_REGISTRATION modClasses otherModContainer() tomlString() mavenRange() fabricOnly() ONLY_IN_ERROR withoutSideOnly() attachmentCallsBack() withoutBridgeInterfaces() BRIDGED_ENTRY BRIDGED_LOCAL BRIDGED_END WRITTEN_EVENT_CLASS factoriesToConstructors() bridgeToStatics() unexpandedVersion() otherTypeNamed() FABRIC_ONLY SIDE_ONLY
+
+part NeoForgeBuild neoForgeBuild tools/cli/convert/NeoForgeBuild.java | A Loom build script rewritten for ModDevGradle.
+  buildToNeoForge() runToNeoForge()
+  testsUseGame() FABRIC_PROPERTIES dropPropertyEntries() dropNeoForgeExclusion() bridgedDependencies bridgeReplaces() latestNeoForge() LOOM_PLUGIN loomConfigurationsToNeoForge() loomStatement() MODDEV_GRADLE_MIN dropLoomTypes() declaredSourceSets() splitClient SPLIT_CLIENT
+
+part ToFabric asFabric tools/cli/convert/ToFabric.java | A NeoForge mod's sources and metadata as a Fabric mod: entry points, mixins and fabric.mod.json.
+  toFabric() fabricJson() entryToFabric() toml() setAsideDatagen() dropNeoForgeTabOrder() neoforgeParametersOutOfMixins() lambdaMixinTargets() enumExtensionLookups() superHookCalls()
+  fabricPredicate() neoforgeParametersOutOfMixin() declaresUpward() mixinOwner() DATAGEN_ASIDE dropCalls() javaVersion() superclassOf()
+
+part FabricBuild fabricBuild tools/cli/convert/FabricBuild.java | A ModDevGradle or NeoGradle build script rewritten for Loom.
+  buildToFabric() runToLoom()
+  NIGHT_CONFIG MDG_PLUGIN NEOGRADLE_PLUGIN parchmentRepository groovyValue() addRepository() dropMetadataExpansion() remapVariableDependencies()
+
+part BuildScript buildScript tools/cli/convert/BuildScript.java | A Gradle build script read as text: its blocks, statements, properties and dependency lines, for either loader.
+  properties() setProperties() block() withoutChildren() nextBlock() children() statements() dropStatements() repositories() dropPluginCode() publishLoader() stablePlugin() upgradeWrapper() metadataVersions() newest() dependencyLine() expandProperties() neutralDependencies BRIDGED_DEPENDENCY NEOFORGE_EXCLUSION
+  loaderNeutral() otherLoaderDependency() remapConfiguration() swapLoaderWord() resolveProperties() LOADER_WORDS
+
+part NeoForgeBridge neoForgeBridge tools/cli/convert/NeoForgeBridge.java | NeoForge's API kept working on Fabric: the bridge classes copied into the converted mod and its code pointed at them.
+  prepareBridge() applyBridge() bridgeEntry() copyNeoForgeSources() bridgePackage bridgePackage() bridgeUsed clientEntry subscribers Subscriber bridgeFolder() copiedFiles copied copiedMembersGone eventClassesInListeners()
+  wildcardBridgeImports() leaveEntry() dropUnusedGenerated() sideQueries() ATTACHMENT_FIELD attachmentCalls() importOf() classSource() constructorsToFactories() staticsToBridge() closingParen()
+
+part FabricBridge fabricBridge tools/cli/convert/FabricBridge.java | Fabric's API kept working on NeoForge: the mirrored classes copied into the converted mod and its code pointed at them.
+  applyFabricBridge() fabricBridgeFor() mirroredClasses() mirrored() FABRIC_ROOTS fabricBridgePackage fabricBridgeReplaces fabricBridgeReplacedMods unbridgeFabric() FABRIC_BRIDGE_MARK
+
+part ConvertBridges bridges tools/cli/convert/ConvertBridges.java | What both bridges share: the bridge layer in use, its mixins, and filling in only the classes a mod uses.
+  bridgeMixins() fillBridge() whenUsed() sourcesOutside() layerRewrites() dropped() bridgeTemplates() uses() bridgeLayer bridgeLayer() bridge bridgeMixinConfig bridgeInjected bridgeUsers INJECTED_INTERFACES
+
+part ConvertCompile compiler tools/cli/convert/ConvertCompile.java | The converted project compiled, and the repairs made from what the compiler says.
+  compile()
+  unwiredSourceSets() repairOverrides() repairKeyMappings() contextKeyMappings() nonTransitiveCompileOnly() disableLoomOnlyStatement() disableLines() insidePlugins() unhooked LOOM_ONLY
+
+host Target target
+
+part TargetFabric targetFabric tools/cli/target/TargetFabric.java | A Fabric build moved to the target release: Loom (and Architectury Loom), its remap tasks and the Fabric pins.
+  unobfuscatedFabric() fabricPins() loomFollows() loomInRoot() architecturyLoomFollows() noAdditionalRuntimeClasspath() newestLoom() appliesLoom()
+  fabricMavenFilter() fabricSubgroups() withoutAdditionalRuntimeClasspath() withoutLoomVersion() rootLoom() FIRST_COMPANION_LOOM FIRST_UNOBFUSCATED_LOOM newestLoomLine() remapTasks() plainConfigurations() unobfuscatedLoom() newestArchitecturyPlugin() newestArchitecturyLoom() loomEdit() LOOM_WITH_VERSION
+
+part TargetNeoForge targetNeoForge tools/cli/target/TargetNeoForge.java | A NeoForge build moved to the target release: ModDevGradle or NeoGradle, NeoForm, run types and unit tests.
+  neoForgeSibling() modDevFollows() neoFormFollows() neoGradleFollows() neoForgeVersion() unitTestsInFml() runTypeRename()
+  neoFormRelease() dropMixinPlugin() hasJUnitTests() modId() latestNeoGradle() neoForgePrefix()
+
+part TargetForge targetForge tools/cli/target/TargetForge.java | A Forge build for the target release: the legacy scaffold (RetroFuturaGradle) and the Forge project beside a multiloader mod.
+  legacyForgeScaffold() forgeSibling()
+  rfgVersion() scaffoldFiles() scaffoldScript() rootName() retargetGamePin() gamePinOwner() gamePin() rfgBuildGradle() rfgSettingsGradle() rfgDaemonJvmProperties() forgeRelease() dropForgeProject() withoutForgeInclude() RFG_METADATA
+
+part TargetParchment targetParchment tools/cli/target/TargetParchment.java | The Parchment mappings a build names, moved to the release that has them.
+  parchmentFollows() parchmentRelease()
+  parchmentBlockFollows() parchmentEdit() removeLines()
+
+part TargetGradle targetGradle tools/cli/target/TargetGradle.java | Gradle itself for the target release: the wrapper, the Java toolchain and build DSL the newer Gradle removed.
+  gradleForJava25() buildDslFollows() gradleFollows() toolchain() javaFor()
+  removedDsl() loomMinimumGradle() newestGradle() classConstants()
+
+part TargetManifest targetManifest tools/cli/target/TargetManifest.java | The game version ranges a mod's manifests declare, moved to the target release.
+  literalGameRange() manifest() manifestEditsForModel() manifestEdits()
+  retargetMinecraft() depth() closing() toRange() manifests()

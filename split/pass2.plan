@@ -1,0 +1,95 @@
+release 25
+classpath tools/perf/lib/asm-9.9.jar tools/perf/lib/asm-commons-9.9.jar
+source tools/port/*.java tools/port/jar/*.java tools/port/jar/sites/*.java tools/port/learn/*.java tools/port/names/*.java tools/port/source/*.java
+source tools/cli/Json.java tools/cli/Versions.java tools/cli/Route.java
+source tools/tests/JarPort*Test.java tools/tests/Game*Test.java tools/tests/ModNames*Test.java tools/tests/SourceAnswers*Test.java tools/tests/PortPreflightTest.java tools/tests/ChainMapTest.java tools/tests/LegacyMapTest.java
+
+host Sites sites
+
+part RetypedValues retypedValues tools/port/jar/sites/RetypedValues.java | A game field or call result the update gave another type: the mod's uses of the value moved to the new type.
+  retyped() resultConverted() unwrapping() onNewType onNewType() movedWith() onType() uses readsTried WIDEN MAYBE
+
+part SuperCalls superCalls tools/port/jar/sites/SuperCalls.java | A mod's super call into a game method or constructor the update moved or removed.
+  mixinSuper() superCall() inheritedGone()
+
+part MovedCalls movedCalls tools/port/jar/sites/MovedCalls.java | A call to a method the game or the loader moved: to the call the game's own code switched to, or to where the method went.
+  rewritten() relocated() forwardedTo() movedStatic()
+
+part ConvertedCalls convertedCalls tools/port/jar/sites/ConvertedCalls.java | A call whose parameters the update retyped: each argument converted as the game's own callers convert it.
+  converted()
+
+part VoidedCalls voidedCalls tools/port/jar/sites/VoidedCalls.java | A call to a method the update deleted with nothing in its place, where the mod can go on without it.
+  voided()
+
+part DefaultedArguments defaultedArguments tools/port/jar/sites/DefaultedArguments.java | A call to a method that gained a parameter: the value the game's own callers pass for it.
+  defaulted() value()
+
+part ChainedCalls chainedCalls tools/port/jar/sites/ChainedCalls.java | A member the update put behind another call (a field that is now reached through a getter chain).
+  chain()
+
+part RuleAnswers ruleAnswers tools/port/jar/sites/RuleAnswers.java | A reference nothing in the game's code answers, answered by a port rule or a stand-in (knowledge/fixes.json, knowledge/standins).
+  fix() holds() constants made()
+
+part MovedBodies movedBodies tools/port/jar/sites/MovedBodies.java | Calls inside a method body the port moved to a game method's new parameters: passed the new values where they are at hand.
+  given() twin() alone() onOrigin()
+
+part LambdaSites lambdaSites tools/port/jar/sites/LambdaSites.java | Lambdas and method references that implement or name a game method the update changed.
+  callback() capturing() handle()
+
+host GameLearner learner
+
+part LearnOverrides learnOverrides tools/port/learn/LearnOverrides.java | What replaced a game method mods override, learned from the game's own overrides of it.
+  overrides() stillOverrides()
+
+part LearnByTypes learnByTypes tools/port/learn/LearnByTypes.java | A replacement found by its types alone: the one member or factory of the new release that takes what the old one took and gives what it gave.
+  byTypes() ask() instanceMethods instanceMethods() instanceMethodsOf() makes() fromJdk() unchecked() factories() makers makers()
+
+part LearnClassMoves learnClassMoves tools/port/learn/LearnClassMoves.java | Members that went with their class when the game renamed, merged or split it.
+  throughClassMap() renamedFamily() narrows() accepts() mapType() assignableB()
+
+part LearnSameMeaning learnSameMeaning tools/port/learn/LearnSameMeaning.java | A removed member whose replacement does the same thing by another route: found by what both bodies compute.
+  sameMeaning() wraps() same() slots() oneLine() substitute() through() SAME MARGIN REST covered() meanings meaning() gather() IdentityKey
+
+part LearnAccessors learnAccessors tools/port/learn/LearnAccessors.java | A field the game put behind a getter or setter, and a member now reached through an accessor.
+  accessors() reads() writes() throughAccessor()
+
+part LearnConstants learnConstants tools/port/learn/LearnConstants.java | A replacement that depends on the constant passed: one answer per constant, or per class of constant.
+  byConstant perConstant() constant() byGroup() byConstantClass()
+
+part LearnHolders learnHolders tools/port/learn/LearnHolders.java | A value the game now hands over wrapped (a Holder, an Optional, a record component) or unwrapped.
+  throughHolder() unwrapped() componentOf()
+
+part LearnChains learnChains tools/port/learn/LearnChains.java | Builder chains the game reshaped: the calls that follow a changed call on the same value, read together.
+  Chained consumers consumers() chainSites byReceiver bodyOf siblingUse siblingRead() chainRefs chainUse chains chainable() chain() late() lateUse chainRead() voteChains() unsure() MADE
+
+part LearnVotes learnVotes tools/port/learn/LearnVotes.java | The vote over every use the game's own code makes of a changed member: when the uses agree, and what is left out when they do not.
+  vote() operandIndex() beyondLiterals() withoutOtherValues() insisting() sameCallUnread() fixedWhereFixed() fixed() keepsOperands() onlyTested() sameTree()
+
+part LearnCompiles learnCompiles tools/port/learn/LearnCompiles.java | Whether a learned expression compiles against the new release, typed as the porter will type it.
+  compiles() ways() typeIn() jdkStatic() called() fitsIn() fromJdkClass()
+
+part LearnPairing learnPairing tools/port/learn/LearnPairing.java | Two versions of one method body lined up statement by statement, so a changed use sits opposite what replaced it.
+  pair() dropped() explained() pairs() skippable() droppable() returnsReceiver() subtypeA() lambdas() matches() hash() hashA hashB match() head() hole() holed holed() budget
+
+part LearnReading learnReading tools/port/learn/LearnReading.java | One lined-up use read as a replacement expression over the old member's operands.
+  read() align() endsLike() fits() givesArgument() merged() mergedMemo express() linesUpThrough() arguments() open() receiver() boxed() primitive() literal() local() mappedName()
+
+part LearnTypeMap learnTypeMap tools/port/learn/LearnTypeMap.java | Types the game replaced by another type everywhere it used them.
+  typeVotes typeRewrites typeVote() typeMap()
+
+host GameHop hop
+
+part HopClasses hopClasses tools/port/learn/HopClasses.java | Which class of the new release each class of the old one became, where no published name says so: by nesting, by signature and by likeness.
+  nested() memberNames() bodies() Score fuzzyClasses() signatureClasses() signatureVote() kindFollows() unlink() score() outerVote hierarchy() related() moves()
+
+part HopMembers hopMembers tools/port/learn/HopMembers.java | Which method and field of the new release each one of the old became: by name, by rename, by registered id and by who calls it.
+  members() newSupers() sameName() renames() Accept mutual() fields() idRenames idRenames() registered() distinctConstant() callers() unlinkedRef() target() vote() accessorScore() similarity() stringsDisagree() RENAME RENAME_SIG MARGIN
+
+part HopRewrites hopRewrites tools/port/learn/HopRewrites.java | Calls the game's own code rewrote between the two releases: the call each old call became, with the evidence for it.
+  Rewrite rewrites() typeSafe() receiverCarries() droppedIndices() portable() publicInB() ClassRewrite classRewrites() simpleName()
+
+part HopChains hopChains tools/port/learn/HopChains.java | Members the game put behind a chain of calls, and their siblings that went the same way.
+  Evidence templateRefs unlinkedMember Chain Sibling siblings() chains() chain() subtypeB() evidence() unlinkedKey()
+
+part HopArgDefaults hopArgDefaults tools/port/learn/HopArgDefaults.java | Parameters the game added to a method, with the value its own callers pass for them.
+  ArgDefault argDefaults() passedByNewCalls() samName() gainedOne() addedIndex() valueOf()
