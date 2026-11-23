@@ -7,7 +7,7 @@ name: Cloud game proof
 # tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2; it downloads the summaries into .runs/cloud/ and compares each
 # with the receipt main keeps for that update (bench/exposure/load-*.json). A mod that fails is a result, not a job
 # failure; a job fails when its run could not finish or started no game, with why as the summary's last line. Started
-# only by dispatch. No caches, no retries.
+# only by dispatch. No retries; the only cache is of published downloads (.github/actions/downloads), not of results.
 run-name: "Cloud game proof: ${{ inputs.updates }} ${{ inputs.mods }} ${{ inputs.request }}"
 on:
   workflow_dispatch:
@@ -83,6 +83,12 @@ jobs:
           # there; SDL's offscreen driver on Mesa's EGL does (as in cloud-convert.yml). Older releases' GLFW ignores it.
           echo "SDL_VIDEO_DRIVER=offscreen" >> "$GITHUB_ENV"
           ./mmt preferences --background on --quiet on
+      # The published files the porter downloads (intermediary, Mojang's mappings and jars, Fabric API), one cache entry each:
+      # Fabric's maven reset connections when many jobs downloaded at once.
+      - uses: ./.github/actions/downloads
+        with:
+          mode: restore
+          job: load-${{ matrix.update }}
       - name: Port the mods, start them on a server and in a client
         run: |
           set -o pipefail
@@ -94,6 +100,15 @@ jobs:
             --out "summary/load-$LOADER-$FROM-$TO-${GITHUB_SHA::10}.json" 2>&1 | tee load.txt || status=$?
           { echo '```'; grep -A 1000 '^mod  ' load.txt || tail -n 5 load.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+      - uses: ./.github/actions/downloads
+        if: always()
+        with:
+          mode: save
+          job: load-${{ matrix.update }}
+      - name: What a cold job downloads
+        # Counted for the kept downloads' measure: files in mmt's download folders after the run.
+        if: always()
+        run: for d in "$HOME"/.mmt/*/ "$HOME"/.mmt/packs/*/; do echo "$(find "$d" -type f | wc -l) files, $(du -sh "$d" | cut -f1) in $d"; done
       - name: Game logs
         # pack-check keeps each start's server or client log and result.json in its own cache, outside the workspace;
         # the runner is fresh, so every run there is this job's.

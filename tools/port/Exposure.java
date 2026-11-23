@@ -280,7 +280,7 @@ public final class Exposure {
             String path = d[0].replace('.', '/') + "/" + d[1] + "/" + d[2] + "/" + file;
             try {
                 classes.addAll(classes(Files.readAllBytes(VersionMap.fetch(NEOFORGED + path, d[0] + "-" + file)), "net/neoforged/"));
-            } catch (java.io.IOException notPublished) {
+            } catch (VersionMap.NotPublished notPublished) {
                 System.out.println("  " + path + ": " + notPublished.getMessage()); // a build-time library with no plain jar
             }
         }
@@ -629,13 +629,13 @@ public final class Exposure {
                     java.net.http.HttpResponse.BodyHandlers.ofString()
                 );
             } catch (java.io.IOException failed) {
-                throw new java.io.IOException("download of " + url + " failed: " + failed, failed);
+                throw new java.io.IOException("network failure downloading " + url + ": " + failed, failed);
             }
             if (response.statusCode() == 404) {
                 return null;
             }
             if (response.statusCode() != 200) {
-                throw new java.io.IOException("HTTP " + response.statusCode() + " for " + url);
+                throw new java.io.IOException("the server answered HTTP " + response.statusCode() + " for " + url);
             }
             // A release with one file need not mark it primary (Fabric API for 1.18 does not).
             List<Object> files = Json.array(Json.object(Json.parse(response.body())).get("files"));
