@@ -1,0 +1,15 @@
+{
+ "id": "87",
+ "title": "Mods run on an older Java than they were built for",
+ "part": "Port by type of break",
+ "status": "doing",
+ "text": "Step 86's top blocker on any version: a mod compiled for a newer Java than the release runs on (Fabric 1.14.4-1.16.5 run Java 8, 1.17 Java 16, 1.18-1.20.4 Java 17) held back 286 of the 300 mods, because the release's JVM refuses the class file outright. The jar porter now lowers every class of a mod (and its nested jars) to the release's Java (version.json's javaVersion) and rewrites in bytecode what that Java cannot run, as javac writes it for that Java: string concatenation, records, nestmates, private interface methods, pattern switches, sealed classes. Every JDK reference is then linked against the release's JDK as the JDK's own API record (lib/ct.sym) declares it; a method that only gained a narrower return type is called as the older Java declares it, a method the older Java lacks goes to a stand-in written from the JDK's documented contract (knowledge/standins/jdk/, carried in the mod), and anything else is a break the scoreboard names.",
+ "start": "2026-11-23",
+ "target": "2026-11-24",
+ "finish": "No mod is held back by 'built for a newer Java' on the scoreboard; what is left of the Java gap is named per JDK member; a cloud scoreboard run reports every update, big updates and any version against main; mods ported 1.20.1 -> 1.16.5 and 1.20.1 -> 1.15.2 load and run on those releases' Java in the cloud game proof",
+ "wrongIf": "a lowered mod that links fails in game with UnsupportedClassVersionError, NoSuchMethodError or NoClassDefFoundError on a JDK member, or a VerifyError in a class the lowering rewrote",
+ "measures": [
+  "port.jar-links.any-version",
+  "port.jar-links.every-update"
+ ]
+}

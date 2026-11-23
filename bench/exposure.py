@@ -69,6 +69,7 @@ own code changed (call rewrites, call chains, class replacements). A new kind of
 update here, not only in the one being worked on. Kept in bench/exposure/steps.json.
 """
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -421,7 +422,7 @@ def route_maps(updates, loader, classes):
 
 
 ASM = [ROOT / "tools" / "perf" / "lib" / "asm-9.9.jar", ROOT / "tools" / "perf" / "lib" / "asm-commons-9.9.jar"]
-JAR_SOURCES = ("JarPort.java", "DataIds.java", "FixExpr.java", "PortChains.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
+JAR_SOURCES = ("JarPort.java", "DataIds.java", "FixExpr.java", "PortChains.java", "Downgrade.java", "Exposure.java", "GameDiff.java", "VersionMap.java", "ModNames.java", "cli/Json.java",
                "cli/Versions.java")
 
 
@@ -561,8 +562,14 @@ def port_key(loader, frm, to, runtime=False):
     # The registry reports the data pass reads (DataIds), or that a release has none.
     reports = [(HOME / "registries" / f"{v}.json").read_bytes() if (HOME / "registries" / f"{v}.json").is_file() else b"none" for v in steps]
     return content_key(tools_classes_key(), *(r.read_bytes() for r in maps), (ROOT / "knowledge" / "fixes.json").read_bytes(),
-                       *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), *(platform_key(loader, r) for r in maps),
-                       *reports, java_version(), loader, frm, to, runtime, pinned)
+                       *(standins_key(loader, a, b) for a, b in zip(steps, steps[1:])), standins_key(loader, "jdk", None), *(platform_key(loader, r) for r in maps),
+                       *reports, java_check_key(), java_version(), loader, frm, to, runtime, pinned)
+
+
+def java_check_key():
+    """The source of the Java check jar_port runs on each ported jar (JAVA_CHECK): a kept port holds its answer."""
+    import inspect
+    return content_key(*(inspect.getsource(globals()[name]).encode() for name in JAVA_CHECK))
 
 
 def registry_reports(versions):
@@ -577,7 +584,9 @@ def standins_key(loader, frm, to):
     """The stand-ins JarPort reads for one update and loader (knowledge/standins/FROM-TO/ and FROM-TO.LOADER/), each file's
     path and content."""
     parts = []
-    for folder in (ROOT / "knowledge" / "standins" / f"{frm}-{to}", ROOT / "knowledge" / "standins" / f"{frm}-{to}.{loader}"):
+    # to None: the JDK stand-ins (knowledge/standins/jdk/), which a port to a release on an older Java reads.
+    folders = [ROOT / "knowledge" / "standins" / frm] if to is None else [ROOT / "knowledge" / "standins" / f"{frm}-{to}", ROOT / "knowledge" / "standins" / f"{frm}-{to}.{loader}"]
+    for folder in folders:
         if folder.is_dir():
             for f in sorted(folder.rglob("*.java")):
                 parts += [f.relative_to(folder.parent).as_posix().encode(), f.read_bytes()]
@@ -616,7 +625,9 @@ def jar_port(loader, frm, to, jars, out_dir, report, runtime=False, cache=False)
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
             args += ["--originals", str(HOME / "jars" / f"{loader}-{frm}")]
         # One process: JarPort ports the jars of each step on every processor, and each process read every step's releases.
+        runs = functools.cache(lambda: release_java(to))
         for m in side_by_side(args, todo, report, one=True):
+            m = with_java_checked(m, loader, to, runs)
             rows[m["mod"]] = m
             if cache:
                 kept = {k: v for k, v in m.items() if k != "out"}  # where this run wrote it, not part of the answer
@@ -836,16 +847,49 @@ def newer_java(folder, names, loader, version, side):
     newer Java than the release runs on. Such a jar cannot load there: a mixin of it merged into a game class makes that
     game class too new as well, so the start crashes naming no mod, and every other mod in it goes without a verdict. The
     proof leaves these out before any start."""
-    import functools
-    import zipfile
     runs, out = functools.cache(lambda: release_java(version)), {}
     for name in names:
-        with zipfile.ZipFile(folder / name) as z:
-            java, cls, what = newest_loaded_class(z, loader, (side,), runs)
-        # Every release runs on Java 8 or newer, so the release's version.json is read only for a newer class.
-        if java > 8 and java > runs():
+        found = too_new_class(folder / name, loader, (side,), runs)
+        if found:
+            java, cls, what = found
             out[name] = f"built for Java {java}; Minecraft {version} runs on Java {runs()} (its {what} {cls}), so it is not started in the {side}"
     return out
+
+
+def too_new_class(jar, loader, sides, runs, skipped=frozenset()):
+    """(java, class, what it is) for the class needing the newest Java of those the JVM loads of a jar on the sides given
+    (newest_loaded_class), when that Java is newer than the release's (runs()); None when the release's Java loads them.
+    The one Java check: the game proof (newer_java) and the link check (jar_port) both ask it, of the jar the game is
+    given, so a port that lowers a mod's classes (JarPort's lowerJava) is judged by what it wrote. Nested jars in
+    skipped (skipped_jars: the port left them out as not loaded on the release) ask nothing of its Java."""
+    import zipfile
+    with zipfile.ZipFile(jar) as z:
+        found = newest_loaded_class(z, loader, sides, runs, skipped=skipped)
+    # Every release runs on Java 8 or newer, so the release's version.json is read only for a newer class.
+    return found if found[0] > 8 and found[0] > runs() else None
+
+
+# The Python that judges a ported jar's Java (too_new_class and what it reads): part of every kept port's key.
+JAVA_CHECK = ("too_new_class", "newest_loaded_class", "start_classes", "admits_java", "metadata", "skipped_jars")
+
+
+def with_java_checked(row, loader, to, runs):
+    """JarPort's row for one mod with the Java check of its ported jar (row["out"]): a mod with a class the release's JVM
+    loads that still needs a newer Java once ported does not link there, as the JVM refuses that class before any
+    reference in it is read (a 1.21.1 mod's Java 21 classes on 1.20.2's Java 17, a real 1.20.2 server started without
+    one while the link count called it linked). The port lowers a mod's classes to the release's Java (Downgrade), and
+    what that Java cannot run is in the row already, so the jar as it came no longer says it."""
+    import zipfile
+    out = Path(row.get("out") or "")
+    if "error" in row or not out.is_file():
+        return row
+    try:
+        found = too_new_class(out, loader, ("server", "client"), runs, skipped_jars(row))
+    except zipfile.BadZipFile:  # JarPort wrote it, so it reads; one it could not is an error row
+        return row
+    if found:
+        row["unlinked"] = row["unlinked"] + [f"{row['mod']}: built for a newer Java: Java {found[0]} classes, Java {runs()} runs {to}"]
+    return row
 
 
 LOADER_REF = re.compile(r": (?:net\.neoforged|net\.fabricmc)\.")
@@ -889,33 +933,6 @@ def skipped_jars(row):
             holder = parts[0].split("!", 1)
             out.add((holder[1] + "!" if len(holder) == 2 else "", parts[1]))
     return out
-
-
-def with_target_java(report, jars, loader, to):
-    """A mod with a class the release's JVM loads (newest_loaded_class, server and client) compiled for a newer Java
-    than the release runs on does not link there: the JVM refuses that class before any reference in it is read. Ports
-    back to an older release meet it (a 1.21.1 mod's Java 21 classes on 1.20.2's Java 17, a 1.20.1 mod's Java 17 on
-    1.16.5's Java 8), and a real 1.20.2 server started without such a mod while the link count called it linked. The
-    port keeps each class's version, so the mod as it came says it. The game proof reads the same classes per side."""
-    import zipfile
-    runs_on = release_java(to)
-    for m in report["mods"]:
-        if "error" in m or m["mod"] not in jars:
-            continue
-        try:
-            with zipfile.ZipFile(jars[m["mod"]]) as z:
-                needs = newest_loaded_class(z, loader, ("server", "client"), lambda: runs_on, skipped=skipped_jars(m))[0]
-        except zipfile.BadZipFile:  # JarPort judged a jar zipfile cannot open already
-            continue
-        if needs > runs_on:
-            m["unlinked"] = m["unlinked"] + [f"{m['mod']}: built for a newer Java: Java {needs} classes, Java {runs_on} runs {to}"]
-    counts = {}
-    for m in report["mods"]:
-        for member in left(m):
-            counts[member] = counts.get(member, 0) + 1
-    report["unlinkedByMods"] = [{"member": k, "mods": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
-    report["linked"] = sum(1 for m in report["mods"] if "error" not in m and not m["unlinked"])
-    return report
 
 
 def without_platform_copies(report, provided, jars):
@@ -1066,7 +1083,6 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
     if mods:
         report = without_platform_copies(report, platform_ids(loader, to), {m.name: m for m in mods})
-        report = with_target_java(report, {m.name: m for m in mods}, loader, to)
         written.write_text(json.dumps(report, indent=1), encoding="utf-8")
     said = timed("game", game_says, loader, frm, to, written) if report["unlinkedByMods"] else {}
     rows = [m for m in report["mods"] if "error" not in m]
