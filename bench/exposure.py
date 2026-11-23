@@ -1,6 +1,7 @@
 """What real mods reference of the game, ported as jars and linked against the next release: the porter's scoreboard and its to-do list.
 
-    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE] [--save] [--out FILE]
+    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE | --mods SLUG,...] [--save] [--out FILE]
+    python bench/exposure.py compare-update SUMMARY.json ... [--head SHA]
     python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--out FILE] [--verify]
     python bench/exposure.py all --at origin/main --out BASE.json    (any command, on another commit's porter)
     python bench/exposure.py join DIR [--out FILE]
@@ -38,7 +39,10 @@ the rules, the loaders' release lists, the JVM, each mod's jar), shared by every
 run computes only what an edit can change: an edit to JarPort ports every mod again (each one runs the code it touched),
 but reuses the downloads, the names, the map, the registry reports and most of Exposure's answers; an edit to anything else
 reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before, and the
-load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
+load --mods that proves only those in game; with no run before here, against main's row for the update, read from main's
+table (every row names the mods that link and the types of break holding back the rest), so main is never ported again
+for a before. --type TYPE and --mods SLUG,... port only those mods, from the last whole run here or main's row: an answer
+in seconds, in a heap sized to those mods. --verify computes everything again and fails where a kept answer differs (main's sweep).
 
 --save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
 requests proving the same update keep two receipts instead of conflicting on one.
@@ -141,9 +145,8 @@ def main():
         j.add_argument("--out", type=Path, help="write the summary to this file (a folder that is there, or jars with several --to: LOADER-FROM-TO.json each in it)")
         if name == "jars":
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
-            j.add_argument("--type", dest="kind", help="port only the mods the last whole run held back with this type of break (or part of its text)")
-        if name == "load":
-            j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated), with the libraries they need")
+            j.add_argument("--type", dest="kind", help="port only the mods the last whole run here, else main's table, held back with this type of break (or part of its text)")
+        j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated)" + (", with the libraries they need" if name == "load" else ""))
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     lp.add_argument("--mods", default="", help="the slugs the proof asks of every update; one that no update pins stops the plan")
@@ -158,11 +161,14 @@ def main():
     al.add_argument("--loader", choices=sorted(settings.FIRST), help="one loader (default both)")
     al.add_argument("--only", help="LOADER:FROM,... the updates to run (default every one)")
     al.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
-    al.add_argument("--jobs", type=int, default=4, help="updates run side by side (each JarPort takes up to 10 GB)")
+    al.add_argument("--jobs", type=int, default=4, help="updates run side by side (each JarPort takes the heap its jars need: about 7 GB for 150 mods)")
     al.add_argument("--out", type=Path, help="write the table to this file (main's is on the generated branch, scoreboard/all.json)")
     jo = sub.add_parser("join")
     jo.add_argument("folder")
     jo.add_argument("--out", type=Path, help="write the table to this file")
+    cu = sub.add_parser("compare-update", help="each update's jars summary against main's row for it, one line each (tools/cloud-run prints these as jobs finish)")
+    cu.add_argument("summaries", nargs="+", type=Path)
+    cu.add_argument("--head", default="HEAD", help="the commit whose base on main is compared with (default this checkout's)")
     co = sub.add_parser("compare", help="what one table (a branch's) changes against another (main's)")
     co.add_argument("before", type=Path)
     co.add_argument("after", type=Path)
@@ -174,7 +180,7 @@ def main():
     if a.command == "steps":
         gamesteps.steps(a.frm, a.to)
     elif a.command == "jars":
-        board.jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind)
+        board.jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind, mods=[m.strip() for m in (a.mods or "").split(",") if m.strip()])
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
         loaders = [a.loader] if a.loader else sorted(settings.FIRST)
@@ -198,6 +204,11 @@ def main():
                     modrinth.pin(lo, v)
     elif a.command == "join":
         board.join(a.folder, a.out)
+    elif a.command == "compare-update":
+        for path in a.summaries:
+            s = json.loads(path.read_text(encoding="utf-8"))
+            if {"loader", "from", "to", "modsRead"} <= s.keys():
+                print(mainrecord.compare_update(s, main=mainrecord.main_table(a.head)), flush=True)
     elif a.command == "compare":
         before, after = (json.loads(f.read_text(encoding="utf-8")) for f in (a.before, a.after))
         print("\n".join((gameload.compare_loads if "verdicts" in after else mainrecord.compare)(before, after)))

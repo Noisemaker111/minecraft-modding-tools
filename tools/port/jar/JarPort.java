@@ -345,10 +345,37 @@ public final class JarPort {
      * but 4 workers left 1.3 GB spent 77 s in collections and 8 workers left 3.3 GB spent 29 s, as long as 4 with 6 GB to spare.
      */
     static final long PORT_WORKER = 400L << 20;
+    /**
+     * Jar bytes a worker is made for. Each worker is a porter of its own on the step's two releases, made one after
+     * another, so a worker the jars do not keep busy costs time and memory and ports nothing sooner. Measured on NeoForge
+     * 1.21.1 -> 1.21.2 (147 mods, 831 MB of jars, 24 processors): ported in 43 s with 4 workers, 43 s with 8, and 38 to
+     * 50 s with the 21 a 10 GB heap made room for, which filled it (9.7 GB live); 10 of the mods (26 MB) in 15 s with 3
+     * workers and 25 s with 10, in 5.6 GB.
+     */
+    static final long WORKER_JARS = 200L << 20;
+
+    /** The workers jars of these sizes keep busy: one per WORKER_JARS, no more than the jars or the processors. */
+    static int busy(List<Path> jars) throws IOException {
+        long bytes = bytes(jars);
+        return (int) Math.max(1, Math.min(Math.min(jars.size(), Runtime.getRuntime().availableProcessors()), (bytes + WORKER_JARS - 1) / WORKER_JARS));
+    }
+
+    /** The heap a port of these jars needs with busy(jars) workers, what JarPort is started with (JarPort --heap JAR ...). */
+    static long heap(List<Path> jars) throws IOException {
+        return RELEASES_HEAP + JAR_HEAP * bytes(jars) + busy(jars) * PORT_WORKER;
+    }
+
+    static long bytes(List<Path> jars) throws IOException {
+        long bytes = 0;
+        for (Path jar : jars) {
+            bytes += Files.size(jar);
+        }
+        return bytes;
+    }
 
     public static void main(String[] args) throws Exception {
         String from = null, to = null, out = null, loader = null, report = null, book = null, chain = null, plan = null;
-        boolean runtime = false, hopsOnly = false;
+        boolean runtime = false, hopsOnly = false, heapOnly = false;
         Path originalsDir = null;
         List<String> via = new ArrayList<>(), maps = new ArrayList<>();
         List<Path> jars = new ArrayList<>();
@@ -360,6 +387,7 @@ public final class JarPort {
                 case "--via" -> via.addAll(Arrays.stream(args[++i].split(",")).filter(v -> !v.isBlank()).toList());
                 case "--map" -> maps.add(args[++i]);
                 case "--hops" -> hopsOnly = true;
+                case "--heap" -> heapOnly = true;
                 case "--chain" -> chain = args[++i];
                 case "--out" -> out = args[++i];
                 case "--loader" -> loader = args[++i];
@@ -377,6 +405,10 @@ public final class JarPort {
                 System.exit(2);
             }
             System.out.println(String.join(",", hops(List.of(chain.split(",")), Path.of(book).resolveSibling("standins"), loader == null ? "" : loader)));
+            return;
+        }
+        if (heapOnly) {
+            System.out.println(heap(jars) >> 20);
             return;
         }
         List<Target> targets = new ArrayList<>();
@@ -402,6 +434,7 @@ public final class JarPort {
         if (from == null || targets.isEmpty() || jars.isEmpty() || targets.stream().anyMatch(t -> t.maps().size() != t.stops().size() - 1)) {
             System.err.println("usage: JarPort --from V [--via V,...] --to V --map route.json (one per step) [--loader neoforge|fabric] [--runtime-names] [--fixes knowledge/fixes.json] --out OUT.jar|DIR [--report R.json] IN.jar ...");
             System.err.println("       JarPort --from V --plan PLAN.json ... IN.jar ...   (PLAN: {\"ports\": [{\"to\", \"via\", \"maps\", \"out\", \"report\"}, ...]}, ports that share their steps before the last)");
+            System.err.println("       JarPort --heap IN.jar ...   (the heap, in MB, a port of these jars needs)");
             System.exit(2);
         }
         portAll(targets, jars, loader, runtime, book, originalsDir);
@@ -507,12 +540,8 @@ public final class JarPort {
         // Step by step, every jar through one step before the next: each step holds two releases of the game, and a port
         // across a dozen updates would not fit holding all of them. Within a step the jars are ported on every processor,
         // each worker with a porter of its own on the step's two releases: a jar's port does not depend on the jars beside it.
-        long jarBytes = 0;
-        for (Path jar : jars) {
-            jarBytes += Files.size(jar);
-        }
         Integer asked = Integer.getInteger("jarport.workers");
-        int workers = asked != null ? Math.max(1, Math.min(jars.size(), asked)) : GameDiff.workers(jars.size(), PORT_WORKER, RELEASES_HEAP + JAR_HEAP * jarBytes);
+        int workers = asked != null ? Math.max(1, Math.min(jars.size(), asked)) : GameDiff.workers(busy(jars), PORT_WORKER, RELEASES_HEAP + JAR_HEAP * bytes(jars));
         // Biggest first, so no big jar starts when the others are done.
         List<Path> order = new ArrayList<>(jars);
         order.sort(Comparator.comparingLong((Path j) -> j.toFile().length()).reversed().thenComparing(Path::toString));

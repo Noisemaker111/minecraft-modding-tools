@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
-from portboard import anyversion, cachekeys, gamereleases, javalevels, modrinth, porter, settings
+from portboard import anyversion, cachekeys, gamereleases, javalevels, mainrecord, modrinth, porter, settings
 
 
 def nearest(rows, data, said):
@@ -81,7 +81,7 @@ def receipt(kind, loader, frm, to):
     return settings.ROOT / "bench" / "exposure" / f"{kind}-{loader}-{frm}-{to}-{commit}.json"
 
 
-def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
+def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, mods=None):
     """The jar scoreboard: what every top mod's classes and mixins reference, ported from frm to each release of tos and
     linked against it as the JVM and Mixin do; a summary for each.
 
@@ -90,23 +90,22 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
     before with the same inputs is read from the cache, so a run after an edit ports only what the edit can change. Each
     run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the porter's inputs differ from the last
     run's, that one becomes before.json, and the run prints which mods newly link, stopped linking or changed their port
-    against it. kind: port only the mods the last run held back with a type of break (its text, or part of it), the answer
-    for those mods in seconds; the summary is then partial and is not kept. out: the summary's file, or a folder (one that
-    is there, or any with several targets) that gets LOADER-FROM-TO.json for each."""
+    against it, or with no run before here, against main's row for the update (main_table: main's mods are not ported
+    again for it). kind: port only the mods the last whole run here, else main's table, held back with a type of break
+    (its text, or part of it); mods: only these slugs. Either is the answer for those mods in seconds and in little
+    memory; the summary is then partial and is not kept. out: the summary's file, or a folder (one that is there, or any
+    with several targets) that gets LOADER-FROM-TO.json for each."""
     seconds = {}
     timed = timer(seconds)
-    if kind and len(tos) > 1:
-        raise SystemExit("--type answers one update at a time: give one --to")
+    if (kind or mods) and len(tos) > 1:
+        raise SystemExit("--type and --mods answer one update at a time: give one --to")
     pinned = timed("download", modrinth.fetch, loader, frm)
     works = {to: settings.ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" for to in tos}
-    if kind:
-        last = works[tos[0]] / "last.json"
-        if not last.is_file():
-            raise SystemExit(f"--type needs a run of the whole update first: python bench/exposure.py jars --loader {loader} --from {frm} --to {tos[0]}")
-        held = {mod for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items() if any(kind in t for t in v.get("types", []))}
-        pinned = [p for p in pinned if p.name in held]
-        if not pinned:
-            raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
+    narrow = bool(kind or mods)
+    if narrow:
+        pinned = mainrecord.narrowed(pinned, works[tos[0]], kind, mods)
+    elif not quiet:
+        print(mainrecord.narrow_hint(loader, frm, tos[0], len(pinned)), flush=True)
     porter.compile_tools()  # once, before the threads below that run it
     # Every step of every target, so one GameDiff process builds the maps that are missing.
     segments = list(dict.fromkeys((x, y) for to in tos for x, y in zip(porter.stops(loader, frm, to), porter.stops(loader, frm, to)[1:])))
@@ -115,15 +114,15 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
         named = pool.submit(timed, "names", porter.mojang_names, loader, frm, pinned)
         mapped = pool.submit(timed, "map", porter.route_maps, segments, loader, porter.compile_tools())
         reported = pool.submit(timed, "reports", porter.registry_reports, list(dict.fromkeys(v for to in tos for v in porter.stops(loader, frm, to))))
-        mods, unread = named.result()
+        ported, unread = named.result()
         mapped.result()
         reported.result()
     # A run of some mods only (kind) keeps its report apart: load reads the whole update's.
-    written = {to: works[to] / ("report.json" if not kind else "report-type.json") for to in tos}
+    written = {to: works[to] / ("report.json" if not narrow else "report-type.json") for to in tos}
     for work in works.values():
         work.mkdir(parents=True, exist_ok=True)
     empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
-    reports = timed("port", porter.jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
+    reports = timed("port", porter.jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], ported, False, True) if ported else {to: dict(empty) for to in tos}
     for work in works.values():
         shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
     summaries = {}
@@ -131,7 +130,8 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
         # What the targets shared, and each one's own questions to the game after it.
         own = dict(seconds)
         target = out if out is None or (len(tos) == 1 and not Path(out).is_dir()) else Path(out) / f"{loader}-{frm}-{to}.json"
-        summaries[to] = summarize(loader, frm, to, mods, unread, reports[to], written[to], works[to], kind, save, target, quiet, timer(own), own)
+        summaries[to] = summarize(loader, frm, to, ported, unread, reports[to], written[to], works[to], narrow and (kind or "--mods " + ",".join(mods)),
+                                  save, target, quiet, timer(own), own)
     return summaries
 
 
@@ -192,12 +192,12 @@ def summarize(loader, frm, to, mods, unread, report, written, work, kind, save, 
                            for m in rows}
     summary["porter"] = porter.port_key(loader, frm, to) + " " + cachekeys.content_key(*(p.read_bytes() for p in mods))
     if kind:
-        summary["partial"] = f"only the {len(mods)} mods the last run held back with '{kind}'"
+        summary["partial"] = f"only the {len(mods)} mods " + (kind if kind.startswith("--mods") else f"held back with '{kind}'")
     before = work / "before.json"
     if not kind and last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
         os.replace(last, before)
-    against = before if not kind else last
-    moved = verdicts_moved(json.loads(against.read_text(encoding="utf-8")), summary) if against.is_file() else None
+    # all (quiet) runs every update side by side and is compared as a table: it reads no main row per update.
+    what, moved = mainrecord.against(work, kind, summary, main=(None, "") if quiet else None)
     summary["moved"] = moved
     if not kind:
         work.mkdir(parents=True, exist_ok=True)
@@ -205,13 +205,12 @@ def summarize(loader, frm, to, mods, unread, report, written, work, kind, save, 
     if not quiet:
         if settings.VERIFY:
             print(f"--verify: {report.get('verified', 0)} kept ports were the same as porting them again")
-        if moved is not None and (moved["newly link"] or moved["link, port changed"]):
-            slugs = sorted({m.split("--", 1)[0] for m in moved["newly link"] + moved["link, port changed"]})
+        if moved is not None and (moved["newly link"] or moved.get("link, port changed")):
+            slugs = sorted({m.split("--", 1)[0] for m in moved["newly link"] + moved.get("link, port changed", [])})
             print(f"prove in game only those: python bench/exposure.py load --loader {loader} --from {frm} --to {to} --mods {','.join(slugs)}"
                   f" (or tools/cloud-run load -f updates={loader}:{frm}:{to} -f mods={','.join(slugs)})")
         if moved is not None:
-            print(f"against {'the run before' if not kind else 'the last whole run'} ({against}): "
-                  + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
+            print(f"against {what}: " + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
         if kind:
             print(summary["partial"])
         print(f"{summary['modsThatLink']}/{summary['modsRead']} {loader} mods link against {to} after the port "
@@ -384,10 +383,20 @@ def join(folder, out=None):
                if not any(pair(s) == (lo, a, b) for s in found)]
     anyv = anyversion.any_version_table({pair(s): s for s in found if pair(s) in targets})
     keep = ("loader", "from", "to", "modsRead", "modsThatLink", "modsThatLinkAndData", "brokenUses", "loaderUses", "modsHeldOnlyByLoader", "links")
+
+    def row(s, **more):
+        # The mods held back, by type of break (slugs): what jars --type and compare-update read instead of porting main again.
+        held = {}
+        for mod, v in s.get("verdicts", {}).items():
+            for kind in v.get("types", []) if v.get("left") else ():
+                held.setdefault(kind, []).append(mainrecord.slug(mod))
+        return {**{k: s.get(k) for k in keep}, **({"heldBy": {k: sorted(v) for k, v in sorted(held.items())}} if "verdicts" in s else {}), **more}
+
     table = {
         "date": date.today().isoformat(), "total": total, "loaders": loaders, "missing": missing, "anyVersion": anyv,
-        "updates": [{**{k: s.get(k) for k in keep}, "big": gamereleases.big(s["from"], s["to"])} for s in rows],
-        "jumps": [{**{k: s.get(k) for k in keep}, "updatesCrossed": len(gamereleases.chain(s["from"], s["to"])) - 1} for s in far],
+        "updates": [row(s, big=gamereleases.big(s["from"], s["to"])) for s in rows],
+        "jumps": [row(s, updatesCrossed=len(gamereleases.chain(s["from"], s["to"])) - 1) for s in far],
+        "anyVersionPairs": [row(s) for s in found if pair(s) in targets and pair(s) not in single and pair(s) not in wanted],
         "types": kinds,
         "typesNotRead": untyped,
         "nearest": turns[:60],

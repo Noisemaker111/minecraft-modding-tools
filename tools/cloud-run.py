@@ -20,7 +20,9 @@ GitHub, so push first: a branch whose local commit is not on origin is refused (
 It dispatches with a request id the workflow puts in its run name, finds that run, waits with a hard --timeout
 (minutes, default 120; the run is cancelled then, unless --keep-running), prints each job's result and time, and
 downloads every artifact to .runs/cloud/WORKFLOW-RUNID/ (--out). A summary artifact's summary.md is printed.
-Exit 0 when the run succeeded, 1 when it failed, 124 on the timeout. Needs the GitHub CLI (gh), logged in.
+Exit 0 when the run succeeded, 1 when it failed, 124 on the timeout, 75 when GitHub's API limit (5,000 calls an hour,
+shared by every agent on the token) is spent: it prints when it renews and the run's link, and the run goes on. Each
+poll is one call, and polls slow from 30 s to 2 min while no job finishes. Needs the GitHub CLI (gh), logged in.
 
 exposure on a branch runs only the branch. Main's table for the branch's base is made once, by the sweep every push to
 main starts (cloud-exposure.yml), or by a pull request's sweep of the same tree; main_table finds that run, or one for a
@@ -28,6 +30,10 @@ commit that changed nothing the table reads (the workflow's paths-ignore), waits
 dispatches one for the base only when none ran. Every exposure run is named with the tree it sweeps (-f tree=), and a
 sweep of a tree that already has a whole table reuses it without running a job.
 When both are in, python bench/exposure.py compare prints what the branch changes. main-table does the finding alone.
+While an exposure run goes, each update is reported as its job finishes: its summary downloaded and compared with main's
+row for it (bench/exposure.py compare-update), so the update a change is about is answered when its job ends, not the
+whole run. The first failed job ends the wait at once with its failed step, the end of its log and the run's link, and
+exits 1; the run goes on (--run RUN_ID waits for the rest).
 
 load is cloud-load.yml, the game proof of a port (python bench/exposure.py load), one job per update: the update's mods
 that link (or only mods=), ported and started on a real server and in a real client of the new release. Each update's
@@ -48,6 +54,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {"packs": "cloud-packs.yml", "ports": "cloud-ports.yml", "convert": "cloud-convert.yml", "exposure": "cloud-exposure.yml",
              "load": "cloud-load.yml"}
+
+
+def workflow_name(file):
+    """A workflow's name: line, what gh run view calls it."""
+    text = (ROOT / ".github" / "workflows" / file).read_text(encoding="utf-8")
+    found = re.search(r"^name:\s*(.+)$", text, re.M)
+    return found.group(1).strip().strip("'\"") if found else file
 
 
 def gh_path():
@@ -124,16 +137,54 @@ def duration(s):
     return "—" if s is None else f"{s // 60}m{s % 60:02d}s"
 
 
-def wait(run_id, timeout_minutes, keep_running):
-    """Polls until the run completes or the hard timeout; prints each job once it finishes."""
+# Seconds between polls: the first, and the most when nothing finished for a while. GitHub's API allows 5,000 calls an
+# hour on the owner's one token, shared by every agent; one poll is one call (the run with every job's status).
+POLL, POLL_MOST = 30, 120
+
+
+def rate_limited(text):
+    return "rate limit" in (text or "").lower()
+
+
+def limit_reset(gh=None):
+    """When the API limit is renewed, as HH:MM UTC; GitHub answers rate_limit without counting it, spent or not."""
+    gh = gh or globals()["gh"]
+    reset = gh("api", "rate_limit", "--jq", ".resources.core.reset", check=False, tries=1).strip()
+    return time.strftime("%H:%M UTC", time.gmtime(int(reset))) if reset.isdigit() else "an unknown time"
+
+
+def run_url(run_id):
+    remote = git("remote", "get-url", "origin")
+    found = re.search(r"github\.com[:/](.+?)(?:\.git)?$", remote or "")
+    return f"https://github.com/{found.group(1)}/actions/runs/{run_id}" if found else f"run {run_id}"
+
+
+def wait(run_id, timeout_minutes, keep_running, on_job=None, sleep=None, gh=None):
+    """Polls until the run completes or the hard timeout; prints each job once it finishes. on_job(job, view) is called
+    for each newly finished job; when it returns a conclusion, waiting stops there with it and the run is left going.
+    A poll is one API call; with nothing newly finished the next waits twice as long, up to POLL_MOST. When GitHub's API
+    limit is spent, the wait ends ("rate limited") with when it renews and the run's link; the run goes on."""
+    sleep = sleep or time.sleep
+    gh = gh or globals()["gh"]
     deadline = time.monotonic() + timeout_minutes * 60
-    seen = set()
+    seen, pause, view = set(), POLL, {}
     while True:
-        view = json.loads(gh("run", "view", str(run_id), "--json", "status,conclusion,jobs,url,createdAt,updatedAt,name,workflowName,displayTitle,headSha,headBranch"))
-        for job in view.get("jobs", []):
-            if job.get("status") == "completed" and job["name"] not in seen:
+        try:
+            view = json.loads(gh("run", "view", str(run_id), "--json", "status,conclusion,jobs,url,createdAt,updatedAt,name,workflowName,displayTitle,headSha,headBranch"))
+            fresh = [job for job in view.get("jobs", []) if job.get("status") == "completed" and job["name"] not in seen]
+            for job in fresh:
                 seen.add(job["name"])
                 print(f"  {job.get('conclusion'):<9} {duration(seconds(job.get('startedAt'), job.get('completedAt'))):>8}  {job['name']}", flush=True)
+                stop = on_job(job, view) if on_job else None
+                if stop:
+                    view["conclusion"] = stop
+                    return view
+        except SystemExit as failed:
+            if not rate_limited(str(failed)):
+                raise
+            print(f"GitHub's API limit is spent until {limit_reset(gh)}; stopped waiting, the run goes on: {view.get('url') or run_url(run_id)} "
+                  f"(tools/cloud-run --run {run_id} waits again)", flush=True)
+            return {**view, "status": view.get("status") or "unknown", "conclusion": "rate limited"}
         if view.get("status") == "completed":
             return view
         if time.monotonic() > deadline:
@@ -142,7 +193,81 @@ def wait(run_id, timeout_minutes, keep_running):
             print(f"timed out after {timeout_minutes} min" + ("" if keep_running else "; the run was cancelled"), flush=True)
             view["conclusion"] = "timed out"
             return view
-        time.sleep(30)
+        pause = POLL if fresh else min(POLL_MOST, pause * 2)
+        sleep(pause)
+
+
+FAILED = ("failure", "timed_out", "cancelled", "startup_failure")
+
+
+def artifacts(run_id, gh=None):
+    """The run's artifacts uploaded so far, by name: a job's are listed as soon as it uploads them, while the run goes on."""
+    gh = gh or globals()["gh"]
+    listed = json.loads(gh("api", f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}/artifacts?per_page=100", "--paginate", "--jq", "[.artifacts[] | {name, id}]") or "[]")
+    return {a["name"]: a["id"] for a in listed}
+
+
+def download_new(run_id, out, have, gh=None):
+    """Downloads each artifact of the run not in have (names) into out/NAME, as gh run download lays a whole run out;
+    returns the names it downloaded."""
+    gh = gh or globals()["gh"]
+    got = []
+    for name in sorted(set(artifacts(run_id, gh=gh)) - set(have)):
+        gh("run", "download", str(run_id), "-n", name, "--dir", str(out / name), check=False)
+        have.add(name)
+        got.append(name)
+    return got
+
+
+def failed_step(job):
+    """The name of the first step of a job that failed, or the job's own conclusion."""
+    return next((s.get("name") for s in job.get("steps", []) if s.get("conclusion") in FAILED), job.get("conclusion"))
+
+
+def log_tail(job_id, lines=25, gh=None):
+    """The last lines of a finished job's log, from the job's own log (gh run view --log waits for the whole run)."""
+    gh = gh or globals()["gh"]
+    # Job logs carry colour codes, which gh prints only when allowed to; they are taken out here.
+    text = re.sub(r"\x1b\[[0-9;]*m", "", gh("api", "--allow-escape-sequences", f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs", check=False) or "")
+    if text.lstrip("\ufeff").startswith("<?xml"):
+        return []  # a job cancelled before it logged has no log: GitHub answers with a storage error page
+    # Each line starts with a timestamp; the post-job cleanup after the failed step says nothing about it.
+    kept = [re.sub(r"^\S+Z ", "", line) for line in text.splitlines()]
+    cut = next((i for i, line in enumerate(kept) if line.startswith("##[error]")), len(kept))
+    return kept[max(0, cut - lines + 1):cut + 1]
+
+
+class Updates:
+    """A scoreboard run's jobs as they finish: each update's summary downloaded and compared with main's row for that
+    update (bench/exposure.py compare-update), and on the first failed job the failure, its log's end and the run, and
+    a stop, the run left going. Only each finished update's line is printed early: the whole table comes when the run ends."""
+
+    def __init__(self, run_id, out, gh=None, compare=None):
+        self.run_id, self.out, self.have = run_id, out, set()
+        self.gh = gh or globals()["gh"]
+        self.compare = compare or compare_updates
+
+    def __call__(self, job, view):
+        if job.get("conclusion") in FAILED:
+            print(f"\n{job['name']} {job.get('conclusion')} at '{failed_step(job)}' after {duration(seconds(job.get('startedAt'), job.get('completedAt')))}: "
+                  f"{job.get('url', '')}", flush=True)
+            for line in log_tail(job.get("databaseId"), gh=self.gh) if job.get("databaseId") else []:
+                print(f"    {line}", flush=True)
+            print(f"stopped on the first failed job; the run goes on: {view.get('url')} (tools/cloud-run --run {self.run_id} waits for the rest)", flush=True)
+            return "failure"
+        if job.get("conclusion") == "success" and job["name"] not in ("plan", "summary"):
+            got = download_new(self.run_id, self.out, self.have, gh=self.gh)
+            summaries = [s for name in got if name.startswith("exposure-") for s in sorted((self.out / name).glob("*.json"))]
+            if summaries:
+                self.compare(summaries, view.get("headSha"))
+        return None
+
+
+def compare_updates(summaries, head):
+    """Each summary's line against main's row for its update (bench/exposure.py compare-update)."""
+    done = subprocess.run([sys.executable, str(ROOT / "bench" / "exposure.py"), "compare-update", *map(str, summaries)] + (["--head", head] if head else []),
+                          cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+    print("".join("    " + line + "\n" for line in (done.stdout + done.stderr).splitlines()), end="", flush=True)
 
 
 # ---- main's table, made once per commit -----------------------------------------------------------------------------
@@ -323,7 +448,8 @@ def main(argv=None):
     started = time.monotonic()
     if args.run:
         run_id = args.run
-        workflow = json.loads(gh("run", "view", str(run_id), "--json", "workflowName"))["workflowName"]
+        named = json.loads(gh("run", "view", str(run_id), "--json", "workflowName"))["workflowName"]
+        workflow = EXPOSURE if named == workflow_name(EXPOSURE) else named
     else:
         if args.workflow == "exposure" and not any(f.startswith("only=") for f in args.field):
             # main's sweep for the base is started (or found) before the branch's, so the two run side by side.
@@ -342,11 +468,19 @@ def main(argv=None):
         print(f"{workflow} on {ref} ({commit[:10]}): {run['url']}", flush=True)
         if args.no_wait:
             return 0
-    view = wait(run_id, args.timeout, args.keep_running)
-    name = Path(str(args.workflow or view.get("workflowName") or workflow)).stem.replace(" ", "-").lower()
+    name = Path(str(args.workflow or (named if args.run else workflow))).stem.replace(" ", "-").lower()
     out = args.out or ROOT / ".runs" / "cloud" / f"{name}-{run_id}"
     out.mkdir(parents=True, exist_ok=True)
-    gh("run", "download", str(run_id), "--dir", str(out), check=False)
+    # The scoreboard's updates are reported as their jobs finish, and the first failed job ends the wait.
+    updates = Updates(run_id, out) if workflow == EXPOSURE else None
+    view = wait(run_id, args.timeout, args.keep_running, on_job=updates)
+    if view.get("conclusion") == "rate limited" or updates and view.get("status") != "completed":
+        (out / "run.json").write_text(json.dumps(view, indent=1), encoding="utf-8")
+        return {"timed out": 124, "rate limited": 75}.get(view.get("conclusion"), 1)
+    if updates:
+        download_new(run_id, out, updates.have)
+    else:
+        gh("run", "download", str(run_id), "--dir", str(out), check=False)
     (out / "run.json").write_text(json.dumps(view, indent=1), encoding="utf-8")
     summary = next(iter(sorted(out.glob("summary/summary.md"))), None)
     if summary:

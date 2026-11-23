@@ -227,7 +227,7 @@ def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
     if todo:
         written = Path(targets[0][2]).with_name(f"plan-{os.getpid()}.json")
         written.write_text(json.dumps({"ports": plan}), encoding="utf-8")
-        args = [java(), f"-Xmx{settings.HEAP}g", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(settings.ROOT / "knowledge" / "fixes.json"),
+        args = [java(), f"-Xmx{jarport_heap(todo)}m", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(settings.ROOT / "knowledge" / "fixes.json"),
                 "--loader", loader] + (["--runtime-names"] if runtime else [])
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
@@ -266,6 +266,13 @@ def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
                       "ported": len(todo), "verified": checked}
         Path(report).write_text(json.dumps(merged[to], indent=1), encoding="utf-8")
     return merged
+
+
+def jarport_heap(jars):
+    """The heap, in MB, JarPort needs for these jars (JarPort.heap): its workers are as many as the jars keep busy, and
+    each worker holds a porter of its own, so ten mods need a third of what 150 do. A fixed 10 GB made it start as many
+    workers as fit (21 here), and it filled it even for ten mods."""
+    return int(subprocess.run([java(), "-cp", jar_tools(), "JarPort", "--heap", *map(str, jars)], capture_output=True, text=True, check=True).stdout.split()[-1])
 
 
 def jarport(command):

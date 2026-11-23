@@ -665,10 +665,15 @@ with tempfile.TemporaryDirectory() as tmp:
         (runs / f"fabric-{s['from']}-{s['to']}.json").write_text(json.dumps(s), encoding="utf-8")
     sys.stdout = io.StringIO()
     try:
-        a = portboard.board.join(runs)["anyVersion"]
+        joined = portboard.board.join(runs)
+        a = joined["anyVersion"]
     finally:
         sys.stdout = sys.__stdout__
         portboard.settings.PINS = pins
+    # Every pair's row names the mods held back by type, so a branch reads main's row for any pair instead of porting it.
+    row = portboard.mainrecord.table_row(joined, "fabric", "1.1", "2.1")
+    check(row is not None and row["heldBy"] == {linked: ["c"], field: ["c"]} and portboard.mainrecord.table_row(joined, "fabric", "1.1", "1.0")["heldBy"] == {split: ["b"]},
+          f"an any-version pair has a row in main's table, with the mods held back by type: {row}")
     fab, neo = a["loaders"]["fabric"], a["loaders"]["neoforge"]
     check((a["every"], a["mods"]) == (1, 6) and a["everywhere"]["fabric"] == ["a"],
           f"only the mod that links on every release counts, out of every pinned mod, a loader whose jobs did not run too: {a['every']} of {a['mods']}")
@@ -719,7 +724,7 @@ with tempfile.TemporaryDirectory() as tmp:
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
-             portboard.porter.registry_reports)
+             portboard.porter.registry_reports, portboard.porter.jarport_heap)
     portboard.settings.ROOT, portboard.settings.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     fixes = root / "knowledge" / "fixes.json"
@@ -750,6 +755,7 @@ with tempfile.TemporaryDirectory() as tmp:
     step_routes[("1.1", "1.2")].write_text("{}", encoding="utf-8")
     portboard.porter.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
     portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools = fake_jarport, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
+    portboard.porter.jarport_heap = lambda jars: 1024
     portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
     asked_reports = []
     portboard.porter.registry_reports = asked_reports.append
@@ -834,12 +840,77 @@ with tempfile.TemporaryDirectory() as tmp:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
     (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
-     portboard.porter.registry_reports) = saved
+     portboard.porter.registry_reports, portboard.porter.jarport_heap) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}
 check(portboard.board.verdicts_moved(before, after) == {"newly link": ["a"], "no longer link": ["b"], "other references left": ["c"], "link, port changed": ["d"], "same": 1},
       f"each mod both runs read is named once by how its verdict moved: {portboard.board.verdicts_moved(before, after)}")
+
+# With no run of the update here, jars compares with main's row for it, read from the generated branch: 53 of about 293
+# agent runs ported main's 150 mods again only to have a before. The table is the newest one of a commit the branch has.
+tables = {"r3": {"commit": "c3"}, "r2": {"commit": "c2", "updates": [
+    {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "modsRead": 3, "modsThatLink": 1, "links": ["b--1.jar"],
+     "heldBy": {"call, game: linked": ["a", "c"], "class gone, game: redesigned": ["c"]}}]}}
+
+
+def fake_git(*a):
+    if a[:2] == ("rev-parse", "--is-shallow-repository"):
+        return "false"
+    if a[0] == "log":
+        return "r3\nr2"
+    if a[0] == "show":
+        return json.dumps(tables[a[1].split(":")[0]])
+    if a[0] == "merge-base" and a[1] == "--is-ancestor":
+        return "" if a[2] == "c2" else None
+    if a[0] == "merge-base":
+        return "base0123456789"
+    if a[0] == "rev-list":
+        return "4"
+    raise AssertionError(a)
+
+
+portboard.mainrecord.MAIN_TABLES.clear()
+main = portboard.mainrecord.main_table("HEAD", git=fake_git, fetch=False)
+check(main[0]["commit"] == "c2" and "c2" in main[1] and "4 main commits before" in main[1],
+      f"main's table is the newest of a commit the branch has, saying how far behind the branch's base it is: {main[1]}")
+portboard.mainrecord.MAIN_TABLES.clear()
+check(portboard.mainrecord.main_table("HEAD", git=lambda *a: None, fetch=False)[0] is None, "with no generated branch there is no main table, and no failure")
+portboard.mainrecord.MAIN_TABLES.clear()
+check(portboard.mainrecord.main_table("HEAD", git=lambda *a: "true" if a[0] == "rev-parse" else fake_git(*a), fetch=False)[0] is None,
+      "a shallow clone (the cloud sweep's) reads no table: it cannot tell which commits it has")
+summary = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "modsRead": 3, "modsThatLink": 1, "links": ["a--1.jar"],
+           "verdicts": {"a--1.jar": {"left": [], "types": []}, "b--1.jar": {"left": ["x"], "types": ["call, game: linked"]},
+                        "c--1.jar": {"left": ["y"], "types": ["call, game: linked"]}}}
+with tempfile.TemporaryDirectory() as tmp:
+    work = Path(tmp) / "jars-neoforge-1.21.1-1.21.2"
+    work.mkdir()
+    what, moved = portboard.mainrecord.against(work, None, summary, main=main)
+    check(moved == {"newly link": ["a--1.jar"], "no longer link": ["b--1.jar"], "other types left": ["c--1.jar"], "same": 0} and "c2" in what,
+          f"a run with none before here is compared with main's row for the update: {what} {moved}")
+    (work / "before.json").write_text(json.dumps({"verdicts": {m: {"left": [], "ported": "1"} for m in summary["verdicts"]}}), encoding="utf-8")
+    check(portboard.mainrecord.against(work, None, summary, main=main)[1]["no longer link"] == ["b--1.jar", "c--1.jar"], "a run before here is what a run is compared with")
+    check(portboard.mainrecord.against(Path(tmp) / "jars-neoforge-1.21.1-1.21.3", None, {**summary, "to": "1.21.3"}, main=main) == (None, None),
+          "an update main's table has no row for is compared with nothing")
+    # --type and --mods are the narrow run, and need no whole run here first: main's row says which mods a type holds.
+    pinned = [Path(f"{s}--1.jar") for s in "abcd"]
+    check([p.name for p in portboard.mainrecord.narrowed(pinned, work, "class gone", main=main)] == ["c--1.jar"], "--type picks the mods main's row holds back with it")
+    check([p.name for p in portboard.mainrecord.narrowed(pinned, work, mods=["d", "a"], main=main)] == ["a--1.jar", "d--1.jar"], "--mods picks the slugs asked for")
+    check(portboard.mainrecord.narrowed(pinned, work, main=main) == pinned, "with neither, every mod is ported")
+    for bad in ({"kind": "no such type"}, {"mods": ["zzz"]}):
+        try:
+            portboard.mainrecord.narrowed(pinned, work, main=main, **bad)
+            caught = False
+        except SystemExit:
+            caught = True
+        check(caught, f"a narrow run that picks nothing says so instead of porting nothing: {bad}")
+    (work / "last.json").write_text(json.dumps({"verdicts": {"d--1.jar": {"types": ["class gone, game: linked"]}}}), encoding="utf-8")
+    check([p.name for p in portboard.mainrecord.narrowed(pinned, work, "class gone", main=main)] == ["d--1.jar"], "the last whole run here comes before main's row")
+    check("--type 'call, game: linked' ports the 2 mods" in portboard.mainrecord.narrow_hint("neoforge", "1.21.1", "1.21.2", 4, main=main),
+          "a run of every mod says how to run narrow, with the type that holds the most mods back in main's row")
+    line = portboard.mainrecord.compare_update(summary, main=main)
+    check(line.startswith("neoforge 1.21.1 -> 1.21.2: 1/3 link, main 1/3 (+0; main's table at c2") and "newly link a--1.jar" in line and "no longer link b--1.jar" in line,
+          f"one update's summary against main's row, on one line: {line}")
 
 # A client sent back to the disconnected screen names no mod: the mod whose arrival makes it fail is found by halving,
 # each set started with the jars it needs; a client that fails with no mod at all blames none.
@@ -997,7 +1068,7 @@ with tempfile.TemporaryDirectory() as tmp:
         return 0
 
     saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
-             portboard.porter.registry_reports)
+             portboard.porter.registry_reports, portboard.porter.jarport_heap)
     portboard.settings.ROOT, portboard.settings.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     (root / "knowledge" / "fixes.json").write_text("[]", encoding="utf-8")
@@ -1006,6 +1077,7 @@ with tempfile.TemporaryDirectory() as tmp:
     portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops = (lambda: "tools"), (lambda loader, r: b"platform"), (lambda: "java 25"), (lambda loader, frm, to: [frm, to])
     portboard.javalevels.release_java = lambda v: {"old": 17, "new": 21}[v]
     portboard.porter.registry_reports = lambda versions: None  # these mods carry no data
+    portboard.porter.jarport_heap = lambda jars: 1024
     try:
         def port(to, cache=False):
             return portboard.porter.jar_port("fabric", "1.0", to, list(came.values()), root / f"out-{to}", root / f"report-{to}.json", cache=cache)
@@ -1017,7 +1089,7 @@ with tempfile.TemporaryDirectory() as tmp:
         kept = first, port("old", cache=True)
     finally:
         (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
-         portboard.porter.registry_reports) = saved
+         portboard.porter.registry_reports, portboard.porter.jarport_heap) = saved
     check([m["mod"] for m in back["mods"] if m["unlinked"]] == ["nested.jar"] and back["linked"] == 3
           and portboard.porter.left(back["mods"][1]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
           and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],

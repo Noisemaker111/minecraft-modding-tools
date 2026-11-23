@@ -5,8 +5,10 @@ from pathlib import Path
 import port_tools  # noqa: E402
 
 ROOT = port_tools.ROOT
-# Gigabytes of heap for the Java tools; lower it when other work shares the machine.
-HEAP = int(os.environ.get("MMT_HEAP_GB") or 10)
+# Gigabytes of heap GameDiff and Exposure may grow to. They hold two releases (a map's chain, read one after another),
+# whatever the mods: about 1.4 GB live, 2.4 GB taken, measured on a 6-release chain and on 147 mods' references.
+# JarPort's heap is sized to the jars it ports (jar_ports), not this.
+HEAP = 10
 HOME = Path(os.environ.get("MMT_EXPOSURE_HOME") or Path(os.path.expanduser("~")) / ".mmt" / "exposure")
 # --verify: port every mod and ask Exposure every reference as if nothing were cached, and fail where a cached answer with
 # the same key differs. Main's sweep runs so, with the answers of main's sweep before it, as the check that the cache is exact.
