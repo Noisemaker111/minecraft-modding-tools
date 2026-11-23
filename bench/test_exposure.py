@@ -19,6 +19,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import exposure as E  # noqa: E402
+import portboard.board  # noqa: E402
+import portboard.cachekeys  # noqa: E402
+import portboard.dependencies  # noqa: E402
+import portboard.gameload  # noqa: E402
+import portboard.gamereleases  # noqa: E402
+import portboard.javalevels  # noqa: E402
+import portboard.mainrecord  # noqa: E402
+import portboard.modrinth  # noqa: E402
+import portboard.porter  # noqa: E402
+import portboard.settings  # noqa: E402
 
 checks = 0
 
@@ -44,23 +54,23 @@ def plan(only):
         sys.argv, sys.stdout = argv, sys.__stdout__
 
 
-newest = E.updates("fabric")[-1]
+newest = portboard.gamereleases.updates("fabric")[-1]
 check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1]}"], "--only LOADER:FROM:TO picks that update")
 check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
 check("names no update: fabric:1.20.1:99.9" in plan("fabric:1.20.1:99.9"), f"--only naming no update stops: {plan('fabric:1.20.1:99.9')}")
 
 # The sweep's jobs: every pair runs() lists is in exactly one job, a job's targets are one release's ports in one
 # direction (so JarPort ports the steps they share once), and --only keeps only the pairs it names.
-for lo in E.FIRST:
-    jobs = E.plan(lo)
+for lo in portboard.settings.FIRST:
+    jobs = portboard.board.plan(lo)
     pairs = [(frm, to) for _, frm, tos in jobs for to in tos]
-    check(sorted(pairs) == sorted(E.runs(lo)) and len(pairs) == len(set(pairs)), f"{lo}: every pair runs in one job")
-    check(all(len({E.vkey(to) > E.vkey(frm) for to in tos}) == 1 for _, frm, tos in jobs), f"{lo}: a job's targets lie one way from its release")
+    check(sorted(pairs) == sorted(portboard.gamereleases.runs(lo)) and len(pairs) == len(set(pairs)), f"{lo}: every pair runs in one job")
+    check(all(len({portboard.gamereleases.vkey(to) > portboard.gamereleases.vkey(frm) for to in tos}) == 1 for _, frm, tos in jobs), f"{lo}: a job's targets lie one way from its release")
     check(len(jobs) < len(pairs), f"{lo}: ports from one release share jobs ({len(jobs)} jobs for {len(pairs)} pairs)")
-    frm, to = E.runs(lo)[-1]
-    check([(f, t) for _, f, tos in E.plan(lo, {f"{lo}:{frm}:{to}"}) for t in tos] == [(frm, to)], f"{lo}: --only LOADER:FROM:TO runs that pair alone")
+    frm, to = portboard.gamereleases.runs(lo)[-1]
+    check([(f, t) for _, f, tos in portboard.board.plan(lo, {f"{lo}:{frm}:{to}"}) for t in tos] == [(frm, to)], f"{lo}: --only LOADER:FROM:TO runs that pair alone")
 
-REPO, EXPOSURE_HOME = E.ROOT, E.HOME
+REPO, EXPOSURE_HOME = portboard.settings.ROOT, portboard.settings.HOME
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
@@ -69,11 +79,11 @@ with tempfile.TemporaryDirectory() as tmp:
         for name in ("port/learn/GameDiff.java", "port/names/VersionMap.java", "port/jar/JarPort.java", "cli/Json.java", "cli/Route.java", "cli/Versions.java"):
             (root / tree / "tools" / name).parent.mkdir(parents=True, exist_ok=True)
             (root / tree / "tools" / name).write_text(f"// {name}\n", encoding="utf-8")
-    E.HOME = root / "home"
+    portboard.settings.HOME = root / "home"
 
     def key_in(tree):
-        E.ROOT = root / tree
-        return E.tools_key(*E.MAP_SOURCES)
+        portboard.settings.ROOT = root / tree
+        return portboard.cachekeys.tools_key(*portboard.settings.MAP_SOURCES)
 
     check(key_in("a") == key_in("b"), "worktrees with the same tools share entries")
     time.sleep(0.01)
@@ -87,17 +97,17 @@ with tempfile.TemporaryDirectory() as tmp:
     (root / "b" / "tools" / "port" / "learn" / "LearnNew.java").write_text("// a learner file nothing lists\n", encoding="utf-8")
     check(key_in("b") != edited, "a file added under tools/port/learn is one of the learner's sources by being there")
 
-    E.ROOT = root / "a"
-    first = E.keyed("maps", *E.MAP_SOURCES)
+    portboard.settings.ROOT = root / "a"
+    first = portboard.cachekeys.keyed("maps", *portboard.settings.MAP_SOURCES)
     (first / "neoforge-1.0-2.0.json").write_text("{}", encoding="utf-8")
-    E.ROOT = root / "b"
-    second = E.keyed("maps", *E.MAP_SOURCES)
+    portboard.settings.ROOT = root / "b"
+    second = portboard.cachekeys.keyed("maps", *portboard.settings.MAP_SOURCES)
     check(first != second and (first / "neoforge-1.0-2.0.json").is_file(), "making one worktree's entry leaves the other's in place")
     # A key no run has used for over a day is removed when a new one is made; a fresh one is kept.
     stale = first / "used"
     os.utime(stale, (time.time() - 2 * 86400, time.time() - 2 * 86400))
     (root / "b" / "tools" / "port" / "names" / "VersionMap.java").write_text("// VersionMap, edited\n", encoding="utf-8")
-    third = E.keyed("maps", *E.MAP_SOURCES)
+    third = portboard.cachekeys.keyed("maps", *portboard.settings.MAP_SOURCES)
     check(not first.exists() and second.exists() and third.exists(), "only a key unused for a day is cleared")
 
     # Runs beside each other finishing the same file: every reader sees a whole file, and the first one is kept.
@@ -105,10 +115,10 @@ with tempfile.TemporaryDirectory() as tmp:
     seen, start = [], threading.Barrier(8)
 
     def writer(i):
-        part = E.part_of(target)
+        part = portboard.cachekeys.part_of(target)
         part.write_text(f'{{"writer": {i}, "pad": "{"x" * 200000}"}}', encoding="utf-8")
         start.wait()
-        E.publish(part, target)
+        portboard.cachekeys.publish(part, target)
         seen.append(target.read_text(encoding="utf-8"))
 
     threads = [threading.Thread(target=writer, args=(i,)) for i in range(8)]
@@ -119,8 +129,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(len(seen) == 8 and all(s.endswith('"}') for s in seen), "no reader sees half a file")
     check(len(set(seen)) == 1, "one writer's file is kept and the others are dropped")
     check(not list(third.glob("*.part")), "no part file is left behind")
-E.ROOT, E.HOME = REPO, EXPOSURE_HOME
-
+portboard.settings.ROOT, portboard.settings.HOME = REPO, EXPOSURE_HOME
 
 
 def jar(files):
@@ -166,12 +175,12 @@ with tempfile.TemporaryDirectory() as tmp:
         {"mod": "n.jar", "silent": [], "unlinked": ["n.jar: call: net.minecraft.Gone.run()V (in n.Main)"]},
         {"mod": "o.jar", "silent": [], "unlinked": []}],
         "unlinkedByMods": []}
-    out = E.without_platform_copies(report, {"fabric-api-base", "fabric-api"}, {"m.jar": mod})
+    out = portboard.javalevels.without_platform_copies(report, {"fabric-api-base", "fabric-api"}, {"m.jar": mod})
     m = out["mods"][0]["unlinked"]
     check(len(m) == 1 and "old-module" in m[0], f"a nested copy of a platform module is not counted; one of a module the platform lacks is: {m}")
     check(out["unlinkedByMods"] == [{"member": "call: net.minecraft.Gone.run()V", "mods": 2}] and out["linked"] == 1,
           f"each reference counts once a mod and the mods that link are counted again: {out['unlinkedByMods']} {out['linked']}")
-    check(E.nested_ids(mod.read_bytes()) == {"m": "", "fabric-api-base": "api-base-1.jar", "fabric-gone-v1": "old-module-1.jar"},
+    check(portboard.javalevels.nested_ids(mod.read_bytes()) == {"m": "", "fabric-api-base": "api-base-1.jar", "fabric-gone-v1": "old-module-1.jar"},
           "every id in a jar and its nested jars is read with the nested jar's name")
 
 
@@ -180,15 +189,15 @@ with tempfile.TemporaryDirectory() as tmp:
     capes.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "capes", "depends": {"fabricloader": "*", "fabric-api": "*", "minecraft": "1.19.4"}})}))
     other = Path(tmp) / "other.jar"
     other.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "o", "depends": {"cloth-config": "*"}})}))
-    fa = lambda jar: E.unmet(E.needs(jar, "fabric"), {"fabric-api", "fabric-api-base"})  # noqa: E731
-    check(fa(capes) == set() and E.needs(capes, "fabric") == {"fabric-api"} and fa(other) == {"cloth-config"},
+    fa = lambda jar: portboard.dependencies.unmet(portboard.dependencies.needs(jar, "fabric"), {"fabric-api", "fabric-api-base"})  # noqa: E731
+    check(fa(capes) == set() and portboard.dependencies.needs(capes, "fabric") == {"fabric-api"} and fa(other) == {"cloth-config"},
           "a mod that needs only Fabric API is started with the platform; one that needs another mod waits for it")
     kotlin = Path(tmp) / "kt.jar"
     kotlin.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "kt", "depends": {"fabric-language-kotlin": "*"},
                                                            "entrypoints": {"main": [{"adapter": "kotlin", "value": "a.B"}]}})}))
     flk = Path(tmp) / "flk.jar"
     flk.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "fabric-language-kotlin", "languageAdapters": {"kotlin": "a.Adapter"}})}))
-    check(E.unmet(E.needs(kotlin, "fabric"), E.provides(flk, "fabric")) == set() and E.unmet(E.needs(kotlin, "fabric"), {"fabric-language-kotlin"}) == {"adapter:kotlin"},
+    check(portboard.dependencies.unmet(portboard.dependencies.needs(kotlin, "fabric"), portboard.dependencies.provides(flk, "fabric")) == set() and portboard.dependencies.unmet(portboard.dependencies.needs(kotlin, "fabric"), {"fabric-language-kotlin"}) == {"adapter:kotlin"},
           "a mod whose language adapter comes with a mod started beside it is started with it")
     # NeoForge: a mod written for a language loader that comes in a library (nested several jars deep, with no metadata
     # of its own at the top) and a required library mod; a jar made for both loaders is read as the pack's loader.
@@ -203,10 +212,10 @@ with tempfile.TemporaryDirectory() as tmp:
     lib.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("libipn")}))
     both = Path(tmp) / "both.jar"
     both.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "b", "depends": {"fabric-api": "*"}}), "META-INF/neoforge.mods.toml": toml("b", "lowcodefml", ["neoforge"])}))
-    check(E.needs(kt_mod, "neoforge") == {"loader:kotlinlang", "libipn"} and E.needs(lang, "neoforge") == set() and "loader:*" in E.provides(lang, "neoforge"),
+    check(portboard.dependencies.needs(kt_mod, "neoforge") == {"loader:kotlinlang", "libipn"} and portboard.dependencies.needs(lang, "neoforge") == set() and "loader:*" in portboard.dependencies.provides(lang, "neoforge"),
           "a NeoForge mod needs its library mods and its language loader; a library with only nested metadata needs nothing")
-    check(E.unmet(E.needs(kt_mod, "neoforge"), E.provides(lang, "neoforge")) == {"libipn"}
-          and E.unmet(E.needs(kt_mod, "neoforge"), E.provides(lang, "neoforge") | E.provides(lib, "neoforge")) == set(),
+    check(portboard.dependencies.unmet(portboard.dependencies.needs(kt_mod, "neoforge"), portboard.dependencies.provides(lang, "neoforge")) == {"libipn"}
+          and portboard.dependencies.unmet(portboard.dependencies.needs(kt_mod, "neoforge"), portboard.dependencies.provides(lang, "neoforge") | portboard.dependencies.provides(lib, "neoforge")) == set(),
           "the language loader is answered by the jar that carries one, the library by its mod id")
     # Two Kotlin language loaders, each registered under its own name: a mod written for one does not start on the other
     # (veinminer asks for KotlinLangForge's klf; Kotlin for Forge registers kotlinforforge).
@@ -219,22 +228,22 @@ with tempfile.TemporaryDirectory() as tmp:
     unnamed.write_bytes(jar({service: "c.L", "c/L.class": loader_class("c/L", None)}))
     vein = Path(tmp) / "vein.jar"
     vein.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("veinminer", "klf", ["neoforge"])}))
-    check(E.provides(kff, "neoforge") == {"loader:kotlinforforge"} and E.provides(klf, "neoforge") == {"klf", "loader:klf"}
-          and E.provides(unnamed, "neoforge") == {"loader:*"},
+    check(portboard.dependencies.provides(kff, "neoforge") == {"loader:kotlinforforge"} and portboard.dependencies.provides(klf, "neoforge") == {"klf", "loader:klf"}
+          and portboard.dependencies.provides(unnamed, "neoforge") == {"loader:*"},
           "a language loader is known by the name its name() returns, read from its class; one that computes it is any name")
-    check(E.unmet(E.needs(vein, "neoforge"), E.provides(kff, "neoforge")) == {"loader:klf"}
-          and E.unmet(E.needs(vein, "neoforge"), E.provides(klf, "neoforge")) == set()
-          and E.unmet(E.needs(kt_mod, "neoforge"), E.provides(kff, "neoforge") | {"libipn"}) == {"loader:kotlinlang"},
+    check(portboard.dependencies.unmet(portboard.dependencies.needs(vein, "neoforge"), portboard.dependencies.provides(kff, "neoforge")) == {"loader:klf"}
+          and portboard.dependencies.unmet(portboard.dependencies.needs(vein, "neoforge"), portboard.dependencies.provides(klf, "neoforge")) == set()
+          and portboard.dependencies.unmet(portboard.dependencies.needs(kt_mod, "neoforge"), portboard.dependencies.provides(kff, "neoforge") | {"libipn"}) == {"loader:kotlinlang"},
           "a mod waits for the language loader it names; another language's loader does not start it")
     old_service = "META-INF/services/net.neoforged.neoforgespi.language.IModLanguageProvider"
     old_only = Path(tmp) / "old-only.jar"
     old_only.write_bytes(jar({old_service: "b.Klf", "b/Klf.class": loader_class("b/Klf", "klf")}))
-    check(E.provides(old_only, "neoforge", "1.20.4") == {"loader:klf"} and E.provides(old_only, "neoforge", "1.20.5") == set()
-          and E.provides(old_only, "neoforge", "1.21") == set() and E.provides(klf, "neoforge", "1.20.4") == {"klf"}
-          and E.provides(klf, "neoforge", "1.20.6") == {"klf", "loader:klf"} and E.provides(klf, "neoforge", "26.3") == {"klf", "loader:klf"},
+    check(portboard.dependencies.provides(old_only, "neoforge", "1.20.4") == {"loader:klf"} and portboard.dependencies.provides(old_only, "neoforge", "1.20.5") == set()
+          and portboard.dependencies.provides(old_only, "neoforge", "1.21") == set() and portboard.dependencies.provides(klf, "neoforge", "1.20.4") == {"klf"}
+          and portboard.dependencies.provides(klf, "neoforge", "1.20.6") == {"klf", "loader:klf"} and portboard.dependencies.provides(klf, "neoforge", "26.3") == {"klf", "loader:klf"},
           "a language loader counts on the releases whose loader reads its service: IModLanguageProvider up to 1.20.4 (FML 2), IModLanguageLoader from 1.20.5 (FML 3)")
-    check(E.needs(both, "neoforge") == set() and E.needs(both, "fabric") == {"fabric-api"}, "a jar for both loaders is read as the pack's loader")
-    check(E.needs(Path(tmp) / "other.jar", "neoforge") is None, "a jar with no metadata for the loader is nothing the loader starts")
+    check(portboard.dependencies.needs(both, "neoforge") == set() and portboard.dependencies.needs(both, "fabric") == {"fabric-api"}, "a jar for both loaders is read as the pack's loader")
+    check(portboard.dependencies.needs(Path(tmp) / "other.jar", "neoforge") is None, "a jar with no metadata for the loader is nothing the loader starts")
     # The libraries come from what each mod's Modrinth version lists as required, and from what those list in turn; the
     # release for the new version first, the old one (ported) when the project has none.
     folder = Path(tmp) / "top"
@@ -244,16 +253,16 @@ with tempfile.TemporaryDirectory() as tmp:
     pins = [{"slug": "ipn", "file": "ktmod.jar", "project": "P-ipn", "version": "v-ipn"}, {"slug": "lone", "file": "lone.jar", "project": "P-lone", "version": "v-lone"}]
     listed = {"v-ipn": ["P-libipn"], "v-libipn": ["P-lang"], "v-lone": []}
     files = {("P-libipn", "2.0"): (lib, "v-libipn"), ("P-lang", "1.0"): (lang, "v-lang")}
-    real = E.required_projects, E.library
-    real_api, real_home = E.api, E.HOME
+    real = portboard.dependencies.required_projects, portboard.dependencies.library
+    real_api, real_home = portboard.modrinth.api, portboard.settings.HOME
     searched = []
-    E.api = lambda path, params=None: searched.append(params["query"]) or {"hits": []}  # noqa: E731
-    E.HOME = Path(tmp) / "home"
-    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    portboard.modrinth.api = lambda path, params=None: searched.append(params["query"]) or {"hits": []}  # noqa: E731
+    portboard.settings.HOME = Path(tmp) / "home"
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
     try:
-        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["ipn--ktmod.jar", "lone--lone.jar"], folder, pins, set())
+        chosen, ready, to_port, left = portboard.dependencies.choose("neoforge", "1.0", "2.0", ["ipn--ktmod.jar", "lone--lone.jar"], folder, pins, set())
     finally:
-        E.required_projects, E.library = real
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["ipn--ktmod.jar"] and list(ready) == ["libipn.jar"] and list(to_port) == ["lang-all.jar"],
           f"a mod is started with the libraries it needs, each library's own found through it: {chosen} {ready} {to_port}")
     check(left == {"lone--lone.jar": ["nowhere"]}, f"a mod whose need nothing answers is named with what it needs: {left}")
@@ -267,11 +276,11 @@ with tempfile.TemporaryDirectory() as tmp:
     pins = [{"slug": "hud", "file": "hud.jar", "project": "P-hud", "version": "v-hud"}]
     listed = {"v-hud": ["P-api", "P-cloth"]}
     files = {("P-api", "2.0"): (api, "v-api"), ("P-cloth", "2.0"): (cloth, "v-cloth")}
-    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
     try:
-        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["hud--hud.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["hud--hud.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
     finally:
-        E.required_projects, E.library = real
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
           f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
     # A mod that nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod
@@ -280,19 +289,19 @@ with tempfile.TemporaryDirectory() as tmp:
     (folder / "api--fabric-api.jar").write_bytes(api.read_bytes())
     pins = [{"slug": "presence", "file": "presence.jar", "project": "P-presence", "version": "v-presence"},
             {"slug": "api", "file": "fabric-api.jar", "project": "P-api", "version": "v-api"}]
-    E.required_projects, E.library = (lambda v: []), (lambda project, loader, version: None)
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: []), (lambda project, loader, version: None)
     try:
-        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["presence--presence.jar", "api--fabric-api.jar", "gone--gone.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["presence--presence.jar", "api--fabric-api.jar", "gone--gone.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
     finally:
-        E.required_projects, E.library = real
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["presence--presence.jar"] and sorted(left) == ["api--fabric-api.jar", "gone--gone.jar"]
           and "platform itself" in left["api--fabric-api.jar"][0] and "not in" in left["gone--gone.jar"][0],
           f"a mod nesting a platform module starts; the platform itself and a missing jar are each named with why: {chosen} {left}")
     # A library's release for the new version outside the range the mod asks for is not taken: its old release is ported.
-    check(E.in_range("21.1.9", "[21.1,21.2)") and not E.in_range("21.2.3", "[21.1,21.2)") and E.in_range("1.3", "1.2") and not E.in_range("1.21.2", "[1.21.1]"),
+    check(portboard.dependencies.in_range("21.1.9", "[21.1,21.2)") and not portboard.dependencies.in_range("21.2.3", "[21.1,21.2)") and portboard.dependencies.in_range("1.3", "1.2") and not portboard.dependencies.in_range("1.21.2", "[1.21.1]"),
           "versions are read against Maven ranges as NeoForge reads them")
-    check(not E.in_range("0.6.0-beta.5", "[0.6.0,)") and E.in_range("0.6.0", "[0.6.0,)") and E.in_range("0.6.1-beta.1", "[0.6.0,)")
-          and E.in_range("1.0.0", "[1.0,)") and not E.in_range("1.0-rc1", "1.0"),
+    check(not portboard.dependencies.in_range("0.6.0-beta.5", "[0.6.0,)") and portboard.dependencies.in_range("0.6.0", "[0.6.0,)") and portboard.dependencies.in_range("0.6.1-beta.1", "[0.6.0,)")
+          and portboard.dependencies.in_range("1.0.0", "[1.0,)") and not portboard.dependencies.in_range("1.0-rc1", "1.0"),
           "a prerelease is below the release it leads to, as NeoForge orders versions")
     strict = Path(tmp) / "strict.jar"
     strict.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("strict") + '[[dependencies.strict]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,2.0)"\n'}))
@@ -304,11 +313,11 @@ with tempfile.TemporaryDirectory() as tmp:
     pins.append({"slug": "strict", "file": "strict.jar", "project": "P-strict", "version": "v-strict"})
     listed["v-strict"] = ["P-libipn"]
     files = {("P-libipn", "2.0"): (lib_new, "v-libipn"), ("P-libipn", "1.0"): (lib_old, "v-libipn-old")}
-    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
     try:
-        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["strict--strict.jar"], folder, pins, set())
+        chosen, ready, to_port, left = portboard.dependencies.choose("neoforge", "1.0", "2.0", ["strict--strict.jar"], folder, pins, set())
     finally:
-        E.required_projects, E.library = real
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["strict--strict.jar"] and not ready and list(to_port) == ["libipn-1.jar"],
           f"a library outside the mod's range for the new version is ported from the old one: {ready} {to_port}")
     # Two mods needing the same library: the release for the new version has to fit both ranges, not the last one read.
@@ -317,11 +326,11 @@ with tempfile.TemporaryDirectory() as tmp:
     (folder / "loose--loose.jar").write_bytes(loose.read_bytes())
     pins.append({"slug": "loose", "file": "loose.jar", "project": "P-loose", "version": "v-loose"})
     listed["v-loose"] = ["P-libipn"]
-    E.required_projects, E.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
     try:
-        chosen, ready, to_port, left = E.choose("neoforge", "1.0", "2.0", ["strict--strict.jar", "loose--loose.jar"], folder, pins, set())
+        chosen, ready, to_port, left = portboard.dependencies.choose("neoforge", "1.0", "2.0", ["strict--strict.jar", "loose--loose.jar"], folder, pins, set())
     finally:
-        E.required_projects, E.library = real
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
     check(not ready and list(to_port) == ["libipn-1.jar"],
           f"a library two mods need fits every range they ask for: {ready} {to_port}")
     check(searched == ["nowhere"], f"an id no listed library gives is looked for once, by its words: {searched}")
@@ -334,7 +343,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (folder / "sound--sound.jar").write_bytes(fabric_mod("sounds", ["fabric-api", "yet_another_config_lib_v3"]))
     (folder / "ui--ui.jar").write_bytes(fabric_mod("ui", ["owo"]))
     (folder / "chat--chat.jar").write_bytes(fabric_mod("chat", ["nolib_v2"]))
-    pinned_old = E.HOME / "jars" / "fabric-1.0"
+    pinned_old = portboard.settings.HOME / "jars" / "fabric-1.0"
     pinned_old.mkdir(parents=True)
     (pinned_old / "yacl--yacl-old.jar").write_bytes(fabric_mod("yet_another_config_lib_v3"))
     yacl_new, owo_new, decoy = Path(tmp) / "yacl-new.jar", Path(tmp) / "owo-new.jar", Path(tmp) / "decoy.jar"
@@ -348,13 +357,13 @@ with tempfile.TemporaryDirectory() as tmp:
     files = {("P-yacl", "2.0"): (yacl_new, "v-yacl"), ("P-owo", "2.0"): (owo_new, "v-owo"), ("P-decoy", "2.0"): (decoy, "v-decoy")}
     hits = {"owo": ["P-decoy", "P-owo"], "nolib": ["P-decoy"]}
     searched.clear()
-    E.api = lambda path, params=None: searched.append(params["query"]) or {"hits": [{"project_id": h} for h in hits.get(params["query"], [])]}  # noqa: E731
-    E.required_projects, E.library = (lambda v: []), (lambda project, loader, version: files.get((project, version)))
+    portboard.modrinth.api = lambda path, params=None: searched.append(params["query"]) or {"hits": [{"project_id": h} for h in hits.get(params["query"], [])]}  # noqa: E731
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: []), (lambda project, loader, version: files.get((project, version)))
     try:
-        chosen, ready, to_port, left = E.choose("fabric", "1.0", "2.0", ["sound--sound.jar", "ui--ui.jar", "chat--chat.jar"], folder, pins, {"fabric-api"})
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["sound--sound.jar", "ui--ui.jar", "chat--chat.jar"], folder, pins, {"fabric-api"})
     finally:
-        E.required_projects, E.library = real
-        E.api, E.HOME = real_api, real_home
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+        portboard.modrinth.api, portboard.settings.HOME = real_api, real_home
     check(sorted(j.name for j in chosen) == ["sound--sound.jar", "ui--ui.jar"] and sorted(ready) == ["owo-new.jar", "yacl-new.jar"] and not to_port,
           f"a library is found for the id a mod's metadata requires, and the library's own in turn: {chosen} {ready} {to_port}")
     check(left == {"chat--chat.jar": ["nolib_v2"]} and "decoy.jar" not in ready,
@@ -374,7 +383,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "[main/WARN] [mixin/]: @Mixin target net.minecraft.client.Minecraft was not found hud.mixins.json:client.A from mod hud",
         "Caused by: org.spongepowered.asm.mixin.transformer.throwables.MixinPreProcessorException: Attach error for stats.mixins.json:B from mod stats during activity: [x]",
         "\tat org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinProcessor.java:392) hud.mixins.json:client.A from mod hud"]), encoding="utf-8")
-    blamed = E.named_in_errors(Path(tmp) / "result.json", mods, ["hud.jar", "stats.jar"])
+    blamed = portboard.gameload.named_in_errors(Path(tmp) / "result.json", mods, ["hud.jar", "stats.jar"])
 check(list(blamed) == ["stats.jar"] and "stats.mixins.json:B" in blamed["stats.jar"], f"the mixin that stopped the start names its mod: {blamed}")
 
 # A log names a mod nested in a library (Forgified Fabric API's data attachment module); the library that ships it is
@@ -390,23 +399,23 @@ with tempfile.TemporaryDirectory() as tmp:
     (Path(tmp) / "3-server-place.log").write_text(
         "Caused by: org.spongepowered.asm.mixin.throwables.MixinApplyError: Mixin [fabric-data-attachment-api-v1.mixins.json:BaseMappedRegistryAccessor "
         "from mod fabric_data_attachment_api_v1] from phase [DEFAULT] FAILED during APPLY", encoding="utf-8")
-    check(E.mod_ids(mods / "ffapi.jar") == {"fabric_api", "fabric_data_attachment_api_v1"}, "a jar's mod ids include those of the jars it nests")
-    blamed = E.named_in_errors(Path(tmp) / "result.json", mods, ["top.jar", "ffapi.jar"])
+    check(portboard.dependencies.mod_ids(mods / "ffapi.jar") == {"fabric_api", "fabric_data_attachment_api_v1"}, "a jar's mod ids include those of the jars it nests")
+    blamed = portboard.gameload.named_in_errors(Path(tmp) / "result.json", mods, ["top.jar", "ffapi.jar"])
 check(list(blamed) == ["ffapi.jar"], f"a failing nested mod blames the jar that ships it: {blamed}")
 
 # A game proof runs the updates asked for, LOADER:FROM taking the next release; --mods picks pinned mods by slug, and one
 # that does not link is left out, as the whole run leaves it out.
-check(E.load_plan("neoforge:1.21.1:1.21.2, fabric:1.21.1") == ["neoforge:1.21.1:1.21.2", "fabric:1.21.1:1.21.2"], "an update is LOADER:FROM:TO, or LOADER:FROM for the next release")
+check(portboard.gameload.load_plan("neoforge:1.21.1:1.21.2, fabric:1.21.1") == ["neoforge:1.21.1:1.21.2", "fabric:1.21.1:1.21.2"], "an update is LOADER:FROM:TO, or LOADER:FROM for the next release")
 for bad in ("forge:1.21.1", "neoforge", "fabric:0.1"):
     try:
-        E.load_plan(bad)
+        portboard.gameload.load_plan(bad)
         check(False, f"{bad} is refused")
     except SystemExit:
         pass
 pinned = [{"slug": "chunky", "file": "Chunky.jar"}, {"slug": "clumps", "file": "Clumps.jar"}, {"slug": "jei", "file": "jei.jar"}]
 sys.stdout = io.StringIO()
 try:
-    picked, skipped = E.only_mods(["chunky--Chunky.jar", "jei--jei.jar"], pinned, ["chunky", "clumps"])
+    picked, skipped = portboard.gameload.only_mods(["chunky--Chunky.jar", "jei--jei.jar"], pinned, ["chunky", "clumps"])
     said = sys.stdout.getvalue()
 finally:
     sys.stdout = sys.__stdout__
@@ -416,46 +425,46 @@ check(picked == ["chunky--Chunky.jar"] and list(skipped) == ["clumps--Clumps.jar
 # why, and the other asked mods still start (fabric 1.20.4 pins fastquit and not sound, and stopped before any game).
 sys.stdout = io.StringIO()
 try:
-    picked, skipped = E.only_mods(["chunky--Chunky.jar"], pinned, ["chunky", "sound"])
+    picked, skipped = portboard.gameload.only_mods(["chunky--Chunky.jar"], pinned, ["chunky", "sound"])
 finally:
     sys.stdout = sys.__stdout__
 check(picked == ["chunky--Chunky.jar"] and skipped == {"sound": ["it is not among this release's pinned mods (bench/exposure/mods/)"]},
       f"a slug another update pins is not started on this one, and the rest start: {picked} {skipped}")
 with tempfile.TemporaryDirectory() as tmp:
-    real_pins = E.PINS
-    E.PINS = Path(tmp)
+    real_pins = portboard.settings.PINS
+    portboard.settings.PINS = Path(tmp)
     for release, slugs in (("1.0", ["fastquit"]), ("2.0", ["fastquit", "sound"])):
-        (E.PINS / f"fabric-{release}.json").write_text(json.dumps({"mods": [{"slug": x} for x in slugs]}), encoding="utf-8")
+        (portboard.settings.PINS / f"fabric-{release}.json").write_text(json.dumps({"mods": [{"slug": x} for x in slugs]}), encoding="utf-8")
     try:
-        check(E.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "sound"]) == ["fabric:1.0:2.0", "fabric:2.0:3.0"],
+        check(portboard.gameload.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "sound"]) == ["fabric:1.0:2.0", "fabric:2.0:3.0"],
               "a slug one update of a proof pins is asked of each")
         try:
-            E.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "nonesuch"])
+            portboard.gameload.load_plan("fabric:1.0:2.0,fabric:2.0:3.0", ["fastquit", "nonesuch"])
             check(False, "a slug no update pins stops the plan")
         except SystemExit as stop:
             check("nonesuch" in str(stop), f"the plan names the slug no update pins: {stop}")
     finally:
-        E.PINS = real_pins
+        portboard.settings.PINS = real_pins
 
 # --mods where no asked mod links keeps a receipt with no game verdicts and why each mod was not started, and fails with
 # that why: a proof that started no game never passes as one.
 with tempfile.TemporaryDirectory() as tmp:
-    real = E.ROOT, E.PINS, E.HOME
-    E.ROOT, E.PINS, E.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
-    E.PINS.mkdir()
-    (E.PINS / "neoforge-9.1.json").write_text(json.dumps({"mods": pinned}), encoding="utf-8")
+    real = portboard.settings.ROOT, portboard.settings.PINS, portboard.settings.HOME
+    portboard.settings.ROOT, portboard.settings.PINS, portboard.settings.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
+    portboard.settings.PINS.mkdir()
+    (portboard.settings.PINS / "neoforge-9.1.json").write_text(json.dumps({"mods": pinned}), encoding="utf-8")
     report = Path(tmp) / ".runs" / "exposure" / "jars-neoforge-9.1-9.2" / "report.json"
     report.parent.mkdir(parents=True)
     report.write_text(json.dumps({"mods": [{"mod": "chunky--Chunky.jar", "unlinked": []}, {"mod": "clumps--Clumps.jar", "unlinked": ["x"]}]}), encoding="utf-8")
     sys.stdout = io.StringIO()
     stopped = None
     try:
-        E.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
+        portboard.gameload.load("neoforge", "9.1", "9.2", False, ["clumps"], Path(tmp) / "out" / "load.json")
     except SystemExit as stop:
         stopped = str(stop)
     finally:
         sys.stdout = sys.__stdout__
-        E.ROOT, E.PINS, E.HOME = real
+        portboard.settings.ROOT, portboard.settings.PINS, portboard.settings.HOME = real
     kept = json.loads((Path(tmp) / "out" / "load.json").read_text(encoding="utf-8"))
 check(stopped == "no mod to start: clumps--Clumps.jar: it does not link after the port", f"a proof that starts no game fails with why: {stopped}")
 check(kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"] == {} and kept["scope"] == ["clumps"]
@@ -468,20 +477,20 @@ main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,
             "client": {"verdicts": {"a--a.jar": "loaded", "c--c.jar": "failed: z"}}}
 branch_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "scope": ["a", "b"], "mods": 2,
               "verdicts": {"a--a.jar": "loaded", "b--b.jar": "loaded"}, "client": {"verdicts": {"a--a.jar": "failed: crash", "b--b.jar": "loaded"}}}
-lines = E.compare_loads(main_run, branch_run)
+lines = portboard.gameload.compare_loads(main_run, branch_run)
 check("server: 1/2 the same; loaded 1 -> 2" in lines and "  b--b.jar: failed -> loaded" in lines and "  a--a.jar: loaded -> failed (failed: crash)" in lines
       and "  b--b.jar: not started -> loaded" in lines and not any("c--c.jar" in x for x in lines),
       f"compare names each verdict that moved; a mod a focused run was not asked for is not one: {lines}")
-check(E.compare_loads(main_run, main_run)[-1] == "no verdict moved", "a proof against itself moves nothing")
+check(portboard.gameload.compare_loads(main_run, main_run)[-1] == "no verdict moved", "a proof against itself moves nothing")
 # A full run that no longer starts a mod main loaded (it now stops at the link check) has moved, whatever its count.
 full = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "scope": "all", "mods": 2,
         "verdicts": {"a--a.jar": "loaded", "b--b.jar": "failed: its mixin x"}, "client": {"verdicts": {"a--a.jar": "loaded"}},
         "notStarted": {"c--c.jar": ["it does not link after the port"]}}
-lines = E.compare_loads(main_run, full)
+lines = portboard.gameload.compare_loads(main_run, full)
 check("  c--c.jar: client-only -> not started (it does not link after the port)" in lines and lines[-1] != "no verdict moved",
       f"a full run names each mod main started that it did not: {lines}")
 focused = {**full, "scope": ["a", "c"], "verdicts": {"a--a.jar": "loaded"}}
-lines = E.compare_loads(main_run, focused)
+lines = portboard.gameload.compare_loads(main_run, focused)
 check(any(x.startswith("  c--c.jar: client-only -> not started") for x in lines) and not any(x.startswith("  b--b.jar") for x in lines),
       f"a focused run names the asked mods it did not start, and no others: {lines}")
 
@@ -495,7 +504,7 @@ rows = [
     {"mod": "e.jar", "unlinked": []},
 ]
 said = {"call: g.C.only()V": {"game": "replaced"}, "call: g.W.gone()V": {"game": "redesigned"}}
-order = E.nearest(rows, {"e.jar": ["data id gone: minecraft:thing x (in data/e.json)"]}, said)
+order = portboard.board.nearest(rows, {"e.jar": ["data id gone: minecraft:thing x (in data/e.json)"]}, said)
 check([t["mod"] for t in order] == ["c.jar", "e.jar", "w.jar", "b.jar", "a.jar"],
       f"mods come in the order they finish, the ones the game answers first among equals: {[t['mod'] for t in order]}")
 check(order[0]["alsoFrees"] == ["d.jar"] and [t["modsDone"] for t in order] == [2, 3, 4, 5, 6] and [t["fixes"] for t in order] == [1, 2, 3, 5, 7],
@@ -503,7 +512,7 @@ check(order[0]["alsoFrees"] == ["d.jar"] and [t["modsDone"] for t in order] == [
 check([m["member"] for m in order[4]["members"]] == ["call: g.A.x()V", "call: g.A.y()V"] and order[0]["members"][0]["game"] == "replaced",
       "a turn lists only what earlier turns left, each reference once with what the game did about it")
 longer = {"mod": "b.jar", "unlinked": [f"b.jar: call: g.B.m{i}()V" for i in range(5)]}
-check([t["mod"] for t in E.nearest([rows[0], longer], None, {})] == ["a.jar", "b.jar"], "a mod with more left than another comes after it")
+check([t["mod"] for t in portboard.board.nearest([rows[0], longer], None, {})] == ["a.jar", "b.jar"], "a mod with more left than another comes after it")
 
 # The same list by type of break: a way to handle a type finishes every mod only that type holds back.
 kinds = [
@@ -514,30 +523,30 @@ kinds = [
     {"mod": "e.jar", "unlinked": []},
 ]
 verdicts = {"call: g.X.one()V": {"game": "linked"}, "call: g.Y.two()V": {"game": "linked"}, "call: g.Z.three()V": {"game": "linked"}, "field: g.F.gone": {"game": "split"}}
-table = E.by_type(kinds, None, verdicts)
+table = portboard.board.by_type(kinds, None, verdicts)
 check([(t["type"], t["finishes"], t["mods"], t["references"]) for t in table] == [("call, game: linked", 2, 3, 3), ("field, game: split", 1, 2, 1)],
       f"a type counts the mods it alone holds back, the mods that have it and its references: {table}")
 check(table[0]["examples"][0] == "call: g.X.one()V", "a type's first example is its most-used reference")
 verdicts["call: g.Y.two()V"] = {"game": "redesigned"}
-check(next(t for t in E.by_type(kinds, None, verdicts) if t["type"] == "call, game: linked")["finishes"] == 1,
+check(next(t for t in portboard.board.by_type(kinds, None, verdicts) if t["type"] == "call, game: linked")["finishes"] == 1,
       "a mod held by two types is finished by neither alone")
 verdicts["call: g.Z.three()V"] = {"game": "linked", "part": "library"}
-check([t["type"] for t in E.by_type(kinds, None, verdicts) if t["examples"] == ["call: g.Z.three()V"]] == ["call (library), game: linked"],
+check([t["type"] for t in portboard.board.by_type(kinds, None, verdicts) if t["examples"] == ["call: g.Z.three()V"]] == ["call (library), game: linked"],
       "a reference into a library the release ships is its own type, apart from the game's")
 
 # Jumps: the ports people ask for, from each family's most-used release to the next family's and to the newest.
 with tempfile.TemporaryDirectory() as tmp:
-    E.INDEX = Path(tmp) / "index.json"
-    E.INDEX.write_text(json.dumps({
+    portboard.settings.INDEX = Path(tmp) / "index.json"
+    portboard.settings.INDEX.write_text(json.dumps({
         "allVersions": [{"id": v, "status": "indexed"} for v in ("1.0", "1.1", "2.0", "2.1", "3.0")],
         "families": {"list": [{"id": "1", "versions": ["1.0", "1.1"], "hub": "1.0", "mods": {"1.0": 9, "1.1": 2}},
                               {"id": "2", "versions": ["2.0", "2.1"], "hub": "2.1", "mods": {"2.0": 1, "2.1": 5}},
                               {"id": "3", "versions": ["3.0"], "hub": "3.0", "mods": {"3.0": 4}}]}}), encoding="utf-8")
-    E.FIRST = {"fabric": "1.0", "neoforge": "2.0"}
-    check(E.jumps("fabric") == [("1.0", "2.1"), ("1.0", "3.0")],
-          f"each hub to the next hub, and the most-used release to the newest, without the pairs one update apart: {E.jumps('fabric')}")
-    check(E.jumps("neoforge") == [], "a loader read from a later release has only its own hubs, and a pair one update apart is no jump")
-    check(E.big("1.1", "2.0") and not E.big("1.0", "1.1"), "an update into another family is a big one")
+    portboard.settings.FIRST = {"fabric": "1.0", "neoforge": "2.0"}
+    check(portboard.gamereleases.jumps("fabric") == [("1.0", "2.1"), ("1.0", "3.0")],
+          f"each hub to the next hub, and the most-used release to the newest, without the pairs one update apart: {portboard.gamereleases.jumps('fabric')}")
+    check(portboard.gamereleases.jumps("neoforge") == [], "a loader read from a later release has only its own hubs, and a pair one update apart is no jump")
+    check(portboard.gamereleases.big("1.1", "2.0") and not portboard.gamereleases.big("1.0", "1.1"), "an update into another family is a big one")
 
     def summary(loader, frm, to, link, turns=()):
         return {"loader": loader, "from": frm, "to": to, "modsRead": 10, "modsThatLink": link, "modsThatLinkAndData": link, "top": [],
@@ -550,7 +559,7 @@ with tempfile.TemporaryDirectory() as tmp:
         (runs / f"{s['loader']}-{s['from']}-{s['to']}.json").write_text(json.dumps(s), encoding="utf-8")
     sys.stdout = io.StringIO()
     try:
-        table = E.join(runs)
+        table = portboard.board.join(runs)
     finally:
         sys.stdout = sys.__stdout__
     total = table["total"]
@@ -567,7 +576,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (runs / "fabric-1.0-1.1.json").write_text(json.dumps(typed), encoding="utf-8")
     sys.stdout = io.StringIO()
     try:
-        table = E.join(runs)
+        table = portboard.board.join(runs)
     finally:
         sys.stdout = sys.__stdout__
     check(table["typesNotRead"] == ["fabric 1.1 -> 2.0"] and [(t["type"], t["finishes"], t["updates"]) for t in table["types"]] == [("call, game: linked", 2, 1)],
@@ -580,31 +589,31 @@ with tempfile.TemporaryDirectory() as tmp:
     (runs / "fabric-1.1-2.0.json").write_text(json.dumps(summary("fabric", "1.1", "2.0", 6)), encoding="utf-8")
     sys.stdout = io.StringIO()
     try:
-        after = E.join(runs)
-        lines = E.compare(before, after)
-        same = E.compare(after, after)
+        after = portboard.board.join(runs)
+        lines = portboard.mainrecord.compare(before, after)
+        same = portboard.mainrecord.compare(after, after)
     finally:
         sys.stdout = sys.__stdout__
     check(lines[0] == "every update: 14 -> 16 of 20 (+2)" and lines[1] == "big updates: 4 -> 6 of 10 (+2)" and "updates higher: fabric 1.1 -> 2.0 4 -> 6" in lines,
           f"compare names the counts and the update that moved: {lines}")
-    check(same[E.HEADS:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
+    check(same[portboard.mainrecord.HEADS:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
     board = Path(tmp) / "scoreboard"
     board.mkdir()
     measures = board / "points.json"
     measures.write_text(json.dumps({m: [{"date": "2026-01-01", "value": 14 if m.endswith("every-update") else 4 if m.endswith("big-updates") else 1, "source": "x"}]
-                                    for m in E.MAIN_MEASURES}), encoding="utf-8")
+                                    for m in portboard.mainrecord.MAIN_MEASURES}), encoding="utf-8")
     main_table = board / "all.json"
     main_table.write_text(json.dumps(before), encoding="utf-8")
     (Path(tmp) / "sweep.json").write_text(json.dumps(after), encoding="utf-8")
-    repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
-    head = os.popen(f'git -C "{E.ROOT}" rev-parse HEAD').read().strip()
+    repo, portboard.settings.ROOT = portboard.settings.ROOT, Path(__file__).resolve().parent.parent
+    head = os.popen(f'git -C "{portboard.settings.ROOT}" rev-parse HEAD').read().strip()
     sys.stdout = io.StringIO()
     try:
-        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/1", board, "2026-02-01")
-        E.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/2", board, "2026-02-02")
+        portboard.mainrecord.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/1", board, "2026-02-01")
+        portboard.mainrecord.record_main(Path(tmp) / "sweep.json", head, "https://example.invalid/runs/2", board, "2026-02-02")
     finally:
         sys.stdout = sys.__stdout__
-        E.ROOT = repo
+        portboard.settings.ROOT = repo
     saved = json.loads(main_table.read_text(encoding="utf-8"))
     points = json.loads(measures.read_text(encoding="utf-8"))
     every = points["port.jar-links.every-update"]
@@ -615,13 +624,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check([p["value"] for p in points["port.jar-links.newest"]] == [1, 1, 1] and points["port.jar-links.big-updates"][1]["value"] == 6, "each measure reads its own total")
     # Sweeps of main may finish out of order: an older commit's table never replaces a newer one's.
     parent = os.popen(f'git -C "{Path(__file__).resolve().parent.parent}" rev-parse HEAD~1').read().strip()
-    repo, E.ROOT = E.ROOT, Path(__file__).resolve().parent.parent
+    repo, portboard.settings.ROOT = portboard.settings.ROOT, Path(__file__).resolve().parent.parent
     sys.stdout = io.StringIO()
     try:
-        late = E.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", board, "2026-02-03")
+        late = portboard.mainrecord.record_main(Path(tmp) / "sweep.json", parent, "https://example.invalid/runs/0", board, "2026-02-03")
     finally:
         sys.stdout = sys.__stdout__
-        E.ROOT = repo
+        portboard.settings.ROOT = repo
     check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
           and len(json.loads(measures.read_text(encoding="utf-8"))["port.jar-links.every-update"]) == 3, "a sweep of an older commit that finishes later is not recorded")
     check((board / "any-version.md").read_text(encoding="utf-8").startswith("# Any mod, any version") and len(points["port.jar-links.any-version"]) == 3,
@@ -630,17 +639,17 @@ with tempfile.TemporaryDirectory() as tmp:
 # Any mod, any version: the most-used release's mods to every other release, back as well as forward. A mod counts only
 # when its port links on every one; a release whose job did not run, or where the mod was unreadable, is not reached.
 with tempfile.TemporaryDirectory() as tmp:
-    E.INDEX = Path(tmp) / "index.json"
-    E.INDEX.write_text(json.dumps({
+    portboard.settings.INDEX = Path(tmp) / "index.json"
+    portboard.settings.INDEX.write_text(json.dumps({
         "allVersions": [{"id": v, "status": "indexed"} for v in ("1.0", "1.1", "2.0", "2.1")],
         "families": {"list": [{"id": "1", "versions": ["1.0", "1.1"], "hub": "1.1", "mods": {"1.1": 9}},
                               {"id": "2", "versions": ["2.0", "2.1"], "hub": "2.0", "mods": {"2.0": 3}}]}}), encoding="utf-8")
-    E.FIRST = {"fabric": "1.0", "neoforge": "2.0"}
-    pins, E.PINS = E.PINS, Path(tmp) / "pins"
-    E.PINS.mkdir()
-    (E.PINS / "neoforge-2.0.json").write_text(json.dumps({"mods": [{"slug": "e", "file": "e.jar"}, {"slug": "f", "file": "f.jar"}]}), encoding="utf-8")
-    check(E.any_version("fabric") == [("1.1", "1.0"), ("1.1", "2.0"), ("1.1", "2.1")] and ("fabric", "1.1", "1.0") in
-          {("fabric", *p) for p in E.runs("fabric")}, f"the most-used release goes to every other release, the older ones too: {E.any_version('fabric')}")
+    portboard.settings.FIRST = {"fabric": "1.0", "neoforge": "2.0"}
+    pins, portboard.settings.PINS = portboard.settings.PINS, Path(tmp) / "pins"
+    portboard.settings.PINS.mkdir()
+    (portboard.settings.PINS / "neoforge-2.0.json").write_text(json.dumps({"mods": [{"slug": "e", "file": "e.jar"}, {"slug": "f", "file": "f.jar"}]}), encoding="utf-8")
+    check(portboard.gamereleases.any_version("fabric") == [("1.1", "1.0"), ("1.1", "2.0"), ("1.1", "2.1")] and ("fabric", "1.1", "1.0") in
+          {("fabric", *p) for p in portboard.gamereleases.runs("fabric")}, f"the most-used release goes to every other release, the older ones too: {portboard.gamereleases.any_version('fabric')}")
 
     def ported(frm, to, verdicts, unreadable=()):
         return {"loader": "fabric", "from": frm, "to": to, "modsRead": len(verdicts), "modsThatLink": 0, "top": [],
@@ -656,14 +665,14 @@ with tempfile.TemporaryDirectory() as tmp:
         (runs / f"fabric-{s['from']}-{s['to']}.json").write_text(json.dumps(s), encoding="utf-8")
     sys.stdout = io.StringIO()
     try:
-        joined = E.join(runs)
+        joined = portboard.board.join(runs)
         a = joined["anyVersion"]
     finally:
         sys.stdout = sys.__stdout__
-        E.PINS = pins
+        portboard.settings.PINS = pins
     # Every pair's row names the mods held back by type, so a branch reads main's row for any pair instead of porting it.
-    row = E.table_row(joined, "fabric", "1.1", "2.1")
-    check(row is not None and row["heldBy"] == {linked: ["c"], field: ["c"]} and E.table_row(joined, "fabric", "1.1", "1.0")["heldBy"] == {split: ["b"]},
+    row = portboard.mainrecord.table_row(joined, "fabric", "1.1", "2.1")
+    check(row is not None and row["heldBy"] == {linked: ["c"], field: ["c"]} and portboard.mainrecord.table_row(joined, "fabric", "1.1", "1.0")["heldBy"] == {split: ["b"]},
           f"an any-version pair has a row in main's table, with the mods held back by type: {row}")
     fab, neo = a["loaders"]["fabric"], a["loaders"]["neoforge"]
     check((a["every"], a["mods"]) == (1, 6) and a["everywhere"]["fabric"] == ["a"],
@@ -685,26 +694,26 @@ with tempfile.TemporaryDirectory() as tmp:
         (folder / name).write_bytes(b"x" * (1 + (i * 37) % 97) * 1000)
     (folder / "big.jar").write_bytes(b"x" * 2_000_000)
     given = [folder / "big.jar"] + [folder / n for n in names]
-    E.CORES = 16
-    dealt = E.piles(given)
+    portboard.settings.CORES = 16
+    dealt = portboard.porter.piles(given)
     sizes = [sum(j.stat().st_size for j in pile) for pile in dealt]
     check(len(dealt) == 4 and sorted(j.name for pile in dealt for j in pile) == sorted(j.name for j in given), "every jar is in exactly one of four piles")
     check(max(sizes) - min(sizes) <= 2_000_000 and [folder / "big.jar"] in [pile[:1] for pile in dealt],
           f"the piles weigh about the same, the biggest jar dealt first: {sizes}")
-    E.CORES = 4
-    check(len(E.piles(given)) == 1, "a 4-processor runner has none to spare: one pile")
-    E.CORES = 64
-    check(len(E.piles(given)) == 151 // E.PILE and len(E.piles(given[:5])) == 1, "a pile is not made for a handful of jars, however many processors there are")
+    portboard.settings.CORES = 4
+    check(len(portboard.porter.piles(given)) == 1, "a 4-processor runner has none to spare: one pile")
+    portboard.settings.CORES = 64
+    check(len(portboard.porter.piles(given)) == 151 // portboard.settings.PILE and len(portboard.porter.piles(given[:5])) == 1, "a pile is not made for a handful of jars, however many processors there are")
     tool = folder / "tool.py"
     tool.write_text("import json, sys\nargs = sys.argv[1:]\nat = args.index('--report')\njars = args[at + 2:]\n"
                     "if any('mod013' in j for j in jars) and 'fail' in args:\n    sys.exit(3)\n"
                     "json.dump({'mods': [{'mod': j.replace(chr(92), '/').rsplit('/', 1)[1], 'heap': args[0]} for j in jars]}, open(args[at + 1], 'w'))\n", encoding="utf-8")
-    E.CORES = 16
-    rows = E.side_by_side([sys.executable, str(tool), "-Xmx10g"], given, folder / "report.json")
+    portboard.settings.CORES = 16
+    rows = portboard.porter.side_by_side([sys.executable, str(tool), "-Xmx10g"], given, folder / "report.json")
     check([r["mod"] for r in rows] == [j.name for j in given], "rows come back in the order the jars were given, each once")
     check(not list(folder.glob("report.*.json")), "the piles' own reports are removed")
     try:
-        E.side_by_side([sys.executable, str(tool), "fail"], given, folder / "report.json")
+        portboard.porter.side_by_side([sys.executable, str(tool), "fail"], given, folder / "report.json")
         failed = False
     except SystemExit:
         failed = True
@@ -714,9 +723,9 @@ with tempfile.TemporaryDirectory() as tmp:
 # scoreboard after every edit, and porting every mod again is most of a run.
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
-    saved = (E.ROOT, E.HOME, E.jarport, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops,
-             E.registry_reports, E.jarport_heap)
-    E.ROOT, E.HOME = root, root / "home"
+    saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
+             portboard.porter.registry_reports, portboard.porter.jarport_heap)
+    portboard.settings.ROOT, portboard.settings.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     fixes = root / "knowledge" / "fixes.json"
     fixes.write_text("[]", encoding="utf-8")
@@ -744,15 +753,15 @@ with tempfile.TemporaryDirectory() as tmp:
     # A port from 1.0 to 1.2 stops at 1.1, as JarPort plans it when 1.1 -> 1.2 has stand-ins: each step has a map of its own.
     step_routes = {("1.0", "1.1"): route, ("1.1", "1.2"): root / "route-1.1-1.2.json"}
     step_routes[("1.1", "1.2")].write_text("{}", encoding="utf-8")
-    E.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
-    E.jarport, E.route_maps, E.jar_tools, E.compile_tools = fake_jarport, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
-    E.jarport_heap = lambda jars: 1024
-    E.tools_classes_key, E.platform_key, E.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
+    portboard.porter.stops = lambda loader, frm, to: ["1.0", "1.1", "1.2"] if to == "1.2" else [frm, to]
+    portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools = fake_jarport, (lambda updates, *a: [step_routes[u] for u in updates]), (lambda: "classes"), (lambda: "classes")
+    portboard.porter.jarport_heap = lambda jars: 1024
+    portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version = (lambda: "tools-1"), (lambda loader, r: b"platform"), (lambda: "java 25")
     asked_reports = []
-    E.registry_reports = asked_reports.append
+    portboard.porter.registry_reports = asked_reports.append
 
     def port():
-        return E.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+        return portboard.porter.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
 
     first = port()
     again = port()
@@ -768,7 +777,7 @@ with tempfile.TemporaryDirectory() as tmp:
         standin.write_text("package mmt.standin.a; public final class B {}", encoding="utf-8")
 
     def report_of(version):
-        return E.HOME / "registries" / f"{version}.json"
+        return portboard.settings.HOME / "registries" / f"{version}.json"
 
     def write_report():
         report_of("1.1").parent.mkdir(parents=True, exist_ok=True)
@@ -777,14 +786,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check(asked_reports and asked_reports[0] == ["1.0", "1.1"], f"the port asks for each release's registry report first: {asked_reports}")
     for change in (lambda: fixes.write_text('[{"id": "x"}]', encoding="utf-8"), lambda: route.write_text('{"rewrites": []}', encoding="utf-8"),
                    write_standin, lambda: standin.write_text("package mmt.standin.a; public final class B { }", encoding="utf-8"),
-                   lambda: setattr(E, "tools_classes_key", lambda: "tools-2"), lambda: setattr(E, "platform_key", lambda loader, r: b"other loader"),
-                   lambda: setattr(E, "java_version", lambda: "java 26"), write_report, lambda: report_of("1.1").write_text('{"minecraft:item": ["minecraft:b"]}', encoding="utf-8")):
+                   lambda: setattr(portboard.porter, "tools_classes_key", lambda: "tools-2"), lambda: setattr(portboard.cachekeys, "platform_key", lambda loader, r: b"other loader"),
+                   lambda: setattr(portboard.porter, "java_version", lambda: "java 26"), write_report, lambda: report_of("1.1").write_text('{"minecraft:item": ["minecraft:b"]}', encoding="utf-8")):
         runs = len(ported)
         change()
         port()
         check(len(ported) == runs + 1 and ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], f"a change to what every port reads ports every mod again: {ported[runs:]}")
     def long_port():
-        return E.jar_port("neoforge", "1.0", "1.2", jars, root / "out", root / "report.json", cache=True)
+        return portboard.porter.jar_port("neoforge", "1.0", "1.2", jars, root / "out", root / "report.json", cache=True)
 
     long_port()
     target = commands[-1]["ports"][0]
@@ -793,20 +802,20 @@ with tempfile.TemporaryDirectory() as tmp:
     # Ports from one release to several go to one JarPort, which ports the steps they share once; a mod kept for one
     # target and not the other is ported to both, and the kept port must be what porting it again gives.
     runs = len(ported)
-    both = E.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+    both = portboard.porter.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
     check(len(ported) == runs and sorted(both) == ["1.1", "1.2"] and both["1.2"]["linked"] == 1,
           f"two targets whose ports were kept are read, not ported: {ported[runs:]}")
     jars[2].write_bytes(b"jar 2, edited")
-    E.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
-    both = E.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+    portboard.porter.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+    both = portboard.porter.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
     check(ported[-1] == ["m2.jar"] and [t["to"] for t in commands[-1]["ports"]] == ["1.1", "1.2"] and both["1.1"]["verified"] == 1,
           f"a mod with no kept port to one target goes to one JarPort with every target, and its kept port to the other is checked: {commands[-1]}")
     answer["m2.jar"] = ["field: a.B.d"]
     jars[2].write_bytes(b"jar 2, edited again")
-    E.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
+    portboard.porter.jar_port("neoforge", "1.0", "1.1", jars, root / "out", root / "report.json", cache=True)
     answer["m2.jar"] = ["field: a.B.e"]
     try:
-        E.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
+        portboard.porter.jar_ports("neoforge", "1.0", [("1.1", root / "out-1.1", root / "report-1.1.json"), ("1.2", root / "out-1.2", root / "report-1.2.json")], jars, cache=True)
         caught = False
     except SystemExit as failed:
         caught = "m2.jar" in str(failed) and "1.1" in str(failed)
@@ -820,7 +829,7 @@ with tempfile.TemporaryDirectory() as tmp:
         change()
         long_port()
         check(len(ported) == runs + 1, f"a change to a later step's stand-ins or map ports the long jump's mods again: {ported[runs:]}")
-    E.VERIFY = True
+    portboard.settings.VERIFY = True
     port()
     check(ported[-1] == ["m0.jar", "m1.jar", "m2.jar"], "--verify ports every mod although each has a kept port")
     answer["m2.jar"] = []
@@ -830,13 +839,13 @@ with tempfile.TemporaryDirectory() as tmp:
     except SystemExit as failed:
         caught = "m2.jar" in str(failed)
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
-    (E.ROOT, E.HOME, E.jarport, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.VERIFY, E.stops,
-     E.registry_reports, E.jarport_heap) = saved
+    (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
+     portboard.porter.registry_reports, portboard.porter.jarport_heap) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}
-check(E.verdicts_moved(before, after) == {"newly link": ["a"], "no longer link": ["b"], "other references left": ["c"], "link, port changed": ["d"], "same": 1},
-      f"each mod both runs read is named once by how its verdict moved: {E.verdicts_moved(before, after)}")
+check(portboard.board.verdicts_moved(before, after) == {"newly link": ["a"], "no longer link": ["b"], "other references left": ["c"], "link, port changed": ["d"], "same": 1},
+      f"each mod both runs read is named once by how its verdict moved: {portboard.board.verdicts_moved(before, after)}")
 
 # With no run of the update here, jars compares with main's row for it, read from the generated branch: 53 of about 293
 # agent runs ported main's 150 mods again only to have a before. The table is the newest one of a commit the branch has.
@@ -861,14 +870,14 @@ def fake_git(*a):
     raise AssertionError(a)
 
 
-E.MAIN_TABLES.clear()
-main = E.main_table("HEAD", git=fake_git, fetch=False)
+portboard.mainrecord.MAIN_TABLES.clear()
+main = portboard.mainrecord.main_table("HEAD", git=fake_git, fetch=False)
 check(main[0]["commit"] == "c2" and "c2" in main[1] and "4 main commits before" in main[1],
       f"main's table is the newest of a commit the branch has, saying how far behind the branch's base it is: {main[1]}")
-E.MAIN_TABLES.clear()
-check(E.main_table("HEAD", git=lambda *a: None, fetch=False)[0] is None, "with no generated branch there is no main table, and no failure")
-E.MAIN_TABLES.clear()
-check(E.main_table("HEAD", git=lambda *a: "true" if a[0] == "rev-parse" else fake_git(*a), fetch=False)[0] is None,
+portboard.mainrecord.MAIN_TABLES.clear()
+check(portboard.mainrecord.main_table("HEAD", git=lambda *a: None, fetch=False)[0] is None, "with no generated branch there is no main table, and no failure")
+portboard.mainrecord.MAIN_TABLES.clear()
+check(portboard.mainrecord.main_table("HEAD", git=lambda *a: "true" if a[0] == "rev-parse" else fake_git(*a), fetch=False)[0] is None,
       "a shallow clone (the cloud sweep's) reads no table: it cannot tell which commits it has")
 summary = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "modsRead": 3, "modsThatLink": 1, "links": ["a--1.jar"],
            "verdicts": {"a--1.jar": {"left": [], "types": []}, "b--1.jar": {"left": ["x"], "types": ["call, game: linked"]},
@@ -876,30 +885,30 @@ summary = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "modsRead": 3
 with tempfile.TemporaryDirectory() as tmp:
     work = Path(tmp) / "jars-neoforge-1.21.1-1.21.2"
     work.mkdir()
-    what, moved = E.against(work, None, summary, main=main)
+    what, moved = portboard.mainrecord.against(work, None, summary, main=main)
     check(moved == {"newly link": ["a--1.jar"], "no longer link": ["b--1.jar"], "other types left": ["c--1.jar"], "same": 0} and "c2" in what,
           f"a run with none before here is compared with main's row for the update: {what} {moved}")
     (work / "before.json").write_text(json.dumps({"verdicts": {m: {"left": [], "ported": "1"} for m in summary["verdicts"]}}), encoding="utf-8")
-    check(E.against(work, None, summary, main=main)[1]["no longer link"] == ["b--1.jar", "c--1.jar"], "a run before here is what a run is compared with")
-    check(E.against(Path(tmp) / "jars-neoforge-1.21.1-1.21.3", None, {**summary, "to": "1.21.3"}, main=main) == (None, None),
+    check(portboard.mainrecord.against(work, None, summary, main=main)[1]["no longer link"] == ["b--1.jar", "c--1.jar"], "a run before here is what a run is compared with")
+    check(portboard.mainrecord.against(Path(tmp) / "jars-neoforge-1.21.1-1.21.3", None, {**summary, "to": "1.21.3"}, main=main) == (None, None),
           "an update main's table has no row for is compared with nothing")
     # --type and --mods are the narrow run, and need no whole run here first: main's row says which mods a type holds.
     pinned = [Path(f"{s}--1.jar") for s in "abcd"]
-    check([p.name for p in E.narrowed(pinned, work, "class gone", main=main)] == ["c--1.jar"], "--type picks the mods main's row holds back with it")
-    check([p.name for p in E.narrowed(pinned, work, mods=["d", "a"], main=main)] == ["a--1.jar", "d--1.jar"], "--mods picks the slugs asked for")
-    check(E.narrowed(pinned, work, main=main) == pinned, "with neither, every mod is ported")
+    check([p.name for p in portboard.mainrecord.narrowed(pinned, work, "class gone", main=main)] == ["c--1.jar"], "--type picks the mods main's row holds back with it")
+    check([p.name for p in portboard.mainrecord.narrowed(pinned, work, mods=["d", "a"], main=main)] == ["a--1.jar", "d--1.jar"], "--mods picks the slugs asked for")
+    check(portboard.mainrecord.narrowed(pinned, work, main=main) == pinned, "with neither, every mod is ported")
     for bad in ({"kind": "no such type"}, {"mods": ["zzz"]}):
         try:
-            E.narrowed(pinned, work, main=main, **bad)
+            portboard.mainrecord.narrowed(pinned, work, main=main, **bad)
             caught = False
         except SystemExit:
             caught = True
         check(caught, f"a narrow run that picks nothing says so instead of porting nothing: {bad}")
     (work / "last.json").write_text(json.dumps({"verdicts": {"d--1.jar": {"types": ["class gone, game: linked"]}}}), encoding="utf-8")
-    check([p.name for p in E.narrowed(pinned, work, "class gone", main=main)] == ["d--1.jar"], "the last whole run here comes before main's row")
-    check("--type 'call, game: linked' ports the 2 mods" in E.narrow_hint("neoforge", "1.21.1", "1.21.2", 4, main=main),
+    check([p.name for p in portboard.mainrecord.narrowed(pinned, work, "class gone", main=main)] == ["d--1.jar"], "the last whole run here comes before main's row")
+    check("--type 'call, game: linked' ports the 2 mods" in portboard.mainrecord.narrow_hint("neoforge", "1.21.1", "1.21.2", 4, main=main),
           "a run of every mod says how to run narrow, with the type that holds the most mods back in main's row")
-    line = E.compare_update(summary, main=main)
+    line = portboard.mainrecord.compare_update(summary, main=main)
     check(line.startswith("neoforge 1.21.1 -> 1.21.2: 1/3 link, main 1/3 (+0; main's table at c2") and "newly link a--1.jar" in line and "no longer link b--1.jar" in line,
           f"one update's summary against main's row, on one line: {line}")
 
@@ -920,10 +929,10 @@ with tempfile.TemporaryDirectory() as tmp:
             raise AssertionError("a mod was started without the jar it needs")
         return {"result": {"client": {"opened": not here & set(bad)}}}, None
 
-    blamed = E.first_failing(pack, names, "fabric", start, "DisconnectedScreen")
+    blamed = portboard.gameload.first_failing(pack, names, "fabric", start, "DisconnectedScreen")
     check(list(blamed) == ["krypton.jar"] and len(seen) <= 4 and sorted(p.name for p in (pack / "mods").glob("*.jar")) == sorted(names),
           f"halving names the mod a silent client fails on, in few starts, and puts every jar back: {blamed} {len(seen)}")
-    check(E.first_failing(pack, names, "fabric", lambda: ({"result": {"client": {"opened": False}}}, None), "x") == {},
+    check(portboard.gameload.first_failing(pack, names, "fabric", lambda: ({"result": {"client": {"opened": False}}}, None), "x") == {},
           "a client that fails with no mod at all blames none")
 
 # The client proof gives every mod asked for a verdict, however many libraries fail on the way: two libraries failing on
@@ -950,11 +959,11 @@ with tempfile.TemporaryDirectory() as tmp:
             return {"result": {"client": {"opened": True}, "findings": findings}}
         return run
 
-    client = E.client_starts("fabric", "2.0", server, ["mod.jar"], ["lib.jar", "lib1.jar", "lib2.jar", "api.jar"], {"api.jar"},
+    client = portboard.gameload.client_starts("fabric", "2.0", server, ["mod.jar"], ["lib.jar", "lib1.jar", "lib2.jar", "api.jar"], {"api.jar"},
                              run=failing(["lib1.jar", "lib2.jar"]))
     check(client["verdicts"] == {"mod.jar": "loaded"},
           f"a mod asked for keeps its verdict when libraries fail start after start: {client['verdicts']}")
-    client = E.client_starts("fabric", "2.0", server, ["mod.jar", "bad.jar"], ["lib.jar", "api.jar"], {"api.jar"},
+    client = portboard.gameload.client_starts("fabric", "2.0", server, ["mod.jar", "bad.jar"], ["lib.jar", "api.jar"], {"api.jar"},
                              run=failing(["bad.jar"], java=["lib.jar"]))
     check(client["verdicts"].get("mod.jar") == "loaded" and client["verdicts"].get("bad.jar", "").startswith("failed")
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
@@ -971,12 +980,12 @@ def class_file(major, body=b""):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    real_home = E.HOME
-    E.HOME = Path(tmp) / "home"
+    real_home = portboard.settings.HOME
+    portboard.settings.HOME = Path(tmp) / "home"
     try:
         for version, java in {"1.15": 8, "1.20.4": 17, "1.21": 21}.items():
-            (E.HOME / "versions").mkdir(parents=True, exist_ok=True)
-            (E.HOME / "versions" / f"{version}.json").write_text(json.dumps({"javaVersion": {"majorVersion": java}}), encoding="utf-8")
+            (portboard.settings.HOME / "versions").mkdir(parents=True, exist_ok=True)
+            (portboard.settings.HOME / "versions" / f"{version}.json").write_text(json.dumps({"javaVersion": {"majorVersion": java}}), encoding="utf-8")
         folder = Path(tmp) / "mods"
         folder.mkdir()
         mixins = json.dumps({"package": "m.mixin", "mixins": ["LivingMixin"], "server": ["sub.ServerMixin"]})
@@ -1004,27 +1013,27 @@ with tempfile.TemporaryDirectory() as tmp:
         # A library starts nothing of its own: the mods that use it load its classes, so every one counts.
         (folder / "library.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "lib"}), "l/Api.class": class_file(52), "l/Impl.class": class_file(61)}))
         names = ["mixin.jar", "server-mixin.jar", "client-entry.jar", "multi-loader.jar", "data.jar", "bundle.jar", "library.jar"]
-        server = E.newer_java(folder, names, "fabric", "1.15", "server")
+        server = portboard.javalevels.newer_java(folder, names, "fabric", "1.15", "server")
         check(sorted(server) == ["bundle.jar", "library.jar", "mixin.jar", "server-mixin.jar"] and "module.jar!api.WorldMixin" in server["bundle.jar"]
               and "l.Impl" in server["library.jar"],
               f"on a 1.15 server a nested module's Java 17 mixin and a Java 17 library class count: {server}")
-        check(E.newer_java(folder, ["gated.jar"], "fabric", "1.21", "server") == {},
+        check(portboard.javalevels.newer_java(folder, ["gated.jar"], "fabric", "1.21", "server") == {},
               "a nested module asking a newer Java than the release's, and a nested jar no loader reads, are not loaded")
         check(sorted(server) == ["bundle.jar", "library.jar", "mixin.jar", "server-mixin.jar"] and server["mixin.jar"].startswith("built for Java 17; Minecraft 1.15 runs on Java 8")
               and "m.mixin.LivingMixin" in server["mixin.jar"],
               f"on a 1.15 server, the jars whose mixins need Java 17 are named with both Javas and the class: {server}")
-        client = E.newer_java(folder, names[:5], "fabric", "1.15", "client")
+        client = portboard.javalevels.newer_java(folder, names[:5], "fabric", "1.15", "client")
         check(sorted(client) == ["client-entry.jar", "mixin.jar"], f"in a 1.15 client, a too-new client entrypoint counts and a server mixin does not: {client}")
-        check(E.newer_java(folder, names, "fabric", "1.20.4", "client") == {}, "on 1.20.4 (Java 17) the same jars all start")
+        check(portboard.javalevels.newer_java(folder, names, "fabric", "1.20.4", "client") == {}, "on 1.20.4 (Java 17) the same jars all start")
         (folder / "neo.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="neo"\n',
                                               "n/Neo.class": class_file(69, b"Lnet/neoforged/fml/common/Mod;"), "n/Other.class": class_file(52)}))
         (folder / "neo21.jar").write_bytes(jar({"META-INF/neoforge.mods.toml": 'modLoader="javafml"\n[[mods]]\nmodId="neo21"\n',
                                                 "n/Neo.class": class_file(65, b"Lnet/neoforged/fml/common/Mod;"), "n/Later.class": class_file(69)}))
-        found = E.newer_java(folder, ["neo.jar", "neo21.jar"], "neoforge", "1.21", "server")
+        found = portboard.javalevels.newer_java(folder, ["neo.jar", "neo21.jar"], "neoforge", "1.21", "server")
         check(list(found) == ["neo.jar"] and "Java 25" in found["neo.jar"],
               f"on NeoForge 1.21 (Java 21) a @Mod class built for Java 25 is named, and a Java 25 class nothing loads at start is not: {found}")
     finally:
-        E.HOME = real_home
+        portboard.settings.HOME = real_home
 # The link check reads the same classes, on both sides, of the jar the port wrote: the port lowers a mod's classes to the
 # release's Java (Downgrade), so a mod built for a newer Java links once lowered, and does not when a class the JVM loads
 # of the ported jar still needs the newer Java. A nested mod counts; a multi-release jar's newer copies, module-info and
@@ -1058,20 +1067,20 @@ with tempfile.TemporaryDirectory() as tmp:
                                               encoding="utf-8")
         return 0
 
-    saved = (E.ROOT, E.HOME, E.jarport, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java,
-             E.registry_reports, E.jarport_heap)
-    E.ROOT, E.HOME = root, root / "home"
+    saved = (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
+             portboard.porter.registry_reports, portboard.porter.jarport_heap)
+    portboard.settings.ROOT, portboard.settings.HOME = root, root / "home"
     (root / "knowledge").mkdir()
     (root / "knowledge" / "fixes.json").write_text("[]", encoding="utf-8")
     (root / "route.json").write_text("{}", encoding="utf-8")
-    E.jarport, E.route_maps, E.jar_tools, E.compile_tools = fake_jarport, (lambda updates, *a: [root / "route.json"]), (lambda: "classes"), (lambda: "classes")
-    E.tools_classes_key, E.platform_key, E.java_version, E.stops = (lambda: "tools"), (lambda loader, r: b"platform"), (lambda: "java 25"), (lambda loader, frm, to: [frm, to])
-    E.release_java = lambda v: {"old": 17, "new": 21}[v]
-    E.registry_reports = lambda versions: None  # these mods carry no data
-    E.jarport_heap = lambda jars: 1024
+    portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools = fake_jarport, (lambda updates, *a: [root / "route.json"]), (lambda: "classes"), (lambda: "classes")
+    portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops = (lambda: "tools"), (lambda loader, r: b"platform"), (lambda: "java 25"), (lambda loader, frm, to: [frm, to])
+    portboard.javalevels.release_java = lambda v: {"old": 17, "new": 21}[v]
+    portboard.porter.registry_reports = lambda versions: None  # these mods carry no data
+    portboard.porter.jarport_heap = lambda jars: 1024
     try:
         def port(to, cache=False):
-            return E.jar_port("fabric", "1.0", to, list(came.values()), root / f"out-{to}", root / f"report-{to}.json", cache=cache)
+            return portboard.porter.jar_port("fabric", "1.0", to, list(came.values()), root / f"out-{to}", root / f"report-{to}.json", cache=cache)
 
         back, forward = port("old"), port("new")
         ported_now.clear()
@@ -1079,10 +1088,10 @@ with tempfile.TemporaryDirectory() as tmp:
         shutil.rmtree(root / "out-old")
         kept = first, port("old", cache=True)
     finally:
-        (E.ROOT, E.HOME, E.jarport, E.route_maps, E.jar_tools, E.compile_tools, E.tools_classes_key, E.platform_key, E.java_version, E.stops, E.release_java,
-         E.registry_reports, E.jarport_heap) = saved
+        (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.porter.stops, portboard.javalevels.release_java,
+         portboard.porter.registry_reports, portboard.porter.jarport_heap) = saved
     check([m["mod"] for m in back["mods"] if m["unlinked"]] == ["nested.jar"] and back["linked"] == 3
-          and E.left(back["mods"][1]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
+          and portboard.porter.left(back["mods"][1]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
           and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
           f"a ported mod whose nested mod still needs a newer Java than the release's does not link; lowered ones and ones whose too-new classes never load do: {back}")
     check(forward["linked"] == 4 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
@@ -1094,7 +1103,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     def checked(skipped):
         row = {"mod": "bundle.jar", "out": str(bundled), "unlinked": [], "skipped": skipped}
-        return E.with_java_checked(row, "fabric", "old", lambda: 17)["unlinked"]
+        return portboard.javalevels.with_java_checked(row, "fabric", "old", lambda: 17)["unlinked"]
 
     check(checked(["bundle.jar: META-INF/jars/lib.jar: not loaded on 1.0 or 2.0 (minecraft \"3.0\")"]) == [],
           "a nested module the loader does not load on the release asks nothing of its Java")
@@ -1103,7 +1112,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 # A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
 # PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.
-skipped = E.not_loaded({"findings": [
+skipped = portboard.gameload.not_loaded({"findings": [
     {"kind": "loader-mismatch", "severity": "warning", "summary": "a.jar is written for another loader (META-INF/neoforge.mods.toml)", "jars": ["a.jar"]},
     {"kind": "java", "severity": "warning", "suspects": [{"jar": "b.jar", "why": ["Java 21"]}]}]})
 check(list(skipped) == ["a.jar"] and "another loader" in skipped["a.jar"], f"a jar the loader skips is named, a Java warning is not: {skipped}")
@@ -1131,15 +1140,15 @@ with tempfile.TemporaryDirectory() as tmp:
     (cache / "fabric-api-0.1.0+26.9.jar").write_bytes(api_jar("26.9"))
     whole = api_jar("26.8")
     (cache / "fabric-api-0.2.0+26.8.jar").write_bytes(whole[:len(whole) // 2])  # a download cut off and kept
-    tools = E.jar_tools()  # compiled before user.home moves, into this machine's shared classes
+    tools = portboard.porter.jar_tools()  # compiled before user.home moves, into this machine's shared classes
     saved_env = {k: os.environ.get(k) for k in ("JAVA_TOOL_OPTIONS", "MMT_EXPOSURE_HOME")}
     os.environ["JAVA_TOOL_OPTIONS"] = f"-Duser.home={home}"
     os.environ["MMT_EXPOSURE_HOME"] = str(home / "exposure")
 
     def lookup(release):
-        E.FABRIC_APIS.clear()  # each lookup a new run, as each cloud job is
+        portboard.settings.FABRIC_APIS.clear()  # each lookup a new run, as each cloud job is
         try:
-            return E.fabric_apis([release])[release]
+            return portboard.porter.fabric_apis([release])[release]
         except BaseException as error:  # noqa: BLE001 - what the job printed, whatever it raised
             return str(error)
 
@@ -1160,7 +1169,7 @@ with tempfile.TemporaryDirectory() as tmp:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        E.FABRIC_APIS.clear()
+        portboard.settings.FABRIC_APIS.clear()
     check(tools and found == cache / "fabric-api-0.1.0+26.9.jar" and len(answers) == 1, f"the lookup reads the release list and jar, and keeps its answer: {found}, {answers}")
     check(kept == found, f"a kept answer is used while Fabric's release list is the same: {kept}")
     check(fresh == cache / "fabric-api-0.3.0+26.9.jar", f"a changed release list gets a fresh answer, not the kept one: {fresh}")
