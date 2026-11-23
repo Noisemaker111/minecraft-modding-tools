@@ -13,5 +13,5 @@
   "port.jar-links.big-updates",
   "port.jar-links.newest"
  ],
- "result": "In progress."
+ "result": "2026-11-23: stand-ins for 31 old classes over 1.21.4 -> 26.3, ranked by ports freed from main's cloud sweep. Cloud-exposure 45121756755 against main 9c3b8d1: every update 6,627 -> 6,644 of 9,423, big updates 2,468 -> 2,485, no update lower (NeoForge 1.21.6 63 -> 64, 1.21.9 54 -> 55, 1.21.11 68 -> 70, 26.3 61 -> 64; Fabric 1.21.6 56 -> 58, 1.21.9 58 -> 59, 1.21.11 58 -> 60, 26.3 58 -> 63). That run dropped NeoForge 1.21.1 -> 26.3 16 -> 14: the 1.21.5 GlUtil stand-in called the render device, whose API 26.3 moved, so a stand-in must call the oldest still-present form of its answer; fixed in cdf97ee, rerun 45126217591. In game (cloud-load 45121241933, 45123687086): 13 freed mods load; Sodium Shadowy Path Blocks (NeoForge 26.3) and Resourceful Lib (Fabric 1.21.11) fail in the client on their own mixins. Left: 1.21.6 shader colour, drawSpecial and deferred tooltips; 26.2's removed immediate drawing (RenderBuffers, MultiBufferSource, Tesselator); 1.21.9 input calls into ContainerEventHandler defaults; 26.1 SavedDataType ids; 26.2 Minecraft.screen (PR #196's file); and the 26.3 route mapping blaze3d GpuTexture/GpuTextureView to renderpearl's backend classes instead of its API interfaces (about 45 mods per loader), a GameDiff fix."
 }
