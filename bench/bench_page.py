@@ -3,6 +3,7 @@
 Both are written after every merge to the generated branch, never to main (bench/generated.py,
 .github/workflows/generated.yml), from:
 - scoreboard/all.json              (main's jar scoreboard, kept on the generated branch)
+- scoreboard/source.json           (main's source scoreboard, bench/source_ports.py, kept there too)
 - coverage/sweeps/pack.json        (modpack pass & repair rates + history)
 - coverage/sweeps/convert.json     (loader-switch pass rates + history)
 - coverage/roadmap.json, roadmap/  (goals, one file per step: burn-up, timeline)
@@ -46,6 +47,7 @@ bumps = load("bench/port/results.json", {"mods": [], "date": ""})
 mods = load("bench/mods/results.json", {"mods": [], "measured": ""})
 NO_TABLE = {"date": "", "total": {"mods": 0, "link": 0}, "loaders": {}, "updates": []}
 exposure = NO_TABLE
+source = {}
 pack_sweep = load("coverage/sweeps/pack.json", {"corpus": 0, "latest": {}, "history": []})
 convert_sweep = load("coverage/sweeps/convert.json", {"corpus": 0, "latest": {}, "history": []})
 
@@ -210,8 +212,12 @@ def hero_scoreboard_html(book):
     av = exposure.get("anyVersion") or {}
     porting = ((f"{av['every']} / {av['mods']}", f"{ex_pct}% per update", "Top mods whose .jar ports to any version", round(100 * av["every"] / av["mods"]), "yellow")
                if av.get("mods") else (f"{ex_pct}%", f"{ex_link:,} / {ex_mods:,}", f".jar mods linking ({ex_updates} updates)", ex_pct, "green" if ex_pct >= 60 else "yellow"))
+    sv = source.get("anyVersion") or {}
+    from_source = [(f"{sv['every']} / {sv['mods']}", f"{sum(c['source'] for c in source.get('sources', {}).values())} have source",
+                    "Top mods whose source ports to any version", round(100 * sv["every"] / sv["mods"]), "yellow")] if sv.get("mods") else []
     items = [
         porting,
+        *from_source,
         (f"{pk_pass} / {pk_total}", f"{pk.get('repaired', 0)} repaired", "Modpacks passing on real servers", pk_pct, "green"),
         (f"{cv_load} / {cv_total}", f"{cv.get('same behaviour fingerprint as the original', 0)} exact", "Fabric ↔ NeoForge conversions", cv_pct, "yellow"),
         (f"{n_done} / {len(steps)}", f"{rm_pct}%", "Roadmap steps proven done", rm_pct, "accent"),
@@ -272,10 +278,12 @@ def area_progress_html(book):
     g1_d, g1_t, g1_now = gstat("1")
 
     av = exposure.get("anyVersion") or {}
+    sv = source.get("anyVersion") or {}
     cards = [
         (
             "Version porting", f"{av['every']}/{av['mods']}", "top mods go to any version",
-            f"Their .jar ported to every release, forward and back, and linked; {ex_pct}% link one update at a time. {g2_d}/{g2_t} steps done.",
+            f"Their .jar ported to every release, forward and back, and linked; {ex_pct}% link one update at a time."
+            + (f" From source: {sv['every']}/{sv['mods']} build and link on every release." if sv.get("mods") else "") + f" {g2_d}/{g2_t} steps done.",
             g2_now, "#porting", round(100 * av["every"] / av["mods"]), "yellow",
         ) if av.get("mods") else (
             "Version porting", f"{ex_pct}%", f"{ex_link:,} of {ex_mods:,} top mods link",
@@ -621,13 +629,15 @@ def slug(title):
 
 
 def main(argv=None):
-    global exposure
+    global exposure, source
     ap = argparse.ArgumentParser(description="Write DIR/docs/index.html and DIR/ROADMAP.md.")
     ap.add_argument("--dir", type=Path, required=True, help="a checkout of the generated branch, or a scratch folder (bench/generated.py)")
     ap.add_argument("--roadmap", action="store_true", help="write ROADMAP.md only")
     args = ap.parse_args(argv)
     table = args.dir / "scoreboard" / "all.json"
     exposure = json.loads(table.read_text(encoding="utf-8")) if table.is_file() else NO_TABLE
+    kept = args.dir / "scoreboard" / "source.json"
+    source = json.loads(kept.read_text(encoding="utf-8")) if kept.is_file() else {}
     book = M.Book(scoreboard=G.points(args.dir))
     found = M.problems(book)
     if found:

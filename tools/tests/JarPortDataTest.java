@@ -130,6 +130,26 @@ final class JarPortDataTest {
         Map<String, byte[]> same = JarPortTest.entries(plain.port(JarPortTest.jar(files), "plain.jar", none));
         JarPortTest.expect(same.containsKey("data/m/recipe/dye.json") && text(same, "data/m/recipe/shaped.json").contains("\"minecraft:scute\"")
             && none.stream().noneMatch(r -> r.containsKey("data")), "without reports the data is as it was and not judged");
+
+        // A jar built from source for 2.0, checked as a port from 2.0 to itself: its data was written for 1.0 (--data-from),
+        // so an id 1.0 registers and 2.0 lacks is a break; judged against 2.0 alone it would pass.
+        DataIds.REPORTS.put("1.0", Optional.of(old));
+        DataIds.REPORTS.put("2.0", Optional.of(now));
+        DataIds.FOLDERS.put("1.0", was);
+        DataIds.FOLDERS.put("2.0", is);
+        DataIds.FIXERS.put("2.0", new DataIds.Fixers(Set.of(), Set.of()));
+        byte[] built = JarPortTest.jar(Map.of("data/m/worldgen/configured_feature/patch.json", bytes("{\"type\": \"minecraft:random_patch\", \"config\": {}}")));
+        for (String written : new String[] { "1.0", null }) {
+            JarPort self = new JarPort(new GameDiff.Snap("2.0"), new GameDiff.Snap("2.0"), map);
+            self.origin = "2.0";
+            self.dataOrigin = written;
+            List<Map<String, Object>> judged = new ArrayList<>();
+            self.port(built, "built.jar", judged);
+            List<Object> gone = Json.array(judged.get(judged.size() - 1).get("data"));
+            JarPortTest.expect(written == null ? gone.isEmpty() : gone.equals(List.of(
+                    "data id gone: minecraft:worldgen/feature minecraft:random_patch (in data/m/worldgen/configured_feature/patch.json)")),
+                "data ids judged against " + (written == null ? "the release itself: nothing gone" : "the release the data was written for") + ": " + gone);
+        }
         JarPortTest.finish("JarPortDataTest");
     }
 
