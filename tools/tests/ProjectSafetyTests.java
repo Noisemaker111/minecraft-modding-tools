@@ -164,7 +164,7 @@ public final class ProjectSafetyTests {
                 Json.map("edits", List.of("gradle.properties"), "removals", List.of())
             )
         );
-        String warning = Port.interruptedText(project);
+        String warning = PortJournal.interruptedText(project);
         require(
             warning != null &&
             warning.contains("stopped part-way (2026-10-26 at 12:47:41 UTC)") &&
@@ -175,13 +175,13 @@ public final class ProjectSafetyTests {
             new Mmt.Options(new String[] { "port", "--root", ".", "--undo" }).get("undo", "").equals("latest"),
             "--undo alone means the newest port"
         );
-        Map<String, Object> undone = Port.undo(project, "latest");
+        Map<String, Object> undone = PortJournal.undo(project, "latest");
         require(
             Boolean.TRUE.equals(undone.get("ok")) &&
             Files.readString(root.resolve("gradle.properties")).equals("minecraft_version=1.21.5\n"),
             "--undo latest finds the interrupted port and puts its files back: " + undone.get("details")
         );
-        require(Port.interruptedText(project) == null, "an undone port warns no more");
+        require(PortJournal.interruptedText(project) == null, "an undone port warns no more");
     }
 
     /** A read-only gradle.properties stopped a port with only its path, and an "Undo this port" for a port that changed nothing. */

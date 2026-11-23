@@ -55,10 +55,10 @@ public final class Exposure {
             System.exit(2);
         }
         GameDiff.Snap a = snap(from, loader), b = snap(to, loader);
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
-        Map<String, GameDiff.Hop.Evidence> evidence = hop.evidence();
-        Set<String> portable = hop.portable();
+        Map<String, HopChains.Evidence> evidence = hop.hopChains.evidence();
+        Set<String> portable = hop.hopRewrites.portable();
         Map<String, Object> said = new LinkedHashMap<>();
         for (Object o : Json.array(Json.read(Path.of(report)).get("unlinkedByMods"))) {
             String member = Json.text(Json.object(o), "member", "");
@@ -136,10 +136,10 @@ public final class Exposure {
         if (p == null || oldDesc == null) {
             return new String[] { "not read", null, part };
         }
-        JarPort.GameCode before, after;
+        GameCode before, after;
         try {
-            before = JarPort.GameCode.of(a.version);
-            after = JarPort.GameCode.of(b.version);
+            before = GameCode.of(a.version);
+            after = GameCode.of(b.version);
         } catch (Exception unreadable) {
             return new String[] { "not read", null, part };
         }
@@ -150,7 +150,7 @@ public final class Exposure {
         if (has > 0) {
             return new String[] { "fewer", "the method makes it " + has + " times, the old one " + had, part };
         }
-        JarPort.GameCode.Slot slot = JarPort.GameCode.slot(before, after, x -> x, new String[] { owner, name, oldDesc }, new String[] { owner, name, desc },
+        GameCode.Slot slot = GameCode.slot(before, after, x -> x, new String[] { owner, name, oldDesc }, new String[] { owner, name, desc },
             p[0].charAt(0), p[1], p[2], p[3], -1);
         return new String[] { slot.game(), slot.detail(), part };
     }
@@ -769,7 +769,6 @@ public final class Exposure {
         }
     }
 
-
     /** Every access widener in a Fabric jar and the jars nested in it. */
     static List<String> wideners(byte[] jar) throws java.io.IOException {
         List<String> out = new ArrayList<>();
@@ -1047,7 +1046,7 @@ public final class Exposure {
      * signature), "unused" (the game never used it), "redesigned" (every place that used it was rewritten beyond lining
      * up), or "replaced" (places line up with what b uses instead: the miner's threshold or kind kept it out).
      */
-    static String[] gameSays(GameDiff.Hop.Evidence e) {
+    static String[] gameSays(HopChains.Evidence e) {
         if (e == null) {
             return new String[] {"linked", "the map follows it; the new signature differs"};
         }
@@ -1095,7 +1094,7 @@ public final class Exposure {
         for (GameDiff.Cls c : b.classes.values()) {
             GameDiff.Meth w = c.methods.get(name + desc);
             GameDiff.Cls old = a.classes.get(c.name);
-            if (w == null || (w.flags & 0x0400) != 0 || c.name.equals(k) || old == null || !JarPort.subtype(b, c.name, k)) {
+            if (w == null || (w.flags & 0x0400) != 0 || c.name.equals(k) || old == null || !Linking.subtype(b, c.name, k)) {
                 continue;
             }
             had++;

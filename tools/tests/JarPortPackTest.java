@@ -89,7 +89,7 @@ final class JarPortPackTest {
         byte[] inner = JarPortTest.jar(Map.of("pack.mcmeta", "{\"pack\": {\"min_format\": 75, \"max_format\": 99}}".getBytes(StandardCharsets.UTF_8),
             "fabric.mod.json", "{\"id\": \"inner\"}".getBytes(StandardCharsets.UTF_8)));
         for (Map.Entry<String, int[]> release : RELEASES.entrySet()) {
-            port.packFormats = release.getValue();
+            port.modMetadata.packFormats = release.getValue();
             Map<String, byte[]> out = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("pack.mcmeta", old.getBytes(StandardCharsets.UTF_8),
                 "fabric.mod.json", "{\"id\": \"m\", \"jars\": [{\"file\": \"META-INF/jars/inner.jar\"}]}".getBytes(StandardCharsets.UTF_8),
                 "META-INF/jars/inner.jar", inner)), "pack.jar", new ArrayList<>()));
@@ -108,16 +108,16 @@ final class JarPortPackTest {
             }
             JarPortTest.expect("Mod resources".equals(written.get("description")) && written.containsKey("x:extra"), "the description and other keys stay: " + written);
         }
-        port.packFormats = RELEASES.get("26.1");
+        port.modMetadata.packFormats = RELEASES.get("26.1");
         Map<String, Object> plain = pack(new String(JarPortTest.entries(port.port(JarPortTest.jar(Map.of("pack.mcmeta", old.getBytes(StandardCharsets.UTF_8))),
             "plain.jar", new ArrayList<>())).get("pack.mcmeta"), StandardCharsets.UTF_8));
         JarPortTest.expect(String.valueOf(plain.get("min_format")).equals("84") && String.valueOf(plain.get("max_format")).equals("101")
             && !plain.containsKey("pack_format") && !plain.containsKey("supported_formats"), "on 26.1 the release's own two formats are the range: " + plain);
 
-        port.packFormats = new int[0];
+        port.modMetadata.packFormats = new int[0];
         byte[] kept = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("pack.mcmeta", old.getBytes(StandardCharsets.UTF_8))), "old.jar", new ArrayList<>())).get("pack.mcmeta");
         JarPortTest.expect(new String(kept, StandardCharsets.UTF_8).equals(old), "a release reading only pack_format keeps the file as it was");
-        port.packFormats = RELEASES.get("26.1");
+        port.modMetadata.packFormats = RELEASES.get("26.1");
         byte[] broken = "{\"pack\": {\"pack_format\": 75,}} // a comment".getBytes(StandardCharsets.UTF_8);
         byte[] left = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("pack.mcmeta", broken)), "broken.jar", new ArrayList<>())).get("pack.mcmeta");
         JarPortTest.expect(Arrays.equals(left, broken), "an unreadable file is left as it was");
