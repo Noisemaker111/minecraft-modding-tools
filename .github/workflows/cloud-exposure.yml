@@ -94,7 +94,7 @@ jobs:
             ~/.mmt/exposure/ports
             ~/.mmt/exposure/game
             ~/.mmt/exposure/maps
-          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: exposure-kept-${{ matrix.update }},broken-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: exposure-kept-${{ matrix.update }}-
       - name: Port and link this update's mods
         # Under the job's 40 so the save below still runs when the port runs out of time.
@@ -115,7 +115,7 @@ jobs:
             ~/.mmt/exposure/ports
             ~/.mmt/exposure/game
             ~/.mmt/exposure/maps
-          key: exposure-kept-${{ matrix.update }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: exposure-kept-${{ matrix.update }},broken-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
