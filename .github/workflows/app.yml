@@ -1,11 +1,15 @@
 name: Desktop app
-# cargo test for the desktop app (app/, Rust on Rune) when it changes: its scenes lay out and its verdicts read the
-# CLI's JSON right. Linux only; the build's Rust and Rune are pinned in app/rust-toolchain.toml and app/Cargo.toml.
+# cargo test for the desktop app (app/, Rust on Rune) when a ready pull request changes it: its scenes lay out and its
+# verdicts read the CLI's JSON right. Linux only; the build's Rust and Rune are pinned in app/rust-toolchain.toml and
+# app/Cargo.toml. A draft's pushes start no job, and a merge to main does not run it again (main takes only pull
+# requests that are up to date with it, so the merged tree is the tree the pull request ran it on). main runs it only to
+# keep the build cache, which is saved from main alone: when the crates or the toolchain change, or by hand.
 on:
   push:
     branches: [main]
-    paths: ['app/**', '.github/workflows/app.yml']
+    paths: ['app/Cargo.lock', 'app/Cargo.toml', 'app/rust-toolchain.toml']
   pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
     paths: ['app/**', '.github/workflows/app.yml']
   workflow_dispatch:
 permissions:
@@ -15,6 +19,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -26,5 +31,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --locked

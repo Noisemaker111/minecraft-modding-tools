@@ -122,8 +122,8 @@ the first row above.
    and against the run before your edit: the type's mods must have moved and none may stop linking. If nothing moved, the change does not do what you think: fix it or take it out. For a learner change, also run
    `python bench/learn_diff.py --loader neoforge|fabric` and read every reading that is new, gone or changed against
    main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()).
-5. Commit, write `Port check: LOADER:A:B type=TYPE` (or `mods=...`) in the PR description, push, mark the PR ready and
-   end the turn. Its Port check ports those mods against main's row and starts the ones that newly link on a real
+5. Commit, write `Port check: LOADER:A:B type=TYPE` (or `mods=...`) in the PR description, push, and when the last
+   commit is in, mark the PR ready and end the turn (a draft's pushes start no check; each push to a ready PR starts them all again). Its Port check ports those mods against main's row and starts the ones that newly link on a real
    server and in a real client, with the library mods they require; no mod that links may stop or fail.
    `python bench/port_board.py --changed` builds the pinned source ports your rule crosses.
 
