@@ -22,9 +22,9 @@ def check_plan(changed, body="", table=None, index_before=None):
       for the next release); with mods, only those; with a type, only the mods main's row says that type holds back.
     - A changed stand-in folder (knowledge/standins/FROM-TO/, or FROM-TO.LOADER/): that update, for each loader it is for.
     - A changed pin list (bench/exposure/mods/LOADER-FROM.json): the update from that release.
-    - A change to what every port reads (SHARED): a sample, not every port, and the lines say so: per loader the big
-      update and the small update with the most mods linking on main, and the jump from the most-used release to the
-      newest, every mod of each. A changed change index also runs each update it makes (index_before: main's copy).
+    - A change to what every port reads (SHARED): a sample, not every port, and the lines say so: per loader the fewest
+      ports that would have caught every time a sweep of main lost a mod (sample), every mod of each. A changed change
+      index also runs each update it makes (index_before: main's copy).
     Anything else changes nothing the scoreboard reads, and runs nothing."""
     jobs, why = {}, []
 
@@ -72,16 +72,15 @@ def check_plan(changed, body="", table=None, index_before=None):
                 if (settings.PINS / f"{lo}-{frm}.json").is_file():
                     add(lo, frm, to, [], "the change index makes it an update")
     if shared:
+        picked, times = 0, 0
         for lo in sorted(settings.FIRST):
-            rows = [r for r in (table or {}).get("updates", []) if r["loader"] == lo]
-            for size in (True, False):
-                some = [r for r in rows if r.get("big") == size]
-                if some:
-                    r = max(some, key=lambda r: r["modsThatLink"])
-                    add(lo, r["from"], r["to"], [], f"sample: the {'big' if size else 'small'} update with the most mods linking on main ({r['modsThatLink']})")
-            newest = gamereleases.updates(lo)[-1][1]
-            add(lo, gamereleases.most_used(lo), newest, [], "sample: the most-used release's mods on the newest game")
-        why.append(f"{', '.join(shared)} changed, which every port reads: this checks a sample of {len(settings.FIRST) * 3} ports, not every one. "
+            ports, caught = sample(lo, table)
+            times += caught
+            picked += len(ports)
+            for (frm, to), why_this in ports:
+                add(lo, frm, to, [], why_this)
+        why.append(f"{', '.join(shared)} changed, which every port reads: this checks a sample of {picked} ports, not every one: the fewest "
+                   f"that would have caught each of the {times} times a sweep of main found mods that had stopped linking (losses). "
                    "The whole scoreboard runs by hand (tools/cloud-run exposure) and with each release.")
     out = [{"loader": j["loader"], "from": j["from"], "to": j["to"], "mods": "" if j["all"] else ",".join(sorted(j["mods"])),
             "why": "; ".join(dict.fromkeys(j["why"]))} for j in jobs.values()]
@@ -90,6 +89,32 @@ def check_plan(changed, body="", table=None, index_before=None):
     if not out:
         why.append("nothing the scoreboard reads changed: no port to check")
     return out, why
+
+
+def sample(loader, table):
+    """The ports a change to what every port reads checks for one loader, with why each, and how many losses they cover:
+    the fewest ports of main's table that would have caught every time main lost a mod on this loader (losses), each
+    next one the port that catches the most of those left, then an update before a jump (a jump ports through several
+    releases and took 12 to 15 minutes, an update 2 to 3), then the most mods linking on main. With no loss yet, the update
+    with the most mods linking on main. The 7 losses to 2026-11-23 take 7 updates and no jump; the sample this replaced
+    (per loader the big and small update with the most mods linking, and the most-used release to the newest) caught 3."""
+    rows = {f"{r['loader']}:{r['from']}:{r['to']}": r for r in (table or {}).get("updates", []) + (table or {}).get("jumps", [])
+            if r["loader"] == loader and (settings.PINS / f"{loader}-{r['from']}.json").is_file()}
+    single = {f"{loader}:{frm}:{to}" for frm, to in gamereleases.updates(loader)}
+    left = [{p for p in e["ports"] if p in rows} for e in mainrecord.losses(table)]
+    left = [e for e in left if e]
+    count, out = len(left), []
+    while left:
+        best = max(sorted(set().union(*left)), key=lambda p: (sum(p in e for e in left), p in single, rows[p].get("modsThatLink", 0)))
+        caught = sum(best in e for e in left)
+        left = [e for e in left if best not in e]
+        out.append(((rows[best]["from"], rows[best]["to"]), f"sample: it lost mods {caught} of the {count} times main lost any on {loader} that the ports before it miss"))
+    if not out:
+        some = [r for p, r in rows.items() if p in single]
+        if some:
+            r = max(some, key=lambda r: r.get("modsThatLink", 0))
+            out.append(((r["from"], r["to"]), f"sample: main has lost no {loader} mod yet; the update with the most mods linking on main ({r.get('modsThatLink', 0)})"))
+    return out, count
 
 
 def gate(summary):

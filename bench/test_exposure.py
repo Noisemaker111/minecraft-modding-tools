@@ -472,6 +472,70 @@ check(kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"
       and kept["notStarted"] == {"clumps--Clumps.jar": ["it does not link after the port"]},
       f"a proof with nothing to start keeps a receipt saying why: {kept}")
 
+# A game proof starts the client beside the server, and no server when every mod to start is client-only by its own
+# metadata: fabric 1.18.1 -> 1.18.2 spent 147 s starting a server with neither of its two client-only mods on it. Run
+# through load with the game's starts stood in for; a client start that fails still fails the gate.
+def proof(mods, client_ok, server_waits_for_client):
+    S, G = portboard.settings, portboard.gameload
+    stubs = [(portboard.porter, "mojang_names"), (portboard.porter, "jar_port"), (portboard.porter, "fabric_api"), (portboard.dependencies, "choose"),
+             (portboard.javalevels, "platform_ids"), (portboard.javalevels, "newer_java"), (G, "pack_check")]
+    kept = [(m, n, getattr(m, n)) for m, n in stubs]
+    with tempfile.TemporaryDirectory() as tmp:
+        real = S.ROOT, S.PINS, S.HOME
+        S.ROOT, S.PINS, S.HOME = Path(tmp), Path(tmp) / "pins", Path(tmp) / "home"
+        S.PINS.mkdir()
+        (S.PINS / "fabric-9.1.json").write_text(json.dumps({"mods": [{"slug": s, "file": f"{s}.jar"} for s in mods]}), encoding="utf-8")
+        report = Path(tmp) / ".runs" / "exposure" / "jars-fabric-9.1-9.2" / "report.json"
+        report.parent.mkdir(parents=True)
+        report.write_text(json.dumps({"mods": [{"mod": f"{s}--{s}.jar", "unlinked": []} for s in mods]}), encoding="utf-8")
+        folder = S.HOME / "jars" / "fabric-9.1"
+        folder.mkdir(parents=True)
+        for s, env in mods.items():
+            (folder / f"{s}--{s}.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": s, "environment": env})}))
+        starts, client_started = [], threading.Event()
+
+        def ported(loader, frm, to, read, out, rep, runtime=False):
+            out.mkdir(parents=True, exist_ok=True)
+            for j in read:
+                shutil.copy(j, out / j.name)
+            return {"mods": [{"mod": j.name, "unlinked": []} for j in read]}
+
+        def start(pack, to, loader, side="server"):
+            starts.append(side)
+            done = G.subprocess.CompletedProcess([], 0, "", "")
+            if side == "client":
+                client_started.set()
+                suspects = [{"jar": n.name, "why": ["crash"]} for n in (pack / "mods").glob("*.jar")]
+                return {"result": {"client": {"opened": client_ok, "failure": "Description: Rendering screen"},
+                                   "findings": [] if client_ok else [{"kind": "client-start", "severity": "problem", "suspects": suspects}]}}, done
+            if server_waits_for_client:
+                check(client_started.wait(10), "the client starts while the server runs")
+            return {"ok": True, "result": {"game": {"leftOut": {}}}}, done
+        portboard.porter.mojang_names = lambda loader, version, jars: (jars, {})
+        portboard.porter.jar_port, portboard.porter.fabric_api = ported, (lambda to: None)
+        portboard.dependencies.choose = lambda loader, frm, to, linked, out, pins, platform: ([out / n for n in linked], {}, {}, {})
+        portboard.javalevels.platform_ids, portboard.javalevels.newer_java, G.pack_check = (lambda loader, to: []), (lambda *a: {}), start
+        sys.stdout = io.StringIO()
+        try:
+            summary = G.load("fabric", "9.1", "9.2", False, sorted(mods))
+        finally:
+            sys.stdout = sys.__stdout__
+            S.ROOT, S.PINS, S.HOME = real
+            for m, n, f in kept:
+                setattr(m, n, f)
+    return summary, starts
+
+
+summary, starts = proof({"csl": "client", "jec": "client"}, True, False)
+check(starts == ["client"] and all(v.startswith("client-only: its fabric.mod.json says environment client") for v in summary["verdicts"].values())
+      and portboard.portcheck.load_gate(summary)[1], f"client-only mods start no server, only the client: {starts} {summary['verdicts']}")
+summary, starts = proof({"csl": "client"}, False, False)
+check(starts[0] == "client" and "server" not in starts and not portboard.portcheck.load_gate(summary)[1],
+      f"a client-only mod that fails in the client still fails the gate with no server started: {starts} {portboard.portcheck.load_gate(summary)[0]}")
+summary, starts = proof({"csl": "client", "chunky": "*"}, True, True)
+check(sorted(set(starts)) == ["client", "server"] and summary["verdicts"]["chunky--chunky.jar"] == "loaded" and portboard.portcheck.load_gate(summary)[1]
+      and summary["time"]["starts"] >= 0, f"with a mod a server runs, the server and the client start side by side: {starts} {summary['verdicts']}")
+
 # Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
 main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,
             "verdicts": {"a--a.jar": "loaded", "b--b.jar": "failed: its mixin x", "c--c.jar": "client-only: y"},
@@ -619,6 +683,8 @@ with tempfile.TemporaryDirectory() as tmp:
     points = json.loads(measures.read_text(encoding="utf-8"))
     every = points["port.jar-links.every-update"]
     check(saved["commit"] == head and saved["run"].endswith("/runs/2") and saved["total"]["link"] == 16, "main's table says the commit and run it came from")
+    check(saved["losses"] == portboard.mainrecord.losses(None) and len(saved["losses"]) >= 7,
+          "main's table carries main's losses from before it kept them, and adds none when no mod stopped linking")
     check([p["value"] for p in every] == [14, 16, 16] and every[1]["n"] == 20 and every[1]["note"].startswith("+2 on 14: ") and "fabric 1.1 -> 2.0 4 -> 6" in every[1]["note"]
           and head[:10] in every[1]["source"], f"each sweep of main adds a point saying what moved: {every}")
     check(every[2]["note"] == "the same", f"a sweep that moved nothing says so: {every[2]}")
@@ -1119,12 +1185,29 @@ table = {"commit": "c" * 40, "run": "r", "jumps": [], "updates": [
 plan = lambda changed, body="": portboard.portcheck.check_plan(changed, body, table)  # noqa: E731
 jobs, why = plan(["docs/index.html", "README.md", "app/src/main.rs", "tools/cli/PackCheck.java"])
 check(jobs == [] and "nothing the scoreboard reads" in why[-1], f"a change to nothing the scoreboard reads runs no port: {jobs}")
+# A porter change runs the fewest ports that would have caught every time main lost a mod. Here main lost mods three
+# times: on the big update and the newest (one port catches neither alone), on the newest, and on a jump with the small
+# update; the newest catches two and the jump and the small update one each, and the update goes before the jump.
+jump = (portboard.gamereleases.most_used("fabric"), lo_f[-1][1])
+table["jumps"] = [{"loader": "fabric", "from": jump[0], "to": jump[1], "modsThatLink": 50, "links": []}]
+p = lambda lo, frm, to: f"{lo}:{frm}:{to}"  # noqa: E731
+table["losses"] = [{"commit": "1", "ports": [p("fabric", *big_f), p("fabric", *lo_f[-1])]}, {"commit": "2", "ports": [p("fabric", *lo_f[-1])]},
+                   {"commit": "3", "ports": [p("fabric", *jump), p("fabric", *small_f), "fabric:0.1:0.2"]}]
 jobs, why = plan(["tools/port/jar/JarPort.java"])
-pairs = {(j["loader"], j["from"], j["to"]) for j in jobs}
-check(("fabric", *lo_f[-1]) in pairs and ("fabric", *small_f) in pairs and ("fabric", big_f[0], big_f[1]) not in pairs
-      and ("fabric", portboard.gamereleases.most_used("fabric"), lo_f[-1][1]) in pairs and ("neoforge", portboard.gamereleases.most_used("neoforge"), lo_n[-1][1]) in pairs
-      and all(j["mods"] == "" for j in jobs) and any("sample" in w and "not every one" in w for w in why),
-      f"a porter change runs a sample: per size the update with the most mods linking on main, and the newest jump, and says so: {jobs} {why}")
+pairs = [(j["loader"], j["from"], j["to"]) for j in jobs]
+check(pairs == [("fabric", *lo_f[-1]), ("fabric", *small_f)] and all(j["mods"] == "" for j in jobs)
+      and any("sample of 2 ports" in w and "each of the 3 times" in w for w in why),
+      f"a porter change runs the fewest ports that catch every loss of main's, an update before a jump, and says so: {jobs} {why}")
+del table["losses"]
+check(portboard.portcheck.sample("fabric", {**table, "losses": []})[0]
+      == [(lo_f[-1], "sample: main has lost no fabric mod yet; the update with the most mods linking on main (9)")],
+      "with no loss yet, the sample is the update with the most mods linking on main")
+del table["jumps"]
+# main's table keeps the losses: a sweep that finds a mod no longer linking adds its ports, and one that finds none adds nothing.
+before = {"updates": [{"loader": "fabric", "from": "1", "to": "2", "links": ["a", "b"]}, {"loader": "fabric", "from": "2", "to": "3", "links": ["c"]}]}
+after = {"updates": [{"loader": "fabric", "from": "1", "to": "2", "links": ["a", "d"]}, {"loader": "fabric", "from": "2", "to": "3", "links": ["c", "e"]}]}
+check(portboard.mainrecord.lost_ports(before, after) == ["fabric:1:2"] and portboard.mainrecord.lost_ports(after, after) == [],
+      f"a port that lost a mod is named: {portboard.mainrecord.lost_ports(before, after)}")
 jobs, _ = plan(["bench/exposure/mods/fabric-" + small_f[0] + ".json", f"knowledge/standins/{lo_n[0][0]}-{lo_n[0][1]}.neoforge/x/Y.java"])
 check({(j["loader"], j["from"], j["to"]) for j in jobs} == {("fabric", *small_f), ("neoforge", *lo_n[0])},
       f"changed pins or stand-ins run the update they are for, and only for its loader's: {jobs}")

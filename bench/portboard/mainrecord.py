@@ -101,6 +101,26 @@ def compare(before, after):
     return lines
 
 
+# The times a sweep of main found mods that linked in the sweep before and no longer did, before main's table kept them
+# (record_main adds each since): from the tables' history on main and the generated branch, 2026-11-22 to 11-23.
+LOSSES = settings.PINS.parent / "losses.json"
+
+
+def losses(table):
+    """Each time a sweep of main found mods that had stopped linking: {commit, ports: [LOADER:FROM:TO, ...]}, oldest first."""
+    if table and "losses" in table:
+        return table["losses"]
+    return json.loads(LOSSES.read_text(encoding="utf-8")) if LOSSES.is_file() else []
+
+
+def lost_ports(before, after):
+    """The ports (LOADER:FROM:TO) of after, a table, with a mod that links in before and not in after."""
+    def links(t):
+        return {f"{r['loader']}:{r['from']}:{r['to']}": set(r["links"]) for r in t.get("updates", []) + t.get("jumps", []) if r.get("links") is not None}
+    was, now = links(before), links(after)
+    return sorted(p for p in now if p in was and was[p] - now[p])
+
+
 def record_main(table_path, commit, run, folder, day=None):
     """Saves a sweep of a main commit as main's table (FOLDER/all.json) and adds its totals to the port.jar-links points
     (FOLDER/points.json), each point's note saying what moved against the table it replaces. FOLDER is scoreboard/ in a
@@ -123,6 +143,9 @@ def record_main(table_path, commit, run, folder, day=None):
     pr = re.search(r"\(#(\d+)\)\s*$", subject)
     at = f"main at {commit[:10]}" + (f" (#{pr.group(1)})" if pr else "")
     moved = [line for line in compare(previous, table)[HEADS:] if not line.startswith(("no update", "  "))] if previous else []
+    # Main's losses travel with its table: the port check's sample is the fewest ports that would have caught each.
+    lost = lost_ports(previous, table) if previous else []
+    table["losses"] = losses(previous) + ([{"commit": commit, "ports": lost}] if lost else [])
     for mid, read in MAIN_MEASURES.items():
         link, mods = read(table)
         points = kept.setdefault(mid, [])
