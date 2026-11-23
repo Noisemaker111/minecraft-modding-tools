@@ -27,7 +27,41 @@ final class JarPortFollowTest {
     public static void main(String[] args) throws Exception {
         Path scratch = Files.createDirectories(Path.of(args[0]));
         check(scratch);
+        neither(scratch);
         JarPortTest.finish("JarPortFollowTest");
+    }
+
+    /**
+     * A jar built for a later release than both (gca, built for 1.19 and ported 1.15.2 to 1.16) can inject into a method
+     * neither has: Mixin finds no target, and where the injector requires one the game stops at start. Where nothing
+     * requires it, or the config's plugin picks at start which mixins apply, the injection is only skipped. A method the
+     * old release has is judged as before.
+     */
+    static void neither(Path scratch) throws Exception {
+        GameDiff.Snap a = new GameDiff.Snap("1.0"), b = new GameDiff.Snap("2.0");
+        for (GameDiff.Snap s : List.of(a, b)) {
+            JarPortTest.snap(s, "f9/Menu", 0, null, "click()V");
+        }
+        Path map = scratch.resolve("route-neither.json");
+        Files.writeString(map, "{}");
+        for (String config : List.of("1}", "0}", "1}, \"plugin\": \"m9.Plugin\"")) {
+            List<Map<String, Object>> results = new ArrayList<>();
+            new JarPort(a, b, map).port(JarPortTest.jar(Map.of(
+                "m9/MenuMixin.class", mixin("m9/MenuMixin", "f9/Menu", "onDoClick", "(" + CI + ")V", "doClick()V", "HEAD", null, "onClick", "click()V", "Lf9/Menu;click()V"),
+                "m9/EitherMixin.class", either(),
+                "m9.mixins.json", ("{\"package\": \"m9\", \"mixins\": [\"MenuMixin\", \"EitherMixin\"], \"injectors\": {\"defaultRequire\": " + config + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+                "neither.jar", results);
+            List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+            List<String> silent = Json.array(results.get(0).get("silent")).stream().map(String::valueOf).toList();
+            if (config.equals("1}")) {
+                JarPortTest.expect(unlinked.equals(List.of("mixin target in neither release: f9.Menu.doClick()V")),
+                    "a required injection into a method neither release has holds the mod back; one into a method both have, or naming another"
+                        + " method the class has as well, does not: " + unlinked);
+            } else {
+                JarPortTest.expect(unlinked.stream().noneMatch(u -> u.contains("doClick")) && silent.stream().anyMatch(u -> u.contains("finds no place: f9.Menu.doClick")),
+                    "an injection nothing requires, or one a plugin may leave out, is only skipped: " + config + " " + unlinked + " " + silent);
+            }
+        }
     }
 
     static final String CI = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
@@ -195,6 +229,32 @@ final class JarPortFollowTest {
         t.visitEnd();
         JarPortFixesTest.handler(w, JarPortFixesTest.INJECT, name1, desc1, method1, at1, null, m -> { });
         JarPortFixesTest.handler(w, JarPortFixesTest.INJECT, name2, "(" + CI + ")V", method2, "INVOKE", call2, m -> { });
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** A mixin with one @Inject naming two methods, one each release's f9.Menu has and one neither has, as a jar for several releases does. */
+    static byte[] either() {
+        ClassWriter w = JarPortRetypeTest.writer("m9/EitherMixin", "java/lang/Object");
+        AnnotationVisitor t = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor value = t.visitArray("value");
+        value.visit(null, Type.getObjectType("f9/Menu"));
+        value.visitEnd();
+        t.visitEnd();
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, "onEither", "(" + CI + ")V", null, null);
+        AnnotationVisitor av = m.visitAnnotation(JarPortFixesTest.INJECT, false);
+        AnnotationVisitor methods = av.visitArray("method");
+        methods.visit(null, "slotClicked()V");
+        methods.visit(null, "click()V");
+        methods.visitEnd();
+        AnnotationVisitor ats = av.visitArray("at");
+        ats.visitAnnotation(null, "Lorg/spongepowered/asm/mixin/injection/At;").visit("value", "HEAD");
+        ats.visitEnd();
+        av.visitEnd();
+        m.visitCode();
+        m.visitInsn(Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
         w.visitEnd();
         return w.toByteArray();
     }

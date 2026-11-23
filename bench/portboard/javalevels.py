@@ -111,7 +111,7 @@ def admits_java(spec, java):
     return True
 
 
-def newest_loaded_class(z, loader, sides, runs, inside="", skipped=frozenset()):
+def newest_loaded_class(z, loader, sides, runs, inside="", skipped=frozenset(), release=None):
     """(java, class, what it is) for the class needing the newest Java of those the JVM is asked to load of a jar on the
     sides given, (0, "", "") if none. The JVM refuses a class compiled for a newer Java when it is loaded, not when the jar
     is, so only these count:
@@ -122,8 +122,11 @@ def newest_loaded_class(z, loader, sides, runs, inside="", skipped=frozenset()):
     - For a jar the loader starts nothing of (a library, another mod's add-on): every class, as what loads it calls them.
     - The same for each nested jar with the loader's own metadata (jar-in-jar, JarJar): the loader loads it as a mod. One
       whose "java" dependency refuses the release's Java (runs(), asked only then) is not loaded (C2ME's Java 22 native
-      math module on Java 21). Nor is one in skipped, (the jars holding it as inside names them, its path): the modules
-      of a bundle for other releases, and the like, that the port left out as not loaded on the release.
+      math module on Java 21). Nor is a Fabric one whose "minecraft" dependency refuses the release (fabric_accepts): Fabric's
+      resolver passes it over, which is how a bundle of one module per release (ViaFabric's viafabric-mc1144 to -mc12111,
+      macOS Input Fixes' module for 26.x) runs only its module for the release it starts on, ported or as it came. Nor is
+      one in skipped (the jars holding it as inside names them, its path): a platform module whose platform copy runs,
+      and the like, that the port left out as not loaded on the release.
     A multi-release jar's META-INF/versions/ copies and module-info only load on a Java that reads them."""
     import io
     import zipfile
@@ -151,12 +154,66 @@ def newest_loaded_class(z, loader, sides, runs, inside="", skipped=frozenset()):
                 asks = (meta or {}).get("depends") or {} if loader == "fabric" else {}
                 if meta is None or "java" in asks and not admits_java(asks["java"], runs()):
                     continue
-                found = newest_loaded_class(nested, loader, sides, runs, inside + entry.rsplit("/", 1)[-1] + "!", skipped)
+                if release and "minecraft" in asks and not fabric_accepts(asks["minecraft"], release):
+                    continue
+                found = newest_loaded_class(nested, loader, sides, runs, inside + entry.rsplit("/", 1)[-1] + "!", skipped, release)
         except zipfile.BadZipFile:
             continue
         if found[0] > best[0]:
             best = found
     return best
+
+
+def version_key(version):
+    """A release's place in Fabric Loader's order: numeric dot parts, a missing part zero, a pre-release ("-pre1",
+    "-rc1", "-snapshot-2") before its release; build metadata after "+" does not count. Pre-releases among themselves
+    compare as text, which a fabric.mod.json range never needs finer."""
+    core, dash, pre = version.split("+", 1)[0].strip().partition("-")
+    parts = [int(p) if p.isdigit() else 0 for p in core.split(".")]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return parts, (0, pre) if dash else (1, "")  # a bare "-" is the lowest pre-release
+
+
+def fabric_accepts(spec, release):
+    """Whether a fabric.mod.json version predicate accepts a release, as Fabric Loader reads one: a list any one of which
+    may hold, a string of "||" alternatives, each of terms that must all hold (">=1.14", "<26.1", "~1.15.2", "^1.16",
+    "1.16.x", "1.20.6", "*"). One it cannot read accepts."""
+    if isinstance(spec, list):
+        return not spec or any(fabric_accepts(one, release) for one in spec)
+    for alternative in str(spec).split("||"):
+        terms = alternative.split()
+        if all(fabric_term(t, release) for t in terms):
+            return True
+    return False
+
+
+def fabric_term(term, release):
+    """One term of a Fabric version predicate (fabric_accepts)."""
+    m = re.fullmatch(r"(>=|<=|>|<|=|~|\^)?(.+)", term.split("+", 1)[0])
+    if not m or m.group(2) in ("*", "x", "X"):
+        return True
+    op, wanted = m.group(1) or "", m.group(2)
+    parts = wanted.split(".")
+    wild = next((i for i, p in enumerate(parts) if p in ("x", "X", "*")), None)
+    if wild is not None:
+        fixed = version_key(".".join(parts[:wild]))[0]
+        if op in ("", "="):
+            return wild == 0 or (version_key(release)[0] + [0] * wild)[:wild] == (fixed + [0] * wild)[:wild]
+        wanted = ".".join(parts[:wild] + ["0"] * (len(parts) - wild))
+    a, b = version_key(release), version_key(wanted)
+    if op == ">=":
+        return a >= b
+    if op == ">":
+        return a > b
+    if op == "<=":
+        return a <= b
+    if op == "<":
+        return a < b
+    if op in ("~", "^"):
+        keep = 2 if op == "~" else 1
+        return a >= b and (a[0] + [0] * keep)[:keep] == (b[0] + [0] * keep)[:keep]
+    return a == b
 
 
 def newer_java(folder, names, loader, version, side):
@@ -166,28 +223,29 @@ def newer_java(folder, names, loader, version, side):
     proof leaves these out before any start."""
     runs, out = functools.cache(lambda: release_java(version)), {}
     for name in names:
-        found = too_new_class(folder / name, loader, (side,), runs)
+        found = too_new_class(folder / name, loader, (side,), runs, release=version)
         if found:
             java, cls, what = found
             out[name] = f"built for Java {java}; Minecraft {version} runs on Java {runs()} (its {what} {cls}), so it is not started in the {side}"
     return out
 
 
-def too_new_class(jar, loader, sides, runs, skipped=frozenset()):
+def too_new_class(jar, loader, sides, runs, skipped=frozenset(), release=None):
     """(java, class, what it is) for the class needing the newest Java of those the JVM loads of a jar on the sides given
     (newest_loaded_class), when that Java is newer than the release's (runs()); None when the release's Java loads them.
     The one Java check: the game proof (newer_java) and the link check (jar_port) both ask it, of the jar the game is
     given, so a port that lowers a mod's classes (JarPort's lowerJava) is judged by what it wrote. Nested jars in
-    skipped (skipped_jars: the port left them out as not loaded on the release) ask nothing of its Java."""
+    skipped (skipped_jars: the port left them out as not loaded on the release), and nested modules the loader does not
+    load on release, ask nothing of its Java."""
     import zipfile
     with zipfile.ZipFile(jar) as z:
-        found = newest_loaded_class(z, loader, sides, runs, skipped=skipped)
+        found = newest_loaded_class(z, loader, sides, runs, skipped=skipped, release=release)
     # Every release runs on Java 8 or newer, so the release's version.json is read only for a newer class.
     return found if found[0] > 8 and found[0] > runs() else None
 
 
 # The Python that judges a ported jar's Java (too_new_class and what it reads): part of every kept port's key.
-JAVA_CHECK = ("too_new_class", "newest_loaded_class", "start_classes", "admits_java", "metadata", "skipped_jars")
+JAVA_CHECK = ("too_new_class", "newest_loaded_class", "start_classes", "admits_java", "fabric_accepts", "version_key", "metadata", "skipped_jars")
 
 
 def with_java_checked(row, loader, to, runs):
@@ -201,7 +259,7 @@ def with_java_checked(row, loader, to, runs):
     if "error" in row or not out.is_file():
         return row
     try:
-        found = too_new_class(out, loader, ("server", "client"), runs, skipped_jars(row))
+        found = too_new_class(out, loader, ("server", "client"), runs, skipped_jars(row), to)
     except zipfile.BadZipFile:  # JarPort wrote it, so it reads; one it could not is an error row
         return row
     if found:

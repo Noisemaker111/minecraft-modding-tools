@@ -47,6 +47,18 @@ def project_versions(project):
     return versions
 
 
+def server_side(project):
+    """What a project's author says of it on a server: "required", "optional", "unsupported" or "unknown"; kept a day."""
+    cache = settings.HOME / "modrinth" / f"{project}-sides.json"
+    if not cache.is_file() or time.time() - cache.stat().st_mtime >= 86400:
+        sides = api(f"project/{project}")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        part = cachekeys.part_of(cache)
+        part.write_text(json.dumps({k: sides.get(k) for k in ("client_side", "server_side")}), encoding="utf-8")
+        part.replace(cache)
+    return json.loads(cache.read_text(encoding="utf-8")).get("server_side") or "unknown"
+
+
 def pin(loader, version, count=settings.COUNT):
     """The most-downloaded mods of one loader and release, each with its newest primary jar for that release, kept in PINS."""
     mods, offset = [], 0

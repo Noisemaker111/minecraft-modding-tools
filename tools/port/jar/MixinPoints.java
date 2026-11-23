@@ -41,6 +41,9 @@ final class MixinPoints {
                 for (Object c : config.get(list) instanceof List<?> l ? l : List.of()) {
                     if (c instanceof String name) {
                         mod.requires.put((p + "." + name).replace('.', '/'), require);
+                        if (config.get("plugin") instanceof String) {
+                            mod.pluginPicked.add((p + "." + name).replace('.', '/'));
+                        }
                     }
                 }
             }

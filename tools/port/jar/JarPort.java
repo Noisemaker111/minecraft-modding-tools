@@ -104,6 +104,7 @@ public final class JarPort {
         final Set<String> unmoved = new HashSet<>(); // class.name+desc of bodies a call in them cannot be given its arguments
         final Map<String, Object[]> twins = new LinkedHashMap<>(); // class.name+desc -> {parameter, new type, steps} (Sites.twin)
         final Map<String, Integer> requires = new HashMap<>(); // mixin class -> its config's injectors.defaultRequire
+        final Set<String> pluginPicked = new HashSet<>(); // mixin classes whose config names a plugin, which decides at start whether each applies
         final Map<String, String[]> supers = new HashMap<>(); // class -> {removed superclass (old name), what it extends now (new name)}
         final Set<String> foreign = new HashSet<>(); // entries of classes built for another loader (otherLoader), left as they are
         int lowered; // the Java this jar's classes were lowered to (lowerJava), 0 when the new release's Java runs them as they came

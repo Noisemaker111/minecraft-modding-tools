@@ -28,6 +28,10 @@ final class EveryStart {
 
     /** Reports, in mod.unlinked, each class the mod's start code names that neither release (nor the jar) has. */
     void check(JarPort.Mod mod, Map<String, byte[]> entries) {
+        builtFor = builtFor(entries);
+        if (builtFor != null && (builtFor.equals(port.a.version) || builtFor.equals(port.b.version))) {
+            builtFor = null; // its libraries are these releases' own, already read
+        }
         Deque<String> todo = new ArrayDeque<>(); // "class method+desc", or "class <init>" for each of its constructors
         for (String c : starts(mod, entries)) {
             todo.add(c + " <clinit>()V");
@@ -219,11 +223,66 @@ final class EveryStart {
         }
         String area = area(type);
         if (area.isEmpty() || port.a.classes.containsKey(type) || port.b.classes.containsKey(type) || port.b.classes.containsKey(port.cls(type))
-            || mod.bytes.containsKey(type) || port.tree != null && port.tree.copies.containsKey(type) || !releasePackages().contains(area)
+            || mod.bytes.containsKey(type) || port.tree != null && port.tree.copies.containsKey(type)
+            || !releasePackages().contains(area) && (builtFor == null || !ships(builtFor, area))
             || newIntermediary(type)) {
             return;
         }
         mod.unlinked.add("class in neither release, used on every start: " + Exposure.dotted(type) + " (in " + where + ")");
+    }
+
+    String builtFor; // the release the jar being checked was built against, as its build wrote it; null when it does not say
+
+    /** The release Loom built a jar against (its manifest's Fabric-Minecraft-Version), or null. */
+    static String builtFor(Map<String, byte[]> entries) {
+        byte[] manifest = entries.get("META-INF/MANIFEST.MF");
+        if (manifest == null) {
+            return null;
+        }
+        for (String line : new String(manifest, StandardCharsets.UTF_8).split("\r?\n")) {
+            if (line.startsWith("Fabric-Minecraft-Version:")) {
+                return line.substring(line.indexOf(':') + 1).trim();
+            }
+        }
+        return null;
+    }
+
+    // Per release and Maven group, the areas of that group's libraries the release ships: read once a run.
+    static final Map<String, Set<String>> LIBRARY_AREAS = new java.util.concurrent.ConcurrentHashMap<>();
+    static final java.util.regex.Pattern ARTIFACT = java.util.regex.Pattern.compile("\"artifact\"\\s*:\\s*\\{([^}]*)}");
+
+    /**
+     * Whether a release ships a library holding a class in this area. A jar built against another release than these
+     * two uses that release's libraries as the game's own (a mod built for 1.21.5 logs through SLF4J, which the game
+     * ships from 1.18 on): on a release without the library, a class of it the start code names is missing, and the game
+     * stops at start. Only the libraries whose Maven group starts as the area does are fetched (org/slf4j/slf4j-api for
+     * org/slf4j); false when the release's libraries cannot be read.
+     */
+    static boolean ships(String release, String area) {
+        String[] parts = area.split("/");
+        if (parts.length < 2) {
+            return false;
+        }
+        String group = parts[0] + "/" + parts[1] + "/";
+        return LIBRARY_AREAS.computeIfAbsent(release + " " + group, k -> {
+            Set<String> out = new HashSet<>();
+            try {
+                java.util.regex.Matcher m = ARTIFACT.matcher(GameDiff.versionJson(release));
+                while (m.find()) {
+                    String path = VersionMap.jsonString(m.group(1), "path", 0);
+                    if (path == null || !path.startsWith(group) || !path.endsWith(".jar") || path.contains("natives")) {
+                        continue;
+                    }
+                    String[] download = { VersionMap.jsonString(m.group(1), "url", 0), VersionMap.jsonString(m.group(1), "sha1", 0) };
+                    try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(GameDiff.verified(download, "lib-" + path.substring(path.lastIndexOf('/') + 1)).toFile())) {
+                        z.stream().map(java.util.zip.ZipEntry::getName).filter(n -> n.endsWith(".class") && !n.startsWith("META-INF/")).forEach(n -> out.add(area(n)));
+                    }
+                }
+            } catch (Exception unreadable) {
+                return Set.of();
+            }
+            return out;
+        }).contains(area);
     }
 
     Set<String> newIntermediary;
@@ -238,12 +297,39 @@ final class EveryStart {
         if (!Exposure.Intermediary.CLASS.matcher(type).matches()) {
             return false;
         }
+        readNewIntermediary();
+        return newIntermediary == null || newIntermediary.contains(type);
+    }
+
+    Map<String, Set<String>> newIntermediaryMethods; // intermediary name -> the descriptors (Mojang names) the new release gives it
+
+    /**
+     * The same for a method a jar names in intermediary (method_30010), with its descriptor in Mojang names when the name
+     * gives one: whether the new release has it so. 1.16's method_30010 returns an ItemStack; a build for 1.17 names the
+     * one returning void, which 1.16 lacks.
+     */
+    boolean newIntermediaryMethod(String name, String desc) {
+        if (!name.matches("method_\\d+")) {
+            return false;
+        }
+        readNewIntermediary();
+        if (newIntermediaryMethods == null) {
+            return true;
+        }
+        Set<String> descs = newIntermediaryMethods.getOrDefault(name, Set.of());
+        return desc == null ? !descs.isEmpty() : descs.contains(desc);
+    }
+
+    void readNewIntermediary() {
         if (!newIntermediaryRead) {
             newIntermediaryRead = true;
             ModNames.Back back = "fabric".equals(port.loader) ? port.loaderNames.handBack() : null;
             newIntermediary = back == null ? null : new HashSet<>(back.classes.values());
+            newIntermediaryMethods = back == null ? null : new HashMap<>();
+            if (back != null) {
+                back.methods.forEach((key, inter) -> newIntermediaryMethods.computeIfAbsent(inter, k -> new HashSet<>()).add(key.substring(key.indexOf('('))));
+            }
         }
-        return newIntermediary == null || newIntermediary.contains(type);
     }
 
     Set<String> releasePackages;

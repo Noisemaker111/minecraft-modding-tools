@@ -202,6 +202,21 @@ def library(project, loader, version):
     return None
 
 
+def runs_as_is(jar, loader, release):
+    """Whether a library's file, unported, starts on a release: Fabric Loader refuses a mod whose own "minecraft"
+    dependency refuses the release, and the JVM a class built for a newer Java than the release's (too_new_class, on
+    either side). A file Modrinth tags for the release may still be refused (ViaVersion 5's, tagged for 1.16, is built
+    for Java 17, and 1.16 runs on Java 8); its release for the old version, ported, is lowered and retargeted."""
+    import functools
+    import zipfile
+    with zipfile.ZipFile(jar) as z:
+        meta = javalevels.metadata(z, loader) or {}
+    asks = meta.get("depends") or {} if loader == "fabric" else {}
+    if "minecraft" in asks and not javalevels.fabric_accepts(asks["minecraft"], release):
+        return False
+    return not javalevels.too_new_class(jar, loader, ("server", "client"), functools.cache(lambda: javalevels.release_java(release)), release=release)
+
+
 def ranges(jar, loader):
     """The version ranges a NeoForge mod's metadata asks of each mod it requires ({mod id: "[21.1,21.2)"}); none for Fabric."""
     import zipfile
@@ -321,8 +336,13 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                 asked_range.setdefault(mid, []).append(r)
         if got and any(not in_range(v, r) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
             got = None
+        old = None
+        if got and not runs_as_is(got[0], loader, to):
+            # Modrinth's release tags are the author's word; the jar's own say what the loader and the JVM do with it.
+            old = library(project, loader, frm)
+            got = None if old else got
         if not got:
-            got, where = library(project, loader, frm), to_port
+            got, where = old or library(project, loader, frm), to_port
         if not got or provides(got[0], loader) & own - {"loader:*"}:
             return None
         return got, where

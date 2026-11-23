@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from portboard import board, dependencies, gamereleases, javalevels, porter, settings
+from portboard import board, dependencies, gamereleases, javalevels, modrinth, porter, settings
 
 
 def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(), run=None):
@@ -333,6 +333,16 @@ def load_plan(spec, mods=None):
     return out
 
 
+def server_unsupported(names, pins):
+    """{jar: why} for the pinned mods whose Modrinth project says a server cannot run them. pack-check asks Modrinth a
+    jar's sides by its hash, which a ported jar does not share with the file players download, so the proof asks the
+    mod's project: a mod its author marks unsupported on a server (Crash Assistant, whose language adapter needs a
+    library a server before 1.18 keeps from it) is proven in the client only, as players run it."""
+    projects = {f"{m['slug']}--{m['file']}": m["project"] for m in pins if m.get("project")}
+    return {n: "its Modrinth project says a server cannot run it (server_side unsupported)"
+            for n in names if n in projects and modrinth.server_side(projects[n]) == "unsupported"}
+
+
 def load(loader, frm, to, save, mods=None, out=None):
     """The mods the jar scoreboard says link, ported as jars and started on a real server of the new release with the library
     mods they need (choose), then in a real client of it (client_starts), with both verdicts side by side. mods: only these
@@ -404,6 +414,10 @@ def load(loader, frm, to, save, mods=None, out=None):
             platform.append(api_jar.name)
     mmt = str(settings.ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
     verdicts = {}
+    for name, why in server_unsupported([j.name for j in chosen], pins).items():
+        (pack / "mods" / name).rename(pack / "dropped" / name)
+        verdicts[name] = "client-only: " + why
+        print(f"  {name}: client-only, {why}")
 
     def start_server():
         done = subprocess.run([mmt, "pack-check", "--pack", str(pack), "--minecraft", to, "--loader", loader, "--json"],

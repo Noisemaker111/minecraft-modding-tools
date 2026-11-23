@@ -350,13 +350,21 @@ final class MixinMembers {
             }
         }
         Found f = find(targets, key, text);
-        if (f.report() != null && f.report().contains(".lambda$") && handler != null && mod.injectors.containsKey(handler)) {
-            // A lambda the new release no longer has stops the game only where the injector requires its place.
+        boolean neither = f.report() != null && f.report().startsWith("mixin target in neither release");
+        if (neither && (handler == null || !mod.injectors.containsKey(handler))) {
+            return f.text(); // judged only for an injector, whose require says whether Mixin stops for it
+        }
+        if (f.report() != null && (f.report().contains(".lambda$") || neither) && handler != null && mod.injectors.containsKey(handler)) {
+            // A lambda the new release no longer has, or a method neither release has, stops the game only where the
+            // injector requires its place, and, for the second, none of the injector's other method names gives one (a
+            // jar for several releases names each release's method; Mixin takes whichever the class has), nor does the
+            // config's plugin choose at start which of its mixins apply (Zume's mixins for each release it runs on).
             MixinRetargets.Injector inj = mod.injectors.get(handler);
             String mixin = handler.substring(0, handler.indexOf('.'));
             int require = inj.require()[0] >= 0 ? inj.require()[0] : mod.requires.getOrDefault(mixin, 0);
-            if (require == 0) {
-                mod.silent.add(f.report().replace("mixin target gone", "mixin injection finds no place"));
+            boolean elsewhere = neither && inj.methods().stream().filter(s -> !s.equals(text)).anyMatch(s -> find(targets, key, s).report() == null);
+            if (require == 0 || elsewhere || neither && mod.pluginPicked.contains(mixin)) {
+                mod.silent.add(f.report().replace("mixin target gone", "mixin injection finds no place").replace("mixin target in neither release", "mixin injection finds no place"));
                 return f.text();
             }
         }
@@ -474,8 +482,11 @@ final class MixinMembers {
             return new Found(text, null, null, 'm', owner, name, mdesc, null); // the JDK's or a library's: the same in both
         }
         List<String> owners = owner != null ? List.of(owner) : targets;
+        String absent = null; // a target class of the game neither release has a method of this name in
+        boolean unread = false; // a target that is not the old release's class (another mod's): what it has is not known
         for (String o : owners) {
             if (!port.a.classes.containsKey(o)) {
+                unread = true;
                 continue;
             }
             if (fdesc != null || (mdesc == null && Exposure.declaring(port.a, o, 'f', name, null) != null && owner != null)) {
@@ -505,6 +516,10 @@ final class MixinMembers {
                 // method of that name at all.
                 if (mdesc != null && !named(port.a, o, name).isEmpty() && named(port.b, port.cls(o), name).isEmpty()) {
                     return new Found(text, "mixin target gone: " + Exposure.dotted(o) + "." + name + mdesc, null, (char) 0, null, null, null, null);
+                }
+                // Lambdas and other synthetic methods ($ in the name) are not in the releases as read, so they are not judged.
+                if (key.equals("method") && !name.contains("$") && named(port.a, o, name).isEmpty() && named(port.b, port.cls(o), name).isEmpty()) {
+                    absent = o;
                 }
                 continue;
             }
@@ -536,6 +551,12 @@ final class MixinMembers {
             return now == null
                 ? new Found(text, report, null, 's', port.cls(o), moved[1], null, null)
                 : new Found(text, report, null, 's', port.cls(o), now.name, now.desc, prefix + now.name + (mdesc == null ? "" : now.desc));
+        }
+        if (absent != null && !unread && port.loader.equals("fabric") && !port.everyStart.newIntermediaryMethod(name, mdesc == null ? null : port.desc(mdesc))) {
+            // A jar built for a release with a method neither of these has (gca, built for 1.19, names 1.16.2's doClick as
+            // method_30010 on 1.15.2 and 1.16): Mixin finds no target. Fabric runs the game unpatched, so the old and new
+            // classes are all there is; NeoForge's patches add methods neither jar shows, so this is not read there.
+            return new Found(text, "mixin target in neither release: " + Exposure.dotted(absent) + "." + name + (mdesc == null ? "" : mdesc), null, (char) 0, null, null, null, null);
         }
         return keep(text);
     }

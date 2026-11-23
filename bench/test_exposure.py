@@ -419,6 +419,16 @@ finally:
     sys.stdout = sys.__stdout__
 check(picked == ["chunky--Chunky.jar"] and skipped == {"sound": ["it is not among this release's pinned mods (bench/exposure/mods/)"]},
       f"a slug another update pins is not started on this one, and the rest start: {picked} {skipped}")
+# A ported jar's hash is new to Modrinth, so pack-check cannot read its sides there: the proof asks the mod's project, and
+# a mod whose author says a server cannot run it is proven in the client only.
+real_side = portboard.modrinth.server_side
+portboard.modrinth.server_side = {"P-crash": "unsupported", "P-swim": "required", "P-hud": "optional"}.get
+try:
+    unsupported = portboard.gameload.server_unsupported(["crash--crash.jar", "swim--swim.jar", "hud--hud.jar", "lib.jar"],
+                                                        [{"slug": s, "file": f"{s}.jar", "project": f"P-{s}"} for s in ("crash", "swim", "hud")])
+finally:
+    portboard.modrinth.server_side = real_side
+check(list(unsupported) == ["crash--crash.jar"], f"only a mod its project says a server cannot run is kept off the server: {unsupported}")
 with tempfile.TemporaryDirectory() as tmp:
     real_pins = portboard.settings.PINS
     portboard.settings.PINS = Path(tmp)
@@ -922,6 +932,42 @@ with tempfile.TemporaryDirectory() as tmp:
         found = portboard.javalevels.newer_java(folder, ["neo.jar", "neo21.jar"], "neoforge", "1.21", "server")
         check(list(found) == ["neo.jar"] and "Java 25" in found["neo.jar"],
               f"on NeoForge 1.21 (Java 21) a @Mod class built for Java 25 is named, and a Java 25 class nothing loads at start is not: {found}")
+        # A bundle of one module per release (macOS Input Fixes, ViaFabric): Fabric loads only the module whose own
+        # "minecraft" accepts the release, so a newer release's module built for a newer Java is never loaded, whether
+        # the bundle was ported or came as it is. The module that is loaded still counts.
+        def per_release(java_old, java_new):
+            return jar({"fabric.mod.json": json.dumps({"id": "helper", "jars": [{"file": "META-INF/jars/old.jar"}, {"file": "META-INF/jars/new.jar"}]}),
+                        "META-INF/jars/old.jar": jar({"fabric.mod.json": json.dumps({"id": "fix", "depends": {"minecraft": "<26.1"}, "entrypoints": {"client": ["o.Fix"]}}),
+                                                      "o/Fix.class": class_file(java_old)}),
+                        "META-INF/jars/new.jar": jar({"fabric.mod.json": json.dumps({"id": "fix", "depends": {"minecraft": [">=26.1"]}, "entrypoints": {"client": ["n.Fix"]}}),
+                                                      "n/Fix.class": class_file(java_new)})})
+        (folder / "per-release.jar").write_bytes(per_release(52, 69))
+        (folder / "per-release-old.jar").write_bytes(per_release(61, 52))
+        found = portboard.javalevels.newer_java(folder, ["per-release.jar", "per-release-old.jar"], "fabric", "1.15", "client")
+        check(list(found) == ["per-release-old.jar"] and "old.jar!o.Fix" in found["per-release-old.jar"],
+              f"a bundle's module for a release the loader does not start is passed over, and the one it starts counts: {found}")
+        # A library's file Modrinth tags for the new release that the release cannot run as it is (built for a newer Java,
+        # or a "minecraft" of its own that refuses the release) is not put in the pack as it is: its file for the old
+        # release is ported with the mods, which lowers and retargets it. One that runs is taken as it is.
+        (portboard.settings.HOME / "versions" / "2.0.json").write_text(json.dumps({"javaVersion": {"majorVersion": 8}}), encoding="utf-8")
+        top = Path(tmp) / "top"
+        top.mkdir()
+        (top / "addon--addon.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "addon", "depends": {"newjava": "*", "elsewhere": "*", "fine": "*"}})}))
+        libs = {}
+        for name, meta, cls in (("newjava", {}, 61), ("elsewhere", {"depends": {"minecraft": ["1.0", "2.1"]}}, 52), ("fine", {"depends": {"minecraft": ">=1.0"}}, 52)):
+            for version in ("1.0", "2.0"):
+                libs[(f"P-{name}", version)] = (Path(tmp) / f"{name}-{version}.jar", f"v-{name}-{version}")
+                libs[(f"P-{name}", version)][0].write_bytes(jar({"fabric.mod.json": json.dumps({"id": name, **meta}), f"{name}/Api.class": class_file(cls)}))
+        real = portboard.dependencies.required_projects, portboard.dependencies.library
+        portboard.dependencies.required_projects = lambda v: ["P-newjava", "P-elsewhere", "P-fine"] if v == "v-addon" else []
+        portboard.dependencies.library = lambda project, loader, version: libs.get((project, version))
+        try:
+            chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["addon--addon.jar"], top,
+                                                                         [{"slug": "addon", "file": "addon.jar", "project": "P-addon", "version": "v-addon"}], set())
+        finally:
+            portboard.dependencies.required_projects, portboard.dependencies.library = real
+        check([j.name for j in chosen] == ["addon--addon.jar"] and sorted(ready) == ["fine-2.0.jar"] and sorted(to_port) == ["elsewhere-1.0.jar", "newjava-1.0.jar"],
+              f"a library's new file the release cannot run is ported from its old one: ready {sorted(ready)}, ported {sorted(to_port)}")
     finally:
         portboard.settings.HOME = real_home
 # The link check reads the same classes, on both sides, of the jar the port wrote: the port lowers a mod's classes to the

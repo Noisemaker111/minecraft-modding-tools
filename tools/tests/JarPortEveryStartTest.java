@@ -55,6 +55,23 @@ final class JarPortEveryStartTest {
         JarPortTest.expect(names.stream().noneMatch(u -> u.contains("class_6862")) && names.stream().anyMatch(u -> u.contains("class_7157")),
             "an intermediary name the new release has links; one it lacks does not: " + names);
 
+        // A jar built against a newer release (its manifest says which) whose start logs through a library that release
+        // ships and neither of these does (SLF4J, from 1.18): the class is missing at start. Another mod's class in an
+        // area no release's library holds is that mod's, and the same jar with no build release named is not judged.
+        EveryStart.LIBRARY_AREAS.put("3.0 org/slf4j/", Set.of("org/slf4j"));
+        EveryStart.LIBRARY_AREAS.put("3.0 com/other/", Set.of());
+        Map<String, byte[]> built = new LinkedHashMap<>();
+        built.put("fabric.mod.json", "{\"schemaVersion\":1,\"id\":\"s\",\"entrypoints\":{\"main\":[\"s.Main\",\"s.Other\"]}}".getBytes(StandardCharsets.UTF_8));
+        built.put("s/Main.class", annotated("s/Main", "Ls/Marker;", "org/slf4j/LoggerFactory"));
+        built.put("s/Other.class", annotated("s/Other", "Ls/Marker;", "com/other/Api"));
+        List<String> unbuilt = ported(a, b, map, "fabric", built, Map.of());
+        built.put("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nFabric-Minecraft-Version: 3.0\r\n".getBytes(StandardCharsets.UTF_8));
+        List<String> libs = ported(a, b, map, "fabric", built, Map.of());
+        JarPortTest.expect(libs.stream().anyMatch(u -> u.contains("org.slf4j.LoggerFactory (in s.Main.<init>)")) && libs.stream().noneMatch(u -> u.contains("com.other")),
+            "a class of a library the jar's build release ships and neither release does holds it back; another mod's does not: " + libs);
+        JarPortTest.expect(unbuilt.stream().noneMatch(u -> u.contains("org.slf4j")),
+            "with no build release named, a class outside every release's packages is left as written: " + unbuilt);
+
         // NeoForge starts a mod by constructing its @Mod class.
         Map<String, byte[]> neoforge = new LinkedHashMap<>();
         neoforge.put("META-INF/neoforge.mods.toml", "[[mods]]\nmodId=\"q\"\n".getBytes(StandardCharsets.UTF_8));
