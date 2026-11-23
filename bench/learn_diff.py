@@ -22,9 +22,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import exposure  # noqa: E402
+import portboard.gamereleases  # noqa: E402
+import portboard.porter  # noqa: E402
+import portboard.settings  # noqa: E402
 import port_tools  # noqa: E402
 
-ROOT = exposure.ROOT
+ROOT = portboard.settings.ROOT
 OUT = ROOT / ".runs" / "learn-diff"
 
 
@@ -39,17 +42,17 @@ def base_classes(ref):
         with tarfile.open(fileobj=io.BytesIO(packed)) as t:
             t.extractall(src, filter="data")
         sources = port_tools.sources(root=src)
-        javac = exposure.java().replace("java.exe", "javac.exe") if exposure.java().endswith("java.exe") else exposure.java() + "c"
-        subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", ";".join(map(str, exposure.ASM)) if sys.platform == "win32" else ":".join(map(str, exposure.ASM)),
+        javac = portboard.porter.java().replace("java.exe", "javac.exe") if portboard.porter.java().endswith("java.exe") else portboard.porter.java() + "c"
+        subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", ";".join(map(str, portboard.settings.ASM)) if sys.platform == "win32" else ":".join(map(str, portboard.settings.ASM)),
                         "-d", str(classes)] + [str(src / n) for n in sources], check=True, capture_output=True)
     sep = ";" if sys.platform == "win32" else ":"
-    return folder, sep.join([str(classes)] + [str(a) for a in exposure.ASM])
+    return folder, sep.join([str(classes)] + [str(a) for a in portboard.settings.ASM])
 
 
 def learned(classes, frm, to, loader, out):
     if not out.is_file():
         part = out.with_suffix(".part")
-        subprocess.run([exposure.java(), f"-Xmx{min(8, exposure.HEAP)}g", "-cp", classes, "GameDiff", "--chain", f"{frm},{to}", "--loader", loader, "--out", str(part)],
+        subprocess.run([portboard.porter.java(), f"-Xmx{min(8, portboard.settings.HEAP)}g", "-cp", classes, "GameDiff", "--chain", f"{frm},{to}", "--loader", loader, "--out", str(part)],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         part.replace(out)
     lines = {}
@@ -85,8 +88,8 @@ def main():
     p.add_argument("--jobs", type=int, default=3)
     p.add_argument("--repeat", action="store_true", help="the working tree against a second run of itself")
     a = p.parse_args()
-    hops = [tuple(h.split(",")) for h in a.hops] if a.hops else exposure.updates(a.loader)
-    head = exposure.jar_tools()
+    hops = [tuple(h.split(",")) for h in a.hops] if a.hops else portboard.gamereleases.updates(a.loader)
+    head = portboard.porter.jar_tools()
     work, again = OUT / "work", OUT / "again"
     for folder in (work, again):
         folder.mkdir(parents=True, exist_ok=True)
