@@ -1,18 +1,13 @@
 package mmt.standin.com.mojang.blaze3d.platform;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import java.nio.Buffer;
-import java.nio.ByteBuffer;
-import org.lwjgl.system.MemoryUtil;
 
 /**
  * 1.21.4's GlUtil, which 1.21.5 removed.
  *
- * Read from both releases: 1.21.4's GlUtil allocated and freed native memory through LWJGL's MemoryUtil and answered the
- * GL vendor, renderer and version strings (glGetString of GL_VENDOR, GL_RENDERER, GL_VERSION) and the CPU description
+ * Read from both releases: 1.21.4's GlUtil answered the GL vendor, renderer and version strings (glGetString of GL_VENDOR, GL_RENDERER, GL_VERSION) and the CPU description
  * (GLX._getCpuInfo()). 1.21.5 asks the render device for the same strings (RenderSystem.getDevice(): getVendor(),
- * getRenderer(), getVersion(), which its GL device answers with the same glGetString calls), keeps GLX._getCpuInfo(), and
- * MemoryUtil is LWJGL's own.
+ * getRenderer(), getVersion(), which its GL device answers with the same glGetString calls) and keeps GLX._getCpuInfo().
  *
  * Agrees with NeoForge's 1.21.4 -> 1.21.5 primer (https://github.com/neoforged/.github/blob/main/primers/1.21.5/index.md, CC BY 4.0):
  * "GlUtil class is removed".
@@ -20,14 +15,6 @@ import org.lwjgl.system.MemoryUtil;
 public final class GlUtil {
 
     private GlUtil() {}
-
-    public static ByteBuffer allocateMemory(int size) {
-        return MemoryUtil.memAlloc(size);
-    }
-
-    public static void freeMemory(Buffer buffer) {
-        MemoryUtil.memFree(buffer);
-    }
 
     public static String getVendor() {
         return RenderSystem.getDevice().getVendor();

@@ -1,8 +1,5 @@
 package mmt.standin.net.minecraft.client;
 
-import java.util.function.IntFunction;
-import net.minecraft.util.ByIdMap;
-
 /**
  * 1.21.10's GraphicsStatus, which 1.21.11 removed.
  *
@@ -20,7 +17,6 @@ public enum GraphicsStatus implements mmt.standin.net.minecraft.util.OptionEnum 
     FANCY(1, "options.graphics.fancy"),
     FABULOUS(2, "options.graphics.fabulous");
 
-    private static final IntFunction<GraphicsStatus> BY_ID = ByIdMap.continuous(GraphicsStatus::getId, values(), ByIdMap.OutOfBoundsStrategy.WRAP);
     private final int id;
     private final String key;
 
@@ -49,6 +45,7 @@ public enum GraphicsStatus implements mmt.standin.net.minecraft.util.OptionEnum 
     }
 
     public static GraphicsStatus byId(int id) {
-        return BY_ID.apply(id);
+        GraphicsStatus[] all = values();
+        return all[Math.floorMod(id, all.length)];
     }
 }

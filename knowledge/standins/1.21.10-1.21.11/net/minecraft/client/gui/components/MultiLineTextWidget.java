@@ -2,7 +2,6 @@ package mmt.standin.net.minecraft.client.gui.components;
 
 import java.util.function.Consumer;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.TextColor;
 
 /**
  * 1.21.10's MultiLineTextWidget.setColor and configureStyleHandling on 1.21.11.
@@ -25,7 +24,7 @@ public final class MultiLineTextWidget {
     public static net.minecraft.client.gui.components.MultiLineTextWidget setColor(net.minecraft.client.gui.components.MultiLineTextWidget self, int color) {
         Component message = self.getMessage();
         if (message.getStyle().getColor() == null) {
-            self.setMessage(message.copy().withStyle(style -> style.withColor(TextColor.fromRgb(color & 0xFFFFFF))));
+            self.setMessage(message.copy().withColor(color & 0xFFFFFF));
         }
         return self;
     }

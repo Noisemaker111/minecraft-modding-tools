@@ -28,62 +28,62 @@ public final class VillagerProfession {
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession NONE() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.NONE);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.NONE);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession ARMORER() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.ARMORER);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.ARMORER);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession BUTCHER() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.BUTCHER);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.BUTCHER);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession CARTOGRAPHER() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.CARTOGRAPHER);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.CARTOGRAPHER);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession CLERIC() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.CLERIC);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.CLERIC);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession FARMER() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.FARMER);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.FARMER);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession FISHERMAN() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.FISHERMAN);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.FISHERMAN);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession FLETCHER() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.FLETCHER);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.FLETCHER);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession LEATHERWORKER() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.LEATHERWORKER);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.LEATHERWORKER);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession LIBRARIAN() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.LIBRARIAN);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.LIBRARIAN);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession MASON() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.MASON);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.MASON);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession NITWIT() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.NITWIT);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.NITWIT);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession SHEPHERD() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.SHEPHERD);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.SHEPHERD);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession TOOLSMITH() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.TOOLSMITH);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.TOOLSMITH);
     }
 
     public static net.minecraft.world.entity.npc.VillagerProfession WEAPONSMITH() {
-        return BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.WEAPONSMITH);
+        return (net.minecraft.world.entity.npc.VillagerProfession) BuiltInRegistries.VILLAGER_PROFESSION.getValue(net.minecraft.world.entity.npc.VillagerProfession.WEAPONSMITH);
     }
 }
