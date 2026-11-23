@@ -454,7 +454,7 @@ final class PackChecks {
             c.add(
                 "settled-after-save",
                 "note",
-                settled.size() + " placed block(s) were waiting for a scheduled tick, or could not survive where they stood, when the world saved, and changed by the game's own rules after the reload (coral out of water dries, a plant on the wrong ground breaks at its next block update), not because of the save: " +
+                settled.size() + " placed block(s) were waiting for a scheduled tick, stood next to a block waiting for one (sand about to fall), or could not survive where they stood, when the world saved, and changed by the game's own rules after the reload (coral out of water dries, a plant on the wrong ground breaks at its next block update), not because of the save: " +
                 examples(shown),
                 "evidence",
                 settled
