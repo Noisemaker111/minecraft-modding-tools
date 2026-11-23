@@ -157,6 +157,8 @@ def main():
                                      "on a load receipt, when a mod it started does not load in game")
     ga.add_argument("summary", type=Path)
     ga.add_argument("--freed", type=Path, help="write the slugs of the mods that newly link here, comma-separated")
+    ga.add_argument("--base", type=Path, help="the jars summary of the same pair and mods on the commit compared with (jars --at BASE); default main's saved row")
+    ga.add_argument("--base-name", default="the base", help="what the base is, for the lines (e.g. main at SHA)")
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     lp.add_argument("--mods", default="", help="the slugs the proof asks of every update; one that no update pins stops the plan")
@@ -202,7 +204,7 @@ def main():
         if "client" in summary:
             lines, ok = portcheck.load_gate(summary)
         else:
-            lines, freed, ok = portcheck.gate(summary)
+            lines, freed, ok = portcheck.gate(summary, json.loads(a.base.read_text(encoding="utf-8")), a.base_name) if a.base else portcheck.gate(summary)
             if a.freed:
                 a.freed.write_text(",".join(freed), encoding="utf-8")
         print("\n".join(lines))

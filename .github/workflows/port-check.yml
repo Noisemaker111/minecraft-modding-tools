@@ -6,15 +6,17 @@ name: Port check
 # makes, and, when the porter, its rules or the change index changed, which every port reads, a sample per loader (the
 # fewest ports that would have caught every time a sweep of main found mods that stopped linking: portcheck.sample),
 # never every port; its output says which and why. One job per port, side by side: it ports and links those mods (jars
-# --mods) and fails when a mod that links in main's row stops linking (gate), then starts the mods that newly link on a
+# --mods) with the pull request and with its base commit (jars --at HEAD^1, beside it), and fails when a mod that links
+# on the base stops linking with the pull request (gate --base; main's saved table is remade only by hand or at a
+# release, so it is not what main does after a later merge), then starts the mods that newly link on a
 # real server and, beside it, in a real client of the new release (load --mods; no server when each is client-only by its
 # own metadata), the game proof at its smallest scope, which fails when a mod it started does not load (gate on the load
 # receipt); a mod it could not start is said with why and fails nothing. The whole scoreboard (cloud-exposure.yml) runs only by hand and with each release.
 #
 # Started by the PR's own events: marked ready, or a push to a ready PR; a draft starts nothing, and a newer push
 # replaces the run of the older head. A pull_request run from a fork runs the fork's copy of this file with a read-only
-# token, so it uses no secret. It restores main's kept ports and maps (a PR's cache could only be read by that PR, and
-# would push main's out of the 10 GB), so it saves none.
+# token, so it uses no secret. It restores main's kept ports and maps; the one thing it saves is the base's small
+# summary per pair (a few hundred KB), which only later runs of the same pull request can read.
 on:
   pull_request:
     branches: [main]
@@ -60,7 +62,10 @@ jobs:
       TO: ${{ matrix.to }}
       MODS: ${{ matrix.mods }}
     steps:
+      # The merge with main and its first parent, main as the pull request is compared with: the base of the comparison.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -68,6 +73,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # The base's port of this pair and these mods, kept under what it is made of: the base commit's tree, the pair and
+      # mods, and the scripts that summarize it. A push of the same pull request on the same main reads it back. Other
+      # pull requests cannot: a pull request's cache is readable only by its own runs (and main's by all).
+      - id: base
+        run: |
+          echo "tree=$(git rev-parse HEAD^1^{tree})" >> "$GITHUB_OUTPUT"
+          echo "name=main at $(git rev-parse --short=10 HEAD^1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: kept-base
+        with:
+          path: base/port.json
+          key: "port-base-${{ steps.base.outputs.tree }}-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-${{ matrix.mods }}-${{ hashFiles('bench/exposure.py', 'bench/port_tools.py', 'bench/portboard/**') }}"
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -77,12 +94,28 @@ jobs:
             ~/.mmt/exposure/maps
           key: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-"
           restore-keys: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:"
-      - name: Port and link against main's row
+      # The pull request's port and the base's (when not kept) side by side, each with half the memory: the gate compares
+      # them, so a mod main itself stopped linking since its saved table fails no pull request.
+      - name: Port and link against the base's port
         shell: bash
+        env:
+          BASE_NAME: ${{ steps.base.outputs.name }}
+          MMT_HEAP_GB: '6'
         run: |
-          mkdir -p summary
+          mkdir -p summary base
+          base=
+          if [ ! -f base/port.json ]; then
+            python bench/exposure.py jars --at HEAD^1 --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} --out base/port.json > base.txt 2>&1 &
+            base=$!
+          fi
           python bench/exposure.py jars --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} --out summary/port.json > jars.txt
-          python bench/exposure.py gate summary/port.json --freed freed.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -n "$base" ] && ! wait "$base"; then tail -n 30 base.txt; echo "the base's port failed"; exit 1; fi
+          python bench/exposure.py gate summary/port.json --base base/port.json --base-name "$BASE_NAME" --freed freed.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && steps.kept-base.outputs.cache-hit != 'true' && hashFiles('base/port.json') != '' }}
+        with:
+          path: base/port.json
+          key: ${{ steps.kept-base.outputs.cache-primary-key }}
       - name: Mods that newly link
         id: freed
         if: always()
@@ -123,6 +156,8 @@ jobs:
           path: |
             summary/
             jars.txt
+            base.txt
+            base/
             load.txt
             logs/
           if-no-files-found: ignore

@@ -117,17 +117,21 @@ def sample(loader, table):
     return out, count
 
 
-def gate(summary):
+def gate(summary, base=None, base_name="main's table"):
     """A port check's verdict on one summary: its lines, the mods it freed (slugs, for the game proof) and whether it
-    passes, which it does unless a mod that links in main's row stops linking."""
-    m = summary.get("againstMain")
+    passes, which it does unless a mod that links in the base's result stops linking. base: the jars summary of the same
+    pair and mods on the commit the pull request is compared with (jars --at its base), the comparison the check runs.
+    Without it, main's saved row (againstMain), which a local run prints: that table is only remade by hand or at a
+    release, so after a merge that moved a mod it no longer says what main does, and a check against it failed pull
+    requests for main's own change (fabric 1.18 -> 1.18.1, rechiseled and right-click-harvest, 2026-11-23)."""
+    m = mainrecord.against_main(base, summary) if base is not None else summary.get("againstMain")
     pair = f"{summary['loader']} {summary['from']} -> {summary['to']}"
     if m is None:
-        return [f"{pair}: main's table has no row for it, so nothing to compare; {summary['modsThatLink']}/{summary['modsRead']} link"], [], True
-    lines = [f"{pair}: {summary['modsThatLink']}/{summary['modsRead']} link" + (f" ({summary['partial']})" if summary.get("partial") else ""),
+        return [f"{pair}: {base_name} has no row for it, so nothing to compare; {summary['modsThatLink']}/{summary['modsRead']} link"], [], True
+    lines = [f"{pair}: {summary['modsThatLink']}/{summary['modsRead']} link, against {base_name}" + (f" ({summary['partial']})" if summary.get("partial") else ""),
              f"  newly link: {', '.join(m['newly link']) or 'none'}", f"  no longer link: {', '.join(m['no longer link']) or 'none'}"]
     if m["no longer link"]:
-        lines.append(f"FAIL: {len(m['no longer link'])} mods that link on main stop linking")
+        lines.append(f"FAIL: {len(m['no longer link'])} mods that link on {base_name} stop linking")
     return lines, sorted({n.split("--", 1)[0] for n in m["newly link"]}), not m["no longer link"]
 
 

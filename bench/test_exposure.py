@@ -1236,6 +1236,28 @@ check(portboard.portcheck.gate({**run, "againstMain": None})[2], "a port main ha
 run["againstMain"] = portboard.mainrecord.against_main(row, {**run, "links": ["b--1.jar"], "verdicts": {"b--1.jar": {}}, "unreadable": {"a--1.jar": "ZipException"}})
 check(not portboard.portcheck.gate(run)[2] and run["againstMain"]["no longer link"] == ["a--1.jar"],
       f"a mod that links on main and that the port can no longer read fails the check: {run['againstMain']}")
+# The check compares with the base commit's own port of the same pair and mods, not main's saved table: that table is
+# remade only by hand or at a release, and a merge after it (#223 on fabric 1.18 -> 1.18.1: rechiseled and
+# right-click-harvest stopped linking on main) failed every later pull request for main's change. Here main's table says
+# a and b link; main since stopped a, and the pull request changes nothing: the check passes against the base and names
+# what is the pull request's own. Against the stale table it would fail.
+stale = {"loader": "fabric", "from": big_f[0], "to": big_f[1], "links": ["a--1.jar", "b--1.jar"]}
+base = {"loader": "fabric", "from": big_f[0], "to": big_f[1], "modsRead": 3, "modsThatLink": 1, "links": ["b--1.jar"],
+        "verdicts": {"a--1.jar": {}, "b--1.jar": {}, "c--1.jar": {}}}
+head = {**base, "againstMain": portboard.mainrecord.against_main(stale, base)}
+check(not portboard.portcheck.gate(head)[2], "against main's stale table the unchanged pull request fails (what the check no longer does)")
+lines, freed, ok = portboard.portcheck.gate(head, base, "main at 1234567890")
+check(ok and freed == [] and "against main at 1234567890" in lines[0], f"against the base's own port an unchanged pull request passes: {lines}")
+moved = {**base, "modsThatLink": 1, "links": ["c--1.jar"]}
+lines, freed, ok = portboard.portcheck.gate(moved, base, "main at 1234567890")
+check(not ok and freed == ["c"] and lines[2] == "  no longer link: b--1.jar" and lines[-1] == "FAIL: 1 mods that link on main at 1234567890 stop linking",
+      f"a mod that links on the base and not with the pull request fails it; one it frees goes to the game proof: {lines}")
+with tempfile.TemporaryDirectory() as tmp:
+    (Path(tmp) / "head.json").write_text(json.dumps(head), encoding="utf-8")
+    (Path(tmp) / "base.json").write_text(json.dumps(base), encoding="utf-8")
+    said = E.subprocess.run([sys.executable, str(repo / "bench" / "exposure.py"), "gate", str(Path(tmp) / "head.json"), "--base", str(Path(tmp) / "base.json"),
+                             "--base-name", "main at abc", "--freed", str(Path(tmp) / "freed.txt")], capture_output=True, text=True)
+    check(said.returncode == 0 and "against main at abc" in said.stdout, f"gate --base compares with the base's summary: {said.stdout} {said.stderr}")
 
 
 # A changed change index runs every update it makes, beside the sample: a release newly indexed between two others makes
