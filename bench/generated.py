@@ -73,7 +73,8 @@ def build(folder):
 def record_and_build(folder, table=None, commit=None, run=None, source=None):
     if table:
         import exposure
-        exposure.record_main(table, commit, run, Path(folder) / "scoreboard")
+        import portboard.mainrecord
+        portboard.mainrecord.record_main(table, commit, run, Path(folder) / "scoreboard")
     if source:
         import source_ports
         source_ports.record_main(source, commit, run, Path(folder) / "scoreboard")
