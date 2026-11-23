@@ -92,7 +92,7 @@ jobs:
         if: ${{ !cancelled() && steps.freed.outputs.mods != '' }}
         # Only it, and 25 for mmt: the five a sweep needs took 27 s to download (neoforge 1.21.7 -> 1.21.8, 2026-11-23).
         run: |
-          runs=$(python -c "import sys; sys.path.insert(0, 'bench'); import exposure; print(exposure.release_java(sys.argv[1]))" "$TO")
+          runs=$(python -c "import sys; sys.path.insert(0, 'bench'); from portboard.javalevels import release_java; print(release_java(sys.argv[1]))" "$TO")
           { echo "versions<<EOF"; [ "$runs" = 25 ] || echo "$runs"; echo 25; echo EOF; } >> "$GITHUB_OUTPUT"
       - if: ${{ !cancelled() && steps.freed.outputs.mods != '' }}
         uses: ./.github/actions/game
