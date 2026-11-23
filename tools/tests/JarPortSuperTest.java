@@ -112,6 +112,22 @@ final class JarPortSuperTest {
             "m7.mixins.json", "{\"package\": \"m7\", \"mixins\": [\"InitMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "init.jar", runs);
         JarPortTest.expect(unlinked(runs).equals(List.of("mixin target changed signature: s7.ArrowR.<init>(Ls7/Disp;)V")),
             "an injector into a reshaped constructor taking its old arguments is reported, one taking none is not: " + unlinked(runs));
+        // Named by its old descriptor: Mixin only finds no place, a break where a place is required.
+        for (int require : new int[] { 1, 0 }) {
+            ClassWriter n = JarPortRetypeTest.writer("m7/NamedMixin", "java/lang/Object");
+            AnnotationVisitor t = n.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+            AnnotationVisitor v = t.visitArray("value");
+            v.visit(null, Type.getObjectType("s7/ArrowR"));
+            v.visitEnd();
+            t.visitEnd();
+            JarPortFixesTest.handler(n, JarPortFixesTest.INJECT, "onNamed", "(" + ci + ")V", "<init>(" + DISP + ")V", "TAIL", null, null);
+            n.visitEnd();
+            List<Map<String, Object>> named = new ArrayList<>();
+            port.port(JarPortTest.jar(Map.of("m7/NamedMixin.class", n.toByteArray(), "m7.mixins.json",
+                ("{\"package\": \"m7\", \"mixins\": [\"NamedMixin\"], \"injectors\": {\"defaultRequire\": " + require + "}}").getBytes(java.nio.charset.StandardCharsets.UTF_8))), "named.jar", named);
+            JarPortTest.expect(unlinked(named).isEmpty() == (require == 0),
+                "an injector naming a reshaped constructor's old descriptor is a break only where it requires a place (require " + require + "): " + unlinked(named));
+        }
     }
 
     static List<String> unlinked(List<Map<String, Object>> results) {

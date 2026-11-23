@@ -4664,7 +4664,22 @@ public final class JarPort {
         if (ctor != null && ctor.matches() && "<init>".equals(ctor.group(2))) {
             String changed = constructorChanged(ctor.group(1) != null ? List.of(ctor.group(1)) : targets, ctor.group(3), handler.substring(handler.indexOf('(')));
             if (changed != null) {
-                mod.unlinked.add(changed);
+                // By name alone Mixin refuses a handler whose arguments no constructor takes. One named by its old
+                // descriptor is only not found: a break where the injector requires a place and none of its other
+                // selectors gives one (ferritecore names three constructors of one class; packet-fixer requires none).
+                Injector inj = mod.injectors.get(handler);
+                String mixin = handler.substring(0, handler.indexOf('.'));
+                int require = inj.require()[0] >= 0 ? inj.require()[0] : mod.requires.getOrDefault(mixin, 0);
+                boolean elsewhere = inj.methods().stream().filter(s -> !s.equals(text)).anyMatch(s -> {
+                    Matcher other = MEMBER.matcher(s);
+                    return !other.matches() || !"<init>".equals(other.group(2))
+                        || constructorChanged(other.group(1) != null ? List.of(other.group(1)) : targets, other.group(3), handler.substring(handler.indexOf('('))) == null;
+                });
+                if (ctor.group(3) != null && (require == 0 || elsewhere)) {
+                    mod.silent.add(changed.replace("mixin target changed signature", "mixin injection finds no place"));
+                } else {
+                    mod.unlinked.add(changed);
+                }
                 return text;
             }
         }
