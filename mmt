@@ -7,7 +7,12 @@ if [ -n "${JAVA_HOME:-}" ] && { [ -f "$mmt_dir/mmt.jar" ] && [ -x "$JAVA_HOME/bi
     mmt_java="$JAVA_HOME/bin/java"
 else
     for mmt_jdk in "$mmt_dir"/.tools/jdk-* "$HOME"/.mmt/jdks/* "$HOME"/.modaccel/jdks/* "$HOME"/.jdks/*; do
-        if [ -x "$mmt_jdk/bin/javac" ]; then mmt_java="$mmt_jdk/bin/java"; break; fi
+        [ -x "$mmt_jdk/bin/javac" ] || continue
+        # ~/.mmt/jdks also holds the Java 8 and 16 that old game releases run on; mmt itself needs 17 or newer.
+        case "$(sed -n 's/^JAVA_VERSION="\([0-9]*\).*/\1/p' "$mmt_jdk/release" 2>/dev/null)" in
+            1|9|1[0-6]) continue ;;
+        esac
+        mmt_java="$mmt_jdk/bin/java"; break
     done
 fi
 if ! command -v "$mmt_java" >/dev/null 2>&1 && [ ! -x "$mmt_java" ]; then

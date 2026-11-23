@@ -46,7 +46,8 @@ Do whatever the licences and terms of service allow, and nothing past them.
 ## How the work runs
 
 The plan is the roadmap: `coverage/roadmap.json` (its goals) and `coverage/roadmap/goal-N/` (one file per step,
-`NNN-ID.json`, NNN its place in the goal), shown as `ROADMAP.md` and on the website. There is no other plan.
+`NNN-ID.json`, NNN its place in the goal), shown as `ROADMAP.md` and on the website, both written after every merge
+to the `generated` branch (`bench/generated.py`) so a bot commit never puts open pull requests behind. There is no other plan.
 In November 2026 the method for porting, converting and pack speed was each worked out mid-session and kept only in
 chat and in draft PRs that stayed open for days, so `main` went on teaching the method that had just been replaced
 and every new session started from it. These four steps keep that from happening.

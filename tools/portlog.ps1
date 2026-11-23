@@ -379,7 +379,7 @@ function Get-PortFixJdk {
 
 # The generated rename map for this repo's version jump: Minecraft before (the last commit's
 # gradle.properties) and after (the working copy), in the names the repo compiles against.
-# Built from published mappings by tools/VersionMap.java, so no version needs hand-written data.
+# Built from published mappings by tools/port/names/VersionMap.java, so no version needs hand-written data.
 # Fetches the real ports of this jump from the repos in knowledge/port-corpus.json (their A and B
 # branches compared on GitHub) and learns rewrites from the ones that use the same names. The repo
 # being ported is left out, so it never learns from its own answer.

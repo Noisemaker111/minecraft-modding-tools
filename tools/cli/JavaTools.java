@@ -14,21 +14,9 @@ final class JavaTools {
     JavaTools(Build build) throws Exception {
         this.build = build;
         jdk = Runtimes.ensureAtLeast(build.harness, 25);
-        // GameDiff builds a route map with the loader's own classes and carries learned expressions (FixExpr), and ModNames names JarPort's
-        // remapping, so it compiles with every file it reads; a missing one fails every port, convert and explain.
-        List<Path> sources = List.of(
-            build.harness.resolve("tools/VersionMap.java"),
-            build.harness.resolve("tools/GameDiff.java"),
-            build.harness.resolve("tools/Exposure.java"),
-            build.harness.resolve("tools/ModNames.java"),
-            build.harness.resolve("tools/FixExpr.java"),
-            build.harness.resolve("tools/SourceAnswers.java"),
-            build.harness.resolve("tools/JarPort.java"),
-            build.harness.resolve("tools/PortChains.java"),
-            build.harness.resolve("tools/cli/Json.java"),
-            build.harness.resolve("tools/MixinAudit.java"),
-            build.harness.resolve("tools/GamePrep.java")
-        );
+        List<Path> sources = new ArrayList<>(portSources(build.harness));
+        sources.add(build.harness.resolve("tools/MixinAudit.java"));
+        sources.add(build.harness.resolve("tools/GamePrep.java"));
         asm = build.harness.resolve("tools/perf/lib/asm-9.9.jar") + File.pathSeparator + build.harness.resolve("tools/perf/lib/asm-commons-9.9.jar");
         classes = build.harness.resolve(".mmt/portable-tools/" + Fingerprints.files(sources));
         Path ready = classes.resolve("ready");
@@ -53,6 +41,34 @@ final class JavaTools {
             if (result.exit() != 0) throw new IOException("Mapping tools could not compile. " + Run.tail(result.log()));
             Files.writeString(ready, "ok");
         }
+    }
+
+    /**
+     * The porter's sources: every .java under tools/port, and the three files of this folder compiled with them. Naming
+     * folders of tools/port gives those and tools/port's own files, for a cache key that only they change. The one list
+     * of them here (bench/port_tools.py is the same rule for the checks): a file added under tools/port is compiled
+     * and shipped by being there. They compile together, as each reads the others.
+     */
+    static List<Path> portSources(Path harness, String... folders) throws IOException {
+        Path port = harness.resolve("tools/port");
+        List<Path> found = new ArrayList<>();
+        if (folders.length == 0) {
+            try (var walk = Files.walk(port)) {
+                walk.filter(p -> p.toString().endsWith(".java")).forEach(found::add);
+            }
+        } else {
+            try (var own = Files.list(port)) {
+                own.filter(p -> p.toString().endsWith(".java")).forEach(found::add);
+            }
+            for (String folder : folders) {
+                try (var walk = Files.walk(port.resolve(folder))) {
+                    walk.filter(p -> p.toString().endsWith(".java")).forEach(found::add);
+                }
+            }
+        }
+        Collections.sort(found);
+        for (String with : List.of("Json", "Route", "Versions")) found.add(harness.resolve("tools/cli/" + with + ".java"));
+        return found;
     }
 
     Run.Result run(String tool, List<String> arguments, String stage) throws Exception {

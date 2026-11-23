@@ -13,7 +13,7 @@
 packs is .github/workflows/cloud-packs.yml (pack-check, one job per pack), ports is cloud-ports.yml (the port board,
 one job per case), convert is
 cloud-convert.yml (the convert sweep, one job per mod, in the game and back), exposure is cloud-exposure.yml (the jar
-scoreboard, one job per update and loader, joined into bench/exposure/all.json); any other
+scoreboard, one job per update and loader, joined into one table; main's is kept on the generated branch); any other
 name is taken as a workflow file. The workflow runs the commit the branch (--ref, default the current one) has on
 GitHub, so push first: a branch whose local commit is not on origin is refused (--allow-unpushed runs origin's).
 

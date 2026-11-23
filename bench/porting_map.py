@@ -1,13 +1,13 @@
 """The porting map: every Minecraft release, the hub-to-hub route between any two, and what has
 really been ported. It is a section of the roadmap page (docs/index.html, bench/bench_page.py);
-docs/porting-map.html only sends old links there.
+docs/porting-map.html only sends old links there. Both are written to the generated branch (bench/generated.py).
 
 Reads coverage/changes/index.json (bench/change_routes.py) and every <from>__<to>.json step file
-(tools/ChangeIndex.java). The page carries the small index inline; each step's full change list
+(tools/port/names/ChangeIndex.java). The page carries the small index inline; each step's full change list
 is written to docs/porting-map/steps/<from>__<to>.js as gzip + base64 and loaded only when a
 step is opened, so the page works from a local file and on GitHub Pages without a server.
 
-    python bench/porting_map.py      step files and the redirect page
+    python bench/porting_map.py DOCS      step files and the redirect page in DOCS (bench/generated.py build runs it)
 """
 import sys
 import base64
@@ -18,8 +18,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHANGES = ROOT / "coverage" / "changes"
-DOCS = ROOT / "docs"
-STEPS = DOCS / "porting-map" / "steps"
 DETAIL_JS = (Path(__file__).resolve().parent / "porting_map_detail.js").read_text(encoding="utf-8")
 
 
@@ -38,17 +36,18 @@ def payload():
     return json.dumps(slim, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
 
 
-def write_steps():
+def write_steps(docs):
     """Each step's full change list, loaded only when someone opens that step."""
     index = json.loads((CHANGES / "index.json").read_text(encoding="utf-8"))
-    STEPS.mkdir(parents=True, exist_ok=True)
+    steps = docs / "porting-map" / "steps"
+    steps.mkdir(parents=True, exist_ok=True)
     total, keep = 0, set()
     for s in index["steps"]:
         data = json.loads((CHANGES / s["file"]).read_text(encoding="utf-8"))
         data["matched"] = s["coverage"]["matched"]
         raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         key = s["file"][:-5]
-        out = STEPS / f"{key}.js"
+        out = steps / f"{key}.js"
         keep.add(out.name)
         # zlib builds differ in the bytes they write for the same data (1.3.1 on Windows, 1.3 on Ubuntu), so a file
         # whose contents are unchanged keeps its bytes: docs/ then matches coverage/ whichever machine regenerates it.
@@ -56,7 +55,7 @@ def write_steps():
             b64 = base64.b64encode(gzip.compress(raw, 9, mtime=0)).decode("ascii")
             out.write_bytes(f'PM.loaded("{key}","{b64}");\n'.encode("ascii"))
         total += out.stat().st_size
-    for old in STEPS.glob("*.js"):
+    for old in steps.glob("*.js"):
         if old.name not in keep:
             old.unlink()
     return len(index["steps"]), total
@@ -100,10 +99,11 @@ REDIRECT = """<!doctype html>
 """
 
 
-def main():
-    n, size = write_steps()
-    (DOCS / "porting-map.html").write_text(REDIRECT, encoding="utf-8", newline="\n")
-    print("wrote", DOCS / "porting-map.html", "(redirect to index.html#porting);", n, "step files,", size, "bytes")
+def main(docs):
+    docs = Path(docs)
+    n, size = write_steps(docs)
+    (docs / "porting-map.html").write_text(REDIRECT, encoding="utf-8", newline="\n")
+    print("wrote", docs / "porting-map.html", "(redirect to index.html#porting);", n, "step files,", size, "bytes")
 
 
 MAP_CSS = r""".card { border:1px solid var(--rule); border-radius:12px; padding:16px; margin-top:16px }
@@ -558,4 +558,6 @@ if __name__ == "__main__":
     for stream in (sys.stdout, sys.stderr):  # UTF-8 whatever the console or PYTHONIOENCODING says
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
-    main()
+    if len(sys.argv) != 2:
+        sys.exit("usage: python bench/porting_map.py DOCS (python bench/generated.py build runs it)")
+    main(sys.argv[1])

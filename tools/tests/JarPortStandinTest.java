@@ -139,6 +139,7 @@ final class JarPortStandinTest {
         JarPortTest.expect(trace.equals("42;true;false;45;42"), "the ported mod runs the stand-ins against the new release, a super call to a gone method included: " + trace);
 
         nested(port);
+        became(scratch);
 
         // A jar whose fabric.mod.json gives a key twice (Physics Mod's "environment"), which Json refuses: the types cannot be
         // listed, so the port says so instead of failing the jar.
@@ -262,6 +263,98 @@ final class JarPortStandinTest {
             JarPortTest.expect(trace.matches("mmt\\.standin\\.u[0-9a-f]+\\.s9\\.Zone 3"),
                 (fabric ? "Fabric" : "NeoForge") + ": a mod's call of its nested library's method that returns a stand-in type links: " + trace);
         }
+    }
+
+    /**
+     * A gone interface whose stand-in is written as static methods on the type the game's own classes moved to, as
+     * 1.21.11's PermissionSource on PermissionSetSupplier: s9.Source (has(int)), which s9.Stack implemented, is gone, and
+     * Stack is an s9.Supplier (level()) now. The class goes to Supplier, so a mod's cast to Source and call of has(2)
+     * link and run on a Stack; where Stack did not move to the stand-in's type, the stand-in is the class, as before.
+     */
+    static void became(Path scratch) throws Exception {
+        for (boolean moved : List.of(true, false)) {
+            GameDiff.Snap a = new GameDiff.Snap("1.0"), b = new GameDiff.Snap("2.0");
+            b.loaderVersion = "2.0.1";
+            JarPortTest.snap(a, "s9/Source", Opcodes.ACC_INTERFACE, null, "has(I)Z");
+            JarPortTest.snap(a, "s9/Stack", 0, null, "<init>()V", "has(I)Z").ifaces.add("s9/Source");
+            JarPortTest.snap(b, "s9/Supplier", Opcodes.ACC_INTERFACE, null, "level()I");
+            GameDiff.Cls stack = JarPortTest.snap(b, "s9/Stack", 0, null, "<init>()V", "level()I");
+            if (moved) {
+                stack.ifaces.add("s9/Supplier");
+            }
+            Path kb = scratch.resolve("became-kb-" + moved);
+            Path book = Files.createDirectories(kb).resolve("fixes.json");
+            Files.writeString(book, "{\"rules\": []}");
+            write(kb.resolve("standins/1.0-2.0/s9/Source.java"), """
+                package mmt.standin.s9;
+                public final class Source {
+                    private Source() {}
+                    public static boolean has(s9.Supplier self, int level) {
+                        return self.level() >= level;
+                    }
+                }
+                """);
+            Path map = scratch.resolve("route-became.json");
+            Files.writeString(map, "{}");
+            JarPort port = new JarPort(a, b, map);
+            port.fixes(book);
+            List<Map<String, Object>> runs = new ArrayList<>();
+            Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n9/Asks.class", asks())), "became.jar", runs));
+            List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+            if (!moved) {
+                JarPortTest.expect(!unlinked.isEmpty(), "where the game's classes did not move to the stand-in's type, the stand-in is the class and has(2) stays unlinked: " + unlinked);
+                continue;
+            }
+            JarPortTest.expect(unlinked.isEmpty(), "a gone class whose stand-in is written on the type the game moved to links: " + unlinked);
+            Map<String, byte[]> classes = new HashMap<>();
+            ClassWriter supplier = new ClassWriter(0);
+            supplier.visit(Opcodes.V21, Opcodes.ACC_PUBLIC | Opcodes.ACC_INTERFACE | Opcodes.ACC_ABSTRACT, "s9/Supplier", null, "java/lang/Object", null);
+            supplier.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT, "level", "()I", null, null).visitEnd();
+            classes.put("s9/Supplier", end(supplier));
+            ClassWriter game = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
+            game.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "s9/Stack", null, "java/lang/Object", new String[] {"s9/Supplier"});
+            MethodVisitor init = game.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+            init.visitCode();
+            init.visitVarInsn(Opcodes.ALOAD, 0);
+            init.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+            init.visitInsn(Opcodes.RETURN);
+            init.visitMaxs(0, 0);
+            MethodVisitor level = game.visitMethod(Opcodes.ACC_PUBLIC, "level", "()I", null, null);
+            level.visitCode();
+            level.visitInsn(Opcodes.ICONST_3);
+            level.visitInsn(Opcodes.IRETURN);
+            level.visitMaxs(0, 0);
+            classes.put("s9/Stack", end(game));
+            for (var e : ported.entrySet()) {
+                if (e.getKey().endsWith(".class")) {
+                    classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+                }
+            }
+            String trace;
+            try {
+                ClassLoader loader = loader(classes);
+                Class<?> asks = loader.loadClass("n9.Asks");
+                Object onStack = loader.loadClass("s9.Stack").getConstructor().newInstance();
+                trace = asks.getMethod("ask", Object.class, int.class).invoke(null, onStack, 2) + ";" + asks.getMethod("ask", Object.class, int.class).invoke(null, onStack, 4);
+            } catch (ReflectiveOperationException | LinkageError failed) {
+                trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+            }
+            JarPortTest.expect(trace.equals("true;false"), "the ported mod asks the stand-in on the game's object: " + trace);
+        }
+    }
+
+    /** class n9.Asks, written for the old release: static boolean ask(Object o, int level) { return ((Source) o).has(level); } */
+    static byte[] asks() {
+        ClassWriter w = start("n9/Asks");
+        MethodVisitor ask = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "ask", "(Ljava/lang/Object;I)Z", null, null);
+        ask.visitCode();
+        ask.visitVarInsn(Opcodes.ALOAD, 0);
+        ask.visitTypeInsn(Opcodes.CHECKCAST, "s9/Source");
+        ask.visitVarInsn(Opcodes.ILOAD, 1);
+        ask.visitMethodInsn(Opcodes.INVOKEINTERFACE, "s9/Source", "has", "(I)Z", true);
+        ask.visitInsn(Opcodes.IRETURN);
+        ask.visitMaxs(0, 0);
+        return end(w);
     }
 
     /** The update's jar of stand-in types a ported jar nests, as its metadata lists it, read into its files. */

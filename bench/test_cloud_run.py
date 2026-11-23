@@ -48,11 +48,11 @@ except SystemExit:
 # Main's table is made once per commit and found again. A commit that changed only files the table cannot read (the
 # workflow's paths-ignore) has its parent's table; a sweep dispatched for a commit names it in its title.
 globs = C.ignored_paths()
-check("docs/**" in globs and "bench/exposure/all.json" in globs and "coverage/roadmap/**" in globs, f"the ignored files are read from the workflow: {globs}")
+check("docs/**" in globs and "coverage/measures.json" in globs and "coverage/roadmap/**" in globs, f"the ignored files are read from the workflow: {globs}")
 check(C.glob_matches("**.md", ".claude/skills/port-a-mod/SKILL.md") and C.glob_matches("coverage/roadmap/**", "coverage/roadmap/goal-2/055-78.json")
       and not C.glob_matches("docs/**", "tools/docs.java") and not C.glob_matches("bench/exposure/load-*.json", "bench/exposure/mods/a.json"),
       "path filters match as GitHub's: ** crosses folders, * stays in one")
-history = {"c3": ("c2", ["ROADMAP.md", "docs/index.html"]), "c2": ("c1", ["tools/JarPort.java"]), "c1": ("c0", [])}
+history = {"c3": ("c2", ["ROADMAP.md", "docs/index.html"]), "c2": ("c1", ["tools/port/jar/JarPort.java"]), "c1": ("c0", [])}
 fake_git = lambda *a: (history.get(a[-1].rstrip("^"), (None,))[0] or "") if a[0] == "rev-parse" else "\n".join(history[a[-1]][1])  # noqa: E731
 check(C.same_table("c3", globs, git=fake_git) == ["c3", "c2"], "a commit that changed only generated files has its parent's table, and no further back")
 A, B, D = "a" * 40, "b" * 40, "d" * 40

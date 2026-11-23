@@ -254,10 +254,14 @@ final class PerfReport {
         Map<String, Double> sites = new HashMap<>();
         double scale = gcCopiedBytes > 0 && copiedWeight > 0 ? (double) gcCopiedBytes / copiedWeight : 1;
         copiedClasses.forEach((type, copied) -> {
-            Map<String, Long> bySite = allocationSitesByClass.get(type);
-            if (bySite == null) return;
+            Map<String, Long> bySite = allocationSitesByClass.getOrDefault(type, Map.of());
             double allocated = bySite.values().stream().mapToLong(Long::longValue).sum();
-            if (allocated <= 0) return;
+            // JFR samples allocations, so a site that allocates rarely can go unsampled in a short capture.
+            // Its copying stays in the list under its class: dropping it would rank whatever was sampled first.
+            if (allocated <= 0) {
+                sites.merge(type + " (no allocation of it sampled)", copied * scale, Double::sum);
+                return;
+            }
             bySite.forEach((where, weight) -> sites.merge(where, copied * scale * weight / allocated, Double::sum));
         });
         return sites;

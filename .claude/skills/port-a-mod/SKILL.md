@@ -9,12 +9,17 @@ it, in every update. One changed part of the game as a rule comes second, for wh
 
 ## Where porting stands (2026-11-20)
 
-- A mod comes in as source or as a `.jar`. `mmt port --jar MOD.jar --to 1.21.2` (tools/JarPort.java) moves a compiled
+- A mod comes in as source or as a `.jar`. `mmt port --jar MOD.jar --to 1.21.2` (tools/port/jar/JarPort.java) moves a compiled
   NeoForge or Fabric mod with no source and no build, and names every reference that does not link instead of guessing.
   A Fabric jar is read in Mojang's names and handed back in the target release's intermediary (`ModNames.Back`).
 - **The number to move:** `tools/cloud-run exposure` (`python bench/exposure.py all` runs the same here) ports the
   150 most-downloaded mods of each release and links them against the target release and its loader (NeoForge with FML
-  and its event bus; Fabric Loader and Fabric API). In `bench/exposure/all.json` it counts, apart: the **jump to the
+  and its event bus; Fabric Loader and Fabric API). The headline is **any mod, any version**
+  (`port.jar-links.any-version`): the most-used release's mods ported to every other release, forward and back, and
+  counted when they link on every one. What holds each mod back, and which types of break and releases would free the
+  most mods for every release, is main's `scoreboard/any-version.md` (`python bench/generated.py show
+  scoreboard/any-version.md`; your branch's run prints the same under "Any version"): work from its top. In main's
+  table (`python bench/generated.py show scoreboard/all.json`) it also counts, apart: the **jump to the
   newest game** from the most-used release (Fabric 1.20.1, NeoForge 1.21.1 to 26.3: **11 of 294 link**,
   `port.jar-links.newest`), which is what people ask for; the **35 big updates**, each into a new family of releases
   (**1,861 of 5,149**, `port.jar-links.big-updates`); the 21 jumps from each family's most-used release to the next
@@ -22,11 +27,11 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   `port.jar-links.every-update`) and flattered the porter. Run `tools/cloud-run exposure` on your PR's last commit
   and put what it prints against main in the PR. It runs only your branch: main's table for your base was made when
   that commit reached main, and is found (or made once, for every PR on that base) without you running main. Never
-  commit `bench/exposure/all.json` or add the `port.jar-links` points: main's sweep writes both after the merge.
+  add the `port.jar-links` points: main's sweep writes them and its table to the `generated` branch after the merge.
 - One update or one jump: `python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2` (a
   minute or two the first time, seconds when nothing it reads changed; `--to 1.21.4` or `--to 26.3` is a jump). It prints **the mods nearest to done**, each with the
   references it still needs and what the game's own code did about each one: that is the to-do list. Fabric jars are
-  read in Mojang's names through intermediary first (tools/ModNames.java).
+  read in Mojang's names through intermediary first (tools/port/names/ModNames.java).
 - `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2` is the proof (`python bench/exposure.py load` on GitHub's
   runners, one job per update; `-f mods=SLUG,...` for a few mods): the mods `jars` says link, with the libraries they
   require, are ported and started on a real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side
@@ -82,12 +87,12 @@ work only after it predicts the result:** the mods it clears build, and the ones
 
 Step 50 is done: a `.jar` is ported by changing its classes. Step 44 is done: one scoreboard, read from jars, for every
 update and both loaders. What remains on the tool (`coverage/roadmap/goal-2/`) needs someone who can change
-`tools/JarPort.java` safely. If that is not you, say so to Jon and stop; adding text rules instead is the mistake in
+`tools/port/jar/JarPort.java` safely. If that is not you, say so to Jon and stop; adding text rules instead is the mistake in
 the first row above.
 
 1. **Step 47 (doing): a fix names a game part and is applied in the class.** What the game's own change map knows
    (calls switched, added arguments, chains, narrower fields) and every rule's `inClass` (a Java expression for the
-   old member, compiled by JarPort against the new release, see `tools/FixExpr.java`) are applied in classes. Still to
+   old member, compiled by JarPort against the new release, see `tools/port/FixExpr.java`) are applied in classes. Still to
    do: the source port applies the same `inClass` where the compiler resolved the member, instead of a regex.
 2. **Step 52: `mmt port --jar` ports Fabric mods too.** The scoreboard reads them; the port must hand them back in
    the names Fabric runs.
@@ -98,9 +103,9 @@ the first row above.
    the first time and prints two lists: the **types of break** (what a reference is, and what the game's own code did
    about it: `call, game: linked` is a call whose method is still there with other parameters), each with the mods it
    alone holds back; and the mods nearest to done with what each still needs. Over every update the same two lists
-   are `types` and `nearest` in `bench/exposure/all.json`.
+   are `types` and `nearest` in main's table (`python bench/generated.py show scoreboard/all.json`).
 2. Take the type that finishes the most mods, and design the way the porter handles that type: in the learner
-   (tools/GameDiff.java) when the game's own code shows the answer, in tools/JarPort.java when the answer is in how the
+   (tools/port/learn/GameDiff.java) when the game's own code shows the answer, in tools/port/jar/JarPort.java when the answer is in how the
    mod's class is written. Use the nearest-to-done mods that have the type as your cases: the fix is right when it
    finishes them and the other mods with that type, in this update and the others. Before designing, see why the
    porter gave no answer for three of the type's references: run GameDiff with `-Dgamediff.learnlog=PREFIX` and read
@@ -136,5 +141,5 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
   `tools/cloud-run ports`; then hand back, never watching CI. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
 - Each type of break is a commit on the step's open PR, not a new step or PR (`CONTRIBUTING.md`, "How the work
   runs"). End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`):
-  its result says what the method freed and what it left, which is the table above from step 79 on (ROADMAP.md shows
-  every step). This file changes only when the method does; the table above takes no new rows.
+  its result says what the method freed and what it left, which is the table above from step 79 on (`ROADMAP.md` on the
+  `generated` branch shows every step). This file changes only when the method does; the table above takes no new rows.

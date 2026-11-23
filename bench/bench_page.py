@@ -1,15 +1,17 @@
 """Render the public website (docs/index.html) and ROADMAP.md from live repo data.
 
-Every chart and number is generated automatically on main (.github/workflows/generated.yml) from:
-- bench/exposure/all.json          (live .jar porting coverage across every Fabric & NeoForge update)
+Both are written after every merge to the generated branch, never to main (bench/generated.py,
+.github/workflows/generated.yml), from:
+- scoreboard/all.json              (main's jar scoreboard, kept on the generated branch)
 - coverage/sweeps/pack.json        (modpack pass & repair rates + history)
 - coverage/sweeps/convert.json     (loader-switch pass rates + history)
 - coverage/roadmap.json, roadmap/  (goals, one file per step: burn-up, timeline)
-- coverage/measures.json           (tracked metrics and history)
+- coverage/measures.json           (tracked metrics and history; recordedBy points in scoreboard/points.json)
 - coverage/ledger.json             (verified port runs and loader pairs)
 
-    python bench/bench_page.py              docs/index.html and ROADMAP.md
-    python bench/bench_page.py --roadmap    ROADMAP.md only
+    python bench/bench_page.py --dir DIR              DIR/docs/index.html and DIR/ROADMAP.md, reading DIR/scoreboard/
+    python bench/bench_page.py --dir DIR --roadmap    DIR/ROADMAP.md only
+python bench/generated.py build fills DIR/scoreboard/ from the generated branch and writes the porting map's files too.
 """
 import argparse
 import json
@@ -22,12 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from page_style import STYLE, THEME_JS  # noqa: E402
 from ledger_rule import COLOUR, RANK, WORD  # noqa: E402
 import measures as M  # noqa: E402
+import generated as G  # noqa: E402
 import viz  # noqa: E402
 from porting_map import MAP_CSS, MAP_BODY, section, stonecutter_items  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "docs" / "index.html"
-ROADMAP_MD = ROOT / "ROADMAP.md"
 GOAL_AREAS = {"1": ("test", "plugin"), "2": ("port",), "3": ("pack",), "4": ("loader",), "5": ("perf",)}
 _, _, MAP_JS = section()
 
@@ -43,7 +44,8 @@ ledger = load("coverage/ledger.json", {"hops": [], "loaders": [], "loader_pairs"
 data = load("bench/data.json", {"editloop": []})
 bumps = load("bench/port/results.json", {"mods": [], "date": ""})
 mods = load("bench/mods/results.json", {"mods": [], "measured": ""})
-exposure = load("bench/exposure/all.json", {"date": "", "total": {"mods": 0, "link": 0}, "loaders": {}, "updates": []})
+NO_TABLE = {"date": "", "total": {"mods": 0, "link": 0}, "loaders": {}, "updates": []}
+exposure = NO_TABLE
 pack_sweep = load("coverage/sweeps/pack.json", {"corpus": 0, "latest": {}, "history": []})
 convert_sweep = load("coverage/sweeps/convert.json", {"corpus": 0, "latest": {}, "history": []})
 
@@ -205,8 +207,11 @@ def hero_scoreboard_html(book):
 
     rm_pct = round(100 * n_done / len(steps)) if steps else 0
 
+    av = exposure.get("anyVersion") or {}
+    porting = ((f"{av['every']} / {av['mods']}", f"{ex_pct}% per update", "Top mods whose .jar ports to any version", round(100 * av["every"] / av["mods"]), "yellow")
+               if av.get("mods") else (f"{ex_pct}%", f"{ex_link:,} / {ex_mods:,}", f".jar mods linking ({ex_updates} updates)", ex_pct, "green" if ex_pct >= 60 else "yellow"))
     items = [
-        (f"{ex_pct}%", f"{ex_link:,} / {ex_mods:,}", f".jar mods linking ({ex_updates} updates)", ex_pct, "green" if ex_pct >= 60 else "yellow"),
+        porting,
         (f"{pk_pass} / {pk_total}", f"{pk.get('repaired', 0)} repaired", "Modpacks passing on real servers", pk_pct, "green"),
         (f"{cv_load} / {cv_total}", f"{cv.get('same behaviour fingerprint as the original', 0)} exact", "Fabric ↔ NeoForge conversions", cv_pct, "yellow"),
         (f"{n_done} / {len(steps)}", f"{rm_pct}%", "Roadmap steps proven done", rm_pct, "accent"),
@@ -266,8 +271,13 @@ def area_progress_html(book):
 
     g1_d, g1_t, g1_now = gstat("1")
 
+    av = exposure.get("anyVersion") or {}
     cards = [
         (
+            "Version porting", f"{av['every']}/{av['mods']}", "top mods go to any version",
+            f"Their .jar ported to every release, forward and back, and linked; {ex_pct}% link one update at a time. {g2_d}/{g2_t} steps done.",
+            g2_now, "#porting", round(100 * av["every"] / av["mods"]), "yellow",
+        ) if av.get("mods") else (
             "Version porting", f"{ex_pct}%", f"{ex_link:,} of {ex_mods:,} top mods link",
             f"Fabric (1.14.4–26.3) and NeoForge (1.20.5–26.3) .jar & source porting. {g2_d}/{g2_t} steps done.",
             g2_now, "#porting", ex_pct, "green" if ex_pct >= 60 else "yellow",
@@ -548,6 +558,7 @@ def page(book):
 
 
 # ---- ROADMAP.md ---------------------------------------------------------------------------------
+MAIN = "https://github.com/Noisemaker111/minecraft-modding-tools/blob/main"
 MARK = {"done": "🟢 done", "doing": "🔵 doing", "next": "⚪ next", "later": "⚫ later"}
 
 
@@ -562,12 +573,12 @@ def roadmap_md(book):
         pts, mins = book.points(m), M.minutes(book, m)
         now = M.fmt(pts[-1]["value"], m["unit"], mins) if pts else "not measured"
         tgt = M.target_words(book, m)
-        return f"{M.label(m)} is **{now}**" + (f", target {tgt}" if tgt else "")
+        return f"{M.label(m)} is **{now}**" + (f", target {tgt}" if tgt else "") + (f" ([what is not there yet]({m['see']}))" if m.get("see") else "")
 
     steps = [s for g in r["goals"] for s in g["steps"]]
     out = ["# Roadmap", "",
-           "> Generated from [`coverage/roadmap.json`](coverage/roadmap.json) and [`coverage/measures.json`](coverage/measures.json) by",
-           "> `python bench/bench_page.py --roadmap`. Edit those two files, not this one. Live charts and",
+           f"> Generated after every merge from main's [`coverage/roadmap.json`]({MAIN}/coverage/roadmap.json) and [`coverage/measures.json`]({MAIN}/coverage/measures.json)",
+           "> by `python bench/generated.py build`. Edit those files on main, not this one. Live charts and",
            "> porting map: **<https://noisemaker111.github.io/minecraft-modding-tools/>**", "",
            f"**The goal:** {r['goal']}", "",
            f"**{sum(s['status'] == 'done' for s in steps)} of {len(steps)} steps done.** A step is {MARK['done']} only when it ran and was checked; the others are "
@@ -610,21 +621,29 @@ def slug(title):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Write docs/index.html and ROADMAP.md.")
+    global exposure
+    ap = argparse.ArgumentParser(description="Write DIR/docs/index.html and DIR/ROADMAP.md.")
+    ap.add_argument("--dir", type=Path, required=True, help="a checkout of the generated branch, or a scratch folder (bench/generated.py)")
     ap.add_argument("--roadmap", action="store_true", help="write ROADMAP.md only")
     args = ap.parse_args(argv)
-    book = M.Book()
+    table = args.dir / "scoreboard" / "all.json"
+    exposure = json.loads(table.read_text(encoding="utf-8")) if table.is_file() else NO_TABLE
+    book = M.Book(scoreboard=G.points(args.dir))
     found = M.problems(book)
     if found:
         print("coverage/measures.json or coverage/roadmap.json has problems:\n  " + "\n  ".join(found), file=sys.stderr)
         return 1
-    ROADMAP_MD.write_text(roadmap_md(book), encoding="utf-8", newline="\n")
-    print("wrote", ROADMAP_MD)
+    roadmap = args.dir / "ROADMAP.md"
+    args.dir.mkdir(parents=True, exist_ok=True)
+    roadmap.write_text(roadmap_md(book), encoding="utf-8", newline="\n")
+    print("wrote", roadmap)
     if args.roadmap:
         return 0
     html = page(book)
-    OUT.write_text(html, encoding="utf-8", newline="\n")
-    print("wrote", OUT, len(html), "bytes")
+    out = args.dir / "docs" / "index.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding="utf-8", newline="\n")
+    print("wrote", out, len(html), "bytes")
     return 0
 
 
@@ -807,7 +826,7 @@ TEMPLATE = r"""<!doctype html>
   <div class="folds">{DEEP}</div>
 </section>
 
-<p class="foot">Auto-generated on every merge to <span class="mono">main</span> from <span class="mono">bench/exposure/all.json</span>, <span class="mono">coverage/</span>, and <span class="mono">ROADMAP.md</span>. <a href="https://github.com/Noisemaker111/minecraft-modding-tools">Source on GitHub</a>.</p>
+<p class="foot">Auto-generated after every merge to <span class="mono">main</span> from <span class="mono">coverage/</span> and main's jar scoreboard. <a href="https://github.com/Noisemaker111/minecraft-modding-tools">Source on GitHub</a>.</p>
 </main>
 <script>
 /*THEME*/
