@@ -13,5 +13,5 @@
   "port.jar-links.big-updates",
   "port.jar-links.newest"
  ],
- "result": ""
+ "result": "Stand-ins for 31 old methods over 13 updates, and one porter reading: a gone class whose stand-in is written as static methods on one new type, which every game class that was the old class now is, goes to that type (1.21.11's PermissionSource on PermissionSetSupplier). Cloud-exposure 45117613487 against main 9166166: every update 6,605 -> 6,622 of 9,423, big updates 2,447 -> 2,460 of 5,149, newest game 22 -> 22, none lower; 'call, game: redesigned' finishes 30 -> 15, mods 1,293 -> 1,217. In game (cloud-load 45106092496, 45114127586, 45114127644, 45114127628, 45114127609, 45114127915): Spark, Veinminer Enchantment, JEI, Better Stats (1.19.1), AzureLib and Not Enough Crashes load on server and client, Visuality in the client (client-only); Puzzle (NeoForge 26.3, no MidnightLib in the pack), Visual Workbench (its Puzzles Lib lacks a class) and Better Stats 1.20.5 (its metadata asks for 1.20.4) fail outside the stand-ins. Left: methods with no honest answer (1.15 disableLight, 1.19.1 ChatSender, 1.21.4 item models, 26.3 shader sources, NeoForge 26.1.1's tooltip player, TickableBlockEntity) and super(...) calls."
 }
