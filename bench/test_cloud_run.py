@@ -174,6 +174,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("Process completed with exit code 1" in text and "Post job cleanup" not in text and "https://x/run/5" in text and "--run 5" in text,
           f"the failure prints its log's end and the run: {text}")
     check(C.download_new(5, out, {"exposure-0"}, gh=run_gh) == [], "an artifact already downloaded is not downloaded again")
+    check(C.log_tail(1, gh=lambda *a, **k: "\ufeff<?xml version=\"1.0\"?><Error><Code>BlobNotFound</Code></Error>") == [],
+          "a cancelled job with no log prints no storage error as its log")
 # Every agent shares one API limit (5,000 calls an hour): a poll is one call, polls slow down while no job finishes, and
 # a spent limit ends the wait with when it renews and the run's link, where it used to crash the wait.
 views = [[], [], [job("a", "completed", "success")], [job("a", "completed", "success")]]
