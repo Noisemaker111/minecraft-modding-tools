@@ -85,6 +85,7 @@ final class Fingerprints {
         model = withoutGeneratedSources(model);
         Set<Path> inputs = new TreeSet<>(Port.sources(project));
         inputs.add(init);
+        if (Files.isRegularFile(Build.resolution(init))) inputs.add(Build.resolution(init));
         inputs.addAll(sourceFolderFiles(project));
         Set<Path> outputs = new HashSet<>(), byName = new TreeSet<>();
         List<Path> generatedRoots = new ArrayList<>(

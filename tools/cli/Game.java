@@ -1002,7 +1002,7 @@ final class Game {
         ));
         Run.Result result;
         try {
-            result = Run.command(command, build.project.root, Map.of("JAVA_HOME", build.jdk.home().toString()), build.report.log("game-test"), timeout);
+            result = Run.command(command, build.project.root, build.environment(), build.report.log("game-test"), timeout);
         } catch (Run.Timeout stopped) {
             throw new IOException("The game tests ran past " + timeout + " s and were stopped; raise --timeout. Log: " + stopped.log);
         }
@@ -1253,7 +1253,7 @@ final class Game {
                     task
                 )
             );
-            environment.put("JAVA_HOME", build.jdk.home().toString());
+            environment.putAll(build.environment());
             directory = build.project.root;
             mode = "Gradle prepares and launches the actual client";
         }

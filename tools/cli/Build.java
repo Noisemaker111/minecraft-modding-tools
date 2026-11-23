@@ -5,7 +5,7 @@ import java.util.*;
 final class Build {
 
     final ProjectModel project;
-    final Path harness, init;
+    final Path harness, init, resolution;
     final String selected;
     final Mmt.Report report;
     Runtimes.Jdk jdk;
@@ -16,6 +16,7 @@ final class Build {
         this.selected = selected;
         this.report = report;
         init = harness.resolve("tools/cli/gradle.init.gradle");
+        resolution = resolution(init);
         long start = System.nanoTime();
         int required = project.javaRequirement();
         for (int version : project.javaToolchainVersions()) Runtimes.ensureExact(harness, version);
@@ -143,18 +144,30 @@ final class Build {
         boolean cold = coldSetup();
         int seconds = gradleTimeout(UserState.env("GRADLE_TIMEOUT"));
         try {
-            Map<String, String> environment = new TreeMap<>(BuildSecrets.environment(BuildSecrets.given(project)));
-            environment.put("JAVA_HOME", jdk.home().toString());
             return Run.command(
                 command,
                 project.root,
-                environment,
+                environment(),
                 report.log(stage),
                 seconds
             );
         } catch (Run.Timeout timeout) {
             throw new IOException(timeoutMessage(timeout.seconds, cold, timeout.log), timeout);
         }
+    }
+
+    /**
+     * The environment every Gradle run of this checkout gets beside the inherited one, whoever starts it (compile, game
+     * tests, a server, a client Gradle launches): the build's Java, and the publishing-secret placeholders it needs to load.
+     */
+    Map<String, String> environment() throws IOException {
+        return environment(project, jdk.home());
+    }
+
+    static Map<String, String> environment(ProjectModel project, Path javaHome) throws IOException {
+        Map<String, String> environment = new TreeMap<>(BuildSecrets.environment(BuildSecrets.given(project)));
+        environment.put("JAVA_HOME", javaHome.toString());
+        return environment;
     }
 
     Run.Result gradle(List<String> arguments, String stage) throws Exception {
@@ -249,21 +262,13 @@ final class Build {
     }
 
     /**
-     * A compile with nothing of mmt's in it, so Gradle can reuse its configuration cache:
+     * A compile with none of mmt's tasks in it, so Gradle can reuse its configuration cache:
      * on a 21-project build that is about 3 s instead of 11 s per reload. A build that can't use
-     * the cache still compiles; Gradle just reports the problem and configures as usual.
+     * the cache still compiles; Gradle just reports the problem and configures as usual. It keeps
+     * where the build resolves from (gradle.resolution.gradle), or it would resolve otherwise than the build it reloads.
      */
     Run.Result compileCached(List<String> tasks, String stage) throws Exception {
-        List<String> command = new ArrayList<>(command(tasks));
-        int init = command.indexOf("-I");
-        if (init >= 0) {
-            command.remove(init + 1);
-            command.remove(init);
-        }
-        command.replaceAll(argument -> argument.equals("--no-configuration-cache") ? "--configuration-cache" : argument
-        );
-        command.removeIf(argument -> argument.startsWith("-Dmmt.") || argument.equals("-Dfabric.loom.ci=true"));
-        Run.Result result = timed(command, stage);
+        Run.Result result = timed(cachedCommand(tasks), stage);
         report.stage(
             stage,
             result,
@@ -271,6 +276,30 @@ final class Build {
         );
         return result;
     }
+
+    List<String> cachedCommand(List<String> tasks) throws IOException {
+        return cached(command(tasks), init);
+    }
+
+    /** A full Gradle command as a configuration-cached one: mmt's tasks and properties out, where it resolves from kept. */
+    static List<String> cached(List<String> full, Path init) {
+        List<String> command = new ArrayList<>(full);
+        int at = command.indexOf(init.toString());
+        command.remove(at);
+        command.remove(at - 1);
+        command.replaceAll(argument -> argument.equals("--no-configuration-cache") ? "--configuration-cache" : argument
+        );
+        command.removeIf(argument -> argument.equals("-Dfabric.loom.ci=true") || argument.startsWith("-Dmmt.") && !RESOLUTION.matcher(argument).lookingAt());
+        return command;
+    }
+
+    /** mmt's init script that says where a build resolves from, beside gradle.init.gradle. */
+    static Path resolution(Path init) {
+        return init.resolveSibling("gradle.resolution.gradle");
+    }
+
+    /** The system properties gradle.resolution.gradle reads. */
+    static final java.util.regex.Pattern RESOLUTION = java.util.regex.Pattern.compile("-Dmmt\\.(pluginPins|portedLibraries)=");
 
     List<String> command(List<String> arguments) throws IOException {
         Path wrapper = GradleWrapper.jar(project.root);
@@ -285,7 +314,9 @@ final class Build {
                 "--console=plain",
                 "--no-configuration-cache",
                 "-I",
-                init.toString()
+                init.toString(),
+                "-I",
+                resolution.toString()
             )
         );
         // Test hook: make the init script miss under configure-on-demand to exercise the fallback.

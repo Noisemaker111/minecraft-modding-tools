@@ -83,7 +83,8 @@ final class GradleWrapper {
         try (Writer out = Files.newBufferedWriter(properties)) {
             wanted.store(out, "Written by mmt: the Gradle release this checkout runs on, beside its own files");
         }
-        Files.copy(shipped(url), jar, StandardCopyOption.REPLACE_EXISTING);
+        // Only the checkout's own release is checked by its pinned checksum; a risen one was removed from wanted above.
+        Files.copy(shipped(url, wanted.getProperty("distributionSha256Sum")), jar, StandardCopyOption.REPLACE_EXISTING);
         return jar;
     }
 
@@ -106,8 +107,33 @@ final class GradleWrapper {
     /** Libraries no repository was asked for: "Could not find G:A:V. Required by:" with no searched locations. */
     static final Pattern UNSEARCHED = Pattern.compile("Could not find [\\w.-]+:[\\w.-]+:[\\w.+-]+\\.\\s+Required by:");
 
+    /**
+     * A plugin that states the Gradle it needs: Loom's own check ("requires at least Gradle 8.12", "Gradle 8.12 or
+     * higher is required"), and a plugin whose metadata declares a newer org.gradle.plugin.api-version, which Gradle
+     * refuses while resolving it (NeoGradle 7.0.192 declares 8.13; MineColonies' 1.20.4 wrapper is 8.8).
+     */
+    static final List<Pattern> MINIMUM_GRADLE = List.of(
+        Pattern.compile("requires at least Gradle (\\d+\\.\\d+(?:\\.\\d+)?)"),
+        Pattern.compile("Gradle (\\d+\\.\\d+(?:\\.\\d+)?) or (?:higher|newer|later) is required"),
+        // Gradle's variant report: "this component declares ..., as well as attribute 'org.gradle.plugin.api-version' with
+        // value '8.13' and the consumer needed ... with value '8.8'".
+        Pattern.compile("org\\.gradle\\.plugin\\.api-version' with value '(\\d+\\.\\d+(?:\\.\\d+)?)' and the consumer needed"),
+        Pattern.compile("org\\.gradle\\.plugin\\.api-version'? with value '[\\d.]+' but the component declares '(\\d+\\.\\d+(?:\\.\\d+)?)'"),
+        Pattern.compile("compatible with Gradle (\\d+\\.\\d+(?:\\.\\d+)?) and the consumer needed")
+    );
+
+    /** The newest Gradle a plugin in this failure says it needs, or null when none says. */
+    static String minimumGradle(String log) {
+        String minimum = null;
+        for (Pattern pattern : MINIMUM_GRADLE) for (Matcher m = pattern.matcher(log); m.find();) {
+            if (minimum == null || Versions.compare(m.group(1), minimum) > 0) minimum = m.group(1);
+        }
+        return minimum;
+    }
+
     static boolean needsNewerGradle(String log) {
-        return NEEDS_NEWER_GRADLE.matcher(log).find() ||
+        return minimumGradle(log) != null ||
+            NEEDS_NEWER_GRADLE.matcher(log).find() ||
             (UNSEARCHED.matcher(log).find() && !log.contains("Searched in the following locations"));
     }
 
@@ -137,6 +163,17 @@ final class GradleWrapper {
         }
     }
 
+    /**
+     * The release a build on current that failed with this log runs once more on: the newest of its line, and when a
+     * plugin names the Gradle it needs, only if that release meets it (never across a major line). Null otherwise.
+     */
+    static String riseTo(String current, String log, List<String> released) {
+        if (!needsNewerGradle(log)) return null;
+        String newest = newestOfLine(current, released);
+        String minimum = minimumGradle(log);
+        return newest == null || minimum != null && Versions.compare(newest, minimum) < 0 ? null : newest;
+    }
+
     static Path risenFile(Path root) {
         return root.resolve(".mmt/portable/gradle-release.txt");
     }
@@ -157,7 +194,7 @@ final class GradleWrapper {
         if (current == null || !distributionUrl(root).equals(ownUrl(root))) return null;
         String newest;
         try {
-            newest = newestOfLine(current, released());
+            newest = riseTo(current, log, released());
         } catch (IOException unreachable) {
             return null; // without Gradle's list of releases the build keeps its own; its failure stands
         }
@@ -190,19 +227,25 @@ final class GradleWrapper {
     /**
      * The gradle-wrapper.jar a Gradle release ships inside its own wrapper plugin, lib/plugins/gradle-wrapper*.jar
      * (lib/gradle-wrapper-VERSION.jar in older releases such as 7.3), the jar its wrapper task writes, cached in
-     * ~/.mmt/gradle-wrapper/VERSION/. Read from the unpacked distribution, else its zip, else the zip
-     * is downloaded to where the wrapper looks for it.
+     * ~/.mmt/gradle-wrapper/ under the distribution's own URL (and pinned checksum), so a mirror's or a custom build's
+     * wrapper is never handed to a checkout that names another distribution. Read from the unpacked distribution, else
+     * its zip, else the zip is downloaded to where the wrapper looks for it. A pinned checksum (the checkout's
+     * distributionSha256Sum) is checked on the zip before anything in it is read, as Gradle's wrapper would before
+     * unpacking it; the unpacked copy may have come from a checkout that pinned none, so it is not used then.
      */
-    static Path shipped(String url) throws IOException {
+    static Path shipped(String url, String sha256) throws IOException {
         String version = version(url);
         if (version == null) throw new IOException(
             "This checkout has no gradle-wrapper.jar and its distributionUrl " + url + " names no Gradle release; restore its Gradle wrapper."
         );
-        Path cached = Path.of(System.getProperty("user.home"), ".mmt", "gradle-wrapper", version, "gradle-wrapper.jar");
-        if (Files.isRegularFile(cached)) return cached;
+        boolean pinned = sha256 != null && !sha256.isBlank();
         Path dist = distFolder(url);
+        Path cached = Path.of(System.getProperty("user.home"), ".mmt", "gradle-wrapper", version)
+            .resolve(dist.getFileName() + (pinned ? "-" + sha256.strip().toLowerCase(Locale.ROOT) : ""))
+            .resolve("gradle-wrapper.jar");
+        if (Files.isRegularFile(cached)) return cached;
         byte[] jar = null;
-        for (String lib : List.of("lib/plugins", "lib")) {
+        if (!pinned) for (String lib : List.of("lib/plugins", "lib")) {
             Path unpacked = dist.resolve("gradle-" + version).resolve(lib);
             if (Files.isDirectory(unpacked)) try (var files = Files.list(unpacked)) {
                 for (Path plugin : files.filter(f -> f.getFileName().toString().matches("gradle-wrapper.*\\.jar")).toList()) {
@@ -213,6 +256,13 @@ final class GradleWrapper {
         if (jar == null) {
             Path zip = dist.resolve(url.substring(url.lastIndexOf('/') + 1));
             if (!Files.isRegularFile(zip)) download(url, zip);
+            if (pinned) {
+                String actual = sha256(zip);
+                if (!actual.equalsIgnoreCase(sha256.strip())) throw new IOException(
+                    "The Gradle distribution " + url + " does not match this checkout's distributionSha256Sum (" + sha256.strip() +
+                    ", got " + actual + "); nothing in it was run. Delete " + zip + " to download it again, or fix the checksum."
+                );
+            }
             try (ZipFile file = new ZipFile(zip.toFile())) {
                 for (ZipEntry e : Collections.list(file.entries())) if (
                     jar == null && e.getName().matches("gradle-[^/]+/lib/(plugins/)?gradle-wrapper[^/]*\\.jar")
@@ -225,6 +275,17 @@ final class GradleWrapper {
         Files.write(part, jar);
         Files.move(part, cached, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         return cached;
+    }
+
+    static String sha256(Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[1 << 16];
+            for (int read; (read = in.read(buffer)) > 0;) digest.update(buffer, 0, read);
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     /** One entry of a jar held in memory, or null. */

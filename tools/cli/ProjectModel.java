@@ -312,6 +312,7 @@ public final class ProjectModel {
             digest.update(Files.readAllBytes(file));
         }
         digest.update(Files.readAllBytes(init));
+        if (Files.isRegularFile(Build.resolution(init))) digest.update(Files.readAllBytes(Build.resolution(init)));
         // The user's own Gradle settings and init scripts shape every build too.
         Path gradleHome = Path.of(
             System.getenv()

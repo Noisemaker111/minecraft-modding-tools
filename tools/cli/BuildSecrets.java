@@ -36,14 +36,29 @@ final class BuildSecrets {
      * user's gradle.properties, or the environment, already set are left alone.
      */
     static SortedSet<String> named(ProjectModel project) throws IOException {
-        Properties set = ProjectModel.properties(GradleWrapper.userHome().resolve("gradle.properties"));
         List<String> scripts = new ArrayList<>();
         for (Path file : project.inputs()) {
             String name = file.getFileName().toString();
-            if (name.equals("gradle.properties")) set.putAll(ProjectModel.properties(file));
-            else if (name.endsWith(".gradle") || name.endsWith(".gradle.kts")) scripts.add(ProjectModel.read(file));
+            if (name.endsWith(".gradle") || name.endsWith(".gradle.kts")) scripts.add(ProjectModel.read(file));
         }
-        return named(scripts, set, System.getenv());
+        return named(scripts, set(project), System.getenv());
+    }
+
+    /** The Gradle properties the build's and the user's gradle.properties set. */
+    static Properties set(ProjectModel project) throws IOException {
+        Properties set = ProjectModel.properties(GradleWrapper.userHome().resolve("gradle.properties"));
+        for (Path file : project.inputs()) if (file.getFileName().toString().equals("gradle.properties")) set.putAll(ProjectModel.properties(file));
+        return set;
+    }
+
+    /**
+     * True while nothing gives the name a value: the environment for "env:NAME"; for "prop:NAME" a gradle.properties or
+     * ORG_GRADLE_PROJECT_NAME (https://docs.gradle.org/current/userguide/build_environment.html#setting_a_project_property).
+     */
+    static boolean unset(String name, Properties set, Map<String, String> environment) {
+        if (name.startsWith("env:")) return !environment.containsKey(name.substring(4));
+        String property = name.substring(name.indexOf(':') + 1);
+        return !set.containsKey(property) && !environment.containsKey("ORG_GRADLE_PROJECT_" + property);
     }
 
     static SortedSet<String> named(List<String> scripts, Properties set, Map<String, String> environment) {
@@ -52,11 +67,11 @@ final class BuildSecrets {
             String code = script.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)(^|[^:])//.*$", "$1");
             Set<String> env = new HashSet<>();
             for (Matcher m = ENV.matcher(code); m.find();) env.add(m.group(1));
-            for (String name : env) if (secret(name) && !environment.containsKey(name)) names.add("env:" + name);
+            for (String name : env) if (secret(name) && unset("env:" + name, set, environment)) names.add("env:" + name);
             List<String> props = new ArrayList<>();
             for (Matcher m = QUOTED.matcher(code); m.find();) props.add(m.group(1));
             for (Matcher m = IDENTIFIER.matcher(code.replaceAll("\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'", "\"\"")); m.find();) props.add(m.group(1));
-            for (String name : props) if (secret(name) && !env.contains(name) && !set.containsKey(name)) names.add("prop:" + name);
+            for (String name : props) if (secret(name) && !env.contains(name) && unset("prop:" + name, set, environment)) names.add("prop:" + name);
         }
         return names;
     }
@@ -86,7 +101,22 @@ final class BuildSecrets {
         return project.state().resolve("secret-placeholders.txt");
     }
 
+    /**
+     * The placeholders this checkout's Gradle runs get now: those mmt gave it, less any the user has since set, so a
+     * token exported after the first build reaches the build instead of the placeholder.
+     */
     static SortedSet<String> given(ProjectModel project) throws IOException {
+        SortedSet<String> saved = saved(project);
+        return saved.isEmpty() ? saved : given(saved, set(project), System.getenv());
+    }
+
+    static SortedSet<String> given(Collection<String> saved, Properties set, Map<String, String> environment) {
+        SortedSet<String> names = new TreeSet<>();
+        for (String name : saved) if (unset(name, set, environment)) names.add(name);
+        return names;
+    }
+
+    static SortedSet<String> saved(ProjectModel project) throws IOException {
         Path file = file(project);
         SortedSet<String> names = new TreeSet<>();
         if (Files.isRegularFile(file)) for (String line : Files.readAllLines(file)) if (!line.isBlank()) names.add(line.strip());

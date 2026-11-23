@@ -27,52 +27,6 @@ def planning = System.getProperty('mmt.metadataMode', '') == 'plan'
 // Test hook for mmt's fallback: behave like an init script that registers too late
 // whenever Gradle is configuring on demand, so the retry without it can be exercised.
 def simulateMiss = System.getProperty('mmt.simulateCodMiss', '') == 'true' && gradle.startParameter.configureOnDemand
-// Plugin releases mmt pinned because the newest one in the build's range needs a newer Java (Build.pluginPin).
-def pluginPins = System.getProperty('mmt.pluginPins', '').split(',').findAll { it.contains('=') }.collectEntries { def kv = it.split('=', 2); [(kv[0]): kv[1]] }
-if (pluginPins) gradle.beforeSettings { s ->
-    s.pluginManagement.resolutionStrategy.eachPlugin { d -> if (pluginPins[d.requested.id.id]) d.useVersion(pluginPins[d.requested.id.id]) }
-}
-// Libraries mmt ported from source (LibraryPort) live in a local Maven repository; their versions end in -mmt-<game>.
-def portedLibraries = System.getProperty('mmt.portedLibraries', '')
-def settingsRepositories = false
-if (portedLibraries) {
-    gradle.settingsEvaluated { s ->
-        // Gradle before 6.8 has no settings repositories; projects declare their own there.
-        try { settingsRepositories = s.dependencyResolutionManagement.repositoriesMode.get().toString() != 'PREFER_PROJECT' } catch (Throwable older) { return }
-        if (settingsRepositories) s.dependencyResolutionManagement.repositories.maven { url = new File(portedLibraries).toURI(); content { includeVersionByRegex('.*', '.*', '.*-mmt-.*') } }
-    }
-    gradle.allprojects { p ->
-        if (!settingsRepositories) p.repositories.maven { url = new File(portedLibraries).toURI(); content { includeVersionByRegex('.*', '.*', '.*-mmt-.*') } }
-    }
-}
-// A loader's own artifacts live on its own Maven repository, and builds once found them elsewhere: in the repository's
-// root (https://maven.neoforged.net, Embeddium) or through another loader's or Architectury's maven that no longer
-// mirrors them (Moonlight, Model Gap Fix). NeoForged serves NeoForge and NeoGradle from /releases, the repository its
-// MDKs declare; the root, Forge's and Architectury's mavens answer 404 for them (checked 2026-11-23). So that repository
-// is added last wherever a build already declares repositories, for those groups alone (with the libraries NeoForge
-// and NeoGradle depend on, cpw.mods:modlauncher and net.minecraftforge:srgutils, which it serves too): what resolved
-// before still resolves from where it did (Gradle takes the first repository that has a module).
-def loaderMavens = ['https://maven.neoforged.net/releases': '(net\\.(neoforged|minecraftforge)|cpw\\.mods)(\\..*)?']
-// A repository address that moved: NeoForged's root served everything /releases serves now, NeoForge's own
-// dependencies included (Forge's MCP tools, de.oceanlabs.mcp:mcinjector for Architectury Loom), so it is pointed there.
-def movedRepositories = ['https://maven.neoforged.net': 'https://maven.neoforged.net/releases']
-def addLoaderMavens = { handler ->
-    handler.each { r ->
-        def at = r.hasProperty('url') && r.url != null ? r.url.toString().replaceFirst('/+$', '') : ''
-        if (movedRepositories[at]) r.url = movedRepositories[at]
-    }
-    loaderMavens.each { address, groups ->
-        if (handler.any { it.hasProperty('url') && it.url.toString().startsWith(address) }) return
-        handler.maven { repository -> repository.name = 'mmt ' + address; repository.url = address; repository.content { includeGroupByRegex(groups) } }
-    }
-}
-gradle.settingsEvaluated { s ->
-    // Declaring one plugin repository replaces Gradle's default, the plugin portal, so it stays first when none is declared.
-    if (s.pluginManagement.repositories.isEmpty()) s.pluginManagement.repositories.gradlePluginPortal()
-    addLoaderMavens(s.pluginManagement.repositories)
-    try { if (!s.dependencyResolutionManagement.repositories.isEmpty()) addLoaderMavens(s.dependencyResolutionManagement.repositories) } catch (Throwable older) {}
-}
-gradle.allprojects { p -> p.afterEvaluate { if (!p.repositories.isEmpty()) addLoaderMavens(p.repositories) } }
 def partFile = { File state, String path -> new File(state, 'model-parts/' + Base64.urlEncoder.withoutPadding().encodeToString(path.bytes) + '.json') }
 def metadataPath = { String path -> (path == ':' ? '' : path) + ':mmtProjectMetadata' }
 gradle.rootProject { root ->
