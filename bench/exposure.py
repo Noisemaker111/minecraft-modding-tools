@@ -88,7 +88,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import port_tools  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = port_tools.ROOT
 # Gigabytes of heap for the Java tools; lower it when other work shares the machine.
 HEAP = int(os.environ.get("MMT_HEAP_GB") or 10)
 HOME = Path(os.environ.get("MMT_EXPOSURE_HOME") or Path(os.path.expanduser("~")) / ".mmt" / "exposure")
