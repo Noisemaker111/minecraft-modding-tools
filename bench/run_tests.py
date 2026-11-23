@@ -185,7 +185,7 @@ def jar_port():
     asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
     tests = jar_port_tests()
     home = jdk(25)
-    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
+    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), "tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java",
            "tools/GameDiff.java", "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java", "tools/cli/Versions.java", "tools/SourceAnswers.java", *tests]
     yield Together([str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem)] for test in tests)
 
@@ -249,7 +249,7 @@ CHECKS = {
 
 
 def jar_port_sources():
-    return ["tools/JarPort.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java", "tools/GameDiff.java",
+    return ["tools/JarPort.java", "tools/DataIds.java", "tools/FixExpr.java", "tools/PortChains.java", "tools/Exposure.java", "tools/GameDiff.java",
             "tools/VersionMap.java", "tools/ModNames.java", "tools/cli/Json.java"]
 
 
