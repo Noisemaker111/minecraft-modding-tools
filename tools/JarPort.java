@@ -6967,6 +6967,9 @@ public final class JarPort {
             Type[] was = Type.getArgumentTypes(desc), now = Type.getArgumentTypes(moved[2]);
             String[][] out = found == NONE ? new String[was.length][] : found.clone();
             boolean any = found != NONE;
+            GameDiff.Cls declared = Exposure.declaring(a, owner, 'm', name, desc);
+            String[] itself = route.method(declared == null ? owner : declared.name, name, desc);
+            boolean own = itself[1].equals(moved[1]) && itself[2].equals(moved[2]);
             for (int i = 0; i < was.length; i++) {
                 // A primitive too: 1.21's float tick delta is deltaTracker.getGameTimeDeltaPartialTick(false) wherever the game
                 // reads it from the DeltaTracker that took its place.
@@ -6975,7 +6978,8 @@ public final class JarPort {
                 }
                 // What the game's code has wherever it used this very parameter as it was, followed through calls and
                 // callers; where those places read it two ways, what the method's own statements show is not enough.
-                String seen = followed(owner, name, desc, i, 0);
+                // Only for the method's own new signature: a handler moved into another method takes that one's parameters.
+                String seen = own ? followed(owner, name, desc, i, 0) : "";
                 if (seen.equals(CONFLICT)) {
                     out[i] = null;
                     continue;
