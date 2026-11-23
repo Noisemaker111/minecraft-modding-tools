@@ -3,6 +3,7 @@ package mmt.standin.net.minecraft.world.item.crafting;
 import com.google.gson.JsonElement;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.JsonOps;
+import java.util.function.Function;
 import net.minecraft.Util;
 
 /**
@@ -21,6 +22,6 @@ public final class Ingredient {
 
     public static JsonElement toJson(net.minecraft.world.item.crafting.Ingredient self, boolean allowEmpty) {
         Codec codec = allowEmpty ? net.minecraft.world.item.crafting.Ingredient.CODEC : net.minecraft.world.item.crafting.Ingredient.CODEC_NONEMPTY;
-        return (JsonElement) Util.getOrThrow(codec.encodeStart(JsonOps.INSTANCE, self), IllegalStateException::new);
+        return (JsonElement) Util.getOrThrow(codec.encodeStart(JsonOps.INSTANCE, self), (Function) message -> new IllegalStateException((String) message));
     }
 }
