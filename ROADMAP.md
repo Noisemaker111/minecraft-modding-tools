@@ -124,6 +124,7 @@ One command moves a mod's source from any version to any other, forward or back,
 
 - **Today:** Fabric and NeoForge mods as .jar or source, any version from 1.14.4 to 26.3, in about ten seconds a jar. What comes back working is the gap: of the 150 most-downloaded mods of the most-used release (Fabric 1.20.1, NeoForge 1.21.1), ported as jars to the newest game and linked against it, 11 of 294 link. One update at a time, 36% link across the 35 big updates and 93% across the 29 small ones (62% together). What does not link is named, never guessed. 16 of the 126 corpus ports build with no hand edits.
 - **The number that says most:** Mods that go to any version: the ported jar links on every release, forward and back, Fabric and NeoForge is **3 mods** ([what is not there yet](scoreboard/any-version.md))
+- **Also:** Breaks left before every mod goes to any version: each type of break holding a mod on some release, one per mod is **not measured** ([what is not there yet](scoreboard/any-version.md))
 - **Also:** Mods that go to any version from source: mmt port builds them with no hand edits and the built jar links on every release, forward and back, Fabric and NeoForge is **not measured** ([what is not there yet](scoreboard/source-any-version.md))
 - **Also:** Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge is **24 mods**
 - **Also:** Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge is **2,473 mods**
@@ -463,7 +464,7 @@ One command moves a mod's source from any version to any other, forward or back,
 
 </details>
 
-<details><summary>Every number for this goal (28)</summary>
+<details><summary>Every number for this goal (29)</summary>
 
 | Measure | First | Now | Target | Status |
 |---|---|---|---|---|
@@ -485,6 +486,7 @@ One command moves a mod's source from any version to any other, forward or back,
 | Most-downloaded NeoForge mods with nothing left to port by hand, 1.21.1 to 1.21.2 | — | 58 mods (Nov 18) | 100 mods by Dec 22, step 46 | Baseline |
 | Most-downloaded mods whose ported jar links, NeoForge 1.21.1 to 1.21.2 | 32 mods (Nov 18) | 45 mods (Nov 19) | 50 mods by Dec 8, step 47 | 72% of the way |
 | Mods that go to any version: the ported jar links on every release, forward and back, Fabric and NeoForge | — | 3 mods (Nov 23) | — | Fact |
+| Breaks left before every mod goes to any version: each type of break holding a mod on some release, one per mod | — | not measured | — | Fact |
 | Mods that go to any version from source: mmt port builds them with no hand edits and the built jar links on every release, forward and back, Fabric and NeoForge | — | not measured | — | Fact |
 | Mods of the most-used release whose ported jar links on the newest game, Fabric and NeoForge | 11 mods (Nov 20) | 24 mods (Nov 23) | — | Fact |
 | Most-downloaded mods whose ported jar links, the big updates only, Fabric and NeoForge | 1,861 mods (Nov 20) | 2,473 mods (Nov 23) | — | Fact |
