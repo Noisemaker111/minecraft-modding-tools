@@ -304,10 +304,14 @@ public final class VersionMap {
 
     static Path fetch(String url, String name) throws IOException, InterruptedException {
         Path p = cache.resolve(name);
-        if (Files.isRegularFile(p) && Files.size(p) > 0) {
-            return p;
+        if (Files.isRegularFile(p)) {
+            if (Files.size(p) > 0) {
+                return p;
+            }
+            // An empty file left by a failed write. Only then: a run beside this one may have just moved its download
+            // in, and deleting that broke its reads (a NeoForge map lost lwjgl-opengl to it in a cloud sweep).
+            Files.deleteIfExists(p);
         }
-        Files.deleteIfExists(p); // an empty file left by a failed write
         Files.createDirectories(cache);
         HttpResponse<byte[]> r = HTTP.send(
             HttpRequest.newBuilder(URI.create(url)).build(),

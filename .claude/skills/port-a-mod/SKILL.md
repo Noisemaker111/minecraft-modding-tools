@@ -14,7 +14,12 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   A Fabric jar is read in Mojang's names and handed back in the target release's intermediary (`ModNames.Back`).
 - **The number to move:** `tools/cloud-run exposure` (`python bench/exposure.py all` runs the same here) ports the
   150 most-downloaded mods of each release and links them against the target release and its loader (NeoForge with FML
-  and its event bus; Fabric Loader and Fabric API). In main's table (`python bench/generated.py show scoreboard/all.json`) it counts, apart: the **jump to the
+  and its event bus; Fabric Loader and Fabric API). The headline is **any mod, any version**
+  (`port.jar-links.any-version`): the most-used release's mods ported to every other release, forward and back, and
+  counted when they link on every one. What holds each mod back, and which types of break and releases would free the
+  most mods for every release, is main's `scoreboard/any-version.md` (`python bench/generated.py show
+  scoreboard/any-version.md`; your branch's run prints the same under "Any version"): work from its top. In main's
+  table (`python bench/generated.py show scoreboard/all.json`) it also counts, apart: the **jump to the
   newest game** from the most-used release (Fabric 1.20.1, NeoForge 1.21.1 to 26.3: **11 of 294 link**,
   `port.jar-links.newest`), which is what people ask for; the **35 big updates**, each into a new family of releases
   (**1,861 of 5,149**, `port.jar-links.big-updates`); the 21 jumps from each family's most-used release to the next

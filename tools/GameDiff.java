@@ -5077,7 +5077,7 @@ public final class GameDiff {
                 // it in a way that chooses nothing (see onlyTested). The game dropping a check at its own uses says its own
                 // data passes it, not a mod's: 1.21.4's getList(key, type) gave an empty list for a list of another element
                 // type, and getListOrEmpty(key) at the game's uses would hand a mod that list.
-                if (!used && read.stream().allMatch(u -> u.kids[k].op == 'k')
+                if (!used && read.stream().allMatch(u -> u.kids.length > k && u.kids[k].op == 'k')
                     && (read.stream().map(u -> String.valueOf(u.kids[k].value)).distinct().count() < 2 || !tested.test(i + first))) {
                     return false;
                 }

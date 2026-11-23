@@ -583,7 +583,7 @@ with tempfile.TemporaryDirectory() as tmp:
         sys.stdout = sys.__stdout__
     check(lines[0] == "every update: 14 -> 16 of 20 (+2)" and lines[1] == "big updates: 4 -> 6 of 10 (+2)" and "updates higher: fabric 1.1 -> 2.0 4 -> 6" in lines,
           f"compare names the counts and the update that moved: {lines}")
-    check(same[3:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
+    check(same[E.HEADS:] == ["no update, jump or type of break moved"], f"a table against itself moves nothing: {same}")
     board = Path(tmp) / "scoreboard"
     board.mkdir()
     measures = board / "points.json"
@@ -620,6 +620,53 @@ with tempfile.TemporaryDirectory() as tmp:
         E.ROOT = repo
     check(late is None and json.loads(main_table.read_text(encoding="utf-8"))["commit"] == head
           and len(json.loads(measures.read_text(encoding="utf-8"))["port.jar-links.every-update"]) == 3, "a sweep of an older commit that finishes later is not recorded")
+    check((board / "any-version.md").read_text(encoding="utf-8").startswith("# Any mod, any version") and len(points["port.jar-links.any-version"]) == 3,
+          "main's sweep also writes the any-version page and its measure")
+
+# Any mod, any version: the most-used release's mods to every other release, back as well as forward. A mod counts only
+# when its port links on every one; a release whose job did not run, or where the mod was unreadable, is not reached.
+with tempfile.TemporaryDirectory() as tmp:
+    E.INDEX = Path(tmp) / "index.json"
+    E.INDEX.write_text(json.dumps({
+        "allVersions": [{"id": v, "status": "indexed"} for v in ("1.0", "1.1", "2.0", "2.1")],
+        "families": {"list": [{"id": "1", "versions": ["1.0", "1.1"], "hub": "1.1", "mods": {"1.1": 9}},
+                              {"id": "2", "versions": ["2.0", "2.1"], "hub": "2.0", "mods": {"2.0": 3}}]}}), encoding="utf-8")
+    E.FIRST = {"fabric": "1.0", "neoforge": "2.0"}
+    pins, E.PINS = E.PINS, Path(tmp) / "pins"
+    E.PINS.mkdir()
+    (E.PINS / "neoforge-2.0.json").write_text(json.dumps({"mods": [{"slug": "e", "file": "e.jar"}, {"slug": "f", "file": "f.jar"}]}), encoding="utf-8")
+    check(E.any_version("fabric") == [("1.1", "1.0"), ("1.1", "2.0"), ("1.1", "2.1")] and ("fabric", "1.1", "1.0") in
+          {("fabric", *p) for p in E.runs("fabric")}, f"the most-used release goes to every other release, the older ones too: {E.any_version('fabric')}")
+
+    def ported(frm, to, verdicts, unreadable=()):
+        return {"loader": "fabric", "from": frm, "to": to, "modsRead": len(verdicts), "modsThatLink": 0, "top": [],
+                "unreadable": {m: "bad" for m in unreadable},
+                "verdicts": {f"{m}--{m}.jar": {"left": ["x"] * len(t), "types": t} for m, t in verdicts.items()}}
+
+    split, linked, field = "call, game: split", "call, game: linked", "field, game: split"
+    runs = Path(tmp) / "runs"
+    runs.mkdir()
+    for s in (ported("1.1", "1.0", {"a": [], "b": [split], "c": [], "d": []}),
+              ported("1.1", "2.0", {"a": [], "b": [], "c": [linked], "d": []}),
+              ported("1.1", "2.1", {"a": [], "b": [], "c": [linked, field]}, ["d--d.jar"])):
+        (runs / f"fabric-{s['from']}-{s['to']}.json").write_text(json.dumps(s), encoding="utf-8")
+    sys.stdout = io.StringIO()
+    try:
+        a = E.join(runs)["anyVersion"]
+    finally:
+        sys.stdout = sys.__stdout__
+        E.PINS = pins
+    fab, neo = a["loaders"]["fabric"], a["loaders"]["neoforge"]
+    check((a["every"], a["mods"]) == (1, 6) and a["everywhere"]["fabric"] == ["a"],
+          f"only the mod that links on every release counts, out of every pinned mod, a loader whose jobs did not run too: {a['every']} of {a['mods']}")
+    check(fab["reached"] == {"a": 3, "b": 2, "c": 1, "d": 2} and (fab["everyNewer"], fab["everyOlder"]) == (2, 3),
+          f"each mod's releases reached, a mod unreadable on one release missing it: {fab}")
+    check(neo["notRun"] == ["2.1"] and all(m["missing"] == ["2.1"] for m in a["held"] if m["loader"] == "neoforge"), f"a release that did not run is named and not reached: {neo}")
+    check([(t["type"], t["finishes"], t["mods"]) for t in a["types"]][:3] == [("not run", 2, 2), (split, 1, 1), ("unreadable", 1, 1)]
+          and next(t for t in a["types"] if t["type"] == linked)["finishes"] == 0,
+          f"a type frees the mods it alone keeps from every release; a mod held by two types is freed by neither: {a['types']}")
+    check([(t["loader"], t["release"], t["finishes"], t["mods"]) for t in a["releases"]][:3] == [("neoforge", "2.1", 2, 2), ("fabric", "2.1", 1, 2), ("fabric", "1.0", 1, 1)],
+          f"a release frees the mods that miss only it: {a['releases']}")
 
 # Jars are read on every processor at once; the rows come back as one process would have given them.
 with tempfile.TemporaryDirectory() as tmp:
@@ -797,5 +844,46 @@ with tempfile.TemporaryDirectory() as tmp:
     check(client["verdicts"].get("mod.jar") == "loaded" and client["verdicts"].get("bad.jar", "").startswith("failed")
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
           f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
+
+# A mod compiled for a newer Java than the release runs on does not link there (ports back meet it): its classes and
+# its nested jars' are read, a multi-release jar's newer copies are not.
+with tempfile.TemporaryDirectory() as tmp:
+    def compiled(java):
+        return b"\xca\xfe\xba\xbe\x00\x00" + (java + 44).to_bytes(2, "big") + b"\x00" * 8
+
+    def jar_of(path, entries):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for name, data in entries.items():
+                z.writestr(name, data)
+        if path:
+            path.write_bytes(buf.getvalue())
+        return buf.getvalue()
+
+    inner = jar_of(None, {"lib/L.class": compiled(21)})
+    nested, plain = Path(tmp) / "nested.jar", Path(tmp) / "plain.jar"
+    jar_of(nested, {"a/A.class": compiled(17), "META-INF/jars/lib.jar": inner})
+    jar_of(plain, {"a/A.class": compiled(17), "META-INF/versions/21/a/A.class": compiled(21), "module-info.class": compiled(21)})
+    check((E.class_java(nested.read_bytes()), E.class_java(plain.read_bytes())) == (21, 17),
+          "a nested jar's classes count, a multi-release jar's newer copies and module-info do not")
+    asked, E.release_java = E.release_java, lambda v: {"old": 17, "new": 21}[v]
+    try:
+        def report():
+            return {"mods": [{"mod": "nested.jar", "unlinked": []}, {"mod": "plain.jar", "unlinked": []}], "linked": 2, "unlinkedByMods": []}
+        jars = {"nested.jar": nested, "plain.jar": plain}
+        back, forward = E.with_target_java(report(), jars, "old"), E.with_target_java(report(), jars, "new")
+    finally:
+        E.release_java = asked
+    check(back["linked"] == 1 and E.left(back["mods"][0]) == {"built for a newer Java: Java 21 classes, Java 17 runs old"}
+          and back["unlinkedByMods"] == [{"member": "built for a newer Java: Java 21 classes, Java 17 runs old", "mods": 1}],
+          f"a mod built for a newer Java than the release's does not link on it: {back}")
+    check(forward["linked"] == 2 and not forward["unlinkedByMods"], f"on a release whose Java reads its classes it still links: {forward}")
+
+# A start that opens a world says nothing of a jar the loader skipped (pack-check's loader-mismatch warning, as
+# PackChecks.foreign writes it): 1.21.1 NeoForge jars ported back to 1.20.2 with only neoforge.mods.toml were called loaded.
+skipped = E.not_loaded({"findings": [
+    {"kind": "loader-mismatch", "severity": "warning", "summary": "a.jar is written for another loader (META-INF/neoforge.mods.toml)", "jars": ["a.jar"]},
+    {"kind": "java", "severity": "warning", "suspects": [{"jar": "b.jar", "why": ["Java 21"]}]}]})
+check(list(skipped) == ["a.jar"] and "another loader" in skipped["a.jar"], f"a jar the loader skips is named, a Java warning is not: {skipped}")
 
 print(f"exposure: {checks} checks passed")
