@@ -1,5 +1,7 @@
 """tools/cloud-run.py's parts that need no GitHub: which listed run is the one it started, and run times."""
+import contextlib
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -124,4 +126,74 @@ check(C.main_receipt("neoforge-1.21.1-1.21.2", git=tree_git) == tree[1], "the re
 when[tree[3]] = 400
 check(C.main_receipt("neoforge-1.21.1-1.21.2", git=tree_git) == tree[3], "a newer receipt named for its commit replaces it")
 check(C.main_receipt("neoforge-1.21.2-1.21.3", git=tree_git) is None, "an update main keeps no receipt for has none")
+# A scoreboard run reports each update as its job finishes, and stops at the first failed job with its log's end, leaving
+# the run going: a sweep whose first job failed at minute 4 used to be waited on until minute 38, and an update that
+# finished at minute 4 said nothing until the whole run ended.
+import tempfile  # noqa: E402
+job = lambda name, status, conclusion=None, i=0: {"name": name, "status": status, "conclusion": conclusion, "databaseId": 900 + i,  # noqa: E731
+                                                  "url": f"https://x/job/{900 + i}", "startedAt": "2026-11-23T10:00:00Z",
+                                                  "completedAt": "2026-11-23T10:04:00Z" if status == "completed" else None,
+                                                  "steps": [{"name": "Port and link this job's mods", "conclusion": conclusion}]}
+polls = [
+    [job("plan", "completed", "success"), job("fabric:1.21.1:1.21.2", "completed", "success", 1), job("neoforge:1.21.1:1.21.2", "in_progress", i=2)],
+    [job("plan", "completed", "success"), job("fabric:1.21.1:1.21.2", "completed", "success", 1), job("neoforge:1.21.1:1.21.2", "completed", "failure", 2)],
+]
+calls, compared = [], []
+with tempfile.TemporaryDirectory() as tmp:
+    out = Path(tmp)
+
+    def run_gh(*a, check=True):
+        calls.append(a[:2])
+        if a[:2] == ("run", "view"):
+            if not polls:
+                raise AssertionError("waited on after the failed job")
+            return json.dumps({"status": "in_progress", "conclusion": "", "url": "https://x/run/5", "headSha": "a" * 40, "jobs": polls.pop(0)})
+        if a[0] == "api" and a[1].endswith("/logs"):
+            return "2026-11-23T10:03:59.1Z Exception in thread main\n2026-11-23T10:04:00.0Z ##[error]Process completed with exit code 1.\n2026-11-23T10:04:01.0Z Post job cleanup."
+        if a[0] == "api":
+            return json.dumps([{"name": "exposure-0", "id": 1}])
+        if a[:2] == ("run", "download"):
+            folder = Path(a[a.index("--dir") + 1])
+            folder.mkdir(parents=True)
+            (folder / "fabric-1.21.1-1.21.2.json").write_text("{}", encoding="utf-8")
+            return ""
+        raise AssertionError(f"unexpected gh {a}")
+
+    saved_sleep, saved_gh = C.time.sleep, C.gh
+    C.time.sleep, C.gh = (lambda s: None), run_gh
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            view = C.wait(5, 60, False, on_job=C.Updates(5, out, gh=run_gh, compare=lambda files, head: compared.append(([f.name for f in files], head))))
+    finally:
+        C.time.sleep, C.gh = saved_sleep, saved_gh
+    text = printed.getvalue()
+    check(compared == [(["fabric-1.21.1-1.21.2.json"], "a" * 40)], f"the finished update's summary is compared as its job finishes: {compared}")
+    check(view["conclusion"] == "failure" and not polls, f"the wait ends at the first failed job: {view['conclusion']}")
+    check(("run", "cancel") not in calls, "the run is left going")
+    check("Process completed with exit code 1" in text and "Post job cleanup" not in text and "https://x/run/5" in text and "--run 5" in text,
+          f"the failure prints its log's end and the run: {text}")
+    check(C.download_new(5, out, {"exposure-0"}, gh=run_gh) == [], "an artifact already downloaded is not downloaded again")
+# Every agent shares one API limit (5,000 calls an hour): a poll is one call, polls slow down while no job finishes, and
+# a spent limit ends the wait with when it renews and the run's link, where it used to crash the wait.
+views = [[], [], [job("a", "completed", "success")], [job("a", "completed", "success")]]
+asked, pauses = [], []
+
+
+def limited_gh(*a, check=True, tries=6):
+    asked.append(a[:2])
+    if a[:2] == ("api", "rate_limit"):
+        return "1795000000"
+    if not views:
+        raise SystemExit("gh run view 5 failed: HTTP 403: API rate limit exceeded for user ID 1.")
+    return json.dumps({"status": "in_progress", "url": "https://x/run/5", "jobs": views.pop(0)})
+
+
+printed = io.StringIO()
+with contextlib.redirect_stdout(printed):
+    view = C.wait(5, 60, False, sleep=pauses.append, gh=limited_gh)
+check(pauses == [60, 120, 30, 60], f"polls slow while nothing finishes and speed up when a job does: {pauses}")
+check(asked.count(("run", "view")) == 5 and len(asked) == 6, f"one API call a poll: {asked}")
+check(view["conclusion"] == "rate limited" and "until 11:06 UTC" in printed.getvalue() and "https://x/run/5" in printed.getvalue(),
+      f"a spent limit ends the wait with when it renews and the run's link: {printed.getvalue()}")
 print(f"{checks} cloud-run checks passed")

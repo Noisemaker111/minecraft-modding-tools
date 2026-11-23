@@ -1,6 +1,7 @@
 """What real mods reference of the game, ported as jars and linked against the next release: the porter's scoreboard and its to-do list.
 
-    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE] [--save] [--out FILE]
+    python bench/exposure.py jars --loader neoforge|fabric --from 1.21.1 --to 1.21.2 [--type TYPE | --mods SLUG,...] [--save] [--out FILE]
+    python bench/exposure.py compare-update SUMMARY.json ... [--head SHA]
     python bench/exposure.py all [--loader neoforge|fabric] [--only fabric:1.20.1] [--jobs 4] [--out FILE] [--verify]
     python bench/exposure.py all --at origin/main --out BASE.json    (any command, on another commit's porter)
     python bench/exposure.py join DIR [--out FILE]
@@ -38,7 +39,10 @@ the rules, the loaders' release lists, the JVM, each mod's jar), shared by every
 run computes only what an edit can change: an edit to JarPort ports every mod again (each one runs the code it touched),
 but reuses the downloads, the names, the map, the data check and most of Exposure's answers; an edit to anything else
 reuses the ports. jars prints which mods newly link, stop linking or changed their port against the run before, and the
-load --mods that proves only those in game. --verify computes everything again and fails where a kept answer differs (main's sweep).
+load --mods that proves only those in game; with no run before here, against main's row for the update, read from main's
+table (every row names the mods that link and the types of break holding back the rest), so main is never ported again
+for a before. --type TYPE and --mods SLUG,... port only those mods, from the last whole run here or main's row: an answer
+in seconds, in a heap sized to those mods. --verify computes everything again and fails where a kept answer differs (main's sweep).
 
 --save keeps a jars or load summary in bench/exposure/, named for the update and the commit it ran on, so two pull
 requests proving the same update keep two receipts instead of conflicting on one.
@@ -84,8 +88,10 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# Gigabytes of heap for the Java tools; lower it when other work shares the machine.
-HEAP = int(os.environ.get("MMT_HEAP_GB") or 10)
+# Gigabytes of heap GameDiff and Exposure may grow to. They hold two releases (a map's chain, read one after another),
+# whatever the mods: about 1.4 GB live, 2.4 GB taken, measured on a 6-release chain and on 147 mods' references.
+# JarPort's heap is sized to the jars it ports (jar_ports), not this.
+HEAP = 10
 HOME = Path(os.environ.get("MMT_EXPOSURE_HOME") or Path(os.path.expanduser("~")) / ".mmt" / "exposure")
 # --verify: port every mod and ask Exposure every reference as if nothing were cached, and fail where a cached answer with
 # the same key differs. Main's sweep runs so, with the answers of main's sweep before it, as the check that the cache is exact.
@@ -602,7 +608,7 @@ def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
     if todo:
         written = Path(targets[0][2]).with_name(f"plan-{os.getpid()}.json")
         written.write_text(json.dumps({"ports": plan}), encoding="utf-8")
-        args = [java(), f"-Xmx{HEAP}g", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(ROOT / "knowledge" / "fixes.json"),
+        args = [java(), f"-Xmx{jarport_heap(todo)}m", "-cp", jar_tools(), "JarPort", "--from", frm, "--plan", str(written), "--fixes", str(ROOT / "knowledge" / "fixes.json"),
                 "--loader", loader] + (["--runtime-names"] if runtime else [])
         if shipped_obfuscated(loader, frm):
             # The jars as they came, before mojang_names: the hand-back gives a class's own intermediary names back from them.
@@ -639,6 +645,13 @@ def jar_ports(loader, frm, targets, jars, runtime=False, cache=False):
                       "ported": len(todo), "verified": checked}
         Path(report).write_text(json.dumps(merged[to], indent=1), encoding="utf-8")
     return merged
+
+
+def jarport_heap(jars):
+    """The heap, in MB, JarPort needs for these jars (JarPort.heap): its workers are as many as the jars keep busy, and
+    each worker holds a porter of its own, so ten mods need a third of what 150 do. A fixed 10 GB made it start as many
+    workers as fit (21 here), and it filled it even for ten mods."""
+    return int(subprocess.run([java(), "-cp", jar_tools(), "JarPort", "--heap", *map(str, jars)], capture_output=True, text=True, check=True).stdout.split()[-1])
 
 
 def jarport(command):
@@ -1025,7 +1038,7 @@ def receipt(kind, loader, frm, to):
     return ROOT / "bench" / "exposure" / f"{kind}-{loader}-{frm}-{to}-{commit}.json"
 
 
-def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
+def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, mods=None):
     """The jar scoreboard: what every top mod's classes and mixins reference, ported from frm to each release of tos and
     linked against it as the JVM and Mixin do; a summary for each.
 
@@ -1034,23 +1047,22 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
     before with the same inputs is read from the cache, so a run after an edit ports only what the edit can change. Each
     run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the porter's inputs differ from the last
     run's, that one becomes before.json, and the run prints which mods newly link, stopped linking or changed their port
-    against it. kind: port only the mods the last run held back with a type of break (its text, or part of it), the answer
-    for those mods in seconds; the summary is then partial and is not kept. out: the summary's file, or a folder (one that
-    is there, or any with several targets) that gets LOADER-FROM-TO.json for each."""
+    against it, or with no run before here, against main's row for the update (main_table: main's mods are not ported
+    again for it). kind: port only the mods the last whole run here, else main's table, held back with a type of break
+    (its text, or part of it); mods: only these slugs. Either is the answer for those mods in seconds and in little
+    memory; the summary is then partial and is not kept. out: the summary's file, or a folder (one that is there, or any
+    with several targets) that gets LOADER-FROM-TO.json for each."""
     seconds = {}
     timed = timer(seconds)
-    if kind and len(tos) > 1:
-        raise SystemExit("--type answers one update at a time: give one --to")
+    if (kind or mods) and len(tos) > 1:
+        raise SystemExit("--type and --mods answer one update at a time: give one --to")
     pinned = timed("download", fetch, loader, frm)
     works = {to: ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" for to in tos}
-    if kind:
-        last = works[tos[0]] / "last.json"
-        if not last.is_file():
-            raise SystemExit(f"--type needs a run of the whole update first: python bench/exposure.py jars --loader {loader} --from {frm} --to {tos[0]}")
-        held = {mod for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items() if any(kind in t for t in v.get("types", []))}
-        pinned = [p for p in pinned if p.name in held]
-        if not pinned:
-            raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
+    narrow = bool(kind or mods)
+    if narrow:
+        pinned = narrowed(pinned, works[tos[0]], kind, mods)
+    elif not quiet:
+        print(narrow_hint(loader, frm, tos[0], len(pinned)), flush=True)
     compile_tools()  # once, before the threads below that run it
     # Every step of every target, so one GameDiff process builds the maps that are missing.
     segments = list(dict.fromkeys((x, y) for to in tos for x, y in zip(stops(loader, frm, to), stops(loader, frm, to)[1:])))
@@ -1059,14 +1071,14 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
         named = pool.submit(timed, "names", mojang_names, loader, frm, pinned)
         mapped = pool.submit(timed, "map", route_maps, segments, loader, compile_tools())
         checked = pool.submit(timed, "data", lambda: {to: data_check(frm, to, pinned) for to in tos})
-        (mods, unread), datas = named.result(), checked.result()
+        (ported, unread), datas = named.result(), checked.result()
         mapped.result()
     # A run of some mods only (kind) keeps its report apart: load reads the whole update's.
-    written = {to: works[to] / ("report.json" if not kind else "report-type.json") for to in tos}
+    written = {to: works[to] / ("report.json" if not narrow else "report-type.json") for to in tos}
     for work in works.values():
         work.mkdir(parents=True, exist_ok=True)
     empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
-    reports = timed("port", jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
+    reports = timed("port", jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], ported, False, True) if ported else {to: dict(empty) for to in tos}
     for work in works.values():
         shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
     summaries = {}
@@ -1074,7 +1086,8 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None):
         # What the targets shared, and each one's own questions to the game after it.
         own = dict(seconds)
         target = out if out is None or (len(tos) == 1 and not Path(out).is_dir()) else Path(out) / f"{loader}-{frm}-{to}.json"
-        summaries[to] = summarize(loader, frm, to, mods, unread, datas[to], reports[to], written[to], works[to], kind, save, target, quiet, timer(own), own)
+        summaries[to] = summarize(loader, frm, to, ported, unread, datas[to], reports[to], written[to], works[to], narrow and (kind or "--mods " + ",".join(mods)),
+                                  save, target, quiet, timer(own), own)
     return summaries
 
 
@@ -1135,12 +1148,12 @@ def summarize(loader, frm, to, mods, unread, data, report, written, work, kind, 
                            for m in rows}
     summary["porter"] = port_key(loader, frm, to) + " " + content_key(*(p.read_bytes() for p in mods))
     if kind:
-        summary["partial"] = f"only the {len(mods)} mods the last run held back with '{kind}'"
+        summary["partial"] = f"only the {len(mods)} mods " + (kind if kind.startswith("--mods") else f"held back with '{kind}'")
     before = work / "before.json"
     if not kind and last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
         os.replace(last, before)
-    against = before if not kind else last
-    moved = verdicts_moved(json.loads(against.read_text(encoding="utf-8")), summary) if against.is_file() else None
+    # all (quiet) runs every update side by side and is compared as a table: it reads no main row per update.
+    what, moved = against(work, kind, summary, main=(None, "") if quiet else None)
     summary["moved"] = moved
     if not kind:
         work.mkdir(parents=True, exist_ok=True)
@@ -1148,13 +1161,12 @@ def summarize(loader, frm, to, mods, unread, data, report, written, work, kind, 
     if not quiet:
         if VERIFY:
             print(f"--verify: {report.get('verified', 0)} kept ports were the same as porting them again")
-        if moved is not None and (moved["newly link"] or moved["link, port changed"]):
-            slugs = sorted({m.split("--", 1)[0] for m in moved["newly link"] + moved["link, port changed"]})
+        if moved is not None and (moved["newly link"] or moved.get("link, port changed")):
+            slugs = sorted({m.split("--", 1)[0] for m in moved["newly link"] + moved.get("link, port changed", [])})
             print(f"prove in game only those: python bench/exposure.py load --loader {loader} --from {frm} --to {to} --mods {','.join(slugs)}"
                   f" (or tools/cloud-run load -f updates={loader}:{frm}:{to} -f mods={','.join(slugs)})")
         if moved is not None:
-            print(f"against {'the run before' if not kind else 'the last whole run'} ({against}): "
-                  + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
+            print(f"against {what}: " + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
         if kind:
             print(summary["partial"])
         print(f"{summary['modsThatLink']}/{summary['modsRead']} {loader} mods link against {to} after the port "
@@ -1193,6 +1205,147 @@ def verdicts_moved(before, after):
              "link, port changed": [m for m in both if not old[m]["left"] and not new[m]["left"] and old[m].get("ported") != new[m].get("ported")]}
     moved["same"] = len(both) - sum(len(v) for v in moved.values())
     return moved
+
+
+def slug(jar):
+    """A pinned jar's Modrinth slug: a release pins one file per mod, named SLUG--FILE."""
+    return jar.split("--", 1)[0]
+
+
+def held_types(row):
+    """A row of main's table's mods held back, by slug, each with the types of break holding it; None for a table made
+    before rows named them (2026-11-23)."""
+    if row.get("heldBy") is None:
+        return None
+    held = {}
+    for kind, slugs in row["heldBy"].items():
+        for s in slugs:
+            held.setdefault(s, []).append(kind)
+    return {s: sorted(kinds) for s, kinds in held.items()}
+
+
+def row_moved(row, after):
+    """verdicts_moved against a row of main's table (table_row), which names the mods that link and the types of break
+    holding back each other mod it read: over the mods both read, those that newly link, no longer link, or are held by
+    other types. A row that names no held mods is taken to have read the mods this run read."""
+    new = after.get("verdicts", {})
+    links, held = {slug(m) for m in row.get("links") or ()}, held_types(row)
+    both = sorted(m for m in new if held is None or slug(m) in links or slug(m) in held)
+    moved = {"newly link": [m for m in both if slug(m) not in links and not new[m]["left"]],
+             "no longer link": [m for m in both if slug(m) in links and new[m]["left"]],
+             "other types left": [m for m in both if held is not None and slug(m) in held and new[m]["left"] and held[slug(m)] != sorted(new[m].get("types", []))]}
+    moved["same"] = len(both) - sum(len(v) for v in moved.values())
+    return moved
+
+
+def compare_update(summary, main=None):
+    """One update's summary against main's row for it, on one line: the count, and the mods that moved."""
+    table, what = main if main is not None else main_table()
+    head = f"{summary['loader']} {summary['from']} -> {summary['to']}: {summary['modsThatLink']}/{summary['modsRead']} link"
+    row = table_row(table, summary["loader"], summary["from"], summary["to"]) if table else None
+    if row is None:
+        return f"{head}; main's table has no row for it ({what})"
+    moved = row_moved(row, summary)
+    return (f"{head}, main {row['modsThatLink']}/{row['modsRead']} ({summary['modsThatLink'] - row['modsThatLink']:+d}; {what})"
+            + "".join(f"; {k} {', '.join(v)}" for k, v in moved.items() if k != "same" and v))
+
+
+def table_row(table, loader, frm, to):
+    """A table's row for one port: an update, a jump or an any-version pair (rows since 2026-11-23); None when it has none."""
+    for r in table.get("updates", []) + table.get("jumps", []) + table.get("anyVersionPairs", []):
+        if (r.get("loader"), r.get("from"), r.get("to")) == (loader, frm, to):
+            return r
+    return None
+
+
+GENERATED = "origin/generated"
+MAIN_TABLES = {}
+
+
+def git_out(*args):
+    """A git command's output in this checkout, or None when it fails (offline, no such commit, or a --at copy with no .git)."""
+    done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def main_table(head="HEAD", git=git_out, fetch=True):
+    """Main's jar scoreboard for a branch, read instead of porting main's mods again: the newest table on the generated
+    branch (bench/generated.py) whose commit the branch contains, its base on main or one before it. Returns (table, what
+    it is), or (None, why there is none)."""
+    if head in MAIN_TABLES:
+        return MAIN_TABLES[head]
+    if git("rev-parse", "--is-shallow-repository") == "true":
+        # The cloud sweep's checkout: it has no history to find main's table by, and tools/cloud-run compares each job's summary itself.
+        MAIN_TABLES[head] = (None, "a shallow clone cannot tell which of main's tables it has")
+        return MAIN_TABLES[head]
+    if fetch:
+        git("fetch", "--quiet", "origin", f"+refs/heads/generated:refs/remotes/{GENERATED}")
+    found = (None, "main's table is not on this machine (no origin/generated)")
+    for rev in (git("log", "--format=%H", "-n", "60", GENERATED, "--", "scoreboard/all.json") or "").split():
+        text = git("show", f"{rev}:scoreboard/all.json")
+        table = json.loads(text) if text else {}
+        commit = table.get("commit")
+        if not commit or git("merge-base", "--is-ancestor", commit, head) is None:
+            found = (None, "no table on the generated branch is of a commit this branch has")
+            continue
+        base = git("merge-base", head, "origin/main")
+        between = git("rev-list", "--count", f"{commit}..{base}") if base else None
+        found = (table, f"main's table at {commit[:10]}" + (f", {between} main commits before this branch's base {base[:10]}" if between and between != "0" else ""))
+        break
+    MAIN_TABLES[head] = found
+    return found
+
+
+def against(work, kind, summary, main=None):
+    """What a jars summary is compared with, and how its mods moved: the run before (a whole run whose porter inputs
+    differed), for a partial run the last whole run, else main's row for the update (main_table). Returns (what, moved),
+    or (None, None) when there is nothing to compare with. main: (table, what), main_table() when not given."""
+    before = work / ("before.json" if not kind else "last.json")
+    if before.is_file():
+        return f"the {'run before' if not kind else 'last whole run'} ({before})", verdicts_moved(json.loads(before.read_text(encoding="utf-8")), summary)
+    table, what = main if main is not None else main_table()
+    row = table_row(table, summary["loader"], summary["from"], summary["to"]) if table else None
+    if row is None:
+        return None, None
+    return what, row_moved(row, summary)
+
+
+def narrowed(pinned, work, kind=None, mods=None, main=None):
+    """The jars a narrow run ports: those the last whole run here (else main's row for the update) held back with a type of
+    break whose text has kind in it, and those of the slugs in mods. Every jar when neither is asked."""
+    loader, frm, to = work.name.split("-", 3)[1:]
+    picked = None
+    if kind:
+        last = work / "last.json"
+        if last.is_file():
+            held = {slug(mod): v.get("types", []) for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items()}
+        else:
+            table, what = main if main is not None else main_table()
+            row = table_row(table, loader, frm, to) if table else None
+            held = held_types(row) if row else None
+            if held is None:
+                raise SystemExit(f"--type needs a whole run of the update, here or in main's table ({what}{'' if row else ', which has no row for it'}): "
+                                 f"python bench/exposure.py jars --loader {loader} --from {frm} --to {to}")
+        picked = {s for s, types in held.items() if any(kind in t for t in types)}
+        if not picked:
+            raise SystemExit(f"no mod is held back by a type of break with '{kind}' in it")
+    if mods:
+        unknown = sorted(set(mods) - {slug(p.name) for p in pinned})
+        if unknown:
+            raise SystemExit(f"--mods: {loader} {frm} pins no {', '.join(unknown)}")
+        picked = (picked or set()) | set(mods)
+    return pinned if picked is None else [p for p in pinned if slug(p.name) in picked]
+
+
+def narrow_hint(loader, frm, to, count, main=None):
+    """One line on how to port only the mods a change can move, with the type of break holding back the most mods in
+    main's row as the example."""
+    table, _ = main if main is not None else main_table()
+    row = table_row(table, loader, frm, to) if table else None
+    types = {t: len(slugs) for t, slugs in (row or {}).get("heldBy", {}).items()}
+    top = max(types.items(), key=lambda kv: (kv[1], kv[0]), default=None)
+    example = f"--type '{top[0]}' ports the {top[1]} mods main holds back with it" if top else "--type TEXT ports the mods a type of break holds back"
+    return f"porting all {count} mods; to port only those your change can move: {example}, --mods SLUG,... only those"
 
 
 def every_update(loaders, only, jobs, out_file=None):
@@ -1328,10 +1481,20 @@ def join(folder, out=None):
                if not any(pair(s) == (lo, a, b) for s in found)]
     anyv = any_version_table({pair(s): s for s in found if pair(s) in targets})
     keep = ("loader", "from", "to", "modsRead", "modsThatLink", "modsThatLinkAndData", "brokenUses", "loaderUses", "modsHeldOnlyByLoader", "links")
+
+    def row(s, **more):
+        # The mods held back, by type of break (slugs): what jars --type and compare-update read instead of porting main again.
+        held = {}
+        for mod, v in s.get("verdicts", {}).items():
+            for kind in v.get("types", []) if v.get("left") else ():
+                held.setdefault(kind, []).append(slug(mod))
+        return {**{k: s.get(k) for k in keep}, **({"heldBy": {k: sorted(v) for k, v in sorted(held.items())}} if "verdicts" in s else {}), **more}
+
     table = {
         "date": date.today().isoformat(), "total": total, "loaders": loaders, "missing": missing, "anyVersion": anyv,
-        "updates": [{**{k: s.get(k) for k in keep}, "big": big(s["from"], s["to"])} for s in rows],
-        "jumps": [{**{k: s.get(k) for k in keep}, "updatesCrossed": len(chain(s["from"], s["to"])) - 1} for s in far],
+        "updates": [row(s, big=big(s["from"], s["to"])) for s in rows],
+        "jumps": [row(s, updatesCrossed=len(chain(s["from"], s["to"])) - 1) for s in far],
+        "anyVersionPairs": [row(s) for s in found if pair(s) in targets and pair(s) not in single and pair(s) not in wanted],
         "types": kinds,
         "typesNotRead": untyped,
         "nearest": turns[:60],
@@ -2620,9 +2783,8 @@ def main():
         j.add_argument("--out", type=Path, help="write the summary to this file (a folder that is there, or jars with several --to: LOADER-FROM-TO.json each in it)")
         if name == "jars":
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
-            j.add_argument("--type", dest="kind", help="port only the mods the last whole run held back with this type of break (or part of its text)")
-        if name == "load":
-            j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated), with the libraries they need")
+            j.add_argument("--type", dest="kind", help="port only the mods the last whole run here, else main's table, held back with this type of break (or part of its text)")
+        j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated)" + (", with the libraries they need" if name == "load" else ""))
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
     lp.add_argument("--mods", default="", help="the slugs the proof asks of every update; one that no update pins stops the plan")
@@ -2637,11 +2799,14 @@ def main():
     al.add_argument("--loader", choices=sorted(FIRST), help="one loader (default both)")
     al.add_argument("--only", help="LOADER:FROM,... the updates to run (default every one)")
     al.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
-    al.add_argument("--jobs", type=int, default=4, help="updates run side by side (each JarPort takes up to 10 GB)")
+    al.add_argument("--jobs", type=int, default=4, help="updates run side by side (each JarPort takes the heap its jars need: about 7 GB for 150 mods)")
     al.add_argument("--out", type=Path, help="write the table to this file (main's is on the generated branch, scoreboard/all.json)")
     jo = sub.add_parser("join")
     jo.add_argument("folder")
     jo.add_argument("--out", type=Path, help="write the table to this file")
+    cu = sub.add_parser("compare-update", help="each update's jars summary against main's row for it, one line each (tools/cloud-run prints these as jobs finish)")
+    cu.add_argument("summaries", nargs="+", type=Path)
+    cu.add_argument("--head", default="HEAD", help="the commit whose base on main is compared with (default this checkout's)")
     co = sub.add_parser("compare", help="what one table (a branch's) changes against another (main's)")
     co.add_argument("before", type=Path)
     co.add_argument("after", type=Path)
@@ -2654,7 +2819,7 @@ def main():
     if a.command == "steps":
         steps(a.frm, a.to)
     elif a.command == "jars":
-        jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind)
+        jars(a.loader, a.frm, [t.strip() for t in a.to.split(",") if t.strip()], a.save, a.out, kind=a.kind, mods=[m.strip() for m in (a.mods or "").split(",") if m.strip()])
     elif a.command == "updates":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
         loaders = [a.loader] if a.loader else sorted(FIRST)
@@ -2678,6 +2843,11 @@ def main():
                     pin(lo, v)
     elif a.command == "join":
         join(a.folder, a.out)
+    elif a.command == "compare-update":
+        for path in a.summaries:
+            s = json.loads(path.read_text(encoding="utf-8"))
+            if {"loader", "from", "to", "modsRead"} <= s.keys():
+                print(compare_update(s, main=main_table(a.head)), flush=True)
     elif a.command == "compare":
         before, after = (json.loads(f.read_text(encoding="utf-8")) for f in (a.before, a.after))
         print("\n".join((compare_loads if "verdicts" in after else compare)(before, after)))
