@@ -8,15 +8,16 @@ import java.util.*;
  *
  *   "net.minecraft.client.gui.GuiGraphics.setColor": "com.mojang.blaze3d.systems.RenderSystem.setShaderColor($1, $2, $3, $4)"
  *
- * The expression is a small part of Java: static and instance calls, field reads, new, casts, literals and static
- * method references (a.b.C::m) passed where a functional interface is wanted. A name in the member may be a regex;
+ * The expression is a small part of Java: static and instance calls, field reads, new, casts, literals, sums and
+ * differences of whole numbers ($5 - $4), and static method references (a.b.C::m) passed where a functional interface
+ * is wanted. A name in the member may be a regex;
  * {1} in the expression is its first group, and {^1} that group in UPPER_SNAKE case (getPositionTexShader matched by
  * get(\w+)Shader gives CoreShaders.{^1} = CoreShaders.POSITION_TEX). This class only parses; JarPort resolves each
  * name against the new release, so a replacement that does not link there is never written.
  */
 final class FixExpr {
 
-    sealed interface Node permits Arg, Lit, Path, Get, Invoke, New, Cast, Ref {}
+    sealed interface Node permits Arg, Lit, Path, Get, Invoke, New, Cast, Ref, Sum {}
 
     /** $N: the receiver (0) or an argument of the old call. */
     record Arg(int index) implements Node {}
@@ -38,6 +39,9 @@ final class FixExpr {
     record Cast(String type, Node expr) implements Node {}
 
     record Ref(String type, String name) implements Node {}
+
+    /** left + right or left - right (op '+' or '-'), over ints or longs. */
+    record Sum(Node left, char op, Node right) implements Node {}
 
     static Node parse(String text) {
         FixExpr p = new FixExpr(text);
@@ -82,6 +86,10 @@ final class FixExpr {
                 }
                 case New w -> w.args().forEach(todo::push);
                 case Cast c -> todo.push(c.expr());
+                case Sum a -> {
+                    todo.push(a.left());
+                    todo.push(a.right());
+                }
                 default -> {
                 }
             }
@@ -167,7 +175,16 @@ final class FixExpr {
     }
 
     Node expr() {
-        return postfix(primary());
+        Node n = postfix(primary());
+        while (true) {
+            space();
+            char c = at < text.length() ? text.charAt(at) : ' ';
+            if (c != '+' && c != '-') {
+                return n;
+            }
+            at++;
+            n = new Sum(n, c, postfix(primary()));
+        }
     }
 
     Node primary() {
@@ -194,6 +211,10 @@ final class FixExpr {
             String body = text.substring(start, at);
             expect("\"");
             return new Lit(body.replace("\\\"", "\"").replace("\\\\", "\\"), "Ljava/lang/String;");
+        }
+        if (c == '-' && (at + 1 >= text.length() || !Character.isDigit(text.charAt(at + 1)))) {
+            at++;
+            return new Sum(new Lit(0, "I"), '-', postfix(primary()));
         }
         if (Character.isDigit(c) || c == '-') {
             return number();
