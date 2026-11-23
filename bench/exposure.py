@@ -1602,11 +1602,41 @@ def in_range(version, spec):
     return False
 
 
+def pinned_ids(loader, frm, pins):
+    """{mod id: [Modrinth project]} for the old release's pinned jars on disk, by each jar's own metadata (its id and what
+    it says it provides; not the jars nested in it, which would name every mod that bundles a library)."""
+    folder = HOME / "jars" / f"{loader}-{frm}"
+    out = {}
+    for m in pins:
+        jar = folder / f"{m['slug']}--{m['file']}"
+        if jar.is_file():
+            for i in own_ids(jar, loader):
+                out.setdefault(i, []).append(m["project"])
+    return out
+
+
+def projects_providing(mod_id, loader, frm, to, pins, index=None):
+    """The Modrinth projects that may be the mod a metadata id names, most likely first: the old release's pinned mods
+    that declare the id, then Modrinth's search for the id's words for either release (yet_another_config_lib_v3 is
+    "yet another config lib": a trailing version is not in a project's name). Only candidates: choose takes one only when
+    its file declares the id."""
+    index = pinned_ids(loader, frm, pins) if index is None else index
+    yield from index.get(mod_id, [])
+    words = [w for w in re.split(r"[^a-z0-9]+", mod_id.lower()) if w]
+    if len(words) > 1 and re.fullmatch(r"v?\d+", words[-1]):
+        words.pop()
+    facets = [[f"categories:{loader}"], [f"versions:{to}", f"versions:{frm}"], ["project_type:mod"]]
+    for hit in api("search", {"query": " ".join(words), "facets": json.dumps(facets), "limit": 5}).get("hits", []):
+        if hit["project_id"] not in index.get(mod_id, []):
+            yield hit["project_id"]
+
+
 def choose(loader, frm, to, linked, folder, pins, platform):
     """The linked mods to start, and the library mods they need. A mod starts when what it needs is provided: by the
     platform, by another chosen mod, or by a library. A library is a project the mod's Modrinth version lists as
-    required (and each library's own, in turn): its release for the new version when there is one, which is what players
-    would install; else its release for the old one, ported with the mods. Returns (chosen jars, libraries for the new
+    required (and each library's own, in turn), or else the project whose file declares a mod id the mod's metadata
+    requires (projects_providing): its release for the new version when there is one, which is what players would
+    install; else its release for the old one, ported with the mods. Returns (chosen jars, libraries for the new
     release, libraries to port, {mod: what it still needs} for the mods left out)."""
     provided, chosen, ready, to_port, asked_for = set(platform), [], {}, {}, {}
     looked = set()
@@ -1621,6 +1651,42 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                for j in candidates if j.name not in unread and own_ids(j, loader) & own - {"loader:*"}}
     candidates = [j for j in candidates if j.name not in unread]
     by_jar = {folder / f"{m['slug']}--{m['file']}": m for m in pins}
+    searched, index = set(), None
+
+    def pick(project, waiting):
+        """The file of a library project players would install: its release for the new version when that fits every
+        range the waiting mods ask, else its old release, to port; None when it has neither, is a top mod of the old
+        release (started, or not, on its own merits) or is the platform (a second Fabric API stops Fabric)."""
+        if any(m["project"] == project and folder / f"{m['slug']}--{m['file']}" in candidates for m in pins):
+            return None
+        got, where = library(project, loader, to), ready
+        asked_range = {}
+        for w in waiting:
+            for mid, r in ranges(w, loader).items():
+                asked_range.setdefault(mid, []).append(r)
+        if got and any(not in_range(v, r) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
+            got = None
+        if not got:
+            got, where = library(project, loader, frm), to_port
+        if not got or provides(got[0], loader) & own - {"loader:*"}:
+            return None
+        return got, where
+
+    def add(project, got, where):
+        """Puts a library in the pack, then the libraries its Modrinth version lists, in turn."""
+        todo = [(got, where)]
+        asked_for[project] = got
+        while todo:
+            (jar, version), where = todo.pop()
+            where[jar.name] = jar
+            provided.update(provides(jar, loader, to))
+            for p in required_projects(version):
+                if p not in asked_for:
+                    picked = pick(p, waiting)
+                    asked_for[p] = picked[0] if picked else None
+                    if picked:
+                        todo.append(picked)
+
     while True:
         more = [j for j in candidates if j not in chosen and not unmet(needs(j, loader), provided)]
         for j in more:
@@ -1630,36 +1696,35 @@ def choose(loader, frm, to, linked, folder, pins, platform):
             continue
         waiting = [j for j in candidates if j not in chosen]
         found = False
+        # What each mod's Modrinth version lists as required, which is what its author says players install.
         for j in waiting:
-            todo = [by_jar[j]["version"]] if j in by_jar and j not in looked else []
+            listed = required_projects(by_jar[j]["version"]) if j in by_jar and j not in looked else []
             looked.add(j)
-            while todo:
-                for project in required_projects(todo.pop()):
-                    if project in asked_for:
-                        continue
-                    if any(m["project"] == project and folder / f"{m['slug']}--{m['file']}" in candidates for m in pins):
-                        asked_for[project] = None  # a top mod of the old release: started (or not) on its own merits
-                        continue
-                    got = library(project, loader, to)
-                    where = ready
-                    asked_range = {}
-                    for w in waiting:
-                        for mid, r in ranges(w, loader).items():
-                            asked_range.setdefault(mid, []).append(r)
-                    if got and any(not in_range(v, r) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
-                        got = None  # its release for the new version is outside the range the mod asks for: the old one, ported
-                    if not got:
-                        got, where = library(project, loader, frm), to_port
-                    if got and provides(got[0], loader) & own - {"loader:*"}:
-                        # The platform is this project (Fabric API): the pack has it already, and a second copy stops Fabric.
-                        asked_for[project] = None
-                        continue
-                    asked_for[project] = got
-                    if got:
-                        where[got[0].name] = got[0]
-                        provided |= provides(got[0], loader, to)
-                        todo.append(got[1])
+            for project in listed:
+                if project not in asked_for:
+                    picked = pick(project, waiting)
+                    if picked:
+                        add(project, *picked)
                         found = True
+                    else:
+                        asked_for[project] = None
+        if found:
+            continue
+        # A mod id the metadata of a waiting mod (or of a library) requires that no listed project gave: authors leave
+        # libraries off their Modrinth version (Sounds requires YACL's yet_another_config_lib_v3 and lists nothing). A
+        # project found for the id is taken only when the file it would install declares that id.
+        for j in waiting + list(ready.values()) + list(to_port.values()):
+            for mod_id in sorted(unmet(needs(j, loader) or set(), provided) - searched):
+                if ":" in mod_id:
+                    continue  # a language loader or adapter comes with the library mod a mod requires by id
+                searched.add(mod_id)
+                index = pinned_ids(loader, frm, pins) if index is None else index
+                for project in projects_providing(mod_id, loader, frm, to, pins, index):
+                    picked = None if project in asked_for else pick(project, waiting)
+                    if picked and mod_id in provides(picked[0][0], loader, to):
+                        add(project, *picked)
+                        found = True
+                        break
         if not found:
             break
     left = {**unread, **{j.name: sorted(unmet(needs(j, loader), provided)) for j in candidates if j not in chosen}}
@@ -1918,21 +1983,23 @@ def built_for_newer_java(res):
 
 
 def only_mods(linked, pins, wanted):
-    """The linked jars of the wanted mods (Modrinth slugs), and {jar: [why]} for the wanted ones left out. A slug that is
-    not pinned for the release stops the run; one that is pinned and does not link is left out, as the whole run leaves it."""
+    """The linked jars of the wanted mods (Modrinth slugs), and {name: [why]} for the wanted ones left out: one that is
+    pinned and does not link, as the whole run leaves it, and one this release does not pin (a proof of several updates
+    asks each for the same slugs; load_plan refuses a slug no update pins)."""
     pinned = {m["slug"]: f"{m['slug']}--{m['file']}" for m in pins}
-    unknown = sorted(set(wanted) - set(pinned))
-    if unknown:
-        raise SystemExit(f"not among this release's pinned mods: {', '.join(unknown)} (bench/exposure/mods/)")
-    skipped = {pinned[s]: ["it does not link after the port"] for s in sorted(wanted) if pinned[s] not in linked}
-    for name in skipped:
+    skipped = {s: ["it is not among this release's pinned mods (bench/exposure/mods/)"] for s in sorted(set(wanted) - set(pinned))}
+    for slug in skipped:
+        print(f"  {slug}: is not among this release's pinned mods, so it is not started")
+    skipped |= {pinned[s]: ["it does not link after the port"] for s in sorted(wanted) if s in pinned and pinned[s] not in linked}
+    for name in [n for n in skipped if n not in wanted]:
         print(f"  {name}: does not link after the port, so it is not started")
-    return [name for name in linked if name in {pinned[s] for s in wanted}], skipped
+    return [name for name in linked if name in {pinned[s] for s in wanted if s in pinned}], skipped
 
 
-def load_plan(spec):
+def load_plan(spec, mods=None):
     """The updates a game proof runs, as LOADER:FROM:TO: each item of spec is LOADER:FROM:TO, or LOADER:FROM for the next
-    release the scoreboard reads for that loader."""
+    release the scoreboard reads for that loader. mods (Modrinth slugs) a proof asks of every update: a slug no update
+    pins is a mistake, and stops the plan before any job starts; one only some pin is not started in the others."""
     out = []
     for item in [x.strip() for x in spec.split(",") if x.strip()]:
         parts = item.split(":")
@@ -1944,6 +2011,14 @@ def load_plan(spec):
                 raise SystemExit(f"{item}: {parts[1]} is not a release the {parts[0]} scoreboard reads")
             parts.append(nxt)
         out.append(":".join(parts))
+    pinned = set()
+    for update in out:
+        lo, frm, _ = update.split(":")
+        pins = PINS / f"{lo}-{frm}.json"
+        pinned |= {m["slug"] for m in json.loads(pins.read_text(encoding="utf-8"))["mods"]} if pins.is_file() else set()
+    unknown = sorted(set(mods or ()) - pinned)
+    if unknown:
+        raise SystemExit(f"no update of {spec} pins {', '.join(unknown)} (bench/exposure/mods/LOADER-FROM.json): the proof would start no game for it")
     return out
 
 
@@ -1981,19 +2056,20 @@ def load(loader, frm, to, save, mods=None, out=None):
         if missing[0].startswith("it is not started"):
             print(f"  {name}: {missing[0][3:]}")
         else:
-            print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library its Modrinth version lists provides")
+            print(f"  {name}: not started, it needs {', '.join(missing)}, which neither a top mod nor a library (listed on its Modrinth version, or found for the id) provides")
     left = {**skipped, **left}
     # What the run was asked to prove: every mod that links, or these slugs; compare_loads reads a mod main started and
     # this run did not as a regression only inside it.
     scope = sorted(mods) if mods else "all"
     if not chosen:
-        # Nothing to start (no asked mod links, or none has what it needs): a finished proof with no game verdicts.
-        print("no mod to start: " + ("; ".join(f"{n}: {', '.join(w)}" for n, w in sorted(left.items())) or "none links"))
+        # Nothing to start (no asked mod links, or none has what it needs): the receipt says why each mod was not started,
+        # and the run fails, so a proof that started no game never passes for one that did.
+        why = "no mod to start: " + ("; ".join(f"{n}: {', '.join(w)}" for n, w in sorted(left.items())) or "none links")
         summary = {"loader": loader, "from": frm, "to": to, "scope": scope, "mods": 0, "loaded": 0, "linkedAndLoaded": 0, "linked": 0,
                    "failedButLinked": [], "clashOnly": [], "failedDataOnly": [], "verdicts": {}, "libraries": {}, "notStarted": left,
                    "client": {"mods": 0, "loaded": 0, "verdicts": {}}, "loadedOnServerFailedInClient": []}
         keep_load(summary, out, save)
-        return summary
+        raise SystemExit(why)
     (pack / "mods").mkdir()
     for jar in chosen:
         shutil.move(jar, pack / "mods" / jar.name)
@@ -2265,6 +2341,7 @@ def main():
             j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated), with the libraries they need")
     lp = sub.add_parser("load-plan", help="the updates a cloud game proof runs, as JSON (tools/cloud-run load's matrix)")
     lp.add_argument("updates", help="LOADER:FROM:TO or LOADER:FROM (the next release), comma-separated")
+    lp.add_argument("--mods", default="", help="the slugs the proof asks of every update; one that no update pins stops the plan")
     ls = sub.add_parser("updates", help="every LOADER:FROM:TO all runs, updates and jumps, as JSON (the cloud run's matrix)")
     ls.add_argument("--loader", choices=sorted(FIRST))
     ls.add_argument("--only", help="LOADER:FROM or LOADER:FROM:TO, comma-separated")
@@ -2310,7 +2387,7 @@ def main():
     elif a.command == "load":
         load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
     elif a.command == "load-plan":
-        print(json.dumps(load_plan(a.updates)))
+        print(json.dumps(load_plan(a.updates, [m.strip() for m in a.mods.split(",") if m.strip()])))
     elif a.command == "all":
         only = {x.strip() for x in a.only.split(",")} if a.only else None
         every_update([a.loader] if a.loader else sorted(FIRST), only, a.jobs, a.out)
