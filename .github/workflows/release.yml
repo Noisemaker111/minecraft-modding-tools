@@ -4,7 +4,8 @@ name: Release
 # and Linux with mmt.jar embedded inside, proves each standalone binary in an empty folder, packages the portable ZIP
 # and runs its acceptance test, then tags the commit and publishes standalone binaries + ZIP + JAR.
 # Notes come from .github/whats-new.md (with merged PRs folded underneath); it refuses to publish if unchanged.
-# Run on any other branch, it is a rehearsal: every step runs except tag and publish.
+# Run on any other branch, it is a rehearsal: every step runs except tag and publish. On main it then starts the
+# whole jar scoreboard (cloud-exposure.yml), which records main's table and headline numbers.
 on:
   workflow_dispatch:
     inputs:
@@ -191,3 +192,18 @@ jobs:
           for f in mmt-desktop.exe mmt-desktop-linux *.jar *.zip; do sha256sum "$f" > "$f.sha256"; done
           gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "Minecraft Modding Tools $VERSION" --notes-file "$NOTES" *
+
+  scoreboard:
+    # The whole jar scoreboard of the released commit, recorded as main's table with its headline points (generated.yml).
+    # Started, not waited for: the release doesn't hang on its hour of runner time. A dispatch is the one event a
+    # workflow's own token may start another workflow with.
+    needs: release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run cloud-exposure.yml --repo "$GITHUB_REPOSITORY" --ref main

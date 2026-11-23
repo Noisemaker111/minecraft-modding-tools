@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
-from portboard import anyversion, cachekeys, gamereleases, javalevels, modrinth, porter, settings
+from portboard import anyversion, cachekeys, gamereleases, javalevels, mainrecord, modrinth, porter, settings
 
 
 def nearest(rows, data, said):
@@ -81,46 +81,83 @@ def receipt(kind, loader, frm, to):
     return settings.ROOT / "bench" / "exposure" / f"{kind}-{loader}-{frm}-{to}-{commit}.json"
 
 
-def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
-    """The jar scoreboard: what every top mod's classes and mixins reference, linked against the new release as the JVM and Mixin do.
+def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=None):
+    """The jar scoreboard: what every top mod's classes and mixins reference, ported from frm to each release of tos and
+    linked against it as the JVM and Mixin do; a summary for each.
 
-    A mod whose port was made before with the same inputs is read from the cache (jar_port), so a run after an edit ports
-    only what the edit can change. Each run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the
-    porter's inputs differ from the last run's, that one becomes before.json, and the run prints which mods newly link,
-    stopped linking or changed their port against it. kind: port only the mods the last run held back with a type of break
-    (its text, or part of it), the answer for those mods in seconds; the summary is then partial and is not kept."""
+    The targets share what reads the release ported from: its mods are downloaded and read into Mojang's names once, every
+    map is built in one process, and one JarPort ports the steps the ports share once (jar_ports). A mod whose port was made
+    before with the same inputs is read from the cache, so a run after an edit ports only what the edit can change. Each
+    run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the porter's inputs differ from the last
+    run's, that one becomes before.json, and the run prints which mods newly link, stopped linking or changed their port
+    against it, and against main's row of the same port (main's table, on the generated branch). kind: port only the mods
+    the last run held back with a type of break (its text, or part of it), the answer for those mods in seconds; only:
+    port only these mods (Modrinth slugs); either way the summary is partial and is not kept. out: the summary's file, or
+    a folder (one that is there, or any with several targets) that gets LOADER-FROM-TO.json for each."""
     seconds = {}
+    timed = timer(seconds)
+    if (kind or only) and len(tos) > 1:
+        raise SystemExit("--type and --mods answer one update at a time: give one --to")
+    pinned = timed("download", modrinth.fetch, loader, frm)
+    works = {to: settings.ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" for to in tos}
+    if kind:
+        last = works[tos[0]] / "last.json"
+        if not last.is_file():
+            raise SystemExit(f"--type needs a run of the whole update first: python bench/exposure.py jars --loader {loader} --from {frm} --to {tos[0]}")
+        held = {mod for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items() if any(kind in t for t in v.get("types", []))}
+        pinned = [p for p in pinned if p.name in held]
+        if not pinned:
+            raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
+    if only:
+        unknown = sorted(set(only) - {p.name.split("--", 1)[0] for p in pinned})
+        if unknown:
+            raise SystemExit(f"{loader} {frm} pins no {', '.join(unknown)} (bench/exposure/mods/{loader}-{frm}.json)")
+        pinned = [p for p in pinned if p.name.split("--", 1)[0] in only]
+    partial = (f"only the {len(pinned)} mods the last run held back with '{kind}'" if kind
+               else f"only {', '.join(sorted(only))}" if only else None)
+    porter.compile_tools()  # once, before the threads below that run it
+    # Every step of every target, so one GameDiff process builds the maps that are missing.
+    segments = list(dict.fromkeys((x, y) for to in tos for x, y in zip(porter.stops(loader, frm, to), porter.stops(loader, frm, to)[1:])))
+    # Reading the jars' names, the game's change maps and the releases' registry reports need nothing from each other.
+    with ThreadPoolExecutor(3) as pool:
+        named = pool.submit(timed, "names", porter.mojang_names, loader, frm, pinned)
+        mapped = pool.submit(timed, "map", porter.route_maps, segments, loader, porter.compile_tools())
+        reported = pool.submit(timed, "reports", porter.registry_reports, list(dict.fromkeys(v for to in tos for v in porter.stops(loader, frm, to))))
+        mods, unread = named.result()
+        mapped.result()
+        reported.result()
+    # A run of some mods only keeps its report apart, so a whole run's report is not replaced by part of it.
+    written = {to: works[to] / ("report.json" if not partial else "report-part.json") for to in tos}
+    for work in works.values():
+        work.mkdir(parents=True, exist_ok=True)
+    empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
+    reports = timed("port", porter.jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
+    for work in works.values():
+        shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
+    summaries = {}
+    for to in tos:
+        # What the targets shared, and each one's own questions to the game after it.
+        own = dict(seconds)
+        target = out if out is None or (len(tos) == 1 and not Path(out).is_dir()) else Path(out) / f"{loader}-{frm}-{to}.json"
+        summaries[to] = summarize(loader, frm, to, mods, unread, reports[to], written[to], works[to], partial, save, target, quiet, timer(own), own)
+    return summaries
 
+
+def timer(seconds):
+    """A function that runs work and adds the seconds it took to seconds[stage]."""
     def timed(stage, work, *args):
         started = time.monotonic()
         try:
             return work(*args)
         finally:
             seconds[stage] = round(seconds.get(stage, 0) + time.monotonic() - started, 1)
+    return timed
 
-    pinned = timed("download", modrinth.fetch, loader, frm)
-    work = settings.ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}"
+
+def summarize(loader, frm, to, mods, unread, report, written, work, partial, save, out, quiet, timed, seconds):
+    """One target's summary from its port's report: what still breaks, by type and by the mods nearest to done, printed
+    unless quiet and written to out."""
     last = work / "last.json"
-    if kind:
-        if not last.is_file():
-            raise SystemExit(f"--type needs a run of the whole update first: python bench/exposure.py jars --loader {loader} --from {frm} --to {to}")
-        held = {mod for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items() if any(kind in t for t in v.get("types", []))}
-        pinned = [p for p in pinned if p.name in held]
-        if not pinned:
-            raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
-    porter.compile_tools()  # once, before the threads below that run it
-    # Reading the jars' names, the game's change maps and the releases' registry reports need nothing from each other.
-    with ThreadPoolExecutor(3) as pool:
-        named = pool.submit(timed, "names", porter.mojang_names, loader, frm, pinned)
-        mapped = pool.submit(timed, "map", porter.routes, loader, frm, to)
-        reported = pool.submit(timed, "reports", porter.registry_reports, porter.stops(loader, frm, to))
-        mods, unread = named.result()
-        mapped.result()
-        reported.result()
-    # A run of some mods only (kind) keeps its report apart: load reads the whole update's.
-    written = work / ("report.json" if not kind else "report-type.json")
-    report = timed("port", porter.jar_port, loader, frm, to, mods, work / "mods", written, False, True) if mods else {"linked": 0, "mods": [], "unlinkedByMods": []}
-    shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
     if mods:
         report = javalevels.without_platform_copies(report, javalevels.platform_ids(loader, to), {m.name: m for m in mods})
         written.write_text(json.dumps(report, indent=1), encoding="utf-8")
@@ -159,18 +196,23 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
     # Each mod's verdict: the references it still needs, the types of break they are, and what its port wrote. Two runs
     # agree on a mod when these are equal; a mod whose port wrote the same jar needs no new proof in game.
     summary["links"] = sorted(m["mod"] for m in rows if not porter.left(m, data))
+    # What holds back each mod that does not link, by type: kept in main's table, so a check of one type of break ports
+    # only the mods main says it holds (check_plan).
+    summary["heldBy"] = {m["mod"]: sorted({kind_of(r, said) for r in porter.left(m, data)}) for m in rows if porter.left(m, data)}
     summary["verdicts"] = {m["mod"]: {"left": sorted(porter.left(m, data)), "types": sorted({kind_of(r, said) for r in porter.left(m, data)}), "ported": m.get("ported")}
                            for m in rows}
     summary["porter"] = porter.port_key(loader, frm, to) + " " + cachekeys.content_key(*(p.read_bytes() for p in mods))
-    if kind:
-        summary["partial"] = f"only the {len(mods)} mods the last run held back with '{kind}'"
+    if partial:
+        summary["partial"] = partial
     before = work / "before.json"
-    if not kind and last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
+    if not partial and last.is_file() and json.loads(last.read_text(encoding="utf-8")).get("porter") != summary["porter"]:
         os.replace(last, before)
-    against = before if not kind else last
+    against = before if not partial else last
     moved = verdicts_moved(json.loads(against.read_text(encoding="utf-8")), summary) if against.is_file() else None
     summary["moved"] = moved
-    if not kind:
+    row = mainrecord.main_row(loader, frm, to)
+    summary["againstMain"] = mainrecord.against_main(row, summary) if row else None
+    if not partial:
         work.mkdir(parents=True, exist_ok=True)
         last.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     if not quiet:
@@ -181,10 +223,14 @@ def jars(loader, frm, to, save=False, out=None, quiet=False, kind=None):
             print(f"prove in game only those: python bench/exposure.py load --loader {loader} --from {frm} --to {to} --mods {','.join(slugs)}"
                   f" (or tools/cloud-run load -f updates={loader}:{frm}:{to} -f mods={','.join(slugs)})")
         if moved is not None:
-            print(f"against {'the run before' if not kind else 'the last whole run'} ({against}): "
+            print(f"against {'the run before' if not partial else 'the last whole run'} ({against}): "
                   + "; ".join(f"{k} {', '.join(v) if v else 'none'}" for k, v in moved.items() if k != "same") + f"; {moved['same']} mods the same")
-        if kind:
-            print(summary["partial"])
+        if summary["againstMain"] is not None:
+            m = summary["againstMain"]
+            print(f"against main's table at {(row.get('commit') or '?')[:10]}: newly link {', '.join(m['newly link']) or 'none'}; "
+                  f"no longer link {', '.join(m['no longer link']) or 'none'}; {m['same']} mods the same")
+        if partial:
+            print(partial)
         print(f"{summary['modsThatLink']}/{summary['modsRead']} {loader} mods link against {to} after the port "
               f"({summary['brokenUses']} broken uses; {summary['silentOnly']} keep an override the game no longer calls)"
               + ("" if data is None else f"; {summary['modsThatLinkAndData']} of them also name nothing in their data that {to} dropped")
@@ -224,8 +270,9 @@ def verdicts_moved(before, after):
 
 
 def every_update(loaders, only, jobs, out_file=None):
-    """jars for every update, every jump and every any-version target of each loader, side by side; joined into one table."""
-    todo = [(lo, a, b) for lo in loaders for a, b in gamereleases.runs(lo) if not only or f"{lo}:{a}" in only]
+    """jars for every update, every jump and every any-version target of each loader, side by side, in the jobs the cloud
+    sweep runs (plan); joined into one table."""
+    todo = [job for lo in loaders for job in plan(lo, only)]
     porter.jar_tools()
     porter.compile_tools()
     settings.CORES = max(1, (os.cpu_count() or 1) // max(1, jobs))
@@ -233,33 +280,59 @@ def every_update(loaders, only, jobs, out_file=None):
     out.mkdir(parents=True, exist_ok=True)
 
     def one(job):
-        lo, a, b = job
+        lo, a, tos = job
         started = time.monotonic()
         try:
-            s = jars(lo, a, b, out=out / f"{lo}-{a}-{b}.json", quiet=True)
-            print(f"  {lo} {a} -> {b}: {s['modsThatLink']}/{s['modsRead']} link ({time.monotonic() - started:.0f} s)", flush=True)
+            for b, s in jars(lo, a, tos, out=out, quiet=True).items():
+                print(f"  {lo} {a} -> {b}: {s['modsThatLink']}/{s['modsRead']} link ({time.monotonic() - started:.0f} s)", flush=True)
         except (SystemExit, subprocess.CalledProcessError, OSError) as failed:
-            print(f"  {lo} {a} -> {b}: failed: {failed}", flush=True)
+            print(f"  {lo} {a} -> {', '.join(tos)}: failed: {failed}", flush=True)
 
-    # Two updates next to each other share a release, and their first run downloads its files to the same cache: each
-    # wave holds updates that share none, so no two runs write one file.
-    for loader in loaders:
-        single = gamereleases.updates(loader)
-        for parity in (0, 1):
-            wave = [t for t in todo if t[0] == loader and t[1:] in single and single.index(t[1:]) % 2 == parity]
-            with ThreadPoolExecutor(max(1, jobs)) as pool:
-                list(pool.map(one, wave))
-        # A jump reads every release on its way. The updates above fetched them, so jumps side by side write no file
-        # twice; one that crosses an update that did not run (--only) goes alone.
-        fetched = {v for t in todo if t[0] == loader and t[1:] in single for v in t[1:]}
-        far = [t for t in todo if t[0] == loader and t[1:] not in single]
-        warm = [t for t in far if set(gamereleases.chain(*t[1:])) <= fetched]
-        with ThreadPoolExecutor(max(1, jobs)) as pool:
-            list(pool.map(one, warm))
-        for t in far:
-            if t not in warm:
-                one(t)
+    # Runs side by side share the caches safely: every file is written under a name of its own and moved into place.
+    with ThreadPoolExecutor(max(1, jobs)) as pool:
+        list(pool.map(one, todo))
     return join(out, out_file)
+
+
+# What a job costs, in steps of a port (about 40 s on GitHub's 4-processor runners, measured on the sweep of 2026-11-23):
+# a job's own start (the runner, the download, reading the mods into Mojang's names and the first release) about 2.5,
+# and each target after the first about 1.8 (its last step, its map, its questions to Exposure).
+JOB, TARGET = 2.5, 1.8
+
+
+def planned_steps(loader, frm, to):
+    """About the steps JarPort takes from frm to to: one for each update with stand-ins (JarPort.hops), and one for the
+    updates between. Only a job's cost is planned from it; what is ported is JarPort's plan."""
+    folder = settings.ROOT / "knowledge" / "standins"
+    c = gamereleases.chain(frm, to)
+    return 1 + sum(1 for x, y in zip(c, c[1:]) if (folder / f"{x}-{y}").is_dir() or (folder / f"{x}-{y}.{loader}").is_dir())
+
+
+def plan(loader, only=None):
+    """The scoreboard's jobs for a loader: every pair runs() lists, as (loader, from, [to, ...]). The pairs from one release
+    in one direction are one fan: a port to a later release passes every stop of a port to an earlier one, so one JarPort
+    ports the shared steps once and each target adds its last step (jar_ports), and the mods are read once. A fan is cut,
+    nearest targets first, into jobs that take at most as long as the longest single port and four more targets: the far
+    end of the most-used release's fan cannot be shorter than its own port, and longer jobs saved little more (one job a
+    fan: 291 runner minutes a sweep against 322, with a 36-minute job).
+    only: LOADER:FROM or LOADER:FROM:TO names; the pairs they name."""
+    pairs = [(frm, to) for frm, to in gamereleases.runs(loader) if not only or f"{loader}:{frm}" in only or f"{loader}:{frm}:{to}" in only]
+    cost = lambda frm, tos: JOB + planned_steps(loader, frm, tos[-1]) + TARGET * (len(tos) - 1)
+    budget = max((cost(frm, [to]) for frm, to in gamereleases.runs(loader)), default=0) + 4 * TARGET
+    fans = {}
+    for frm, to in pairs:
+        fans.setdefault((frm, gamereleases.vkey(to) > gamereleases.vkey(frm)), []).append(to)
+    jobs = []
+    for (frm, _), tos in fans.items():
+        tos.sort(key=lambda to: len(gamereleases.chain(frm, to)))
+        job = []
+        for to in tos:
+            if job and cost(frm, job + [to]) > budget:
+                jobs.append((loader, frm, job))
+                job = []
+            job.append(to)
+        jobs.append((loader, frm, job))
+    return jobs
 
 
 def join(folder, out=None):
@@ -327,7 +400,7 @@ def join(folder, out=None):
     missing = [f"{lo} {a} -> {b}" for lo, a, b in dict.fromkeys(list(single) + list(wanted) + sorted(targets))
                if not any(pair(s) == (lo, a, b) for s in found)]
     anyv = anyversion.any_version_table({pair(s): s for s in found if pair(s) in targets})
-    keep = ("loader", "from", "to", "modsRead", "modsThatLink", "modsThatLinkAndData", "brokenUses", "loaderUses", "modsHeldOnlyByLoader", "links")
+    keep = ("loader", "from", "to", "modsRead", "modsThatLink", "modsThatLinkAndData", "brokenUses", "loaderUses", "modsHeldOnlyByLoader", "links", "heldBy")
     table = {
         "date": date.today().isoformat(), "total": total, "loaders": loaders, "missing": missing, "anyVersion": anyv,
         "updates": [{**{k: s.get(k) for k in keep}, "big": gamereleases.big(s["from"], s["to"])} for s in rows],

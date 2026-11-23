@@ -1,0 +1,16 @@
+name: Game logs
+description: Copies each game start's server or client log and result.json into logs/, for the job's artifact (cloud-load.yml, port-check.yml).
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      # pack-check keeps each start's server or client log and result.json in its own cache, outside the workspace; the
+      # runner is fresh, so every run there is this job's.
+      run: |
+        mkdir -p logs
+        for run in "$HOME"/.mmt/packs/.runs/portable/*/; do
+          [ -d "$run" ] || continue
+          mkdir -p "logs/$(basename "$run")"
+          find "$run" -maxdepth 1 \( -name '*.log' -o -name 'result.json' \) -exec cp {} "logs/$(basename "$run")/" \;
+        done
+        echo "$(find logs -type f | wc -l) game log files"
