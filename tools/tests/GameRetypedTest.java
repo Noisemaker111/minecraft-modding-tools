@@ -22,12 +22,12 @@ final class GameRetypedTest {
         // The loader's own screen rewrote its two draws another way (with a shadow): the game's code still decides.
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of(loaderHud(false)));
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of(loaderHud(true)));
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
         List<String> lines = new ArrayList<>();
         String draw = "nothing learned";
-        GameDiff.Retyped retyped = new GameDiff.Retyped(hop, new GameDiff.Learner(hop));
-        for (GameDiff.Retyped.Reading r : retyped.learn()) {
+        RetypedLearner retyped = new RetypedLearner(hop, new GameLearner(hop));
+        for (RetypedLearner.Reading r : retyped.learn()) {
             lines.add(r.json("1.0 -> 2.0"));
             if (r.name().equals("draw")) {
                 draw = r.at() + " " + r.as() + " " + r.expr();
@@ -40,8 +40,8 @@ final class GameRetypedTest {
         Files.writeString(map, "{\"signatures\": [{\"owner\": \"net.minecraft.r.Screen\", \"from\": \"render\", \"desc\": \"(" + POSE + "I)V\", \"to\": \"render\", \"newDesc\": \"(" + GFX + "I)V\"}],"
             + " \"retyped\": [" + String.join(",\n", lines) + "]}");
         JarPort port = new JarPort(a, b, map);
-        port.oldCode = new JarPort.GameCode(oldGame::get, null);
-        port.newCode = new JarPort.GameCode(newGame::get, null);
+        port.oldCode = new GameCode(oldGame::get, null);
+        port.newCode = new GameCode(newGame::get, null);
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m8/Panel.class", panel())), "retyped.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();

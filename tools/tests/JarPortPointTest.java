@@ -57,8 +57,8 @@ final class JarPortPointTest {
         JarPort port = new JarPort(a, b, map);
         Map<String, byte[]> before = Map.of("p9/Ui", ui(true), "p9/Caller", caller(true), "p9/Inv", inv(true)),
             after = Map.of("p9/Ui", ui(false), "p9/Caller", caller(false), "p9/Inv", inv(false));
-        port.oldCode = new JarPort.GameCode(before::get, null, before);
-        port.newCode = new JarPort.GameCode(after::get, null, after);
+        port.oldCode = new GameCode(before::get, null, before);
+        port.newCode = new GameCode(after::get, null, after);
 
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of(
@@ -90,11 +90,11 @@ final class JarPortPointTest {
             "a call the method dropped with nothing in its place stays reported: " + unlinked);
 
         // What the scoreboard says the game did, from the same reading.
-        JarPort.GameCode then = port.oldCode, now = port.newCode;
+        GameCode then = port.oldCode, now = port.newCode;
         String[] ui = { "p9/Ui" };
-        JarPortTest.expect(JarPort.GameCode.slot(then, now, x -> x, new String[] { ui[0], "blend", "()V" }, new String[] { ui[0], "blend", "()V" }, 'm', "p9/Gl", "blend", "()V", -1).game().equals("dropped")
-                && JarPort.GameCode.slot(then, now, x -> x, new String[] { ui[0], "close", "()V" }, new String[] { ui[0], "close", "()V" }, 'm', "p9/Ui", "isDown", "()Z", -1).game().equals("helper")
-                && JarPort.GameCode.slot(then, now, x -> x, new String[] { ui[0], "text", "()V" }, new String[] { ui[0], "text", "()V" }, 'm', "p9/Ui", "draw", DRAW, -1).game().equals("overload"),
+        JarPortTest.expect(GameCode.slot(then, now, x -> x, new String[] { ui[0], "blend", "()V" }, new String[] { ui[0], "blend", "()V" }, 'm', "p9/Gl", "blend", "()V", -1).game().equals("dropped")
+                && GameCode.slot(then, now, x -> x, new String[] { ui[0], "close", "()V" }, new String[] { ui[0], "close", "()V" }, 'm', "p9/Ui", "isDown", "()Z", -1).game().equals("helper")
+                && GameCode.slot(then, now, x -> x, new String[] { ui[0], "text", "()V" }, new String[] { ui[0], "text", "()V" }, 'm', "p9/Ui", "draw", DRAW, -1).game().equals("overload"),
             "the reading names what the game did: dropped, moved into a method, another signature");
     }
 
@@ -166,7 +166,7 @@ final class JarPortPointTest {
         methods.visit(null, method);
         methods.visitEnd();
         AnnotationVisitor ats = av.visitArray("at");
-        AnnotationVisitor point = ats.visitAnnotation(null, JarPort.AT);
+        AnnotationVisitor point = ats.visitAnnotation(null, MixinRetargets.AT);
         point.visit("value", at);
         point.visit("target", target);
         if (ordinal >= 0) {

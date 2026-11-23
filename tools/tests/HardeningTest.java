@@ -150,12 +150,12 @@ public final class HardeningTest {
     static void mixinAudit(Path scratch) throws Exception {
         Path log = scratch.resolve("mixin.log");
         Files.writeString(log, "# 0 mixins, nothing to audit\n");
-        require(Port.auditSummary(log).equals("no mixins to audit"), "no mixins is reported as nothing to audit");
+        require(PortMixins.auditSummary(log).equals("no mixins to audit"), "no mixins is reported as nothing to audit");
         Files.writeString(
             log,
             "note: a.java: target Foo is not in the given jars, not checked\n# 2 mixins, 1 target, 4 members checked, 0 dead, 1 targets not in the jar\n"
         );
-        String summary = Port.auditSummary(log);
+        String summary = PortMixins.auditSummary(log);
         require(
             summary.startsWith("mixin targets checked (2 mixins, 1 target, 4 members checked, 0 dead)") &&
             summary.contains("1 mixin target(s) are in no jar"),
@@ -199,7 +199,7 @@ public final class HardeningTest {
             )
         );
         Files.writeString(source, "class A { half edited }\n");
-        Map<String, Object> undone = Port.undo(project, transaction.toString());
+        Map<String, Object> undone = PortJournal.undo(project, transaction.toString());
         String details = String.valueOf(undone.get("details"));
         require(
             Boolean.TRUE.equals(undone.get("ok")) &&
@@ -232,7 +232,7 @@ public final class HardeningTest {
             )
         );
         try {
-            Port.undo(project, transaction.toString());
+            PortJournal.undo(project, transaction.toString());
             throw new AssertionError("second undo passed");
         } catch (IOException expected) {
             require(expected.getMessage().contains("already undone"), "a second undo says it was already undone");

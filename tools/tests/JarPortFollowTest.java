@@ -73,9 +73,9 @@ final class JarPortFollowTest {
         Path map = scratch.resolve("route-follow.json");
         Files.writeString(map, "{}");
         JarPort port = new JarPort(a, b, map);
-        port.oldCode = new JarPort.GameCode(Map.of("f8/Hud", hud(true), "f8/Bar", bar(true), "f8/Screen", pane("f8/Screen", true, false, false), "f8/Pane", pane("f8/Pane", true, false, false),
+        port.oldCode = new GameCode(Map.of("f8/Hud", hud(true), "f8/Bar", bar(true), "f8/Screen", pane("f8/Screen", true, false, false), "f8/Pane", pane("f8/Pane", true, false, false),
             "f8/Lid", pane("f8/Lid", true, false, false), "f8/Box", box(true), "f8/Wrap", wrap(true))::get, null);
-        port.newCode = new JarPort.GameCode(Map.of("f8/Hud", hud(false), "f8/Bar", bar(false), "f8/Screen", pane("f8/Screen", false, false, false), "f8/Pane", pane("f8/Pane", false, true, false),
+        port.newCode = new GameCode(Map.of("f8/Hud", hud(false), "f8/Bar", bar(false), "f8/Screen", pane("f8/Screen", false, false, false), "f8/Pane", pane("f8/Pane", false, true, false),
             "f8/Lid", pane("f8/Lid", false, false, true), "f8/Box", box(false), "f8/Wrap", wrap(false))::get, null);
 
         List<Map<String, Object>> results = new ArrayList<>();
