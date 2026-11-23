@@ -9125,7 +9125,7 @@ public final class GameDiff {
                 if (!classes.isEmpty()) {
                     prevPlatform = classes;
                     prevLoaderVersion = p.version();
-                    loaderUsed.put(version, p.version() == null ? loader : p.version());
+                    loaderUsed.put(version, p.read() == null ? loader : p.read());
                 } else if (prevPlatform != null) {
                     classes = prevPlatform;
                     loaderNotes.add(version + ": no " + loader + " release; carried " + prevLoaderVersion);
@@ -9391,7 +9391,8 @@ public final class GameDiff {
             }
             head.append(retyped.isEmpty() ? "],\n" : "\n  ],\n");
             if (loader != null) {
-                head.append("  \"loader\": { \"name\": \"neoforge\", \"source\": ").append(VersionMap.Diff.q(NEOFORGE)).append(", \"versions\": {");
+                String source = "fabric".equals(loader) ? Exposure.FABRIC_API : NEOFORGE;
+                head.append("  \"loader\": { \"name\": ").append(VersionMap.Diff.q(loader)).append(", \"source\": ").append(VersionMap.Diff.q(source)).append(", \"versions\": {");
                 int i = 0;
                 for (var e : loaderUsed.entrySet()) {
                     head.append(i++ == 0 ? "" : ", ").append(VersionMap.Diff.q(e.getKey())).append(": ").append(VersionMap.Diff.q(e.getValue()));
@@ -9402,7 +9403,7 @@ public final class GameDiff {
                     head.append(j == 0 ? "" : ", ").append(VersionMap.Diff.q(n.substring(0, n.indexOf(':')))).append(": ");
                     head.append(VersionMap.Diff.q(n.substring(n.indexOf(':') + 2)));
                 }
-                head.append("}, \"fabricApi\": \"not covered\" },\n");
+                head.append("} },\n");
             }
             return body.substring(0, nl + 1) + head + body.substring(nl + 1);
         }
