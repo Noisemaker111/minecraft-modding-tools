@@ -39,12 +39,12 @@ public final class RuleExamples {
                 for (Path file : files.computeIfAbsent(dir.toString(), k -> javaFiles(dir))) {
                     String text = Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n");
                     for (Object earlier : Json.array(request.get("after"))) {
-                        text = Port.rewrite(Json.object(earlier), text);
+                        text = PortRules.rewrite(Json.object(earlier), text);
                     }
                     int[] span = span(rule, text);
                     if (span == null) continue;
                     String before = snippet(rule, text, span);
-                    String after = before == null ? null : Port.rewrite(rule, before);
+                    String after = before == null ? null : PortRules.rewrite(rule, before);
                     if (before == null || after.equals(before)) {
                         why =
                             "it matches " +

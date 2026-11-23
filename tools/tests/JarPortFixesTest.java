@@ -58,8 +58,8 @@ final class JarPortFixesTest {
         files.put("m3/Reader.class", reader());
         List<Map<String, Object>> results = new ArrayList<>();
         JarPort port = new JarPort(a, b, map);
-        port.newCode = new JarPort.GameCode(Map.of("g3/Win", win(false))::get, null);
-        port.oldCode = new JarPort.GameCode(Map.of("g3/Win", win(true))::get, null);
+        port.newCode = new GameCode(Map.of("g3/Win", win(false))::get, null);
+        port.oldCode = new GameCode(Map.of("g3/Win", win(true))::get, null);
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "fixes.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
 

@@ -287,7 +287,7 @@ final class Dependencies {
         Matcher head = Pattern.compile("(?m)^((?:public\\s+|final\\s+|abstract\\s+)*)class\\s+(\\w+)\\s*\\{").matcher(text);
         Matcher pkg = Pattern.compile("(?m)^package\\s+[\\w.]+\\s*;").matcher(text);
         if (!head.find() || !pkg.find()) return null;
-        int open = text.indexOf('{', head.start()), close = Port.closingBrace(text, open);
+        int open = text.indexOf('{', head.start()), close = JavaText.closingBrace(text, open);
         if (close < 0) return null;
         StringBuilder out = new StringBuilder(pkg.group());
         out.append("\n\n/** Written by mmt port: the optional mod this integrated with has no release for the target, so it is never present. */\n");
@@ -297,7 +297,7 @@ final class Dependencies {
         ).matcher(text);
         int kept = 0, at = open + 1;
         while (method.find(at) && method.start() < close) {
-            int bodyClose = Port.closingBrace(text, method.end() - 1);
+            int bodyClose = JavaText.closingBrace(text, method.end() - 1);
             if (bodyClose < 0) break;
             at = bodyClose + 1;
             String type = method.group(2).strip(), signature = type + " " + method.group(4);
@@ -1735,7 +1735,7 @@ final class Dependencies {
             classes.add((packageName.find() ? packageName.group(1) + "." : "") + name);
         }
         List<String> removed = new ArrayList<>();
-        for (Path file : Target.manifests(setup.project)) {
+        for (Path file : TargetManifest.manifests(setup.project)) {
             String before = setup.text(file);
             Map<String, Object> metadata;
             try {

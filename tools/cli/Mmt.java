@@ -403,7 +403,7 @@ public final class Mmt {
             if (preview) previewReceipts = Files.createTempDirectory("mmt-convert-receipt-");
             report = new Report(preview ? previewReceipts : project.root, options.command);
             Map<String, Object> result;
-            String interrupted = options.command.equals("port") ? null : Port.interruptedText(project);
+            String interrupted = options.command.equals("port") ? null : PortJournal.interruptedText(project);
             long discovered = System.nanoTime();
             if (options.command.equals("discover")) {
                 result = project.discover();
@@ -462,10 +462,10 @@ public final class Mmt {
                 } catch (IOException unreadable) {
                     // A port may drop a decompiler-only plugin that is no longer published; the port's undo restores it.
                     String dead = options.command.equals("port") && options.has("fix") && !options.has("dry-run")
-                        ? Port.deadDevPlugin(unreadable.getMessage())
+                        ? PortDevPlugins.deadDevPlugin(unreadable.getMessage())
                         : null;
                     if (dead == null) throw unreadable;
-                    List<String> changed = Port.removeDevPlugin(project, dead);
+                    List<String> changed = PortDevPlugins.removeDevPlugin(project, dead);
                     if (changed.isEmpty()) throw unreadable;
                     report.stages.add(
                         Json.map(
@@ -482,7 +482,7 @@ public final class Mmt {
                     try {
                         model = build.model(true, true);
                     } catch (IOException still) {
-                        Port.restorePending(project);
+                        PortDevPlugins.restorePending(project);
                         throw still;
                     }
                 }
@@ -511,7 +511,7 @@ public final class Mmt {
                             result = new Port(build, model).run(options);
                         } finally {
                             // Changes made before the port's transaction are undone unless the transaction took them over.
-                            Port.restorePending(project);
+                            PortDevPlugins.restorePending(project);
                         }
                         if (!options.values.containsKey("undo")) result.put("support", Support.evaluated(model));
                         exit = Boolean.TRUE.equals(result.get("ok")) ? 0 : 1;

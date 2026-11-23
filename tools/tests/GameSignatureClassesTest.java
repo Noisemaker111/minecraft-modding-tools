@@ -24,7 +24,7 @@ final class GameSignatureClassesTest {
         Map<String, byte[]> oldGame = game(false), newGame = game(true);
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of());
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
         Map<String, String> links = new TreeMap<>();
         hop.cAB.forEach((x, y) -> links.put(x.name, y.name));

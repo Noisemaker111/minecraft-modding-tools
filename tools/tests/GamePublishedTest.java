@@ -47,10 +47,10 @@ final class GamePublishedTest {
         JarPortTest.expect("registerKeyMapping".equals(members.getOrDefault(OLD, Map.of()).get("registerKeyBinding")), "the page's member is read under its old class: " + members);
         JarPortTest.expect("START_LEVEL_TICK".equals(members.getOrDefault(TICKS, Map.of()).get("START_WORLD_TICK")), "a member of a class kept is read: " + members);
 
-        GameDiff.Hop alone = hop(GameDiff.Published.NONE);
+        GameHop alone = hop(GameDiff.Published.NONE);
         JarPortTest.expect(!linked(alone, OLD, NEW), "without the list the renamed class is not linked (the test would prove nothing)");
 
-        GameDiff.Hop hop = hop(new GameDiff.Published(classes, members));
+        GameHop hop = hop(new GameDiff.Published(classes, members));
         JarPortTest.expect(linked(hop, OLD, NEW), "the published class rename is linked");
         String method = hop.mAB.entrySet().stream().filter(e -> e.getKey().name.equals("registerKeyBinding")).map(e -> e.getValue().owner.name + "." + e.getValue().name)
             .findFirst().orElse("none");
@@ -64,7 +64,7 @@ final class GamePublishedTest {
         Map<String, String> chained = new LinkedHashMap<>();
         chained.put(RECIPES + "FabricRecipeManager", RECIPES + "FabricRecipeAccess");
         chained.put(RECIPES + "FabricServerRecipeManager", RECIPES + "FabricRecipeManager");
-        GameDiff.Hop chain = new GameDiff.Hop(GameDiff.read("1.0", List.of(), null, List.of(type("FabricRecipeManager", "getAllMatches"), type("FabricServerRecipeManager", "getAllOfType"))),
+        GameHop chain = new GameHop(GameDiff.read("1.0", List.of(), null, List.of(type("FabricRecipeManager", "getAllMatches"), type("FabricServerRecipeManager", "getAllOfType"))),
             GameDiff.read("2.0", List.of(), null, List.of(type("FabricRecipeAccess", "getAllMatches"), type("FabricRecipeManager", "getAllOfType"))));
         chain.published = new GameDiff.Published(chained, Map.of());
         chain.run();
@@ -76,16 +76,16 @@ final class GamePublishedTest {
         System.out.println("game-published: 10 checks passed");
     }
 
-    static GameDiff.Hop hop(GameDiff.Published published) {
+    static GameHop hop(GameDiff.Published published) {
         GameDiff.Snap a = GameDiff.read("1.0", List.of(), null, loader(false));
         GameDiff.Snap b = GameDiff.read("2.0", List.of(), null, loader(true));
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.published = published;
         hop.run();
         return hop;
     }
 
-    static boolean linked(GameDiff.Hop hop, String from, String to) {
+    static boolean linked(GameHop hop, String from, String to) {
         return hop.cAB.entrySet().stream().anyMatch(e -> e.getKey().name.equals(from) && e.getValue().name.equals(to));
     }
 

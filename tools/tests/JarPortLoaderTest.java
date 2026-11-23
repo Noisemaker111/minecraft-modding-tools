@@ -127,20 +127,20 @@ final class JarPortLoaderTest {
     static void languageVersion(Path scratch) throws Exception {
         String pom = "<project><dependencies><dependency><groupId>net.neoforged.fancymodloader</groupId><artifactId>loader</artifactId>"
             + "<version>1.0.16</version></dependency></dependencies></project>";
-        expect("[1,)".equals(JarPort.languageRange(pom)), "NeoForge's pom gives the language version its loader answers: " + JarPort.languageRange(pom));
-        expect("".equals(JarPort.languageRange("<project></project>")), "a pom naming no FancyModLoader gives none");
+        expect("[1,)".equals(ModMetadata.languageRange(pom)), "NeoForge's pom gives the language version its loader answers: " + ModMetadata.languageRange(pom));
+        expect("".equals(ModMetadata.languageRange("<project></project>")), "a pom naming no FancyModLoader gives none");
         Path map = scratch.resolve("route-language.json");
         Files.writeString(map, "{}");
         JarPort port = new JarPort(new GameDiff.Snap("1.0"), new GameDiff.Snap("2.0"), map);
-        port.languageRange = "[1,)";
+        port.modMetadata.languageRange = "[1,)";
         String forge = "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n[[mods]]\nmodId=\"m\"\n";
-        String ported = port.metadata(forge);
+        String ported = port.modMetadata.metadata(forge);
         expect(ported.contains("loaderVersion=\"[1,)\"") && ported.contains("license=\"MIT\"") && !ported.contains("[47,)"),
             "a javafml jar asks for the new release's language version: " + ported);
         String kotlin = "modLoader=\"kotlinforforge\"\nloaderVersion=\"[4,)\"\n";
-        expect(port.metadata(kotlin).equals(kotlin), "another language loader keeps its own range: " + port.metadata(kotlin));
-        port.languageRange = "";
-        expect(port.metadata(forge).equals(forge), "with no version known the file is left as it was");
+        expect(port.modMetadata.metadata(kotlin).equals(kotlin), "another language loader keeps its own range: " + port.modMetadata.metadata(kotlin));
+        port.modMetadata.languageRange = "";
+        expect(port.modMetadata.metadata(forge).equals(forge), "with no version known the file is left as it was");
     }
 
     static void srg() throws Exception {

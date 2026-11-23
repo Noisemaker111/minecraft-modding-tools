@@ -26,17 +26,17 @@ final class GameSameCallTest {
         Map<String, byte[]> oldGame = game(false), newGame = game(true);
         GameDiff.Snap a = GameDiff.read("1.0", List.copyOf(oldGame.values()), null, List.of());
         GameDiff.Snap b = GameDiff.read("2.0", List.copyOf(newGame.values()), null, List.of());
-        GameDiff.Hop hop = new GameDiff.Hop(a, b);
+        GameHop hop = new GameHop(a, b);
         hop.run();
-        GameDiff.Learner learner = new GameDiff.Learner(hop);
+        GameLearner learner = new GameLearner(hop);
         Map<String, String> learned = new TreeMap<>();
         List<String> lines = new ArrayList<>();
         // How the game reads Lst's removed fields in 2.0, as the learner gives them.
         String lst = "net.minecraft.s5.Lst";
-        List<GameDiff.Learner.Learned> known = List.of(new GameDiff.Learner.Learned(lst, "top", "", true, false, "$0.getY()", 1, 1),
-            new GameDiff.Learner.Learned(lst, "bottom", "", true, false, "$0.getBottom()", 1, 1),
-            new GameDiff.Learner.Learned(lst, "wide", "", true, false, "$0.width", 1, 1));
-        for (GameDiff.Learner.Learned l : new GameDiff.SameCall(hop, learner).learn(known)) {
+        List<GameLearner.Learned> known = List.of(new GameLearner.Learned(lst, "top", "", true, false, "$0.getY()", 1, 1),
+            new GameLearner.Learned(lst, "bottom", "", true, false, "$0.getBottom()", 1, 1),
+            new GameLearner.Learned(lst, "wide", "", true, false, "$0.width", 1, 1));
+        for (GameLearner.Learned l : new SameCallLearner(hop, learner).learn(known)) {
             learned.put(l.owner() + "." + l.name() + l.desc(), l.expr());
             lines.add(l.json("1.0 -> 2.0"));
         }

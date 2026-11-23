@@ -257,7 +257,7 @@ public final class DesugarTests {
             "the legacy-language gate fires on release rejections, not on ordinary errors"
         );
         check(
-            Port.isLegacyRelease(8) && Port.isLegacyRelease("1.8") && !Port.isLegacyRelease("17") && !Port.isLegacyRelease(null) && !Port.isLegacyRelease("foo"),
+            PortDesugar.isLegacyRelease(8) && PortDesugar.isLegacyRelease("1.8") && !PortDesugar.isLegacyRelease("17") && !PortDesugar.isLegacyRelease(null) && !PortDesugar.isLegacyRelease("foo"),
             "releases at Java 8 or older read as legacy, newer and unknown ones do not"
         );
     }

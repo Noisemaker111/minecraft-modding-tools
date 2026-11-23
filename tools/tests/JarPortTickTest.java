@@ -61,8 +61,8 @@ final class JarPortTickTest {
             """);
         JarPort port = new JarPort(a, b, map);
         Map<String, byte[]> before = game(true), after = game(false);
-        port.oldCode = new JarPort.GameCode(before::get, null, before);
-        port.newCode = new JarPort.GameCode(after::get, null, after);
+        port.oldCode = new GameCode(before::get, null, before);
+        port.newCode = new GameCode(after::get, null, after);
 
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m9/Seen.class", seen(),
