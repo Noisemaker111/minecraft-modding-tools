@@ -13,6 +13,7 @@ final class Installation {
      */
     static final List<String> RESOURCES = List.of(
         "tools/cli/gradle.init.gradle",
+        "tools/cli/gradle.resolution.gradle",
         "PERFORMANCE.md",
         "tools/cli/Json.java",
         "tools/cli/Route.java",

@@ -75,7 +75,9 @@ final class Server implements AutoCloseable {
                 task
             )
         );
-        process = new ProcessBuilder(command)
+        ProcessBuilder launch = new ProcessBuilder(command);
+        launch.environment().putAll(build.environment());
+        process = launch
             .directory(build.project.root.toFile())
             .redirectErrorStream(true)
             .redirectOutput(log.toFile())

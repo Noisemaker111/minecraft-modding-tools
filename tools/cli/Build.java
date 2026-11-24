@@ -5,7 +5,7 @@ import java.util.*;
 final class Build {
 
     final ProjectModel project;
-    final Path harness, init;
+    final Path harness, init, resolution;
     final String selected;
     final Mmt.Report report;
     Runtimes.Jdk jdk;
@@ -16,6 +16,7 @@ final class Build {
         this.selected = selected;
         this.report = report;
         init = harness.resolve("tools/cli/gradle.init.gradle");
+        resolution = resolution(init);
         long start = System.nanoTime();
         int required = project.javaRequirement();
         for (int version : project.javaToolchainVersions()) Runtimes.ensureExact(harness, version);
@@ -75,7 +76,7 @@ final class Build {
     /** Stops the Gradle daemons mmt started for this checkout; null if it never started any. */
     Run.Result stopDaemons() throws Exception {
         if (!Files.isDirectory(daemons())) return null;
-        Path wrapper = project.root.resolve("gradle/wrapper/gradle-wrapper.jar");
+        Path wrapper = GradleWrapper.jar(project.root);
         Run.Result result = Run.command(
             List.of(
                 jdk.java().toString(),
@@ -146,7 +147,7 @@ final class Build {
             return Run.command(
                 command,
                 project.root,
-                Map.of("JAVA_HOME", jdk.home().toString()),
+                environment(),
                 report.log(stage),
                 seconds
             );
@@ -155,9 +156,32 @@ final class Build {
         }
     }
 
+    /**
+     * The environment every Gradle run of this checkout gets beside the inherited one, whoever starts it (compile, game
+     * tests, a server, a client Gradle launches): the build's Java, and the publishing-secret placeholders it needs to load.
+     */
+    Map<String, String> environment() throws IOException {
+        return environment(project, jdk.home());
+    }
+
+    static Map<String, String> environment(ProjectModel project, Path javaHome) throws IOException {
+        Map<String, String> environment = new TreeMap<>(BuildSecrets.environment(BuildSecrets.given(project)));
+        environment.put("JAVA_HOME", javaHome.toString());
+        return environment;
+    }
+
     Run.Result gradle(List<String> arguments, String stage) throws Exception {
         List<String> command = command(arguments);
         Run.Result result = timed(command, stage);
+        // A plugin resolved to a release built for a newer Gradle than the wrapper's: once, the newest of its line.
+        String newer = result.exit() == 0 ? null : GradleWrapper.rise(project.root, Files.readString(result.log()));
+        if (newer != null) {
+            // The Java Gradle runs on stays: a newer release of a line runs on every Java its older ones did.
+            report.stage(stage, result, Json.map("gradle", project.wrapperVersion(), "risesTo", newer));
+            command = command(arguments);
+            stage = stage + "-gradle-" + newer;
+            result = timed(command, stage);
+        }
         boolean fallback = result.exit() != 0 && configuresOnDemand() && selectionFailed(result.log());
         report.stage(
             stage,
@@ -238,21 +262,13 @@ final class Build {
     }
 
     /**
-     * A compile with nothing of mmt's in it, so Gradle can reuse its configuration cache:
+     * A compile with none of mmt's tasks in it, so Gradle can reuse its configuration cache:
      * on a 21-project build that is about 3 s instead of 11 s per reload. A build that can't use
-     * the cache still compiles; Gradle just reports the problem and configures as usual.
+     * the cache still compiles; Gradle just reports the problem and configures as usual. It keeps
+     * where the build resolves from (gradle.resolution.gradle), or it would resolve otherwise than the build it reloads.
      */
     Run.Result compileCached(List<String> tasks, String stage) throws Exception {
-        List<String> command = new ArrayList<>(command(tasks));
-        int init = command.indexOf("-I");
-        if (init >= 0) {
-            command.remove(init + 1);
-            command.remove(init);
-        }
-        command.replaceAll(argument -> argument.equals("--no-configuration-cache") ? "--configuration-cache" : argument
-        );
-        command.removeIf(argument -> argument.startsWith("-Dmmt.") || argument.equals("-Dfabric.loom.ci=true"));
-        Run.Result result = timed(command, stage);
+        Run.Result result = timed(cachedCommand(tasks), stage);
         report.stage(
             stage,
             result,
@@ -261,11 +277,32 @@ final class Build {
         return result;
     }
 
-    List<String> command(List<String> arguments) throws IOException {
-        Path wrapper = project.root.resolve("gradle/wrapper/gradle-wrapper.jar");
-        if (!Files.isRegularFile(wrapper)) throw new IOException(
-            "Missing " + wrapper + "; restore this project's Gradle wrapper jar."
+    List<String> cachedCommand(List<String> tasks) throws IOException {
+        return cached(command(tasks), init);
+    }
+
+    /** A full Gradle command as a configuration-cached one: mmt's tasks and properties out, where it resolves from kept. */
+    static List<String> cached(List<String> full, Path init) {
+        List<String> command = new ArrayList<>(full);
+        int at = command.indexOf(init.toString());
+        command.remove(at);
+        command.remove(at - 1);
+        command.replaceAll(argument -> argument.equals("--no-configuration-cache") ? "--configuration-cache" : argument
         );
+        command.removeIf(argument -> argument.equals("-Dfabric.loom.ci=true") || argument.startsWith("-Dmmt.") && !RESOLUTION.matcher(argument).lookingAt());
+        return command;
+    }
+
+    /** mmt's init script that says where a build resolves from, beside gradle.init.gradle. */
+    static Path resolution(Path init) {
+        return init.resolveSibling("gradle.resolution.gradle");
+    }
+
+    /** The system properties gradle.resolution.gradle reads. */
+    static final java.util.regex.Pattern RESOLUTION = java.util.regex.Pattern.compile("-Dmmt\\.(pluginPins|portedLibraries)=");
+
+    List<String> command(List<String> arguments) throws IOException {
+        Path wrapper = GradleWrapper.jar(project.root);
         List<String> command = new ArrayList<>(
             List.of(
                 jdk.java().toString(),
@@ -277,7 +314,9 @@ final class Build {
                 "--console=plain",
                 "--no-configuration-cache",
                 "-I",
-                init.toString()
+                init.toString(),
+                "-I",
+                resolution.toString()
             )
         );
         // Test hook: make the init script miss under configure-on-demand to exercise the fallback.
@@ -306,6 +345,7 @@ final class Build {
             command.add("-Dorg.gradle.java.installations.paths=" + String.join(",", toolchains));
         }
         if (!selected.isBlank()) command.add("-Dmmt.project=" + selected);
+        command.addAll(BuildSecrets.arguments(BuildSecrets.given(project)));
         Path pins = project.state().resolve("plugin-pins.txt");
         if (Files.isRegularFile(pins)) command.add("-Dmmt.pluginPins=" + Files.readString(pins).trim());
         // Libraries mmt ported from source (LibraryPort) resolve from its local repository, and only from there.
@@ -387,6 +427,19 @@ final class Build {
                 Files.writeString(pins, existing.isEmpty() ? pin : existing + "," + pin);
                 report.stages.add(Json.map("name", "plugin-pin", "pin", pin));
                 result = gradle(task, stage + "-pinned");
+            }
+        }
+        // A build that reads its author's publishing secrets while it loads stops everyone else's checkout; mmt never
+        // publishes, so the secrets it names get placeholders (BuildSecrets) and the build is read once more.
+        if (result.exit() != 0) {
+            SortedSet<String> secrets = BuildSecrets.named(project);
+            SortedSet<String> given = BuildSecrets.given(project);
+            if (!given.containsAll(secrets) && BuildSecrets.stoppedOn(Run.gradleFailure(result.log()))) {
+                given.addAll(secrets);
+                Files.createDirectories(BuildSecrets.file(project).getParent());
+                Files.write(BuildSecrets.file(project), given);
+                report.stages.add(Json.map("name", "secret-placeholders", "names", new ArrayList<>(given)));
+                result = gradle(task, stage + "-secret-placeholders");
             }
         }
         String unreachable = result.exit() == 0

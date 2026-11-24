@@ -12,28 +12,21 @@ import org.gradle.api.tasks.testing.Test
 def selected = System.getProperty('mmt.project', '')
 // explain names two projects, the one that fails and one that builds, separated by a comma.
 def selectedPaths = selected ? selected.split(',')*.trim() : []
+// A path given in other case than the build's (:neoforge for a project settings renamed :NeoForge) is the project Gradle's
+// own task selection picks for it: an exact path first, else the one path equal ignoring case (Gradle's NameMatcher,
+// https://docs.gradle.org/current/userguide/command_line_interface.html#sec:name_abbreviation).
+gradle.projectsLoaded { g ->
+    def paths = g.rootProject.allprojects*.path
+    selectedPaths = selectedPaths.collect { wanted ->
+        if (wanted in paths) return wanted
+        def same = paths.findAll { it.equalsIgnoreCase(wanted) }
+        same.size() == 1 ? same[0] : wanted
+    }
+}
 def planning = System.getProperty('mmt.metadataMode', '') == 'plan'
 // Test hook for mmt's fallback: behave like an init script that registers too late
 // whenever Gradle is configuring on demand, so the retry without it can be exercised.
 def simulateMiss = System.getProperty('mmt.simulateCodMiss', '') == 'true' && gradle.startParameter.configureOnDemand
-// Plugin releases mmt pinned because the newest one in the build's range needs a newer Java (Build.pluginPin).
-def pluginPins = System.getProperty('mmt.pluginPins', '').split(',').findAll { it.contains('=') }.collectEntries { def kv = it.split('=', 2); [(kv[0]): kv[1]] }
-if (pluginPins) gradle.beforeSettings { s ->
-    s.pluginManagement.resolutionStrategy.eachPlugin { d -> if (pluginPins[d.requested.id.id]) d.useVersion(pluginPins[d.requested.id.id]) }
-}
-// Libraries mmt ported from source (LibraryPort) live in a local Maven repository; their versions end in -mmt-<game>.
-def portedLibraries = System.getProperty('mmt.portedLibraries', '')
-def settingsRepositories = false
-if (portedLibraries) {
-    gradle.settingsEvaluated { s ->
-        // Gradle before 6.8 has no settings repositories; projects declare their own there.
-        try { settingsRepositories = s.dependencyResolutionManagement.repositoriesMode.get().toString() != 'PREFER_PROJECT' } catch (Throwable older) { return }
-        if (settingsRepositories) s.dependencyResolutionManagement.repositories.maven { url = new File(portedLibraries).toURI(); content { includeVersionByRegex('.*', '.*', '.*-mmt-.*') } }
-    }
-    gradle.allprojects { p ->
-        if (!settingsRepositories) p.repositories.maven { url = new File(portedLibraries).toURI(); content { includeVersionByRegex('.*', '.*', '.*-mmt-.*') } }
-    }
-}
 def partFile = { File state, String path -> new File(state, 'model-parts/' + Base64.urlEncoder.withoutPadding().encodeToString(path.bytes) + '.json') }
 def metadataPath = { String path -> (path == ':' ? '' : path) + ':mmtProjectMetadata' }
 gradle.rootProject { root ->
