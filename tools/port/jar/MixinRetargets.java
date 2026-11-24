@@ -32,7 +32,7 @@ final class MixinRetargets {
      * too), and its require (-1: the mixin config's defaultRequire).
      */
     /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none, then its index (a @ModifyArg's argument); an @At's is in ats. */
-    record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable) {}
+    record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable, boolean[] argsOnly) {}
 
     /**
      * A handler re-declared with its target's new parameters (desc, new names) and the original body moved to name$mmt:
@@ -53,6 +53,8 @@ final class MixinRetargets {
                     inj.require()[0] = i;
                 } else if (at == null && "cancellable".equals(n) && Boolean.TRUE.equals(v)) {
                     inj.cancellable()[0] = true;
+                } else if (at == null && "argsOnly".equals(n) && Boolean.TRUE.equals(v)) {
+                    inj.argsOnly()[0] = true;
                 } else if (at == null && "ordinal".equals(n) && v instanceof Integer i && i >= 0) {
                     inj.ordinal()[0] = i;
                 } else if (at == null && "index".equals(n) && v instanceof Integer i && i >= 0) {
@@ -267,6 +269,23 @@ final class MixinRetargets {
             boolean[] unread = port.overrides.unread(mod, key.substring(0, key.indexOf('.')), handler.name, handler.desc, (handler.flags & Opcodes.ACC_STATIC) != 0, captured);
             boolean[] args = unread == null ? null : Arrays.copyOfRange(unread, r, captured);
             int[] conv = port.overrides.convert(now, was, args);
+            String[][] via = new String[captured][];
+            if (conv == null) {
+                // An argument that changed type: what the game's code reads from the new one wherever it used the old one
+                // as it was (Retype.follow).
+                conv = Overrides.pair(now, was);
+                for (int k = 0; k < was.length && conv != null; k++) {
+                    String[] seen = conv[k] >= 0 ? null : port.retype.follow(oldDecl.owner(), m.group(2), m.group(3), k);
+                    if (seen != null && Integer.parseInt(seen[0]) >= 0) {
+                        conv[k] = Integer.parseInt(seen[0]);
+                        via[r + k] = Arrays.copyOfRange(seen, 1, seen.length);
+                    } else if (conv[k] < 0 && args != null && args[k]) {
+                        conv[k] = -1;
+                    } else if (conv[k] < 0) {
+                        conv = null;
+                    }
+                }
+            }
             if (conv == null) {
                 JarPort.why(key, label + "9 it reads an argument the new call does not take");
                 return;
@@ -287,7 +306,7 @@ final class MixinRetargets {
             for (int k = 0; k < rest; k++) {
                 desc[r + now.length + k] = hp[captured + k];
             }
-            mod.adapters.put(key, new Adapter(Type.getMethodDescriptor(result, desc), from, captured, new String[captured][]));
+            mod.adapters.put(key, new Adapter(Type.getMethodDescriptor(result, desc), from, captured, via));
         } else {
             JarPort.why(key, label + "0 this injector passes the call's arguments on");
             return;
@@ -318,7 +337,12 @@ final class MixinRetargets {
                 { JarPort.why(key, before == null ? "O2-old" : after == null ? "O2-new" : f.changed() == null ? "O2-changed" : ((before.flags ^ after.flags) & Opcodes.ACC_STATIC) != 0 ? "O2-static" : "O2-result"); return; }
             }
             Type[] bp = Type.getArgumentTypes(port.desc(before.desc)), ap = Type.getArgumentTypes(after.desc);
-            if (inj.kind().endsWith("/ModifyVariable;") && !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray())) {
+            // A @ModifyVariable without an index finds its variable by type and ordinal, which other parameters' sizes do
+            // not move; only one whose type the update added to or took from the parameters may find another one. Only
+            // with argsOnly: otherwise its candidates are the live locals too, and the new body may have one more of the type.
+            Type variable = Type.getReturnType(port.desc(handler.desc));
+            boolean byType = inj.argsOnly()[0] && inj.ordinal()[1] < 0 && Arrays.stream(bp).filter(variable::equals).count() == Arrays.stream(ap).filter(variable::equals).count();
+            if (inj.kind().endsWith("/ModifyVariable;") && !byType && !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray())) {
                 { JarPort.why(key, "O3 a local named by its slot would be another one"); return; } // a local named by its slot would be another one
             }
             for (int n = Math.min(hp.length, bp.length); n >= 1; n--) {
@@ -403,7 +427,7 @@ final class MixinRetargets {
                 continue;
             }
             for (int i = 1; i < v.length; i++) {
-                if (v[i].startsWith("x:") || v[i].startsWith("k:")) {
+                if (v[i].startsWith("x:") || v[i].startsWith("k:") || v[i].startsWith("o:") || v[i].startsWith("s:")) {
                     continue;
                 }
                 String[] st = Retype.step(v[i]);

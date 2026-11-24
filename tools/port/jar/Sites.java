@@ -199,6 +199,22 @@ final class Sites extends MethodVisitor {
         return true;
     }
 
+    /**
+     * Whether the mod's moved method body works out each argument this moved body passes it from a new parameter the
+     * way this body does (the same steps): one helper moved for a HUD handler's partial tick, read as (false), is not
+     * what a world handler's (true) wants.
+     */
+    boolean sameReadings(Overrides.Bridge body, String desc) {
+        Integer[] src = moved.track.sources(Type.getArgumentTypes(desc));
+        for (int k = 0; src != null && k < src.length; k++) {
+            String[] mine = src[k] == null ? null : moved.br.via()[src[k]];
+            if (mine != null && (body.via() == null || k >= body.via().length || !Arrays.equals(mine, body.via()[k]))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void call(int opcode, String owner, String name, String desc, boolean itf) {
         String[] own = mod.renamedDecl.get(owner + "." + name + desc);
         // An override moved under a final game method is still reached through it; only super calls go straight there.
@@ -215,7 +231,8 @@ final class Sites extends MethodVisitor {
             .filter(br -> br.via() != null && br.target().equals(name) && br.targetDesc().equals(desc)).findFirst().orElse(null);
         if (body != null) {
             // The mod's own method moved to the game's new parameter types: a call made where they are at hand follows it.
-            if (moved == null || !movedBodies.given(opcode, owner, desc, List.<String[]>of(new String[] { decl.owner(), body.name(), body.desc(), "mod" }))) {
+            // Only where it works out each old argument as this body does: two handlers may read one tracker two ways.
+            if (moved == null || !sameReadings(body, desc) || !movedBodies.given(opcode, owner, desc, List.<String[]>of(new String[] { decl.owner(), body.name(), body.desc(), "mod" }))) {
                 if (DEBUG) {
                     System.err.println("kept " + name + desc + " for a call in " + where + " moved=" + (moved != null) + " src=" + (moved == null ? "" : Arrays.toString(moved.track.sources(Type.getArgumentTypes(desc)))));
                 }

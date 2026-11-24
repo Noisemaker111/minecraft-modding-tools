@@ -725,6 +725,60 @@ final class GameCode {
     /** Each release's callers index, by the classes it was read from: every worker's porter reads the same release. */
     static final Map<Map<String, byte[]>, Map<String, Set<String>>> CALLERS = new IdentityHashMap<>();
 
+    /** What makes a lambda or method reference: the method it runs and how many values it captures (Mojang names). */
+    record Made(String owner, String name, String desc, int tag, int captures, String in) {}
+
+    Map<String, List<Made>> made;
+
+    /**
+     * Every lambda and method reference the whole release makes for one interface method (owner.name+desc, its erased
+     * descriptor): what each runs. Read once per release, and only where the whole jar was read.
+     */
+    List<Made> made(String owner, String name, String desc) {
+        if (all == null) {
+            return null;
+        }
+        if (made == null) {
+            synchronized (MADE) {
+                made = MADE.get(all);
+            }
+        }
+        if (made == null) {
+            Map<String, List<Made>> index = new HashMap<>();
+            for (var e : all.entrySet()) {
+                String jarOwner = e.getKey();
+                new ClassReader(e.getValue()).accept(new ClassVisitor(Opcodes.ASM9) {
+                    @Override
+                    public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                        String in = names.cls(jarOwner) + "." + names.method(jarOwner, n, d) + names.desc(d);
+                        return new MethodVisitor(Opcodes.ASM9) {
+                            @Override
+                            public void visitInvokeDynamicInsn(String sam, String d2, Handle bsm, Object... args) {
+                                if (!bsm.getOwner().equals("java/lang/invoke/LambdaMetafactory") || args.length < 2
+                                    || !(args[0] instanceof Type erased) || !(args[1] instanceof Handle h)) {
+                                    return;
+                                }
+                                String iface = Type.getReturnType(d2).getInternalName();
+                                String key = names.cls(iface) + "." + names.method(declarer(iface, sam, erased.getDescriptor(), false), sam, erased.getDescriptor())
+                                    + names.desc(erased.getDescriptor());
+                                String o = declarer(h.getOwner(), h.getName(), h.getDesc(), false);
+                                index.computeIfAbsent(key, k -> new ArrayList<>()).add(new Made(names.cls(o), names.method(o, h.getName(), h.getDesc()),
+                                    names.desc(h.getDesc()), h.getTag(), Type.getArgumentTypes(d2).length, in));
+                            }
+                        };
+                    }
+                }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            }
+            made = index;
+            synchronized (MADE) {
+                MADE.put(all, index);
+            }
+        }
+        return made.getOrDefault(owner + "." + name + desc, List.of());
+    }
+
+    static final Map<Map<String, byte[]>, Map<String, List<Made>>> MADE = new IdentityHashMap<>();
+
     /**
      * What a game method's new code has where its old code had an injection point. game says what the game did:
      * "ordinal" (the same instruction, now the ordinal-th of its kind), "overload" (a call of the same method with other
