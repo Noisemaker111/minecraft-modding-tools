@@ -414,7 +414,7 @@ def join(folder, out=None):
     def share(part, whole):
         return f"{part} of {whole} ({part / whole:.1%})" if whole else "0 of 0"
 
-    print(anyversion.any_version_lines(anyv)[0] + "\n")
+    print("\n".join(anyversion.any_version_lines(anyv)[:2]) + "\n")
     print(f"| Loader | Update | Mods that link | And their data |\n|---|---|---|---|")
     for s in rows:
         data = "-" if s.get("modsThatLinkAndData") is None else s["modsThatLinkAndData"]
