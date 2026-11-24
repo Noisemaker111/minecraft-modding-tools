@@ -76,7 +76,7 @@ final class Split extends MethodVisitor {
         }
         handler.visitMethodInsn(isStatic ? Opcodes.INVOKESTATIC : Opcodes.INVOKESPECIAL, owner, name + "$mmt", desc, itf);
         handler.visitInsn(Type.getReturnType(desc).getOpcode(Opcodes.IRETURN));
-        handler.visitMaxs(stack + 3, next);
+        handler.visitMaxs(stack + Conversions.room(adapter.via()), next);
         handler.visitEnd();
     }
 }

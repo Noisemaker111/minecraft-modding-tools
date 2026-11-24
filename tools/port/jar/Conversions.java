@@ -50,9 +50,25 @@ final class Conversions {
                 });
                 continue;
             }
+            if (text.startsWith("o:")) {
+                // An operation with a constant: o:OPCODE:type:value (the value on the stack, then the constant).
+                String[] o = text.split(":", 4);
+                mv.visitLdcInsn(switch (o[2]) {
+                    case "J" -> (Object) Long.valueOf(o[3]);
+                    case "F" -> Float.valueOf(o[3]);
+                    case "D" -> Double.valueOf(o[3]);
+                    default -> Integer.valueOf(o[3]);
+                });
+                mv.visitInsn(Integer.parseInt(o[1]));
+                continue;
+            }
             String[] s = Retype.step(text);
             String owner = port.inverse.getOrDefault(s[1], s[1]);
-            if (s[0].equals("m")) {
+            if (s[0].equals("s")) {
+                GameDiff.Cls holder = port.b.classes.get(s[1]);
+                boolean itf = holder != null && (holder.flags & Opcodes.ACC_INTERFACE) != 0;
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, s[2], port.oldDesc(s[3]), itf);
+            } else if (s[0].equals("m")) {
                 GameDiff.Cls holder = port.b.classes.get(s[1]);
                 boolean itf = holder != null && (holder.flags & Opcodes.ACC_INTERFACE) != 0;
                 mv.visitMethodInsn(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL, owner, s[2], port.oldDesc(s[3]), itf);
@@ -63,7 +79,26 @@ final class Conversions {
     }
 
     /** The value Java gives a variable of type t that nothing set: 0, false or null. */
-    static void pushDefault(MethodVisitor mv, Type t) {
+    /**
+     * The operand stack the conversions need above what is already on it: the value they start from, a receiver, and every
+     * constant pushed before the call that takes them (each long or double two slots), the most of any one conversion.
+     */
+    static int room(String[][] vias) {
+        int most = 3;
+        for (String[] steps : vias == null ? new String[0][] : vias) {
+            int need = 3;
+            for (String text : steps == null ? new String[0] : steps) {
+                if (text.startsWith("k:") || text.startsWith("o:")) {
+                    String type = text.startsWith("k:") ? text.substring(2, 3) : text.split(":", 4)[2];
+                    need += type.equals("J") || type.equals("D") ? 2 : 1;
+                }
+            }
+            most = Math.max(most, need);
+        }
+        return most;
+    }
+
+        static void pushDefault(MethodVisitor mv, Type t) {
         mv.visitInsn(switch (t.getSort()) {
             case Type.BOOLEAN, Type.CHAR, Type.BYTE, Type.SHORT, Type.INT -> Opcodes.ICONST_0;
             case Type.LONG -> Opcodes.LCONST_0;

@@ -103,7 +103,7 @@ final class Shift extends MethodVisitor {
 
     @Override
     public void visitMaxs(int maxStack, int maxLocals) {
-        super.visitMaxs(maxStack + 4, maxLocals + base - first); // a conversion's receiver and its constant arguments
+        super.visitMaxs(maxStack + Math.max(4, Conversions.room(br.via())), maxLocals + base - first);
     }
 
     @Override
