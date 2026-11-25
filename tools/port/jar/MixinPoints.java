@@ -163,7 +163,7 @@ final class MixinPoints {
         boolean inject = inj.kind().equals(MixinRetargets.INJECT);
         boolean moves = switch (slot.game()) {
             case "ordinal" -> ordinal >= 0;
-            case "overload", "same name" -> inject;
+            case "overload", "same name", "named" -> inject;
             case "renamed", "accessor" -> true;
             default -> false;
         };
@@ -287,7 +287,8 @@ final class MixinPoints {
             GameCode.Slot slot = GameCode.slot(port.code(port.a), port.code(port.b), port::cls, new String[] { m[1].owner.name, m[1].name, m[1].desc },
                 new String[] { m[0].owner.name, m[0].name, m[0].desc }, 'm', target.group(1), target.group(2), target.group(3), ordinal);
             String[] x = slot.member();
-            if (x == null || !Set.of("same name", "overload").contains(slot.game()) || ordinal >= 0 && slot.ordinal() != ordinal) {
+            boolean inject = inj.kind().equals(MixinRetargets.INJECT);
+            if (x == null || !(Set.of("same name", "overload").contains(slot.game()) || inject && slot.game().equals("named")) || ordinal >= 0 && slot.ordinal() != ordinal) {
                 continue;
             }
             int taken = takesMoved(handlerDesc, inj, target.group(3), x[3]);

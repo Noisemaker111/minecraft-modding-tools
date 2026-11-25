@@ -21,6 +21,9 @@ import org.objectweb.asm.*;
  * - p9.Ui.paint() called Pen.fill(int) twice; the new code calls Gl.fill(Scr, int) twice in their place, the same call
  *   through what the old receiver stood for (1.20's graphics.fill(...) in 1.19.4's LoadingOverlay is GuiComponent.fill(pose,
  *   ...)). An @Inject at the second moves to the second.
+ * - p9.Ui.tip() called Pen.tip(String, int); the new code calls Gl.tip(int) in its place, the one call of that name there
+ *   though it takes other arguments (1.20's graphics.renderTooltip(font, lines, image, x, y) is 1.19.4's
+ *   renderTooltip(pose, stack, x, y)). An @Inject, which takes only a place, moves there.
  */
 final class JarPortPointTest {
 
@@ -38,13 +41,13 @@ final class JarPortPointTest {
         for (GameDiff.Snap s : List.of(a, b)) {
             JarPortTest.snap(s, "p9/Scr", 0, null);
             JarPortTest.snap(s, "p9/Sink", 0, null, "a()V", "b()V", "c()V");
-            JarPortTest.snap(s, "p9/Gl", 0, null, "blend()V", "fill(" + SCR + "I)V");
-            JarPortTest.snap(s, "p9/Pen", 0, null, "fill(I)V");
+            JarPortTest.snap(s, "p9/Gl", 0, null, "blend()V", "fill(" + SCR + "I)V", "tip(I)V");
+            JarPortTest.snap(s, "p9/Pen", 0, null, "fill(I)V", "tip(Ljava/lang/String;I)V");
         }
         GameDiff.Cls oldUi = JarPortTest.snap(a, "p9/Ui", 0, null, "key()V", "text()V", "draw" + DRAW, "tick()V", "air()V", "quit(" + SCR + ")V",
-            "close()V", "isDown()Z", "blend()V", "label()V", "paint()V");
+            "close()V", "isDown()Z", "blend()V", "label()V", "paint()V", "tip()V");
         GameDiff.Cls newUi = JarPortTest.snap(b, "p9/Ui", 0, null, "key()V", "text()V", "draw" + DRAW, "draw" + DRAW3, "tick()V", "air()V",
-            "quit(" + SCR + ")V", "quit(" + SCR + "Z)V", "close()V", "closeAll()V", "fresh()V", "isDown()Z", "blend()V", "label()V", "paint()V");
+            "quit(" + SCR + ")V", "quit(" + SCR + "Z)V", "close()V", "closeAll()V", "fresh()V", "isDown()Z", "blend()V", "label()V", "paint()V", "tip()V");
         JarPortTest.snap(a, "p9/Inv", 0, null);
         JarPortTest.snap(b, "p9/Inv", 0, null, "setSelected(I)V");
         for (GameDiff.Snap x : List.of(a, b)) {
@@ -95,6 +98,8 @@ final class JarPortPointTest {
         JarPortTest.expect(s.getOrDefault("onSecondFill(" + CI + ")V", "").equals("paint()V INVOKE Lp9/Gl;fill(" + SCR + "I)V") && ordinals.get("onSecondFill(" + CI + ")V") == 1
                 && unlinked.stream().noneMatch(u -> u.contains("in p9.Ui.paint")),
             "an @Inject at a call the new code makes on another class in its place, with more arguments, moves there, in order: " + s + " " + unlinked);
+        JarPortTest.expect(s.getOrDefault("onTip(" + CI + ")V", "").equals("tip()V INVOKE Lp9/Gl;tip(I)V") && unlinked.stream().noneMatch(u -> u.contains("in p9.Ui.tip")),
+            "an @Inject at a call the new code makes in its place under the same name, taking other arguments, moves there: " + s + " " + unlinked);
 
         // What the scoreboard says the game did, from the same reading.
         GameCode then = port.oldCode, now = port.newCode;
@@ -166,6 +171,7 @@ final class JarPortPointTest {
         handler(w, JarPortFixesTest.INJECT, "onClose", "(" + CI + ")V", "close()V", "INVOKE", "Lp9/Ui;isDown()Z", -1, false);
         handler(w, JarPortFixesTest.INJECT, "onBlend", "(" + CI + ")V", "blend()V", "INVOKE", "Lp9/Gl;blend()V", -1, false);
         handler(w, JarPortFixesTest.INJECT, "onSecondFill", "(" + CI + ")V", "paint()V", "INVOKE", "Lp9/Pen;fill(I)V", 1, false);
+        handler(w, JarPortFixesTest.INJECT, "onTip", "(" + CI + ")V", "tip()V", "INVOKE", "Lp9/Pen;tip(Ljava/lang/String;I)V", -1, false);
         w.visitEnd();
         return w.toByteArray();
     }
@@ -289,6 +295,15 @@ final class JarPortPointTest {
                 m.visitLdcInsn(old ? i : 10 + i);
                 m.visitMethodInsn(Opcodes.INVOKESTATIC, old ? "p9/Pen" : "p9/Gl", "fill", old ? "(I)V" : "(" + SCR + "I)V", false);
             }
+            sink(m, "b");
+        });
+        JarPortFollowTest.method(w, "tip", "()V", Opcodes.ACC_PUBLIC, m -> {
+            sink(m, "a");
+            if (old) {
+                m.visitLdcInsn("line");
+            }
+            m.visitLdcInsn(old ? 1 : 2);
+            m.visitMethodInsn(Opcodes.INVOKESTATIC, old ? "p9/Pen" : "p9/Gl", "tip", old ? "(Ljava/lang/String;I)V" : "(I)V", false);
             sink(m, "b");
         });
         JarPortFollowTest.method(w, "blend", "()V", Opcodes.ACC_PUBLIC, m -> {

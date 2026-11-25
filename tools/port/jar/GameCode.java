@@ -955,6 +955,12 @@ final class GameCode {
             if (!same.isEmpty() && same.size() == olds.size()) {
                 return found(now, same.get(olds.indexOf(p)), "same name", 'm');
             }
+            // Else the one call of that name in its place, whatever it takes (1.20's graphics.renderTooltip(font, lines,
+            // image, x, y) is 1.19.4's renderTooltip(pose, stack, x, y)): a place, for an injector that takes only one.
+            List<String[]> named = gap.stream().filter(x -> x[0].equals("m") && x[2].equals(point[2]) && !(x[1].equals(point[1]) && x[3].equals(point[3]))).toList();
+            if (named.size() == 1 && olds.size() == 1) {
+                return found(now, named.get(0), "named", 'm');
+            }
         }
         return new Slot("dropped", gap.isEmpty() ? "nothing in its place" : gap.size() + " other instructions in its place", null, -1);
     }
