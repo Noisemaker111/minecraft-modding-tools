@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.BufferUploader;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.Tesselator;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import java.util.List;
 import java.util.Optional;
@@ -15,6 +16,7 @@ import net.minecraft.client.gui.GuiComponent;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FormattedText;
@@ -133,6 +135,45 @@ public class GuiGraphics {
 
     public void fill(int x1, int y1, int x2, int y2, int z, int color) {
         GuiComponent.fill(pose, x1, y1, x2, y2, z, color);
+    }
+
+    /** 1.20's own: four corners into the type's buffer, then flushed. */
+    public void fill(RenderType type, int x1, int y1, int x2, int y2, int color) {
+        fill(type, x1, y1, x2, y2, 0, color);
+    }
+
+    public void fill(RenderType type, int x1, int y1, int x2, int y2, int z, int color) {
+        Matrix4f m = pose.last().pose();
+        if (x1 < x2) {
+            int t = x1;
+            x1 = x2;
+            x2 = t;
+        }
+        if (y1 < y2) {
+            int t = y1;
+            y1 = y2;
+            y2 = t;
+        }
+        float a = (color >>> 24) / 255.0F;
+        float r = (color >> 16 & 255) / 255.0F;
+        float g = (color >> 8 & 255) / 255.0F;
+        float b = (color & 255) / 255.0F;
+        VertexConsumer buffer = bufferSource.getBuffer(type);
+        buffer.vertex(m, x1, y1, z).color(r, g, b, a).endVertex();
+        buffer.vertex(m, x1, y2, z).color(r, g, b, a).endVertex();
+        buffer.vertex(m, x2, y2, z).color(r, g, b, a).endVertex();
+        buffer.vertex(m, x2, y1, z).color(r, g, b, a).endVertex();
+        flush();
+    }
+
+    public void fillGradient(RenderType type, int x1, int y1, int x2, int y2, int from, int to, int z) {
+        Matrix4f m = pose.last().pose();
+        VertexConsumer buffer = bufferSource.getBuffer(type);
+        buffer.vertex(m, x1, y1, z).color(from >> 16 & 255, from >> 8 & 255, from & 255, from >>> 24).endVertex();
+        buffer.vertex(m, x1, y2, z).color(to >> 16 & 255, to >> 8 & 255, to & 255, to >>> 24).endVertex();
+        buffer.vertex(m, x2, y2, z).color(to >> 16 & 255, to >> 8 & 255, to & 255, to >>> 24).endVertex();
+        buffer.vertex(m, x2, y1, z).color(from >> 16 & 255, from >> 8 & 255, from & 255, from >>> 24).endVertex();
+        flush();
     }
 
     public void fillGradient(int x1, int y1, int x2, int y2, int from, int to) {
