@@ -7,6 +7,7 @@
   no longer has does.
 Run: python bench/test_exposure.py"""
 import io
+import hashlib
 import json
 import os
 import shutil
@@ -1032,19 +1033,19 @@ with tempfile.TemporaryDirectory() as tmp:
                        "  sound", f"  game 2.0: {here / 'game-named.jar'}", f"  game 2.0: {here / 'client.jar'}", f"  Fabric API for 2.0: {here / 'api.jar'}",
                        f"  route map: {here / 'route.json'}", f"  stand-ins: {here / 'standins'}"],
           f"a run of named mods names each file of the port that is there, and no other: {said}")
-# The jars a run of named mods kept are the next run's only when the same port wrote them.
+# A jar a run of named mods kept is the next run's only when it is the jar the port's report names.
 with tempfile.TemporaryDirectory() as tmp:
-    kept = Path(tmp) / "mods"
-    portboard.board.keep_same_port(kept, "port-a")
-    (kept / "clumps.jar").write_bytes(b"ported by a")
-    portboard.board.keep_same_port(kept, "port-a")
-    check((kept / "clumps.jar").read_bytes() == b"ported by a", "a repeat run of the same port keeps the jar it wrote, so it ports nothing")
-    portboard.board.keep_same_port(kept, "port-b")
-    check(not (kept / "clumps.jar").exists() and (kept / "port-key.txt").read_text(encoding="utf-8") == "port-b",
-          "a changed porter or stand-in throws the kept jars away: they are another port's")
-    (kept / "clumps.jar").write_bytes(b"ported by b")
-    portboard.board.keep_same_port(kept, None)
-    check(not kept.exists(), "a run of the whole update keeps no jar")
+    kept = Path(tmp) / "clumps.jar"
+    whole = b"ported jar " * 50
+    row = {"mod": "clumps.jar", "ported": hashlib.sha256(whole).hexdigest()[:16]}
+    check(not portboard.board.kept_jar(kept, row), "a mod with no kept jar is ported")
+    kept.write_bytes(whole)
+    check(portboard.board.kept_jar(kept, row), "a repeat run keeps the jar its port wrote, so it ports nothing")
+    kept.write_bytes(whole[:200])
+    check(not portboard.board.kept_jar(kept, row), "a jar cut short while it was written is ported again")
+    kept.write_bytes(b"another porter's jar")
+    check(not portboard.board.kept_jar(kept, row), "a jar a changed porter or stand-in wrote is ported again")
+    check(not portboard.board.kept_jar(kept, {"mod": "clumps.jar", "error": "unreadable"}), "a mod whose port failed has no jar to keep")
 read, standins = portboard.board.port_reads("fabric", ["3.0", "2.0", "1.0"], ["3.0", "1.0"])
 check(read == ["3.0", "2.0", "1.0"] and [p.name for p in standins] == ["3.0-1.0", "3.0-1.0.fabric", "jdk"],
       f"a step across two updates lists the release between, whose game jar and Fabric API its composed map was built from: {read} {standins}")
