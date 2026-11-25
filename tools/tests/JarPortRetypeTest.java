@@ -381,13 +381,24 @@ final class JarPortRetypeTest {
         List<String> nestedUnlinked = nestedRuns.stream().flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
         JarPortTest.expect(nestedUnlinked.isEmpty(), "a jar nested for the other loader is never loaded here, so it holds nothing back: " + nestedUnlinked);
         // A nested jar the platform provides (a Fabric API module beside the mod): the platform's newer copy runs instead.
-        port.modMetadata.platformIds = Set.of("platform-part", "platform-top");
+        port.modMetadata.platformIds = Set.of("platform-part", "platform-top", "platform-more");
         port.modMetadata.platformAliases = Map.of("plat", "plat-api");
         List<Map<String, Object>> platformRuns = new ArrayList<>();
         byte[] nests = port.port(JarPortTest.jar(Map.of("META-INF/jars/platform-part.jar", JarPortTest.jar(Map.of("p6/UsesGone.class", JarPortTest.real("p6/UsesGone", "java/lang/Object", 0, new String[] { "g6/Model" }, w -> JarPortTest.traced(w, "quads", "()V", "", m -> { })),
             "fabric.mod.json", "{\"id\": \"platform-part\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
-            "fabric.mod.json", "{\"id\": \"m6\", \"depends\": {\"platform-part\": \"=1.0.0\", \"plat\": \">=1\", \"platform-top\": \">=9.9\"}, \"jars\": [{\"file\": \"META-INF/jars/platform-part.jar\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "nests.jar", platformRuns);
-        Map<String, Object> asks = Json.object(Json.object(Json.parse(new String(JarPortTest.entries(nests).get("fabric.mod.json"), java.nio.charset.StandardCharsets.UTF_8))).get("depends"));
+            "META-INF/jars/platform-more.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"platform-more\", \"version\": \"9.0.0\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+            "META-INF/jars/own-lib.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"own-lib\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+            "fabric.mod.json", "{\"id\": \"m6\", \"depends\": {\"platform-part\": \"=1.0.0\", \"plat\": \">=1\", \"platform-top\": \">=9.9\"}, \"jars\": [{\"file\": \"META-INF/jars/platform-part.jar\"}, {\"file\": \"META-INF/jars/platform-more.jar\"}, {\"file\": \"META-INF/jars/own-lib.jar\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "nests.jar", platformRuns);
+        Map<String, byte[]> nestsOut = JarPortTest.entries(nests);
+        Map<String, Object> nestsMeta = Json.object(Json.parse(new String(nestsOut.get("fabric.mod.json"), java.nio.charset.StandardCharsets.UTF_8)));
+        Map<String, Object> asks = Json.object(nestsMeta.get("depends"));
+        // The old release's build of a platform module is newer than the release's own on a port back, and Fabric Loader runs
+        // the newest copy of an id: left in, it runs (and fails) instead of the platform's. Left out, it is asked for.
+        JarPortTest.expect(!nestsOut.containsKey("META-INF/jars/platform-part.jar") && !nestsOut.containsKey("META-INF/jars/platform-more.jar") && nestsOut.containsKey("META-INF/jars/own-lib.jar"),
+            "the platform's modules a mod nests are left out of the port; its own nested mods stay: " + nestsOut.keySet());
+        JarPortTest.expect(String.valueOf(nestsMeta.get("jars")).equals("[{file=META-INF/jars/own-lib.jar}]"),
+            "and no longer listed, since the loader refuses a jar listed and missing: " + nestsMeta.get("jars"));
+        JarPortTest.expect("*".equals(asks.get("platform-more")), "a platform module the mod nested without asking for it is now asked of the platform: " + asks);
         JarPortTest.expect("*".equals(asks.get("platform-part")), "the version of a nested platform module the mod asks for is left to the new release's platform: " + asks);
         JarPortTest.expect("*".equals(asks.get("platform-top")), "the version of the platform the mod asks for, numbered as the old release's was, is left to the new one's: " + asks);
         JarPortTest.expect("*".equals(asks.get("plat-api")) && !asks.containsKey("plat"),

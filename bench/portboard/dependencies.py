@@ -215,12 +215,17 @@ def ranges(jar, loader):
 
 
 def versions(jar, loader):
-    """{mod id: version} a jar declares, its manifest's Implementation-Version where the metadata leaves it to the build."""
+    """{mod id: version} a jar declares, its manifest's Implementation-Version where the metadata leaves it to the build. A
+    Fabric mod answers at its version to each id it "provides" too: YUNG's mods ask cloth-config2, which Cloth Config's
+    fabric.mod.json provides under its own id, cloth-config."""
     import zipfile
     with zipfile.ZipFile(jar) as z:
         meta = javalevels.metadata(z, loader) or {}
         if loader == "fabric":
-            return {meta["id"]: str(meta.get("version", ""))} if meta.get("id") else {}
+            if not meta.get("id"):
+                return {}
+            version = str(meta.get("version", ""))
+            return {i: version for i in [meta["id"], *[p for p in meta.get("provides") or [] if isinstance(p, str)]]}
         manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace") if "META-INF/MANIFEST.MF" in z.namelist() else ""
     built = next((line.split(":", 1)[1].strip() for line in manifest.splitlines() if line.startswith("Implementation-Version:")), None)
     return {m.get("modId"): (built if str(m.get("version", "")).startswith("$") else m.get("version")) for m in meta.get("mods", [])}

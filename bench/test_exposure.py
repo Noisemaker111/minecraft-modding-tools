@@ -345,6 +345,19 @@ with tempfile.TemporaryDirectory() as tmp:
         portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["zoom--zoom.jar"] and not ready and list(to_port) == ["yacl-old.jar"],
           f"a Fabric library older than the mod's depends for the new version is ported from the old one: {ready} {to_port} {left}")
+    # A mod may ask a library by an id the library "provides" (YUNG's mods ask cloth-config2 of Cloth Config, whose own id
+    # is cloth-config): its version is checked under that id too, or the too-old release is taken and the loader refuses.
+    zoom.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "zoom", "version": "2.15", "depends": {"minecraft": "*", "yacl2": ">=3.6.6"}})}))
+    (folder / "zoom--zoom.jar").write_bytes(zoom.read_bytes())
+    yacl_new.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.1.1+1.19.4", "provides": ["yacl2"]})}))
+    yacl_old.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.6.6+1.20.1", "provides": ["yacl2"]})}))
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: yacls.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["zoom--zoom.jar"], folder, pins, set())
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["zoom--zoom.jar"] and not ready and list(to_port) == ["yacl-old.jar"],
+          f"a library asked by an id it provides is checked under that id: {ready} {to_port} {left}")
     # Two mods needing the same library: the release for the new version has to fit both ranges, not the last one read.
     loose = Path(tmp) / "loose.jar"
     loose.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("loose") + '[[dependencies.loose]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,)"\n'}))
