@@ -47,6 +47,9 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
     static final String OLD_SERVER_MAIN = "net/minecraft/server/MinecraftServer";
     static final String CLIENT_MAIN = "net/minecraft/client/main/Main";
     static final AtomicBoolean MIXINS_READ = new AtomicBoolean();
+    static final AtomicBoolean WINDOW_REPLACED = new AtomicBoolean();
+    static Instrumentation instrumentation;
+    static volatile Thread stopping;
     /** The system property the replaced glfwInit reads this agent from: java.base is all a class in any module can name. */
     static final String KEY = "mmt.nogame.stop";
     static String side = "server";
@@ -57,10 +60,21 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         if (side.equals("client")) {
             System.getProperties().put(KEY, agent);
         }
-        instrumentation.addTransformer(agent);
+        MmtNoGame.instrumentation = instrumentation;
+        instrumentation.addTransformer(agent, true);
         if (side.equals("server")) {
             // The server thread's first line is a second sign of it, for a start that defines no class there at once.
-            System.setOut(new PrintStream(new Watched(System.out), true));
+            System.setOut(watched(System.out));
+        }
+    }
+
+    /** The console as it was, in the encoding it had (the JVM's own name for it, on the Javas that say), with the watch in front. */
+    static PrintStream watched(PrintStream console) {
+        String encoding = System.getProperty("stdout.encoding", System.getProperty("sun.stdout.encoding"));
+        try {
+            return encoding == null ? new PrintStream(new Watched(console), true) : new PrintStream(new Watched(console), true, encoding);
+        } catch (java.io.UnsupportedEncodingException unknown) {
+            return new PrintStream(new Watched(console), true);
         }
     }
 
@@ -88,10 +102,13 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         boolean entry = side.equals("server") ? SERVER_MAIN.equals(name) || OLD_SERVER_MAIN.equals(name) : CLIENT_MAIN.equals(name);
         if (entry && loader != null && MIXINS_READ.compareAndSet(false, true)) {
             readMixins(loader, name.replace('/', '.'));
+            windowStillReplaced();
         }
         if (side.equals("client") && WINDOW_CLASS.equals(name)) {
             try {
-                return callInsteadOfWindow(bytes);
+                byte[] replaced = callInsteadOfWindow(bytes);
+                WINDOW_REPLACED.set(true);
+                return replaced;
             } catch (Throwable failure) {
                 // A window must never open here: without the replaced call the check ends where it is.
                 MmtMixinCheck.emit("note", "message", "Could not replace GLFW.glfwInit, so the check ends as GLFW loads: " + failure);
@@ -131,9 +148,42 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         }
     }
 
+    /**
+     * The JVM does not hand this agent the classes that load while it is at work in transform (reading the mixins is):
+     * had GLFW loaded then, it loaded as it is, window and all. It is handed over again here, from a thread of its own
+     * (this one is still inside transform, where the JVM would skip the agent again), and with no replacement the check
+     * ends rather than go on to a window.
+     */
+    static void windowStillReplaced() {
+        if (!side.equals("client") || WINDOW_REPLACED.get()) return;
+        for (final Class<?> loaded : instrumentation.getAllLoadedClasses()) {
+            if (!loaded.getName().equals(WINDOW_CLASS.replace('/', '.'))) continue;
+            Thread again = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        instrumentation.retransformClasses(loaded);
+                    } catch (Throwable failure) {
+                        MmtMixinCheck.emit("note", "message", "GLFW loaded while the mixins were read and could not be replaced: " + failure);
+                    }
+                }
+            }, "mmt start-check: GLFW");
+            again.setDaemon(true);
+            again.start();
+            try {
+                again.join();
+            } catch (InterruptedException interrupted) {
+                // judged below by whether the replacement happened
+            }
+            if (!WINDOW_REPLACED.get()) stop("the game loaded its window library");
+        }
+    }
+
     static void stop(String reason) {
         if (!STOPPED.compareAndSet(false, true)) {
-            // The first thread to get here is reading the mixins; any other waits for the JVM to end.
+            // Writing the last event can itself load a class or print on the thread that is stopping: it goes on to end the JVM.
+            if (stopping == Thread.currentThread()) return;
+            // Any other thread waits for the JVM to end.
             while (true) {
                 try {
                     Thread.sleep(Long.MAX_VALUE);
@@ -142,6 +192,7 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
                 }
             }
         }
+        stopping = Thread.currentThread();
         System.getProperties().remove(KEY);
         if (!MIXINS_READ.get()) {
             MmtMixinCheck.emit("note", "message", "The game's entry class never loaded, so no mixins were read.");

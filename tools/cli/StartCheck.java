@@ -179,6 +179,7 @@ final class StartCheck {
             command.add("nogui");
             last = launch(owner, command, instance, "server-" + round);
             Map<String, String> blamed = judge(owner, side, last, instance, mods, round);
+            tidy(instance);
             if (blamed == null) break;
             Json.object(side.runs.get(side.runs.size() - 1)).put("failed", new ArrayList<>(blamed.keySet()));
             if (blamed.isEmpty()) {
@@ -232,9 +233,11 @@ final class StartCheck {
             side.tool = true;
             return null;
         }
+        Map<String, String> blamed = new LinkedHashMap<>();
+        // A mod that reaches client-only code stops a server and is left out of it, not failed: asked first, as pack-check's own start asks.
+        if (side.name.equals("server") && !PackChecks.clientOnly(run.log(), owner.loader, owner.scan, owner.game::clientOnly).isEmpty()) return blamed;
         List<String> reports = PackChecks.crashReports(instance, run.wall());
         String failure = PackChecks.failure(run.log() + "\n" + String.join("\n", reports), owner.loader.failed());
-        Map<String, String> blamed = new LinkedHashMap<>();
         for (var suspect : PackChecks.suspects(run.log(), reports, owner.scan, owner.loader, owner.game::clientOnly)) {
             String jar = PackCheck.top(Json.text(suspect, "jar", ""));
             if (present.contains(jar)) blamed.putIfAbsent(jar, String.join("; ", Json.array(suspect.get("why")).stream().map(String::valueOf).toList()));
@@ -251,7 +254,6 @@ final class StartCheck {
             }
         }
         if (!blamed.isEmpty()) return blamed;
-        if (side.name.equals("server") && !PackChecks.clientOnly(run.log(), owner.loader, owner.scan, owner.game::clientOnly).isEmpty()) return blamed;
         side.undecided = "the start failed and named none of the jars: " + failure;
         return null;
     }
@@ -338,6 +340,7 @@ final class StartCheck {
             Path instance = instance(owner, pack, mods, "client-" + round, first, install);
             last = launch(owner, clientCommand(owner, context, pack, install, agent, instance), instance, "client-" + round);
             Map<String, String> blamed = judge(owner, side, last, instance, mods, round);
+            tidy(instance);
             if (blamed == null) break;
             Json.object(side.runs.get(side.runs.size() - 1)).put("failed", new ArrayList<>(blamed.keySet()));
             side.failed.putAll(blamed);
@@ -360,9 +363,27 @@ final class StartCheck {
         return Boolean.TRUE.equals(((PackLoaders.Style) owner.loader).spec.get("startsModsBeforeWindow"));
     }
 
+    /**
+     * A loader that opens a window of its own before the game's (NeoForge's loading window, made before it has read a
+     * mod) is told not to, in its own settings file in the run's folder (pack-loaders.json, ownWindow): the check then
+     * ends where the game asks for its window, with the mods read and their mixins applied.
+     */
+    static void noOwnWindow(PackCheck owner, Path instance) throws IOException {
+        var setting = Json.object(((PackLoaders.Style) owner.loader).spec.getOrDefault("ownWindow", Map.of()));
+        if (setting.isEmpty()) return;
+        Path file = instance.resolve(Json.text(setting, "file", ""));
+        List<String> lines = new ArrayList<>();
+        // The pack's own copy of the file keeps its other settings.
+        if (Files.isRegularFile(file)) for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) if (!line.strip().startsWith(Json.text(setting, "key", ""))) lines.add(line);
+        lines.add(Json.text(setting, "off", ""));
+        Files.createDirectories(file.getParent());
+        Files.write(file, lines, StandardCharsets.UTF_8);
+    }
+
     static List<String> clientCommand(PackCheck owner, PackLoaders.Context context, PackCheck.Pack pack, Path install, Path agent, Path instance) throws Exception {
         // The native code old releases ask for by folder; nothing draws, but a mod's start code may load LWJGL's classes.
         PackClient.natives(install, pack.minecraft(), Files.createDirectories(instance.resolve("natives")));
+        noOwnWindow(owner, instance);
         List<String> options = new ArrayList<>(jvm(owner, context, agent, "client", instance).subList(1, 6));
         // The game asks Mojang's services who the player is as it starts; a check has no player, and nothing outside this machine is asked.
         for (String host : List.of("auth", "account", "session", "services", "profiles")) options.add("-Dminecraft.api." + host + ".host=http://127.0.0.1:9");
@@ -394,6 +415,20 @@ final class StartCheck {
         for (PackCheck.Mod mod : mods) PackCheck.link(mod.jar(), instance.resolve("mods").resolve(mod.file()));
         if (first != null) linkTree(first, instance);
         return instance;
+    }
+
+    /**
+     * What a run's folder keeps for its receipt is what the start itself wrote (its logs, crash reports and the agent's
+     * events): the jars, the loader's files and the native code a client unpacks are links and copies of what is elsewhere.
+     */
+    static void tidy(Path instance) {
+        for (String folder : List.of("mods", "libraries", "versions", ".fabric", "natives", "world")) {
+            try {
+                PackCheck.deleteTree(instance.resolve(folder));
+            } catch (IOException held) {
+                // Windows can hold a library a moment after its JVM ended; a leftover copy harms nothing.
+            }
+        }
     }
 
     static void linkTree(Path from, Path to) throws IOException {
@@ -481,11 +516,28 @@ final class StartCheck {
         });
     }
 
+    /** The agent's sources: its own class, and the mixin check it runs as the game's entry class loads. */
+    static final List<String> AGENT_SOURCES = List.of("tools/nogame/MmtNoGame.java", "tools/mixincheck/MmtMixinCheck.java", "tools/mixincheck/MmtMixinErrors.java");
+
+    /** The agent's jar from its compiled classes. It may hand a class back to itself: GLFW can load where the JVM shows it no class. */
+    static void agentJar(Path classes, Path jar) throws IOException {
+        java.util.jar.Manifest manifest = new java.util.jar.Manifest();
+        manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
+        manifest.getMainAttributes().putValue("Premain-Class", "MmtNoGame");
+        manifest.getMainAttributes().putValue("Can-Retransform-Classes", "true");
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar), manifest); var walk = Files.walk(classes)) {
+            for (Path file : walk.filter(Files::isRegularFile).sorted().toList()) {
+                out.putNextEntry(new java.util.zip.ZipEntry(classes.relativize(file).toString().replace('\\', '/')));
+                Files.copy(file, out);
+                out.closeEntry();
+            }
+        }
+    }
+
     /** The agent's jar, built once per content of its sources (as PackLoaders.spawnAgent builds its own). */
     static Path agent(PackLoaders.Context context) throws Exception {
         Path harness = context.harness();
-        List<Path> sources = List.of(harness.resolve("tools/nogame/MmtNoGame.java"), harness.resolve("tools/mixincheck/MmtMixinCheck.java"),
-            harness.resolve("tools/mixincheck/MmtMixinErrors.java"));
+        List<Path> sources = AGENT_SOURCES.stream().map(harness::resolve).toList();
         List<Path> stubs = new ArrayList<>();
         for (String stub : MixinCheck.STUBS) stubs.add(harness.resolve(stub));
         MessageDigest hash = MessageDigest.getInstance("SHA-256");
@@ -509,17 +561,8 @@ final class StartCheck {
                 context.report().stage("no-game-agent-compile", result, Map.of());
                 if (result.exit() != 0) throw new IOException("Could not build the start-check agent: " + Run.tail(result.log()));
             }
-            java.util.jar.Manifest manifest = new java.util.jar.Manifest();
-            manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
-            manifest.getMainAttributes().putValue("Premain-Class", "MmtNoGame");
             Path temporary = work.resolve("mmt-nogame.jar");
-            try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(temporary), manifest); var walk = Files.walk(classes)) {
-                for (Path file : walk.filter(Files::isRegularFile).sorted().toList()) {
-                    out.putNextEntry(new java.util.zip.ZipEntry(classes.relativize(file).toString().replace('\\', '/')));
-                    Files.copy(file, out);
-                    out.closeEntry();
-                }
-            }
+            agentJar(classes, temporary);
             try {
                 Files.move(temporary, jar, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException taken) {

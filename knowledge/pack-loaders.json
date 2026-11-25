@@ -59,6 +59,7 @@
    "clientClasses": [
     {"dir": "libraries/net/neoforged/neoforge", "match": ".*-universal\\.jar", "about": "NeoForge's own classes"}
    ],
+      "ownWindow": { "file": "config/fml.toml", "key": "earlyWindowControl", "off": "earlyWindowControl = false" },
       "byMinecraft": {
         "1.20.1": {
           "about": "NeoForge for 1.20.1 is a Forge 47 fork published under Forge's coordinates.",
