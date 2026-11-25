@@ -11,5 +11,5 @@
  "measures": [
   "port.jar-links.any-version"
  ],
- "result": "in progress. Fabric 1.20.1 -> 1.19.4 (PR #232): main links 42 of 150, the branch 73 (broken uses 2,762 -> 648), none lost. Stand-ins write 1.20's GuiGraphics, GUI render types, VertexSorting, BlockStateBase's material getters and the creative tab registry on 1.19.4; mixin points follow calls the stand-in answers. Left: Properties without Material (9 mods), loot data (6), mixins injecting into GuiGraphics itself (2). NeoForge 1.21.1 -> 1.20.6 not proven in game yet."
+ "result": "in progress. Fabric 1.20.1 -> 1.19.4 (PR #232): main links 42 of 150, the branch 74 (broken uses 2,762 -> 629), none lost. Stand-ins write 1.20's GuiGraphics, GUI render types, VertexSorting, BlockStateBase's material getters, the creative tab registry and two-sided sign text on 1.19.4; mixin points follow calls the stand-in answers. Left: Properties without Material (9 mods), loot data (6), mixins injecting into GuiGraphics itself (2). NeoForge 1.21.1 -> 1.20.6 not proven in game yet."
 }
