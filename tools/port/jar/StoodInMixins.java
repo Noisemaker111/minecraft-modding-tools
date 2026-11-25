@@ -84,7 +84,12 @@ final class StoodInMixins {
                         desc[now.length + i - captured] = Type.getType(port.desc(params[i].getDescriptor()));
                     }
                     String[] self = { held(t, now[0].getDescriptor()) };
+                    if (self[0] == null) {
+                        return why(key, "no from(T) for " + now[0]);
+                    }
                     adapters.put(key, new MixinRetargets.Adapter(Type.getMethodDescriptor(Type.VOID_TYPE, desc), w.from(), captured, w.via(), 0, self, "L" + t + ";"));
+                } else if (inj.ordinal()[1] >= 0 || inj.ordinal()[2] >= 0) {
+                    return why(key, "a variable named by its slot or name, which the dropped parameters move");
                 } else if (!sameOrder(Type.getReturnType(m.desc), Type.getArgumentTypes(port.desc(before.desc)), w) || params.length != 1 || !usesSelfAs(mod, rc.name, m, null)) {
                     return why(key, "a variable whose place among its type's changes");
                 }
