@@ -222,6 +222,28 @@ final class JarPortBackStandinTest {
         boolean intoStandin = new String(mixinPorted.get("n6/GfxMixin.class"), StandardCharsets.ISO_8859_1).contains("mmt/standin/");
         JarPortTest.expect(!(intoStandin && mixinUnlinked.isEmpty()),
             "a mixin into a class only a stand-in has does not link (into the stand-in the older game never calls): " + mixinUnlinked);
+        // An accessor reads the stand-in's own field, which Mixin applies to the one copy every port shares: it links.
+        org.objectweb.asm.ClassWriter acc = new org.objectweb.asm.ClassWriter(0);
+        acc.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_INTERFACE | org.objectweb.asm.Opcodes.ACC_ABSTRACT,
+            "n6/GfxAccessor", null, "java/lang/Object", null);
+        org.objectweb.asm.AnnotationVisitor accTarget = acc.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        org.objectweb.asm.AnnotationVisitor accValue = accTarget.visitArray("value");
+        accValue.visit(null, org.objectweb.asm.Type.getObjectType("net/minecraft/g5/Gfx"));
+        accValue.visitEnd();
+        accTarget.visitEnd();
+        org.objectweb.asm.MethodVisitor getter = acc.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_ABSTRACT, "getPose", "()Lnet/minecraft/g5/Pose;", null, null);
+        org.objectweb.asm.AnnotationVisitor accessor = getter.visitAnnotation("Lorg/spongepowered/asm/mixin/gen/Accessor;", false);
+        accessor.visit("value", "pose");
+        accessor.visitEnd();
+        getter.visitEnd();
+        acc.visitEnd();
+        Map<String, byte[]> withAccessor = new HashMap<>(files);
+        withAccessor.put("n6/GfxAccessor.class", acc.toByteArray());
+        withAccessor.put("n6.mixins.json", "{\"package\": \"n6\", \"mixins\": [\"GfxAccessor\"]}".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> accessorRuns = new ArrayList<>();
+        port.port(JarPortTest.jar(withAccessor), "gfx-accessor.jar", accessorRuns);
+        List<String> accessorUnlinked = Json.array(accessorRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        JarPortTest.expect(accessorUnlinked.isEmpty(), "an accessor into a class only a stand-in has reads the stand-in's own field, and links: " + accessorUnlinked);
         JarPortTest.finish("JarPortBackStandinTest");
     }
 }

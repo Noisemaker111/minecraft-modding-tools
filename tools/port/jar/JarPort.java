@@ -1412,10 +1412,12 @@ public final class JarPort {
                 for (String t : targets) {
                     if (a.classes.containsKey(t) && !b.classes.containsKey(cls(t))) {
                         mod.unlinked.add("mixin target class gone: " + Exposure.dotted(t) + " (in " + Exposure.dotted(rc.name) + ")");
-                    } else if (a.classes.containsKey(t) && cls(t).startsWith(StandinClasses.STANDIN)) {
-                        // The older game lacks the class and a stand-in answers it: the stand-in is a copy each port carries,
-                        // which the game's own code never calls, so a mixin into it changes nothing the game does (Patchouli's
-                        // into 1.20's GuiGraphics, whose tooltips 1.19.4 draws in Screen) and Mixin refuses its selectors.
+                    } else if (a.classes.containsKey(t) && cls(t).startsWith(StandinClasses.STANDIN)
+                        && mod.injectors.keySet().stream().anyMatch(k -> k.startsWith(rc.name + "."))) {
+                        // The older game lacks the class and a stand-in answers it: code injected into the stand-in runs only
+                        // where mods call it, never where the older game does its work (Patchouli's into 1.20's
+                        // GuiGraphics.renderTooltip, whose tooltips 1.19.4 draws in Screen; it failed in game). An accessor
+                        // reads the stand-in's own fields, which Mixin can apply to the one copy every port shares.
                         mod.unlinked.add("mixin target class gone: " + Exposure.dotted(t) + ", only a stand-in has it (in " + Exposure.dotted(rc.name) + ")");
                     }
                 }
