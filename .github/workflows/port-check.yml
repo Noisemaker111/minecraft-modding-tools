@@ -96,6 +96,12 @@ jobs:
             ~/.mmt/exposure/maps
           key: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-"
           restore-keys: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:"
+      # A restored cache entry is one this job uses: keyed_at removes keys no run used for a day, judged by each one's
+      # "used" file, which the restore brings back with the saving run's time. Two runs side by side (the pull request's
+      # port and the base's) otherwise remove the entry the other is starting to use.
+      - name: Mark the restored cache entries used
+        shell: bash
+        run: if [ -d ~/.mmt/exposure ]; then find ~/.mmt/exposure -mindepth 3 -maxdepth 3 -name used -exec touch {} +; fi
       # The pull request's port and the base's (when not kept) side by side, each with half the memory: the gate compares
       # them, so a mod main itself stopped linking since its saved table fails no pull request.
       - name: Port and link against the base's port
