@@ -206,7 +206,7 @@ final class PackCheck {
         result.put("modFiles", modFiles);
         // start-check: the same pack, read and installed the same way, decided with no world or window (StartCheck).
         if (options.command.equals("start-check")) return StartCheck.run(this, checked, context, install, result);
-        readDropped();
+        readDropped(checked);
         // A repair known from the jars is known now: the repaired pack's server starts beside the shipped one.
         List<Map<String, Object>> chosen = new ArrayList<>(options.has("fix") ? fixes : List.of());
         PackRepairs.Change change = PackRepairs.change(this, chosen, known);
@@ -955,21 +955,32 @@ final class PackCheck {
         throw last;
     }
 
-    /** Client-only jars earlier starts found (any pack: a jar's file name is its version), so no start pays for them again. */
+    /**
+     * Client-only jars earlier starts found, in any pack, so no start pays for them again. Each is kept with the hash of
+     * the jar the start held: a file name is not a version (a mod ported to another release keeps its name), and a jar of
+     * that name with other content is one no start has judged.
+     */
     Path clientOnlyFile() {
         return cache.resolve("client-only.json");
     }
 
-    void readDropped() throws IOException {
-        if (Files.isRegularFile(clientOnlyFile())) dropped.addAll(Json.read(clientOnlyFile()).keySet());
+    void readDropped(Pack pack) throws Exception {
+        if (!Files.isRegularFile(clientOnlyFile())) return;
+        Map<String, Object> known = Json.read(clientOnlyFile());
+        for (Mod mod : pack.mods()) {
+            Object entry = known.get(mod.file());
+            if (entry != null && sha1(mod.jar()).equals(Json.text(Json.object(entry), "sha1", ""))) dropped.add(mod.file());
+        }
     }
 
-    synchronized void drop(String jar, String modId) throws IOException {
+    synchronized void drop(Pack pack, String jar, String modId) throws Exception {
         dropped.add(jar);
         Map<String, Object> known = Files.isRegularFile(clientOnlyFile()) ? Json.read(clientOnlyFile()) : new TreeMap<>();
+        String hash = "";
+        for (Mod mod : pack.mods()) if (mod.file().equals(jar)) hash = sha1(mod.jar());
         known.put(
             jar,
-            Json.map("modId", modId, "seen", java.time.LocalDate.now().toString(), "evidence", "the server stopped at start-up with this mod's client-only code")
+            Json.map("modId", modId, "sha1", hash, "seen", java.time.LocalDate.now().toString(), "evidence", "the server stopped at start-up with this mod's client-only code")
         );
         Json.save(clientOnlyFile(), known);
     }
@@ -1245,7 +1256,7 @@ final class PackCheck {
                 clientOnly.keySet().removeIf(dropped::contains);
                 if (mode.equals("place") && !clientOnly.isEmpty() && round < 8) {
                     // Left out from now on, with every mod that requires one of them.
-                    for (var jar : clientOnly.entrySet()) drop(jar.getKey(), jar.getValue());
+                    for (var jar : clientOnly.entrySet()) drop(pack, jar.getKey(), jar.getValue());
                     linkMods();
                     deleteTree(instance.resolve(level));
                     continue;

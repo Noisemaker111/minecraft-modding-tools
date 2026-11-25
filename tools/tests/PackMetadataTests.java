@@ -354,14 +354,20 @@ public final class PackMetadataTests extends PackCheckFixtures {
         expect(overridden.loader().equals("quilt") && overridden.loaderVersion().equals("0.29.1"), "--loader names a loader and its version: " + overridden);
 
         // A jar one start showed to be client-only is left out of the next run's starts from the beginning.
-        check(harness, scratch).drop("traverse-forge-7.0.12.jar", "traverse");
-        PackCheck next = check(harness, scratch);
+        check(harness, scratch).drop(fromBare, "sodium.jar", "sodium");
+        PackCheck next = check(harness, scratch, "--minecraft", "1.21.1");
         expect(next.dropped.isEmpty(), "nothing is dropped before the remembered list is read");
-        next.readDropped();
+        next.readDropped(fromBare);
         expect(
-            next.dropped.equals(Set.of("traverse-forge-7.0.12.jar")) && Json.read(next.clientOnlyFile()).get("traverse-forge-7.0.12.jar").toString().contains("traverse"),
+            next.dropped.equals(Set.of("sodium.jar")) && Json.read(next.clientOnlyFile()).get("sodium.jar").toString().contains("sodium"),
             "a client-only jar is remembered with its mod id for the next run: " + next.dropped
         );
+        // What was remembered is that jar, not its name: the same name with other content (the mod ported to another
+        // release) is a jar no start has judged. A game proof kept "client-only" for a port that runs on a server.
+        Files.copy(lithium, bareMods.resolve("sodium.jar"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        PackCheck other = check(harness, scratch, "--minecraft", "1.21.1");
+        other.readDropped(other.read(bare));
+        expect(other.dropped.isEmpty(), "a jar with a remembered name and other content is not left out: " + other.dropped);
     }
 
     // ------------------------------------------------------------------ Fabric and Quilt metadata
