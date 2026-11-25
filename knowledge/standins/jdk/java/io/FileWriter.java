@@ -61,6 +61,26 @@ public final class FileWriter {
             out.write(str, off, len);
         }
 
+        // Java 17's OutputStreamWriter appends straight to its own encoder, which writes the platform's charset into a
+        // buffer nothing here flushes; every append goes to the writer of the charset asked for instead.
+        @Override
+        public java.io.Writer append(CharSequence csq) throws IOException {
+            out.append(csq);
+            return this;
+        }
+
+        @Override
+        public java.io.Writer append(CharSequence csq, int start, int end) throws IOException {
+            out.append(csq, start, end);
+            return this;
+        }
+
+        @Override
+        public java.io.Writer append(char c) throws IOException {
+            out.append(c);
+            return this;
+        }
+
         @Override
         public void flush() throws IOException {
             out.flush();

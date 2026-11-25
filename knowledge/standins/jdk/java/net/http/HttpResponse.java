@@ -1,8 +1,8 @@
 package mmt.standin.java.net.http;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.charset.Charset;
@@ -21,8 +21,9 @@ import java.util.regex.Pattern;
  * Java 11's java.net.http.HttpResponse, for a release on Java 8, from the JDK's documented contract: a response has a
  * status code, headers, the request's URI and a body, whose type the BodyHandler chose. BodyHandlers: ofString() decodes
  * the body "using the character set specified in the Content-Type response header", UTF-8 when there is none;
- * ofString(charset) with that one; ofByteArray() the bytes; ofInputStream() a stream of them; discarding() drops the
- * body (null); ofFile(path) writes it to the file (CREATE, WRITE, TRUNCATE_EXISTING) and gives the path. A BodySubscriber
+ * ofString(charset) with that one; ofByteArray() the bytes; ofInputStream() the body as it arrives, given as soon as the
+ * headers are ("closing the stream ... releases the connection"); discarding() drops the body (null); ofFile(path)
+ * writes it to the file (CREATE, WRITE, TRUNCATE_EXISTING) as it arrives and gives the path. A BodySubscriber
  * a mod writes itself needs java.util.concurrent.Flow, which Java 8 lacks, so only the handlers' own subscribers run.
  */
 public interface HttpResponse<T> {
@@ -103,8 +104,8 @@ public interface HttpResponse<T> {
             return new BodyHandler<InputStream>() {
                 public BodySubscriber<InputStream> apply(ResponseInfo info) {
                     return new Collect<InputStream>() {
-                        InputStream make(InputStream in, HttpHeaders headers) throws IOException {
-                            return new ByteArrayInputStream(HttpClient.readAll(in));
+                        InputStream make(InputStream in, HttpHeaders headers) {
+                            return in;
                         }
                     };
                 }
@@ -116,7 +117,14 @@ public interface HttpResponse<T> {
                 public BodySubscriber<Void> apply(ResponseInfo info) {
                     return new Collect<Void>() {
                         Void make(InputStream in, HttpHeaders headers) throws IOException {
-                            HttpClient.readAll(in);
+                            byte[] buf = new byte[8192];
+                            try {
+                                while (in.read(buf) >= 0) {
+                                    continue;
+                                }
+                            } finally {
+                                in.close();
+                            }
                             return null;
                         }
                     };
@@ -133,7 +141,12 @@ public interface HttpResponse<T> {
                 public BodySubscriber<Path> apply(ResponseInfo info) {
                     return new Collect<Path>() {
                         Path make(InputStream in, HttpHeaders headers) throws IOException {
-                            Files.write(file, HttpClient.readAll(in), options);
+                            byte[] buf = new byte[8192];
+                            try (InputStream body = in; OutputStream out = Files.newOutputStream(file, options)) {
+                                for (int n; (n = body.read(buf)) >= 0; ) {
+                                    out.write(buf, 0, n);
+                                }
+                            }
                             return file;
                         }
                     };
@@ -157,7 +170,7 @@ public interface HttpResponse<T> {
         }
     }
 
-    /** The subscribers BodyHandlers make: the body is read whole from the connection, then made into the handler's type. */
+    /** The subscribers BodyHandlers make: the body's stream from the connection, made into the handler's type. */
     abstract class Collect<T> implements BodySubscriber<T> {
         private final CompletableFuture<T> body = new CompletableFuture<T>();
 

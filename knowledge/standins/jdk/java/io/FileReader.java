@@ -48,6 +48,12 @@ public final class FileReader {
             return in.read(buf, off, len);
         }
 
+        // Java 17's InputStreamReader reads a CharBuffer straight from its own decoder, of the platform's charset.
+        @Override
+        public int read(java.nio.CharBuffer target) throws IOException {
+            return in.read(target);
+        }
+
         @Override
         public boolean ready() throws IOException {
             return in.ready();

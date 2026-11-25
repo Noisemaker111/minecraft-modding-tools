@@ -282,8 +282,22 @@ public abstract class HttpRequest {
         return body == null ? Optional.<BodyPublisher>empty() : Optional.<BodyPublisher>of(new Bytes(body));
     }
 
-    HttpRequest redirected(URI to, String newMethod) {
-        return new Made(to, newMethod, newMethod.equals(method) ? body : null, timeout, version, expectContinue, headers);
+    /**
+     * The request a redirect makes: the body kept only for the same method, and to another origin (scheme, host or port)
+     * without the headers the JDK keeps for the first (Authorization, Cookie, Origin, Referer, Host), so a server's
+     * credentials are never handed to the one it sends the client to.
+     */
+    HttpRequest redirected(URI to, String newMethod, boolean sameOrigin) {
+        HttpHeaders kept = headers;
+        if (!sameOrigin) {
+            Map<String, List<String>> left = new TreeMap<String, List<String>>(String.CASE_INSENSITIVE_ORDER);
+            left.putAll(headers.map());
+            for (String name : new String[] { "Authorization", "Cookie", "Origin", "Referer", "Host" }) {
+                left.remove(name);
+            }
+            kept = new HttpHeaders(left);
+        }
+        return new Made(to, newMethod, newMethod.equals(method) ? body : null, timeout, version, expectContinue, kept);
     }
 
     @Override
