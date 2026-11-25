@@ -150,13 +150,20 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
         target = out if out is None or (len(tos) == 1 and not Path(out).is_dir()) else Path(out) / f"{loader}-{frm}-{to}.json"
         summaries[to] = summarize(loader, frm, to, mods, unread, reports[to], written[to], works[to], partial, save, target, quiet, timer(own), own)
     if only and mods and not quiet:
-        steps = porter.stops(loader, frm, tos[0])
+        read, standins = port_reads(loader, gamereleases.chain(frm, tos[0]), porter.stops(loader, frm, tos[0]))
         shipped = {p.name: p for p in pinned}
         print("\n".join(files_lines([(m.name.split("--", 1)[0], shipped.get(m.name), m, works[tos[0]] / "mods" / m.name) for m in mods],
-                                    {v: game_files(v) for v in steps}, porter.fabric_apis(steps) if loader == "fabric" else {},
-                                    porter.routes(loader, frm, tos[0]),
-                                    [settings.ROOT / "knowledge" / "standins" / f"{a}-{b}{x}" for a, b in zip(steps, steps[1:]) for x in ("", f".{loader}")])))
+                                    {v: game_files(v) for v in read}, porter.fabric_apis(read) if loader == "fabric" else {},
+                                    porter.routes(loader, frm, tos[0]), standins)))
     return summaries
+
+
+def port_reads(loader, chain, steps):
+    """The releases a port reads and the stand-in folders it may read. Every release of the chain, not only the ones the
+    port stops at: a step across several updates runs on a map composed through the releases between (route_maps), built
+    from their game jars and Fabric API. Stand-ins are per step, plus the Java ones a port to an older Java uses."""
+    folder = settings.ROOT / "knowledge" / "standins"
+    return list(chain), [folder / f"{a}-{b}{x}" for a, b in zip(steps, steps[1:]) for x in ("", f".{loader}")] + [folder / "jdk"]
 
 
 def game_files(version):

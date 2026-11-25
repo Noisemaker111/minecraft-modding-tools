@@ -1032,6 +1032,37 @@ with tempfile.TemporaryDirectory() as tmp:
                        "  sound", f"  game 2.0: {here / 'game-named.jar'}", f"  game 2.0: {here / 'client.jar'}", f"  Fabric API for 2.0: {here / 'api.jar'}",
                        f"  route map: {here / 'route.json'}", f"  stand-ins: {here / 'standins'}"],
           f"a run of named mods names each file of the port that is there, and no other: {said}")
+read, standins = portboard.board.port_reads("fabric", ["3.0", "2.0", "1.0"], ["3.0", "1.0"])
+check(read == ["3.0", "2.0", "1.0"] and [p.name for p in standins] == ["3.0-1.0", "3.0-1.0.fabric", "jdk"],
+      f"a step across two updates lists the release between, whose game jar and Fabric API its composed map was built from: {read} {standins}")
+read, standins = portboard.board.port_reads("neoforge", ["1.0", "2.0", "3.0"], ["1.0", "2.0", "3.0"])
+check([p.name for p in standins] == ["1.0-2.0", "1.0-2.0.neoforge", "2.0-3.0", "2.0-3.0.neoforge", "jdk"], f"each step's stand-ins are listed: {standins}")
+
+# Halving names a mod by starting fewer jars; the logs shown for it are of the smallest start that failed with it, not
+# of the whole pack's start, which named no mod.
+with tempfile.TemporaryDirectory() as tmp:
+    pack = Path(tmp) / "pack"
+    (pack / "mods").mkdir(parents=True)
+    names = ["a.jar", "b.jar", "c.jar", "d.jar"]
+    for n in names:
+        (pack / "mods" / n).write_bytes(jar({"fabric.mod.json": json.dumps({"id": n[0]})}))
+    for bad in ("b.jar", "d.jar"):
+        portboard.gameload.ISOLATED.clear()
+        portboard.gameload.FAILED_LOGS.clear()
+        count = [0]
+
+        def start(bad=bad):
+            count[0] += 1
+            here = sorted(p.name for p in (pack / "mods").glob("*.jar"))
+            return {"receipt": str(Path(tmp) / f"start-{'-'.join(n[0] for n in here) or 'none'}" / "result.json"),
+                    "result": {"client": {"opened": bad not in here}}}, None
+
+        found = portboard.gameload.first_failing(pack, names, "fabric", start, "DisconnectedScreen")
+        portboard.gameload.blame("client", bad, {"receipt": str(Path(tmp) / "start-whole" / "result.json")})
+        smallest = "start-" + "-".join(n[0] for n in names[:names.index(bad) + 1])
+        wanted = str(Path(tmp) / ("start-whole" if bad == "d.jar" else smallest))
+        check(list(found) == [bad] and portboard.gameload.FAILED_LOGS[("client", bad)] == wanted,
+              f"a mod named by halving shows the logs of the smallest start that failed with it: {portboard.gameload.FAILED_LOGS} wanted {wanted}")
 
 # One Java check serves the link check and the game proof: a jar is failed when a class the JVM loads of it needs a newer
 # Java than the release runs on (version.json's javaVersion). For a jar the loader starts, that is its start classes (its

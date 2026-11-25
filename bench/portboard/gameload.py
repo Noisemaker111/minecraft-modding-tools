@@ -16,10 +16,14 @@ STARTS = []
 # (side, jar) -> the folder holding the logs of the start that failed it, for this run's own printout: a path on this
 # machine, so it is not part of a receipt.
 FAILED_LOGS = {}
+# jar -> the result of the smallest start that failed with it, when halving named it (first_failing): that start's logs
+# show the jar failing with the fewest others, where the whole pack's start named no mod.
+ISOLATED = {}
 
 
 def blame(side, name, result):
-    """Remembers where the failed start's logs are for a jar it failed."""
+    """Remembers where the failed start's logs are for a jar it failed: the start that isolated it, when halving did."""
+    result = ISOLATED.pop(name, result)
     if result.get("receipt"):
         FAILED_LOGS[(side, name)] = str(Path(result["receipt"]).parent)
 
@@ -250,8 +254,11 @@ def first_failing(pack, present, loader, start, failure, opened=client_opened):
             elif n in keep and (held / n).is_file():
                 (held / n).rename(mods / n)
         result, _ = start()
+        if not opened(result):
+            failed[count] = result
         return not opened(result)
 
+    failed = {}
     low, high = 0, len(present)
     try:
         if fails(0):
@@ -267,6 +274,8 @@ def first_failing(pack, present, loader, start, failure, opened=client_opened):
             if (held / n).is_file():
                 (held / n).rename(mods / n)
     culprit = present[high - 1]
+    if high in failed:
+        ISOLATED[culprit] = failed[high]
     print(f"  {culprit}: the game starts with the jars before it and fails once it is added")
     return {culprit: f"the game starts without it and fails with it (named by halving; the start alone said: {failure[:300]})"}
 
@@ -435,6 +444,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     receipt's time says where the proof's time went: the port before any start, and each side's starts with mmt's stages."""
     STARTS.clear()
     FAILED_LOGS.clear()
+    ISOLATED.clear()
     began = time.monotonic()
     work = settings.ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}"
     report = proof_report(work, mods)
