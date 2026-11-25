@@ -521,6 +521,10 @@ def load(loader, frm, to, save, mods=None, out=None, game=True, check=startcheck
     # The libraries are in the pack as the platform is, and not counted: the mods are the top mods that link.
     for name, jar in ready.items():
         shutil.copy(jar, pack / "mods" / name)
+    # A library the porter stopped on wrote no jar: it is not in the pack, and the loader says which mods needed it.
+    for name in sorted(n for n in to_port if not (pack / "mods" / n).is_file()):
+        print(f"  {name}: a library whose port failed ({next((m.get('error') for m in rows if m['mod'] == name), 'no jar written')}), so it is not in the pack")
+        del to_port[name]
     platform = sorted(ready) + sorted(to_port)
     libraries = {**{n: f"its release for {to}" for n in ready}, **{n: f"its {frm} release, ported" for n in to_port}}
     if loader == "fabric":

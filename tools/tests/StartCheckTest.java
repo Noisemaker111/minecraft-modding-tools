@@ -207,6 +207,18 @@ public final class StartCheckTest {
             Json.map("event", "target", "target", "a.B", "config", "bad.mixins.json", "loaded", false, "exception", "java.lang.RuntimeException", "message", refused))), Set.of("lib.jar"));
         expect(blamed.isEmpty(), "a jar that is not in the run is not blamed for it: " + blamed);
 
+        // A jar the game names is at fault and one only near the failure is not; with nobody named, the jars near it are, unsure.
+        Map<String, Object> namedOne = Json.map("jar", "bad.jar", "why", List.of("the loader names it: Failed to parse bad:worldgen/x.json from pack bad"));
+        Map<String, Object> nearOne = Json.map("jar", "lib.jar", "why", List.of("a mixin handler of this mod is in the stack"));
+        Map<String, Object> both = Json.map("jar", "named.jar", "why", List.of("its code (a.B) is in the stack: at a.B.c", "the loader names it: Mod named requires x"));
+        Set<String> unsure = new LinkedHashSet<>();
+        var fault = StartCheck.atFault(List.of(nearOne, namedOne, both), present, unsure);
+        expect(fault.keySet().equals(Set.of("bad.jar", "named.jar")) && unsure.isEmpty(), "with a jar named, one only near the failure is a bystander: " + fault + " " + unsure);
+        fault = StartCheck.atFault(List.of(nearOne), present, unsure);
+        expect(fault.keySet().equals(Set.of("lib.jar")) && unsure.equals(Set.of("lib.jar")), "with nobody named, the jar near the failure is failed and marked to be started again: " + fault + " " + unsure);
+        fault = StartCheck.atFault(List.of(namedOne), Set.of("lib.jar"), unsure);
+        expect(fault.isEmpty(), "a jar that is not in the run is not at fault for it: " + fault);
+
         // What the loader says of a start that failed: a recommendation is no fault, a data pack that fails is its jar's.
         PackLoaders.Loader fabric = PackLoaders.find(harness, "fabric");
         PackMods.Scan scan = new PackMods.Scan();

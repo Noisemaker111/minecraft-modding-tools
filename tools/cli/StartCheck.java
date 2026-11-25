@@ -33,7 +33,8 @@ import java.util.regex.Pattern;
  * failed with the loader's, Mixin's or the game's own words and left out, and the rest run again, so every jar ends
  * failed, left out of the server as client-only, or passed, with the checks that passing covers named for each side.
  * A jar Mixin refused is started once more with only the jars it requires: when its mixins apply there, two jars here
- * change the same game code and it is a clash, the pairing's fault and not the jar's own.
+ * change the same game code and it is a clash, the pairing's fault and not the jar's own. A jar that was only near a
+ * failure nobody was named for is started once more with the jars that start, and passes when that start does.
  */
 final class StartCheck {
 
@@ -55,6 +56,8 @@ final class StartCheck {
         final Map<String, String> clash = new TreeMap<>();
         /** The failed jars that Mixin refused (the others the loader or the game's start refused). */
         final Set<String> byMixin = new LinkedHashSet<>();
+        /** The failed jars no one named: only near a failure (atFault). Each is started again with the jars that start. */
+        final Set<String> unsure = new LinkedHashSet<>();
         final List<String> passed = new ArrayList<>();
         final List<Object> runs = new ArrayList<>();
         final Map<String, String> checks = new LinkedHashMap<>();
@@ -213,7 +216,12 @@ final class StartCheck {
             side.failed.putAll(blamed);
             if (answered(owner, side)) break;
         }
-        alone(owner, pack, side, first, install, (instance, mixins) -> serverCommand(owner, context, pack, install, agent, instance, mixins));
+        Starter starter = (instance, asked) -> serverCommand(owner, context, pack, install, agent, instance, asked);
+        last = again(owner, pack, side, first, install, starter, () -> {
+            Set<String> kept = PackCheck.serverMods(pack.mods(), owner.scan, clientOnly, side.failed.keySet()).kept();
+            return pack.mods().stream().filter(m -> kept.contains(m.file())).toList();
+        }, last);
+        alone(owner, pack, side, first, install, starter);
         boolean reached = last != null && last.stop() != null && reached(side, last.stop());
         if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
         boolean data = reached && DATA_READ.matcher(last.log()).find();
@@ -256,10 +264,7 @@ final class StartCheck {
         if (side.name.equals("server") && !PackChecks.clientOnly(run.log(), owner.loader, owner.scan, owner.game::clientOnly).isEmpty()) return blamed;
         List<String> reports = PackChecks.crashReports(instance, run.wall());
         String failure = PackChecks.failure(run.log() + "\n" + String.join("\n", reports), owner.loader.failed());
-        for (var suspect : PackChecks.suspects(run.log(), reports, owner.scan, owner.loader, owner.game::clientOnly)) {
-            String jar = PackCheck.top(Json.text(suspect, "jar", ""));
-            if (present.contains(jar)) blamed.putIfAbsent(jar, String.join("; ", Json.array(suspect.get("why")).stream().map(String::valueOf).toList()));
-        }
+        blamed.putAll(atFault(PackChecks.suspects(run.log(), reports, owner.scan, owner.loader, owner.game::clientOnly), present, side.unsure));
         // A jar the loader refuses for a mod an earlier run failed says why that one failed too: its own port may be sound.
         for (var entry : blamed.entrySet()) {
             for (var d : owner.scan.dependencies) {
@@ -274,6 +279,60 @@ final class StartCheck {
         if (!blamed.isEmpty()) return blamed;
         side.undecided = "the start failed and named none of the jars: " + failure;
         return null;
+    }
+
+    /** The evidence that puts a jar only near a failure: its code, a mixin handler or a mixin config of it in a stack that may only pass through it. */
+    static final List<String> NEAR = List.of("its code (", "a mixin handler of this mod", "its mixin config ", "the crash report suspects it");
+
+    /**
+     * The jars a failed start's suspects put at fault, with why. A jar the loader or the game names in its own words is
+     * at fault, and with one named, a jar only near the failure is a bystander: a data pack the release refuses failed
+     * with another mod's mixin handler in its stack, and that mod loads. With nobody named, the jars near the failure are
+     * failed and noted in unsure: each is started again once the rest starts.
+     */
+    static Map<String, String> atFault(List<Map<String, Object>> suspects, Set<String> present, Set<String> unsure) {
+        Map<String, String> named = new LinkedHashMap<>(), near = new LinkedHashMap<>();
+        for (var suspect : suspects) {
+            String jar = PackCheck.top(Json.text(suspect, "jar", ""));
+            if (!present.contains(jar)) continue;
+            List<String> why = Json.array(suspect.get("why")).stream().map(String::valueOf).toList();
+            boolean onlyNear = why.stream().allMatch(w -> NEAR.stream().anyMatch(w::startsWith));
+            (onlyNear ? near : named).putIfAbsent(jar, String.join("; ", why));
+        }
+        if (!named.isEmpty()) return named;
+        unsure.addAll(near.keySet());
+        return near;
+    }
+
+    /** One more start for a side's unsure jars: the jars the side holds now (mods), this one among them. */
+    interface Holding {
+        List<PackCheck.Mod> mods() throws Exception;
+    }
+
+    /**
+     * Each unsure jar, started again with the jars that start: when that start reaches the side's end, the jar was a
+     * bystander of a failure another jar caused, and it passes. Returns the last start that reached the end (else last).
+     */
+    static Launch again(PackCheck owner, PackCheck.Pack pack, Side side, Path first, Path install, Starter starter, Holding holding, Launch last) throws Exception {
+        if (last == null || last.stop() == null || !reached(side, last.stop())) return last;
+        int run = 0;
+        for (String jar : new ArrayList<>(side.unsure)) {
+            String why = side.failed.remove(jar);
+            if (why == null) continue;
+            List<PackCheck.Mod> mods = holding.mods();
+            String name = side.name + "-again-" + ++run;
+            Path instance = instance(owner, pack, mods, name, first, install);
+            Launch launch = launch(owner, starter.command(instance, side.name), instance, name);
+            tidy(instance);
+            Set<String> present = new LinkedHashSet<>();
+            for (PackCheck.Mod mod : mods) present.add(mod.file());
+            boolean starts = launch.stop() != null && reached(side, launch.stop()) && refusedByMixin(owner, launch, present).isEmpty();
+            side.runs.add(Json.map("again", jar, "jars", mods.size(), "seconds", launch.seconds(), "log", launch.logFile().toString(),
+                "ended", launch.stop() == null ? "by itself" : launch.stop().get("reason"), "starts", starts));
+            if (starts) last = launch;
+            else side.failed.put(jar, why);
+        }
+        return last;
     }
 
     /** Whether a run ended where its side's check ends: the server thread, or the window (the window library, where its one call could not be replaced). */
@@ -365,7 +424,9 @@ final class StartCheck {
             if (answered(owner, side)) break;
         }
         for (PackCheck.Mod mod : pack.mods()) if ("server".equals(mod.side())) side.leftOut.put(mod.file(), "server-only (" + mod.source() + ")");
-        alone(owner, pack, side, first, install, (instance, mixins) -> clientCommand(owner, context, pack, install, agent, instance, mixins));
+        Starter starter = (instance, asked) -> clientCommand(owner, context, pack, install, agent, instance, asked);
+        last = again(owner, pack, side, first, install, starter, () -> pack.mods().stream().filter(m -> !"server".equals(m.side()) && !side.failed.containsKey(m.file())).toList(), last);
+        alone(owner, pack, side, first, install, starter);
         boolean reached = last != null && last.stop() != null && reached(side, last.stop());
         if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
         side.checks.put("dependencies", dependencies(last));
@@ -578,12 +639,16 @@ final class StartCheck {
             if (made.stop() == null) {
                 throw new IOException("The " + owner.loader.id() + " " + side + " did not start with no mods (see " + made.logFile() + "), so its first-start files were not made.");
             }
+            int written = 0;
             for (Object file : files) {
                 Path source = instance.resolve(String.valueOf(file));
-                if (!Files.exists(source)) throw new IOException(owner.loader.id() + "'s first " + side + " start wrote no " + file + " (pack-loaders.json, firstStart)");
+                // A release writes the ones it has: a server from before 1.18 is one jar, with no libraries of its own to unpack.
+                if (!Files.exists(source)) continue;
+                written++;
                 // Copied, not moved: Windows refuses to move a folder while anything (a virus scanner reading the new jar) has a file of it open.
                 PackCheck.copyTree(source, folder.resolve(String.valueOf(file)));
             }
+            if (written == 0) throw new IOException(owner.loader.id() + "'s first " + side + " start wrote none of " + files + " (pack-loaders.json, firstStart)");
             tidy(instance);
         });
     }
