@@ -245,6 +245,7 @@ final class JarPortBackStandinTest {
         List<String> accessorUnlinked = Json.array(accessorRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(accessorUnlinked.isEmpty(), "an accessor into a class only a stand-in has reads the stand-in's own field, and links: " + accessorUnlinked);
         valueClass(scratch);
+        reference(scratch);
         JarPortTest.finish("JarPortBackStandinTest");
     }
 
@@ -344,5 +345,104 @@ final class JarPortBackStandinTest {
             got = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
         JarPortTest.expect(got.equals("hi"), "and reads the older release's own value: " + got);
+    }
+
+    /**
+     * A method reference to a method that cannot move, made for a game callback whose parameter is the class only a
+     * stand-in has on the older release (MRU's overlay::render for 1.20's HudRenderCallback.onHudRender(GuiGraphics,
+     * float), where 1.19.4's takes the PoseStack). The mod's own interface keeps the stand-in type; the lambda is made
+     * through an adapter that makes the stand-in from what the older game passes, and the older game's call reaches it.
+     */
+    static void reference(Path scratch) throws Exception {
+        Path dir = Files.createDirectories(scratch.resolve("reference"));
+        String hud = """
+            package net.minecraft.g5;
+            public class Hud {
+                static Painter painter;
+                public static void register(Painter p) {
+                    painter = p;
+                }
+                public static void run(Pose pose) {
+                    painter.paint(%s, 4);
+                }
+            }
+            """;
+        Map<String, byte[]> newer = JarPortBackTest.compile(dir.resolve("newer"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Gfx.java", NEWER_GFX,
+            "net/minecraft/g5/Painter.java", "package net.minecraft.g5;\npublic interface Painter {\n    void paint(Gfx g, int x);\n}\n",
+            "net/minecraft/g5/Hud.java", hud.formatted("new Gfx(pose)")), null);
+        Map<String, byte[]> older = JarPortBackTest.compile(dir.resolve("older"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Comp.java", OLDER_COMP,
+            "net/minecraft/g5/Painter.java", "package net.minecraft.g5;\npublic interface Painter {\n    void paint(Pose p, int x);\n}\n",
+            "net/minecraft/g5/Hud.java", hud.formatted("pose")), null);
+        Map<String, byte[]> mod = JarPortBackTest.compile(dir.resolve("mod"), Map.of("n8/Layer.java", """
+            package n8;
+            import net.minecraft.g5.Gfx;
+            public interface Layer {
+                void draw(Gfx g, int x);
+            }
+            """, "n8/Box.java", """
+            package n8;
+            import net.minecraft.g5.Gfx;
+            public class Box implements Layer {
+                @Override
+                public void draw(Gfx g, int x) {
+                    g.fill(x + 3);
+                }
+            }
+            """, "n8/Wire.java", """
+            package n8;
+            import net.minecraft.g5.Hud;
+            public class Wire {
+                public static void wire(Layer layer) {
+                    Hud.register(layer::draw);
+                }
+            }
+            """), dir.resolve("newer/classes"));
+        GameDiff.Snap a = GameDiff.read("2.0", new ArrayList<>(newer.values()), null, null);
+        GameDiff.Snap b = GameDiff.read("1.0", new ArrayList<>(older.values()), null, null);
+        b.loaderVersion = "1.0.1";
+        Path map = dir.resolve("route.json");
+        Files.writeString(map, """
+            {"classes": [{"from": "net.minecraft.g5.Gfx", "to": "net.minecraft.g5.Comp"}],
+             "signatures": [{"owner": "net.minecraft.g5.Painter", "from": "paint", "desc": "(Lnet/minecraft/g5/Gfx;I)V", "to": "paint", "newDesc": "(Lnet/minecraft/g5/Pose;I)V"}]}
+            """);
+        JarPort port = new JarPort(a, b, map);
+        port.oldCode = new GameCode(newer::get, null, newer);
+        port.newCode = new GameCode(older::get, null, older);
+        Path standin = dir.resolve("standins/2.0-1.0/net/minecraft/g5/Gfx.java");
+        Files.createDirectories(standin.getParent());
+        Files.writeString(standin, STANDIN);
+        port.standIn.standins(List.of(dir.resolve("standins/2.0-1.0")));
+        Map<String, byte[]> files = new HashMap<>();
+        mod.forEach((name, bytes) -> files.put(name + ".class", bytes));
+        files.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n8\"\n".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> runs = new ArrayList<>();
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "reference.jar", runs));
+        List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        JarPortTest.expect(unlinked.isEmpty(), "a method reference to the mod's own interface method links for the callback's older parameters: " + unlinked);
+        Map<String, byte[]> classes = new HashMap<>(older);
+        for (var e : ported.entrySet()) {
+            if (e.getKey().endsWith(".class")) {
+                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+            }
+            if (e.getKey().endsWith(".jar")) {
+                for (var inner : JarPortTest.entries(e.getValue()).entrySet()) {
+                    if (inner.getKey().endsWith(".class")) {
+                        classes.put(inner.getKey().substring(0, inner.getKey().length() - 6), inner.getValue());
+                    }
+                }
+            }
+        }
+        String got;
+        try {
+            ClassLoader loader = JarPortStandinTest.loader(classes);
+            Class<?> hudClass = loader.loadClass("net.minecraft.g5.Hud"), pose = loader.loadClass("net.minecraft.g5.Pose"), layer = loader.loadClass("n8.Layer");
+            loader.loadClass("n8.Wire").getMethod("wire", layer).invoke(null, loader.loadClass("n8.Box").getConstructor().newInstance());
+            Object p = pose.getConstructor().newInstance();
+            hudClass.getMethod("run", pose).invoke(null, p);
+            got = String.valueOf(pose.getField("log").get(p));
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            got = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+        JarPortTest.expect(got.equals("fill7;"), "the older game's callback reaches the mod's method with the stand-in made from its Pose: " + got);
     }
 }

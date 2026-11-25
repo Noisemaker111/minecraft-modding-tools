@@ -26,10 +26,21 @@ final class LambdaSites {
             || Exposure.declaring(sites.port.b, sites.port.cls(iface), 'm', name, sites.port.desc(sam.getDescriptor())) != null) {
             return false;
         }
+        String[] now = sites.port.route.method(iface, name, sam.getDescriptor());
+        Overrides.Reference ref = sites.mod.references.getOrDefault(sites.mod.self, List.of()).stream()
+            .filter(r -> r.impl().equals(impl) && r.iface().equals(iface) && r.sam().equals(sam.getDescriptor())).findFirst().orElse(null);
+        if (ref != null && now[1].equals(name)) {
+            Object[] made = args.clone();
+            made[0] = Type.getMethodType(sites.port.oldDesc(now[2]));
+            made[1] = new Handle(Opcodes.H_INVOKESTATIC, sites.mod.self, ref.name(), sites.port.oldDesc(ref.desc()), sites.mod.selfInterface);
+            made[2] = made[0];
+            sites.emitInvokeDynamicInsn(name, desc, bsm, made);
+            sites.mod.change("method reference made through an adapter for its interface method's new signature");
+            return true;
+        }
         Overrides.Bridge body = sites.mod.bridges.getOrDefault(impl.getOwner(), List.of()).stream()
             .filter(br -> br.target().equals(impl.getName()) && br.targetDesc().equals(impl.getDesc()) && !br.desc().equals(sites.port.desc(impl.getDesc())))
             .findFirst().orElse(null);
-        String[] now = sites.port.route.method(iface, name, sam.getDescriptor());
         if (body == null || !now[1].equals(name)) {
             return false;
         }

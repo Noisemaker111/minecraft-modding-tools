@@ -346,11 +346,28 @@ final class JarPortRetypeTest {
         JarPortTest.expect(makerUnlinked.isEmpty() && makerTrace.equals("M;"),
             "a lambda for a method whose argument became another type, which its body never reads, is made for the new method: " + makerUnlinked + " " + makerTrace);
 
-        List<Map<String, Object>> stuckRuns = new ArrayList<>();
-        port.port(JarPortTest.jar(Map.of("m6/Overlay.class", overlayReference())), "stuck.jar", stuckRuns);
-        List<String> stuck = Json.array(stuckRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
-        JarPortTest.expect(stuck.contains("lambda for a changed method: g6.Hud.draw(Lg6/Pose;I)V (in m6.Overlay)"),
-            "a method reference to a public method, which cannot move, is reported instead of linking silently: " + stuck);
+        List<Map<String, Object>> refRuns = new ArrayList<>();
+        Map<String, byte[]> refJar = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m6/Overlay.class", overlayReference())), "reference.jar", refRuns));
+        List<String> refUnlinked = Json.array(refRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        classes.put("m6/Overlay", refJar.get("m6/Overlay.class"));
+        String refTrace;
+        try {
+            // A loader of its own: the one above has the lambda's m6.Overlay.
+            ClassLoader fresh = JarPortStandinTest.loader(classes);
+            StringBuilder log = (StringBuilder) fresh.loadClass("g2.Log").getField("out").get(null);
+            int before = log.length();
+            Class<?> overlay = fresh.loadClass("m6.Overlay");
+            Object hud = overlay.getMethod("make", overlay).invoke(null, overlay.getConstructor().newInstance());
+            Class<?> gfx = fresh.loadClass("g6.Graphics");
+            fresh.loadClass("g6.Hud").getMethod("draw", gfx, int.class).invoke(hud, gfx.getConstructor().newInstance(), 7);
+            refTrace = log.substring(before);
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            refTrace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+        // A public method another class may override cannot move, so the lambda is made through an adapter that works out
+        // the old argument (graphics.pose()) and calls it as the reference did.
+        JarPortTest.expect(refUnlinked.isEmpty() && refTrace.equals("push;H;"),
+            "a method reference to a public method, which cannot move, is made through an adapter that calls it with graphics.pose(): " + refUnlinked + " " + refTrace);
 
         List<Map<String, Object>> modelRuns = new ArrayList<>();
         port.port(JarPortTest.jar(Map.of("m6/MyModel.class", JarPortTest.real("m6/MyModel", "java/lang/Object", 0, new String[] { "g6/Model" },

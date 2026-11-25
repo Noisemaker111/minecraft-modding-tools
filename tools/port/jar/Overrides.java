@@ -22,6 +22,15 @@ final class Overrides {
     record Bridge(String name, String desc, String target, String targetDesc, int[] from, int access, String[][] via) {}
 
     /**
+     * A static method of the class making a lambda, written for a method reference whose method cannot move to its
+     * interface method's new parameters (an abstract method of the mod's own interface: overlay::render for 1.20's
+     * HudRenderCallback). It takes what the lambda captures, then the interface method's new parameters, works out each
+     * old one from them (via, as for a moved body) and calls the referenced method. desc in new names, its first caps
+     * parameters what the lambda captures; iface and sam the interface method as the jar names it.
+     */
+    record Reference(Handle impl, String iface, String sam, String name, String desc, int caps, int[] from, String[][] via) {}
+
+    /**
      * The game method a mod method overrides, found through the mod's own parents up to the game (ModChild.foo over
      * ModBase.foo over GameBase.foo is GameBase.foo), so every member of an override family follows a rename.
      */
@@ -155,7 +164,12 @@ final class Overrides {
             String where = Exposure.dotted(iface) + "." + name + sam + " (in " + Exposure.dotted(rc.name) + ")";
             Bridge body = holder == null || !moved[1].equals(name) || !sam.equals(l[5]) ? null : lambdaBody(mod, rc, impl, captured, iface, name, sam, moved);
             if (body == null) {
-                mod.unlinked.add("lambda for a changed method: " + where);
+                Reference ref = holder == null || !moved[1].equals(name) || !sam.equals(l[5]) ? null : reference(mod, rc, impl, captured, iface, name, sam, moved);
+                if (ref == null) {
+                    mod.unlinked.add("lambda for a changed method: " + where);
+                } else {
+                    mod.change("method reference made through an adapter for its interface method's new parameter types");
+                }
                 continue;
             }
             mod.bridges.computeIfAbsent(impl.getOwner(), k -> new ArrayList<>()).add(body);
@@ -213,6 +227,80 @@ final class Overrides {
             return new Bridge(m.name, newDesc, m.name, m.desc, from, m.flags | Opcodes.ACC_SYNTHETIC, null);
         }
         return new Bridge(m.name, newDesc, m.name, m.desc, from, m.flags, steps);
+    }
+
+    /**
+     * The adapter a method reference is made through when its method cannot move (lambdaBody refuses it), or null. Only a
+     * reference to a method of the mod's own classes, called as the reference calls it; the receiver of a bound reference
+     * is captured, of an unbound one the first parameter. Each old parameter is a new one of the same type or one the game's
+     * code works out from a new one (Retype); there is no body to say a parameter goes unread.
+     */
+    Reference reference(JarPort.Mod mod, GameDiff.RawCls rc, Handle impl, String captured, String iface, String name, String sam, String[] moved) {
+        int tag = impl.getTag();
+        if (tag != Opcodes.H_INVOKEINTERFACE && tag != Opcodes.H_INVOKEVIRTUAL && tag != Opcodes.H_INVOKESTATIC || !mod.classes.containsKey(impl.getOwner())
+            || mod.bytes.get(rc.name) == null || (new ClassReader(mod.bytes.get(rc.name)).readShort(6) & 0xFFFF) < Opcodes.V1_8) {
+            return null;
+        }
+        for (Reference r : mod.references.getOrDefault(rc.name, List.of())) {
+            if (r.impl().equals(impl) && r.iface().equals(iface) && r.sam().equals(sam)) {
+                return r;
+            }
+        }
+        Type[] caps = Type.getArgumentTypes(captured), was = Type.getArgumentTypes(port.desc(sam)), now = Type.getArgumentTypes(moved[2]);
+        int receiver = tag == Opcodes.H_INVOKESTATIC ? 0 : 1;
+        if (Type.getArgumentTypes(impl.getDesc()).length + receiver != caps.length + was.length
+            || !Type.getReturnType(port.desc(sam)).equals(Type.getReturnType(moved[2]))) {
+            return null;
+        }
+        int[] paired = pair(now, was);
+        String[][] via = Retype.withoutThis(port.retype.conversions(iface, name, sam, moved, paired));
+        int[] from = new int[was.length];
+        String[][] steps = new String[was.length][];
+        for (int i = 0; i < was.length; i++) {
+            if (paired[i] >= 0) {
+                from[i] = paired[i];
+            } else if (via != null && via[i] != null) {
+                from[i] = Integer.parseInt(via[i][0]);
+                steps[i] = Arrays.copyOfRange(via[i], 1, via[i].length);
+            } else {
+                return null;
+            }
+        }
+        Type[] params = new Type[caps.length + now.length];
+        for (int i = 0; i < caps.length; i++) {
+            params[i] = Type.getType(port.desc(caps[i].getDescriptor()));
+        }
+        System.arraycopy(now, 0, params, caps.length, now.length);
+        List<Reference> own = mod.references.computeIfAbsent(rc.name, k -> new ArrayList<>());
+        Reference ref = new Reference(impl, iface, sam, "mmt$ref$" + impl.getName() + "$" + own.size(), Type.getMethodDescriptor(Type.getReturnType(moved[2]), params), caps.length, from, steps);
+        own.add(ref);
+        return ref;
+    }
+
+    /** The code of a method reference's adapter (Reference), written in the old release's names. */
+    void referenceCode(MethodVisitor mv, Reference ref) {
+        Type[] params = Type.getArgumentTypes(port.oldDesc(ref.desc()));
+        int[] slots = Conversions.slots(params, 0);
+        mv.visitCode();
+        int stack = 0;
+        for (int i = 0; i < ref.caps(); i++) {
+            mv.visitVarInsn(params[i].getOpcode(Opcodes.ILOAD), slots[i]);
+            stack += params[i].getSize();
+        }
+        for (int i = 0; i < ref.from().length; i++) {
+            int at = ref.caps() + ref.from()[i];
+            mv.visitVarInsn(params[at].getOpcode(Opcodes.ILOAD), slots[at]);
+            port.conversions.steps(mv, ref.via()[i]);
+            stack += 2;
+        }
+        Handle h = ref.impl();
+        int op = h.getTag() == Opcodes.H_INVOKESTATIC ? Opcodes.INVOKESTATIC : h.getTag() == Opcodes.H_INVOKEINTERFACE ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL;
+        mv.visitMethodInsn(op, h.getOwner(), h.getName(), h.getDesc(), h.isInterface());
+        Type ret = Type.getReturnType(h.getDesc());
+        mv.visitInsn(ret.getOpcode(Opcodes.IRETURN));
+        int locals = params.length == 0 ? 0 : slots[params.length - 1] + params[params.length - 1].getSize();
+        mv.visitMaxs(Math.max(stack + 2, ret.getSize()), locals);
+        mv.visitEnd();
     }
 
     /**

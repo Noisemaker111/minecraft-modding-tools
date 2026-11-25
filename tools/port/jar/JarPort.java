@@ -101,6 +101,7 @@ public final class JarPort {
         final Set<String> staticized = new HashSet<>(); // class.handler+desc of handlers made static, as their targets now are
         final Map<String, Integer> argIndexes = new HashMap<>(); // class.handler+desc of a @ModifyArg -> the index its argument has in the call's new signature
         final Map<String, List<Overrides.Bridge>> bridges = new HashMap<>(); // class -> methods added with a game method's new signature
+        final Map<String, List<Overrides.Reference>> references = new HashMap<>(); // class -> adapters its method references are made through
         final Set<String> grants = new TreeSet<>(); // lines the port adds to the mod's access transformer (new names)
         boolean canWiden; // the loader reads this jar's access transformer
         final Set<String> kept = new HashSet<>(); // name+desc of moved methods also kept as they were, for calls that cannot follow
@@ -1688,6 +1689,10 @@ public final class JarPort {
             public void visitEnd() {
                 for (FinalOverrides.Copy copy : mod.copies.getOrDefault(self[0], List.of())) {
                     finalOverrides.copyBody(copy, self[0], remap);
+                }
+                for (Overrides.Reference ref : mod.references.getOrDefault(self[0], List.of())) {
+                    int open = mod.selfInterface && mod.selfVersion < Opcodes.V9 ? Opcodes.ACC_PUBLIC : Opcodes.ACC_PRIVATE;
+                    overrides.referenceCode(super.visitMethod(open | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, ref.name(), oldDesc(ref.desc()), null, null), ref);
                 }
                 for (Overrides.Bridge br : mod.bridges.getOrDefault(self[0], List.of())) {
                     if (br.via() != null) {
