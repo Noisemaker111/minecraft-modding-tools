@@ -12,6 +12,13 @@ registry, not the core (`tools/cli/PackCheck.java`); `mmt pack-check --list` pri
 | Repair | `knowledge/pack-fixes.json` (`match`, `action`, `check`, `evidence`, `test`), only after a real run proved it; new matchers/actions in `PackRepairs.java` | its own `test`, run by `self-test` |
 | Game version whose API moved | a layer `tools/packcheck/game/VERSION/MmtPackGame.java`, listed in `Installation.RESOURCES` | `probe-compile` |
 
+`start-check` (`tools/cli/StartCheck.java`) reads and installs a pack the same way and decides with no world or window
+whether its jars start: the loader's own launch in one cold JVM a side, under the agent `tools/nogame/MmtNoGame.java`. A
+loader takes part through three more keys of its entry in `knowledge/pack-loaders.json`: `firstStart` (the files its
+first start writes into a new folder, made once per installed loader and linked into each run), `startsModsBeforeWindow`
+(true when its client runs the mods' start code before the game asks for a window) and `ownWindow` (the setting that
+turns off a window the loader opens itself). Its tests: `StartCheckTest` and `bench/test_start_check.py`.
+
 The probe (`tools/packcheck/MmtPackProbe.java`) is loader-neutral, written in Mojang names, and reaches the
 loader only by reflection; keep loader code out of it and its game layers.
 

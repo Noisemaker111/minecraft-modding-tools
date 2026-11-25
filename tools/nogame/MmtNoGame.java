@@ -23,19 +23,22 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * loader's dependency resolver, mixins applied to each class the start loads, Bootstrap, the mods' own start code,
  * and on a server the data packs a new world loads (recipes, tags, registries). Where it ends:
  *
- * - a server, when the thread named "Server thread" defines its first class. The game starts that thread once
- *   Main has loaded the data packs, and the thread's first work is to open the port and the world. That name is the
- *   game's own on every release.
+ * - a server, when the thread named "Server thread" defines its first class or writes its first line. The game starts
+ *   that thread once Main has loaded the data packs, and the thread's first work is to open the port and the world.
+ *   That name is the game's own on every release.
  * - a client, when the game calls GLFW.glfwInit(), the first step of making its window: Bootstrap and (on Fabric)
  *   the mods' client start code have run. The call is replaced, in the one class as it loads, by a call back here.
  *
- * Mixin applies a mixin when its target class loads, and a start only loads some of the game. So as the game's entry
- * class loads (Mixin has read every config by then), MmtMixinCheck loads every class the configs target: a mixin the
- * game would only reach in a world is applied by Mixin here. One that Mixin refuses with an error the game stops on
- * ends the JVM there, a few seconds in; with none, every mixin is in place and the start goes on as the game's own.
+ * Mixin applies a mixin when its target class loads, and a start only loads some of the game. So as the game's own
+ * main begins (Mixin has read every config by then), MmtMixinCheck loads every class the configs target: a mixin the
+ * game would only reach in a world is applied by Mixin here. The first class Mixin refuses ends the JVM there, a few
+ * seconds in, as it ends the game; with none, every mixin is in place and the start goes on as the game's own.
+ * The entry class gets that call as it loads: its main is kept under another name, and the main the loader calls
+ * makes the call and then calls it.
  *
- * Usage: -javaagent:mmt-nogame.jar=server (or =client), with -Dmmt.mixincheck.out naming the file of events: Mixin's
- * (MmtMixinCheck's), and "stop" with why the JVM ended. A start that ends without one ended by itself: it failed.
+ * Usage: -javaagent:mmt-nogame.jar=server (or =client; ",mixins" ends the start once the mixins are read), with
+ * -Dmmt.mixincheck.out naming the file of events: Mixin's (MmtMixinCheck's), and "stop" with why the JVM ended. A start
+ * that ends without one ended by itself: it failed.
  * Java 8 syntax, no dependencies: it runs on whichever Java the release does.
  */
 public final class MmtNoGame implements ClassFileTransformer, Runnable {
@@ -48,16 +51,25 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
     static final String SERVER_MAIN = "net/minecraft/server/Main";
     static final String OLD_SERVER_MAIN = "net/minecraft/server/MinecraftServer";
     static final String CLIENT_MAIN = "net/minecraft/client/main/Main";
+    static final String MAIN = "main";
+    static final String MAIN_TYPE = "([Ljava/lang/String;)V";
+    static final String KEPT_MAIN = "mmt$main";
+    static final AtomicBoolean ENTRY_SEEN = new AtomicBoolean();
     static final AtomicBoolean MIXINS_READ = new AtomicBoolean();
-    static final AtomicBoolean WINDOW_REPLACED = new AtomicBoolean();
-    static Instrumentation instrumentation;
     static volatile Thread stopping;
-    /** The system property the replaced glfwInit reads this agent from: java.base is all a class in any module can name. */
+    /**
+     * The system properties the calls written into the game's classes read their Runnable from (java.base is all a class
+     * in any module can name): what glfwInit calls instead of making a window, and what the entry class's main calls first.
+     */
     static final String KEY = "mmt.nogame.stop";
+    static final String MAIN_KEY = "mmt.nogame.main";
     static String side = "server";
     /** Asked for with "SIDE,mixins": the check ends once the mixins are read, for a start that is only asked whether they apply. */
     static boolean mixinsOnly;
     static final String MIXINS_STOP = "the mixins were read";
+    /** The loader that defined the game's entry class: the one the mixin targets are loaded through. */
+    static volatile ClassLoader game;
+    static volatile String entryClass;
 
     public static void premain(String arguments, Instrumentation instrumentation) {
         List<String> asked = Arrays.asList(String.valueOf(arguments).split(","));
@@ -67,8 +79,13 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         if (side.equals("client")) {
             System.getProperties().put(KEY, agent);
         }
-        MmtNoGame.instrumentation = instrumentation;
-        instrumentation.addTransformer(agent, true);
+        System.getProperties().put(MAIN_KEY, new Runnable() {
+            @Override
+            public void run() {
+                atMain();
+            }
+        });
+        instrumentation.addTransformer(agent);
         if (side.equals("server")) {
             // The server thread's first line is a second sign of it, for a start that defines no class there at once.
             System.setOut(watched(System.out));
@@ -107,16 +124,19 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
             stop("the game started its server thread");
         }
         boolean entry = side.equals("server") ? SERVER_MAIN.equals(name) || OLD_SERVER_MAIN.equals(name) : CLIENT_MAIN.equals(name);
-        if (entry && loader != null && MIXINS_READ.compareAndSet(false, true)) {
-            readMixins(loader, name.replace('/', '.'));
-            if (mixinsOnly) stop(MIXINS_STOP);
-            windowStillReplaced();
+        if (entry && loader != null && ENTRY_SEEN.compareAndSet(false, true)) {
+            game = loader;
+            entryClass = name.replace('/', '.');
+            try {
+                return withCall(bytes, MAIN_KEY, MAIN, MAIN_TYPE, false);
+            } catch (Throwable failure) {
+                MmtMixinCheck.emit("note", "message", "Could not put the mixin check in front of " + name + "'s main, so the check ends here: " + failure);
+                stop("the game's entry class could not be given the mixin check");
+            }
         }
         if (side.equals("client") && WINDOW_CLASS.equals(name)) {
             try {
-                byte[] replaced = callInsteadOfWindow(bytes);
-                WINDOW_REPLACED.set(true);
-                return replaced;
+                return withCall(bytes, KEY, "glfwInit", "()Z", true);
             } catch (Throwable failure) {
                 // A window must never open here: without the replaced call the check ends where it is.
                 MmtMixinCheck.emit("note", "message", "Could not replace GLFW.glfwInit, so the check ends as GLFW loads: " + failure);
@@ -132,17 +152,23 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         stop("the game asked for its window");
     }
 
+    /** What the entry class's main calls first: every mixin is applied before the game's own start-up code runs. */
+    static void atMain() {
+        if (!MIXINS_READ.compareAndSet(false, true)) return;
+        readMixins(game, entryClass);
+        if (mixinsOnly) stop(MIXINS_STOP);
+    }
+
     /**
-     * Every mixin target loaded through the game's loader, as its entry class is being defined (defining is that class:
-     * it cannot be asked for again from inside its own definition, and Mixin has just applied its mixins). Ends the JVM
-     * when Mixin refused one with an error the game stops on.
+     * Every mixin target loaded through the game's loader (entry is the game's entry class, loaded already). Ends the
+     * JVM at the first class Mixin refuses with an error the game stops on.
      */
-    static void readMixins(ClassLoader game, String defining) {
+    static void readMixins(ClassLoader game, String entry) {
         int refused;
         // Mixin's error handler is a class of Mixin's own loader: a system property is all this agent shares with it.
         System.setProperty("mmt.mixincheck.asTheGame", "true");
         try {
-            refused = MmtMixinCheck.check(game, side.toUpperCase(Locale.ROOT), START, defining);
+            refused = MmtMixinCheck.check(game, side.toUpperCase(Locale.ROOT), START, entry);
         } catch (ClassNotFoundException noMixin) {
             MmtMixinCheck.emit("note", "message", "This launch has no Mixin (" + noMixin.getMessage() + "), so no mixins were read.");
             return;
@@ -155,37 +181,6 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         if (refused > 0 && STOPPED.compareAndSet(false, true)) {
             MmtMixinCheck.emit("stop", "reason", "Mixin refused a mixin the game stops on", "side", side, "seconds", MmtMixinCheck.seconds(START));
             Runtime.getRuntime().halt(0);
-        }
-    }
-
-    /**
-     * The JVM does not hand this agent the classes that load while it is at work in transform (reading the mixins is):
-     * had GLFW loaded then, it loaded as it is, window and all. It is handed over again here, from a thread of its own
-     * (this one is still inside transform, where the JVM would skip the agent again), and with no replacement the check
-     * ends rather than go on to a window.
-     */
-    static void windowStillReplaced() {
-        if (!side.equals("client") || WINDOW_REPLACED.get()) return;
-        for (final Class<?> loaded : instrumentation.getAllLoadedClasses()) {
-            if (!loaded.getName().equals(WINDOW_CLASS.replace('/', '.'))) continue;
-            Thread again = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        instrumentation.retransformClasses(loaded);
-                    } catch (Throwable failure) {
-                        MmtMixinCheck.emit("note", "message", "GLFW loaded while the mixins were read and could not be replaced: " + failure);
-                    }
-                }
-            }, "mmt start-check: GLFW");
-            again.setDaemon(true);
-            again.start();
-            try {
-                again.join();
-            } catch (InterruptedException interrupted) {
-                // judged below by whether the replacement happened
-            }
-            if (!WINDOW_REPLACED.get()) stop("the game loaded its window library");
         }
     }
 
@@ -205,18 +200,20 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         stopping = Thread.currentThread();
         System.getProperties().remove(KEY);
         if (!MIXINS_READ.get()) {
-            MmtMixinCheck.emit("note", "message", "The game's entry class never loaded, so no mixins were read.");
+            MmtMixinCheck.emit("note", "message", "The game's main never ran, so no mixins were read.");
         }
         MmtMixinCheck.emit("stop", "reason", reason, "side", side, "seconds", MmtMixinCheck.seconds(START));
         Runtime.getRuntime().halt(0);
     }
 
     /**
-     * The class file with glfwInit()'s body replaced by ((Runnable) System.getProperties().get(KEY)).run(); return false.
-     * Written on the bytes, with no library: the constants the call needs are added at the end of the pool, and the
-     * method's Code attribute is the seven instructions alone (straight-line code needs no stack map).
+     * The class file with a call of ((Runnable) System.getProperties().get(key)).run() in its static method name+type.
+     * instead: the call is the method's whole body, which then returns false (glfwInit). Otherwise it comes first: the
+     * method keeps its code under the name KEPT_MAIN, and a new method of its name makes the call and then calls it.
+     * Written on the bytes, with no library: the constants are added at the end of the pool, and the code written is
+     * straight-line, which needs no stack map.
      */
-    static byte[] callInsteadOfWindow(byte[] bytes) throws IOException {
+    static byte[] withCall(byte[] bytes, String key, String name, String type, boolean instead) throws IOException {
         DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
         ByteArrayOutputStream buffer = new ByteArrayOutputStream(bytes.length + 512);
         DataOutputStream out = new DataOutputStream(buffer);
@@ -224,7 +221,7 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         out.writeShort(in.readUnsignedShort());
         out.writeShort(in.readUnsignedShort());
         int count = in.readUnsignedShort();
-        out.writeShort(count + 20);
+        out.writeShort(count + 26);
         String[] utf8 = new String[count];
         for (int i = 1; i < count; i++) {
             int tag = in.readUnsignedByte();
@@ -264,6 +261,8 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
                     throw new IOException("unknown constant tag " + tag);
             }
         }
+        int access = in.readUnsignedShort();
+        int thisClass = in.readUnsignedShort();
         int n = count;
         utf8(out, "java/lang/System");
         classRef(out, n);
@@ -271,7 +270,7 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         utf8(out, "()Ljava/util/Properties;");
         nameAndType(out, n + 2, n + 3);
         memberRef(out, 10, n + 1, n + 4);
-        utf8(out, KEY);
+        utf8(out, key);
         out.writeByte(8);
         out.writeShort(n + 6);
         utf8(out, "java/util/Properties");
@@ -286,8 +285,15 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         utf8(out, "()V");
         nameAndType(out, n + 16, n + 17);
         memberRef(out, 11, n + 15, n + 18);
-        out.writeShort(in.readUnsignedShort());
-        out.writeShort(in.readUnsignedShort());
+        // For the method kept under another name: its new name, the name and type of the one written in its place, and the call of it.
+        utf8(out, KEPT_MAIN);
+        utf8(out, name);
+        utf8(out, type);
+        utf8(out, "Code");
+        nameAndType(out, n + 20, n + 22);
+        memberRef(out, 10, thisClass, n + 24);
+        out.writeShort(access);
+        out.writeShort(thisClass);
         out.writeShort(in.readUnsignedShort());
         int interfaces = in.readUnsignedShort();
         out.writeShort(interfaces);
@@ -297,16 +303,26 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         int fields = in.readUnsignedShort();
         out.writeShort(fields);
         for (int i = 0; i < fields; i++) {
-            member(in, out, utf8, false, n);
+            member(in, out, utf8, null, null, false, n);
         }
         int methods = in.readUnsignedShort();
-        out.writeShort(methods);
-        boolean replaced = false;
+        out.writeShort(instead ? methods : methods + 1);
+        boolean found = false;
         for (int i = 0; i < methods; i++) {
-            replaced |= member(in, out, utf8, true, n);
+            found |= member(in, out, utf8, name, type, instead, n);
         }
-        if (!replaced) {
-            throw new IOException("GLFW has no glfwInit()Z with code");
+        if (!found) {
+            throw new IOException("no static " + name + type + " with code");
+        }
+        if (!instead) {
+            out.writeShort(0x0009); // public static
+            out.writeShort(n + 21);
+            out.writeShort(n + 22);
+            out.writeShort(1);
+            out.writeShort(n + 23);
+            byte[] code = callCode(n, false);
+            out.writeInt(code.length);
+            out.write(code);
         }
         byte[] rest = new byte[in.available()];
         in.readFully(rest);
@@ -315,14 +331,19 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         return buffer.toByteArray();
     }
 
-    static boolean member(DataInputStream in, DataOutputStream out, String[] utf8, boolean method, int n) throws IOException {
-        out.writeShort(in.readUnsignedShort());
+    /**
+     * Copies one field or method. The method name+type (null for a field) is the one the call goes into: its body is
+     * replaced by the call (instead), or it is renamed to KEPT_MAIN and kept whole. Returns whether this was that method.
+     */
+    static boolean member(DataInputStream in, DataOutputStream out, String[] utf8, String name, String type, boolean instead, int n) throws IOException {
+        int access = in.readUnsignedShort();
+        out.writeShort(access);
         int nameIndex = in.readUnsignedShort();
-        out.writeShort(nameIndex);
         int descriptorIndex = in.readUnsignedShort();
+        boolean target = name != null && (access & 0x0008) != 0 && name.equals(utf8[nameIndex]) && type.equals(utf8[descriptorIndex]);
+        out.writeShort(target && !instead ? n + 20 : nameIndex);
         out.writeShort(descriptorIndex);
-        boolean target = method && "glfwInit".equals(utf8[nameIndex]) && "()Z".equals(utf8[descriptorIndex]);
-        boolean replaced = false;
+        boolean found = false;
         int attributes = in.readUnsignedShort();
         out.writeShort(attributes);
         for (int a = 0; a < attributes; a++) {
@@ -331,25 +352,28 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
             byte[] body = new byte[in.readInt()];
             in.readFully(body);
             if (target && "Code".equals(utf8[attributeName])) {
-                body = callCode(n);
-                replaced = true;
+                if (instead) body = callCode(n, true);
+                found = true;
             }
             out.writeInt(body.length);
             out.write(body);
         }
-        return replaced;
+        return found;
     }
 
-    /** A Code attribute's body: the call through the constants added at n, then return false. */
-    static byte[] callCode(int n) throws IOException {
+    /**
+     * A Code attribute's body: the call through the constants added at n, then return false (instead: a method with no
+     * parameters that answers a boolean), or the call of the kept method with this one's argument and return.
+     */
+    static byte[] callCode(int n, boolean instead) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         DataOutputStream code = new DataOutputStream(buffer);
         code.writeShort(2); // max_stack
-        code.writeShort(0); // max_locals: a static method with no parameters
-        code.writeInt(19);
+        code.writeShort(instead ? 0 : 1); // max_locals: no parameters, or main's one
+        code.writeInt(instead ? 19 : 22);
         code.writeByte(0xb8); // invokestatic System.getProperties
         code.writeShort(n + 5);
-        code.writeByte(0x13); // ldc_w KEY
+        code.writeByte(0x13); // ldc_w the key
         code.writeShort(n + 7);
         code.writeByte(0xb6); // invokevirtual Properties.get
         code.writeShort(n + 13);
@@ -359,8 +383,15 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         code.writeShort(n + 19);
         code.writeByte(1);
         code.writeByte(0);
-        code.writeByte(0x03); // iconst_0
-        code.writeByte(0xac); // ireturn
+        if (instead) {
+            code.writeByte(0x03); // iconst_0
+            code.writeByte(0xac); // ireturn
+        } else {
+            code.writeByte(0x2a); // aload_0
+            code.writeByte(0xb8); // invokestatic the kept method
+            code.writeShort(n + 25);
+            code.writeByte(0xb1); // return
+        }
         code.writeShort(0); // no exception table
         code.writeShort(0); // no attributes
         code.flush();

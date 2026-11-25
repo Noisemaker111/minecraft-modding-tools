@@ -109,11 +109,11 @@ public final class MmtMixinCheck {
     }
 
     /**
-     * defining: a class whose definition this runs inside (MmtNoGame, as the game's entry class loads), left alone; null
-     * for none. Returns how many failures the game would stop on: Mixin's errors of that kind (MmtMixinErrors counts
-     * them) and the target classes that did not load.
+     * started: the game's entry class when the game has loaded it itself (MmtNoGame, as the game's main begins), so it is
+     * not asked for here; null to load the side's own. Returns how many failures the game would stop on: Mixin's errors
+     * of that kind (MmtMixinErrors counts them) and the target classes that did not load.
      */
-    static int check(ClassLoader game, String side, long start, String defining) throws Throwable {
+    static int check(ClassLoader game, String side, long start, String started) throws Throwable {
         Class<?> mixins = Class.forName("org.spongepowered.asm.mixin.Mixins", true, game);
         registerHandler(mixins);
         String mixinVersion = "";
@@ -155,7 +155,7 @@ public final class MmtMixinCheck {
         // Mixin selects and prepares its configs on the first class it transforms. The game's own
         // entry point is in every launch; it is loaded, never run.
         String entry = side.equals("CLIENT") ? "net.minecraft.client.main.Main" : "net.minecraft.server.Main";
-        if (defining == null) try {
+        if (started == null) try {
             Class.forName(entry, false, game);
         } catch (Throwable failure) {
             emit("note", "message", "Could not load " + entry + " to start Mixin: " + messages(unwrap(failure)));
@@ -181,7 +181,7 @@ public final class MmtMixinCheck {
                 ours
             );
             if (ours) for (String target : names) if (
-                !targets.containsKey(target.replace('/', '.')) && !target.replace('/', '.').equals(defining)
+                !targets.containsKey(target.replace('/', '.')) && !target.replace('/', '.').equals(started)
             ) targets.put(target.replace('/', '.'), name);
         }
         int unloadable = 0;
@@ -210,9 +210,9 @@ public final class MmtMixinCheck {
                 "exception",
                 exception
             );
-            // As the game's entry class loads (start-check), the first class that fails is where the game stops: what
-            // Mixin does to the classes after it is no part of any start.
-            if (defining != null && unloadable > 0) break;
+            // Answering as the game (start-check), the first class that fails is where the game stops: what Mixin does
+            // to the classes after it is no part of any start.
+            if (unloadable > 0 && Boolean.getBoolean("mmt.mixincheck.asTheGame")) break;
         }
         // Every mixin of the mod's configs, and whether Mixin finished applying it: Mixin records that
         // on the mixin's own ClassInfo once it has merged it into a target.

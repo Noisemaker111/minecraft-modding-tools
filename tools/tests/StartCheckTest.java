@@ -136,8 +136,7 @@ public final class StartCheckTest {
             "public static boolean glfwInit() { try { opened = true; return true; } finally { tries++; } }\n  static int tries;\n" +
             "  public static String glfwGetVersionString() { return \"3.4\"; }\n"
         );
-        // early: something the mixins are read through loads GLFW first. The JVM shows an agent no class that loads
-        // while the agent is at work, so GLFW is there with its window call as it was.
+        // early: something the mixins are read through loads GLFW before the game's own code does.
         for (String shape : List.of(shapes.get(0), shapes.get(1), "early")) {
             Path classes = Files.createTempDirectory(scratch, "client");
             boolean early = shape.equals("early");

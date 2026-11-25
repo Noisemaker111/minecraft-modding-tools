@@ -57,8 +57,8 @@ side, and any mod that loaded on the server and failed in the client.
 
 start-check is the answer with no game: the same ported jars, in the same pack load would start, go through mmt
 start-check (the loader's own launch in one cold JVM a side, ended where the game would open its world or window), and
-each mod ends failed (with the loader's, Mixin's or the game's own reason), passed (with the checks that ran: never
-"loaded") or left out. load runs it first and starts only what it passed. --against prints how its verdicts agree with
+each mod ends failed (with the loader's, Mixin's or the game's own reason), a clash (its mixins apply without the other
+mods and not beside them), passed (with the checks that ran: never "loaded") or left out. load runs it first and starts only what it passed. --against prints how its verdicts agree with
 a saved game proof's (a load receipt): the mods the game loaded and it failed, and the ones the game failed and it passed.
 
 jars also runs the JVM's verifier (the JDK's copy of HotSpot's) over every ported class against the new release, as the

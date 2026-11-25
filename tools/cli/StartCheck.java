@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
  *
  * Each side is the loader's own launch (the installed server's; the client's as a launcher writes it) in a new folder,
  * in one cold JVM under tools/nogame/MmtNoGame.java. That agent lets the loader resolve the mods, has Mixin apply every
- * mixin of every config, and lets the game's own start-up code run (Bootstrap, the mods' start code, and on a server the
+ * mixin of every config as the game's main begins, and lets the game's own start-up code run (Bootstrap, the mods' start code, and on a server the
  * data packs of a new world), then ends the JVM where the game would open its world or its window. Nothing of an earlier
  * run is read: no kept process, no kept answer. What is kept is what the loader's installer and its first start write
  * for a release (PackLoaders, firstStart), as on any install of it.
@@ -656,12 +656,11 @@ final class StartCheck {
     /** The agent's sources: its own class, and the mixin check it runs as the game's entry class loads. */
     static final List<String> AGENT_SOURCES = List.of("tools/nogame/MmtNoGame.java", "tools/mixincheck/MmtMixinCheck.java", "tools/mixincheck/MmtMixinErrors.java");
 
-    /** The agent's jar from its compiled classes. It may hand a class back to itself: GLFW can load where the JVM shows it no class. */
+    /** The agent's jar from its compiled classes. */
     static void agentJar(Path classes, Path jar) throws IOException {
         java.util.jar.Manifest manifest = new java.util.jar.Manifest();
         manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
         manifest.getMainAttributes().putValue("Premain-Class", "MmtNoGame");
-        manifest.getMainAttributes().putValue("Can-Retransform-Classes", "true");
         try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar), manifest); var walk = Files.walk(classes)) {
             for (Path file : walk.filter(Files::isRegularFile).sorted().toList()) {
                 out.putNextEntry(new java.util.zip.ZipEntry(classes.relativize(file).toString().replace('\\', '/')));
