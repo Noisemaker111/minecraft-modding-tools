@@ -21,6 +21,10 @@ final class GameHop {
     GameDiff.Published published = GameDiff.Published.NONE; // what the loader published as renamed in this hop
 
     GameHop(GameDiff.Snap a, GameDiff.Snap b) {
+        if (!a.code || !b.code) {
+            // Linking and learning read every method's code and what the whole of it tells of each field.
+            throw new IllegalArgumentException("a release read without its code (GameDiff.read) cannot be linked: " + (a.code ? b : a).version);
+        }
         this.a = a;
         this.b = b;
     }

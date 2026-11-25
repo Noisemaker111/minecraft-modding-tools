@@ -35,7 +35,10 @@ public final class VersionMap {
 
     static Path cache = Path.of(System.getProperty("user.home"), ".mmt", "mappings");
     static final String FORGE_MAVEN = "https://maven.minecraftforge.net/";
-    static final HttpClient HTTP = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
+    /** Made at the first download: a run that finds every file on disk starts no client, and none of its threads. */
+    static final class Http {
+        static final HttpClient CLIENT = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
+    }
 
     /** The published name sets a table can be built from; mcp may pin a channel (mcp:stable_39). */
     static boolean knownNames(String names) {
@@ -312,7 +315,7 @@ public final class VersionMap {
         Files.createDirectories(cache);
         HttpResponse<byte[]> r;
         try {
-            r = HTTP.send(HttpRequest.newBuilder(URI.create(url)).build(), HttpResponse.BodyHandlers.ofByteArray());
+            r = Http.CLIENT.send(HttpRequest.newBuilder(URI.create(url)).build(), HttpResponse.BodyHandlers.ofByteArray());
         } catch (IOException failed) {
             // The client's own messages name no address (a refused connection's is empty).
             throw new IOException("download of " + url + " failed: " + failed, failed);
@@ -386,6 +389,26 @@ public final class VersionMap {
                 }
             }
         }
+
+        /**
+         * A release's intermediary names in Mojang's (load), read once per process and only read after: a Fabric port
+         * reads them for the names its mods came in and again for the names it hands them back in, every worker for itself.
+         */
+        static Table mojmap(String version) throws Exception {
+            try {
+                return MOJMAP.computeIfAbsent(version, v -> {
+                    try {
+                        return load(v, "mojmap");
+                    } catch (Exception failed) {
+                        throw new java.util.concurrent.CompletionException(failed);
+                    }
+                });
+            } catch (java.util.concurrent.CompletionException failed) {
+                throw failed.getCause() instanceof Exception e ? e : failed;
+            }
+        }
+
+        static final Map<String, Table> MOJMAP = new java.util.concurrent.ConcurrentHashMap<>();
 
         static Table load(String version, String names) throws Exception {
             if (names.equals("mcp") || names.startsWith("mcp:")) {
@@ -463,13 +486,11 @@ public final class VersionMap {
                 if (dl < 0) {
                     throw new IOException("Minecraft " + version + " publishes no official mappings");
                 }
-                String proguard = fetchText(jsonString(versionJson, "url", dl), "client-" + version + ".txt");
                 int sdl = versionJson.indexOf("\"server_mappings\"");
-                Proguard pg = Proguard.parse(proguard);
+                Proguard pg = new Proguard();
+                pg.merge(Proguard.read(fetch(jsonString(versionJson, "url", dl), "client-" + version + ".txt")));
                 if (sdl >= 0) {
-                    pg.merge(
-                        Proguard.parse(fetchText(jsonString(versionJson, "url", sdl), "server-" + version + ".txt"))
-                    );
+                    pg.merge(Proguard.read(fetch(jsonString(versionJson, "url", sdl), "server-" + version + ".txt")));
                 }
                 Map<String, String> interToNamed = new HashMap<>();
                 for (var e : obfToInter.entrySet()) {
@@ -718,11 +739,33 @@ public final class VersionMap {
             o.fields.forEach(fields::putIfAbsent);
         }
 
+        /**
+         * A mappings file, parsed once per process and only read after (merge into a new one): a port's snapshot, its
+         * intermediary names in and out, and its reading of the game's code each parsed the release's file again, which
+         * was a tenth of a port.
+         */
+        static Proguard read(Path file) throws IOException {
+            Proguard known = READ.get(file);
+            if (known == null) {
+                READ.putIfAbsent(file, parse(Files.readString(file, StandardCharsets.UTF_8)));
+                known = READ.get(file);
+            }
+            return known;
+        }
+
+        static final Map<Path, Proguard> READ = new java.util.concurrent.ConcurrentHashMap<>();
+
+        /** Lets go of a release's files (client-VERSION.txt, server-VERSION.txt). */
+        static void forget(String version) {
+            READ.keySet().removeIf(f -> f.getFileName().toString().endsWith("-" + version + ".txt"));
+        }
+
         static Proguard parse(String text) {
             // Pass 1: classes, so member descriptors can be written in obf names.
             Map<String, String> namedToObf = new HashMap<>();
             Proguard pg = new Proguard();
-            for (String line : text.split("\r?\n")) {
+            String[] lines = text.split("\r?\n");
+            for (String line : lines) {
                 if (line.isEmpty() || line.startsWith("#") || line.startsWith(" ")) {
                     continue;
                 }
@@ -733,7 +776,7 @@ public final class VersionMap {
                 namedToObf.put(named, obf);
             }
             String owner = null;
-            for (String line : text.split("\r?\n")) {
+            for (String line : lines) {
                 if (line.isEmpty() || line.startsWith("#")) {
                     continue;
                 }
@@ -753,7 +796,7 @@ public final class VersionMap {
                     pg.fields.put(owner + "." + obfName, tp[tp.length - 1]);
                     continue;
                 }
-                String head = left.replaceFirst("^\\d+:\\d+:", "");
+                String head = unnumbered(left);
                 paren = head.indexOf('(');
                 int close = head.indexOf(')');
                 String[] rn = head.substring(0, paren).split(" ");
@@ -769,6 +812,28 @@ public final class VersionMap {
                 pg.methods.put(owner + "." + obfName + desc, name);
             }
             return pg;
+        }
+
+        /** A method's line without the source lines ProGuard writes before it ("12:34:"); a pattern compiled for each of 100,000 lines was a third of the parse. */
+        static String unnumbered(String left) {
+            int first = digits(left, 0);
+            if (first == 0 || first == left.length() || left.charAt(first) != ':') {
+                return left;
+            }
+            int second = digits(left, first + 1);
+            if (second == first + 1 || second == left.length() || left.charAt(second) != ':') {
+                return left;
+            }
+            return left.substring(second + 1);
+        }
+
+        /** Where the run of digits that starts at from ends. */
+        static int digits(String s, int from) {
+            int i = from;
+            while (i < s.length() && s.charAt(i) >= '0' && s.charAt(i) <= '9') {
+                i++;
+            }
+            return i;
         }
 
         static String type(String t, Map<String, String> namedToObf) {

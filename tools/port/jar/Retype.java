@@ -883,7 +883,7 @@ final class Retype {
     List<String> overriders(String owner, String name, String desc) {
         return overridersOf.computeIfAbsent(owner + "." + name + desc, k -> {
             List<String> out = new ArrayList<>();
-            for (GameDiff.Cls c : port.links.declaring(port.a, name + desc)) {
+            for (GameDiff.Cls c : port.links.declaring(port.a, name + desc, owner)) {
                 if (Linking.subtype(port.a, c.name, owner)) {
                     out.add(c.name);
                 }

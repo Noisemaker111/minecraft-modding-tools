@@ -473,7 +473,7 @@ public final class ModNames {
 
         Back(String version, GameDiff.Snap game) throws Exception {
             this.game = game;
-            VersionMap.Table t = VersionMap.Table.load(version, "mojmap");
+            VersionMap.Table t = VersionMap.Table.mojmap(version);
             t.classes.forEach((inter, named) -> classes.put(named, inter));
             for (boolean method : new boolean[] { true, false }) {
                 for (var e : (method ? t.methods : t.fields).entrySet()) {

@@ -29,7 +29,9 @@ def compile_tools():
     return jar_tools()
 
 
+@functools.cache
 def java_version():
+    """The JVM's own version text, asked once per run: every cache key names it, and a run of one mod asked eight times."""
     return subprocess.run([java(), "-version"], capture_output=True, text=True).stderr.strip()
 
 

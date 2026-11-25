@@ -128,15 +128,19 @@ public final class JarPort {
         // what changed inside a library both releases list is checked. A class gone from a library the new release still
         // lists is gone at run time (1.20.5's DataFixerUpper dropped DataResult.PartialResult).
         Set<String> listed = new HashSet<>();
-        for (GameDiff.Cls c : b.classes.values()) {
-            if (c.library && c.artifact != null) {
-                listed.add(c.artifact);
+        b.classes.libraries((name, artifact) -> {
+            if (artifact != null) {
+                listed.add(artifact);
             }
-        }
-        for (GameDiff.Cls c : a.classes.values()) {
-            if (c.library && !b.classes.containsKey(c.name) && !listed.contains(c.artifact)) {
-                b.classes.put(c.name, c);
+        });
+        List<String> carried = new ArrayList<>();
+        a.classes.libraries((name, artifact) -> {
+            if (!b.classes.containsKey(name) && !listed.contains(artifact)) {
+                carried.add(name);
             }
+        });
+        for (String name : carried) {
+            b.classes.carry(name, a.classes);
         }
         classMap.putAll(route.classes);
         for (var e : route.classRewrites.entrySet()) {
@@ -534,7 +538,7 @@ public final class JarPort {
         }
         Reads reader = new Reads(reads, loader);
         Trunk state = new Trunk();
-        GameDiff.Snap was = Exposure.snap(trunk.get(0), loader);
+        GameDiff.Snap was = Exposure.snap(trunk.get(0), loader, false);
         for (int p = 0; p < trunk.size(); p++) {
             for (Target t : branches.getOrDefault(p, List.of())) {
                 Trunk mine = state.copy();
@@ -626,7 +630,7 @@ public final class JarPort {
 
         void ahead() {
             String version = upcoming.peekFirst();
-            coming = version == null ? null : thread.submit(() -> Exposure.snap(version, loader));
+            coming = version == null ? null : thread.submit(() -> Exposure.snap(version, loader, false));
         }
 
         GameDiff.Snap next() throws Exception {

@@ -177,7 +177,7 @@ final class StandinClasses {
             return null;
         }
         boolean moved = false;
-        for (GameDiff.Cls c : port.a.classes.values()) {
+        for (GameDiff.Cls c : port.a.classes.own()) {
             if (c.library || c.name.equals(old) || !port.b.classes.containsKey(c.name) || !Linking.isA(port.a, c.name, old)) {
                 continue;
             }

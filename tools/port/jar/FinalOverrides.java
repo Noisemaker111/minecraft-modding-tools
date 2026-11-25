@@ -143,7 +143,7 @@ final class FinalOverrides {
         }
         Set<String> seen = new HashSet<>();
         String chosen = null;
-        for (GameDiff.Cls sub : port.links.declaring(port.b, h + hd)) {
+        for (GameDiff.Cls sub : port.links.declaring(port.b, h + hd, k)) {
             GameDiff.Meth own = sub.methods.get(h + hd);
             GameDiff.Cls old = port.a.classes.get(port.inverse.getOrDefault(sub.name, sub.name));
             if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || (sub.flags & Opcodes.ACC_ABSTRACT) != 0 || sub.name.equals(k) || !Linking.subtype(port.b, sub.name, k)

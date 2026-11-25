@@ -179,7 +179,7 @@ final class Constructors {
      */
     boolean sameShape(String owner, Type old, Type now) {
         int yes = 0, total = 0;
-        for (GameDiff.Cls c : port.a.classes.values()) {
+        for (GameDiff.Cls c : port.a.classes.under(owner)) {
             if (!owner.equals(c.sup) || c.methods.values().stream().noneMatch(k -> takes(k, old, true))) {
                 continue;
             }

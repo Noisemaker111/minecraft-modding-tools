@@ -45,16 +45,12 @@ final class GameCode {
     static final Map<String, Object[]> READ = new java.util.concurrent.ConcurrentHashMap<>();
 
     static Object[] read(String version) throws Exception {
-        String json = GameDiff.versionJson(version);
-        Path jar = GameDiff.verified(GameDiff.download(json, "client"), "client-" + version + ".jar");
-        String[] mappings = GameDiff.download(json, "client_mappings");
-        VersionMap.Proguard pg = mappings == null ? null
-            : VersionMap.Proguard.parse(Files.readString(GameDiff.verified(mappings, "client-" + version + ".txt"), StandardCharsets.UTF_8));
+        GameDiff.Client client = GameDiff.client(version);
         Map<String, byte[]> all = new HashMap<>();
-        for (byte[] c : GameDiff.classes(jar, null)) {
+        for (byte[] c : client.classes()) {
             all.put(new ClassReader(c).getClassName(), c);
         }
-        return new Object[] { all, pg };
+        return new Object[] { all, client.names() };
     }
 
     /** A box's primitive and the call that unboxes it. */
@@ -684,6 +680,7 @@ final class GameCode {
         }
         if (callers == null) {
             Map<String, Set<String>> index = new HashMap<>();
+            Map<String, String> called = new HashMap<>(); // a call as written -> the method it calls: the game writes each many times
             for (var e : all.entrySet()) {
                 String jarOwner = e.getKey();
                 String self = names.cls(jarOwner);
@@ -693,7 +690,10 @@ final class GameCode {
                         String me = self + "." + names.method(jarOwner, n, d) + names.desc(d);
                         return new MethodVisitor(Opcodes.ASM9) {
                             void add(String o, String mn, String md) {
-                                String callee = names.cls(declarer(o, mn, md, false)) + "." + names.method(declarer(o, mn, md, false), mn, md) + names.desc(md);
+                                String callee = called.computeIfAbsent(o + "." + mn + md, k -> {
+                                    String declares = declarer(o, mn, md, false);
+                                    return names.cls(declares) + "." + names.method(declares, mn, md) + names.desc(md);
+                                });
                                 index.computeIfAbsent(callee, k -> new HashSet<>()).add(me);
                             }
 
