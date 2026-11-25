@@ -795,6 +795,12 @@ final class GameCode {
 
     static Slot slot(GameCode before, GameCode after, java.util.function.UnaryOperator<String> rename, String[] oldMethod, String[] newMethod,
                      char kind, String owner, String name, String desc, int ordinal) {
+        return slot(before, after, rename, oldMethod, newMethod, kind, owner, name, desc, ordinal, Set.of());
+    }
+
+    /** As slot, where answers are the calls ("owner.name desc", new names) a stand-in for the point's member makes. */
+    static Slot slot(GameCode before, GameCode after, java.util.function.UnaryOperator<String> rename, String[] oldMethod, String[] newMethod,
+                     char kind, String owner, String name, String desc, int ordinal, Set<String> answers) {
         List<String[]> old = before == null ? null : before.steps(oldMethod[0], oldMethod[1], oldMethod[2]);
         List<String[]> now = after == null ? null : after.steps(newMethod[0], newMethod[1], newMethod[2]);
         if (old == null || now == null || (long) old.size() * now.size() > 4_000_000L) {
@@ -821,7 +827,7 @@ final class GameCode {
         List<Integer> points = ordinal >= 0 ? List.of(at.get(ordinal)) : at;
         Slot found = null;
         for (int p : points) {
-            Slot one = place(after, was, now, map, p, oldMethod, newMethod);
+            Slot one = place(after, was, now, map, p, oldMethod, newMethod, answers);
             if (found == null || found.game().equals(one.game()) && Arrays.equals(found.member(), one.member())) {
                 found = found == null || one.ordinal() < found.ordinal() || found.ordinal() < 0 ? one : found;
             } else {
@@ -861,7 +867,7 @@ final class GameCode {
         return x[0] + " " + x[1] + "." + (x[0].equals("l") ? x[2].replaceAll("\\$\\d+$", "") : x[2]) + x[3];
     }
 
-    static Slot place(GameCode after, List<String[]> was, List<String[]> now, int[] map, int p, String[] oldMethod, String[] newMethod) {
+    static Slot place(GameCode after, List<String[]> was, List<String[]> now, int[] map, int p, String[] oldMethod, String[] newMethod, Set<String> answers) {
         String[] point = was.get(p);
         char kind = point[0].equals("m") ? 'm' : 'f';
         if (map[p] >= 0) {
@@ -960,6 +966,18 @@ final class GameCode {
             List<String[]> named = gap.stream().filter(x -> x[0].equals("m") && x[2].equals(point[2]) && !(x[1].equals(point[1]) && x[3].equals(point[3]))).toList();
             if (named.size() == 1 && olds.size() == 1) {
                 return found(now, named.get(0), "named", 'm');
+            }
+            // A call a stand-in answers (a member of a class the older release lacks, on a port back) is, in the older
+            // game's code, the call the stand-in makes for it: 1.20's graphics.drawString(font, text, x, y, color) is
+            // 1.19.4's font.drawShadow(pose, text, x, y, color), as the GuiGraphics stand-in writes it. Of the calls it
+            // can make, those in its place pair up in order, or those giving what the point gives when that is fewer.
+            List<String[]> answered = gap.stream().filter(x -> x[0].equals("m") && answers.contains(x[1] + "." + x[2] + x[3])).toList();
+            if (answered.size() != olds.size()) {
+                String gives = Type.getReturnType(point[3]).getDescriptor();
+                answered = answered.stream().filter(x -> Type.getReturnType(x[3]).getDescriptor().equals(gives)).toList();
+            }
+            if (!answered.isEmpty() && answered.size() == olds.size()) {
+                return found(now, answered.get(olds.indexOf(p)), "stand-in", 'm');
             }
         }
         return new Slot("dropped", gap.isEmpty() ? "nothing in its place" : gap.size() + " other instructions in its place", null, -1);

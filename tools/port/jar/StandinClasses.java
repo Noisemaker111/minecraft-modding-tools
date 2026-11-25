@@ -216,6 +216,60 @@ final class StandinClasses {
     }
 
     /**
+     * The game calls ("owner.name desc", new names) a stand-in's answer for an old method (old names) can make, following
+     * the stand-in's calls into its own classes; empty when no stand-in answers it. The answer is the class's own method
+     * where the stand-in is the class, else its static method taking the old receiver first.
+     */
+    Set<String> reaches(String owner, String name, String desc) {
+        byte[] bytes = standins.get(STANDIN + owner);
+        if (bytes == null) {
+            return Set.of();
+        }
+        String now = port.desc(desc);
+        String args = now.substring(1, now.indexOf(')'));
+        Set<String> out = new TreeSet<>(), seen = new HashSet<>();
+        for (MethodModel mm : ClassFile.of().parse(bytes).methods()) {
+            String d = mm.methodType().stringValue();
+            boolean isStatic = (mm.flags().flagsMask() & Opcodes.ACC_STATIC) != 0;
+            Type[] params = Type.getArgumentTypes(d);
+            boolean onSelf = isStatic && params.length > 0 && d.substring(1 + params[0].getDescriptor().length()).equals(args + ")" + Type.getReturnType(now).getDescriptor());
+            if (mm.methodName().stringValue().equals(name) && (d.equals(now) || onSelf)) {
+                calls(STANDIN + owner, name, d, out, seen);
+            }
+        }
+        return out;
+    }
+
+    private void calls(String cls, String name, String desc, Set<String> out, Set<String> seen) {
+        byte[] bytes = standins.get(cls);
+        if (bytes == null || !seen.add(cls + "." + name + desc)) {
+            return;
+        }
+        List<String[]> made = new ArrayList<>();
+        new org.objectweb.asm.ClassReader(bytes).accept(new org.objectweb.asm.ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public org.objectweb.asm.MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                if (!n.equals(name) || !d.equals(desc)) {
+                    return null;
+                }
+                return new org.objectweb.asm.MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String o, String mn, String md, boolean itf) {
+                        made.add(new String[] { o, mn, md });
+                    }
+                };
+            }
+        }, org.objectweb.asm.ClassReader.SKIP_FRAMES);
+        for (String[] m : made) {
+            if (m[0].startsWith(STANDIN)) {
+                calls(m[0], m[1], m[2], out, seen);
+            } else if (port.b.classes.containsKey(m[0])) {
+                out.add(m[0] + "." + m[1] + m[2]);
+            }
+        }
+    }
+
+    /**
      * The old release's descriptor of a method of an old class (or one it inherits) whose descriptor, carried into the new
      * release's names, is newDesc; null if none. A constructor is looked up on the class itself.
      */

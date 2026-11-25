@@ -111,6 +111,12 @@ final class JarPortPointTest {
         GameCode.Slot first = GameCode.slot(then, now, x -> x, new String[] { ui[0], "paint", "()V" }, new String[] { ui[0], "paint", "()V" }, 'm', "p9/Pen", "fill", "(I)V", 0);
         JarPortTest.expect(first.game().equals("same name") && first.member()[1].equals("p9/Gl") && first.ordinal() == 0,
             "the first of the calls in a row pairs with the first in their place: " + first);
+        Set<String> answers = Set.of("p9/Font.shadow(" + SCR + "I)I", "p9/Text.visual()Lp9/Seq;");
+        GameCode.Slot answered = GameCode.slot(then, now, x -> x, new String[] { ui[0], "write", "()V" }, new String[] { ui[0], "write", "()V" }, 'm', "p9/Pen", "write", "(I)I", -1, answers);
+        JarPortTest.expect(answered.game().equals("stand-in") && answered.member()[1].equals("p9/Font") && answered.member()[2].equals("shadow"),
+            "a call a stand-in answers is, in the new code, the call of the stand-in's that gives what it gave: " + answered);
+        JarPortTest.expect(GameCode.slot(then, now, x -> x, new String[] { ui[0], "write", "()V" }, new String[] { ui[0], "write", "()V" }, 'm', "p9/Pen", "write", "(I)I", -1).game().equals("dropped"),
+            "without a stand-in, nothing says which call took its place");
     }
 
     /** Each handler's @At ordinal, where it gives one. */
@@ -304,6 +310,23 @@ final class JarPortPointTest {
             }
             m.visitLdcInsn(old ? 1 : 2);
             m.visitMethodInsn(Opcodes.INVOKESTATIC, old ? "p9/Pen" : "p9/Gl", "tip", old ? "(Ljava/lang/String;I)V" : "(I)V", false);
+            sink(m, "b");
+        });
+        // write(): the old release calls Pen.write(int), which a stand-in answers in the new release by Text.visual() and
+        // then Font.shadow(Scr, int), the two calls the new code makes in its place.
+        JarPortFollowTest.method(w, "write", "()V", Opcodes.ACC_PUBLIC, m -> {
+            sink(m, "a");
+            if (old) {
+                m.visitLdcInsn(7);
+                m.visitMethodInsn(Opcodes.INVOKESTATIC, "p9/Pen", "write", "(I)I", false);
+            } else {
+                m.visitMethodInsn(Opcodes.INVOKESTATIC, "p9/Text", "visual", "()Lp9/Seq;", false);
+                m.visitInsn(Opcodes.POP);
+                m.visitInsn(Opcodes.ACONST_NULL);
+                m.visitLdcInsn(8);
+                m.visitMethodInsn(Opcodes.INVOKESTATIC, "p9/Font", "shadow", "(" + SCR + "I)I", false);
+            }
+            m.visitInsn(Opcodes.POP);
             sink(m, "b");
         });
         JarPortFollowTest.method(w, "blend", "()V", Opcodes.ACC_PUBLIC, m -> {

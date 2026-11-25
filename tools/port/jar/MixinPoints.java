@@ -150,7 +150,8 @@ final class MixinPoints {
         int ordinal = point[2] == null ? -1 : Integer.parseInt(point[2]);
         String desc = target.group(3) != null ? target.group(3) : target.group(4);
         GameCode.Slot slot = GameCode.slot(port.code(port.a), port.code(port.b), port::cls, new String[] { was.owner.name, was.name, was.desc },
-            new String[] { is.owner.name, is.name, is.desc }, at.kind(), target.group(1), target.group(2), desc, ordinal);
+            new String[] { is.owner.name, is.name, is.desc }, at.kind(), target.group(1), target.group(2), desc, ordinal,
+            at.kind() == 'm' && desc != null ? port.standIn.reaches(target.group(1), target.group(2), desc) : Set.of());
         String[] x = slot.member();
         if (kept) {
             // The ordinal still finds a place; it moves only where the old one lines up with another one now.
@@ -163,7 +164,7 @@ final class MixinPoints {
         boolean inject = inj.kind().equals(MixinRetargets.INJECT);
         boolean moves = switch (slot.game()) {
             case "ordinal" -> ordinal >= 0;
-            case "overload", "same name", "named" -> inject;
+            case "overload", "same name", "named", "stand-in" -> inject;
             case "renamed", "accessor" -> true;
             default -> false;
         };
@@ -285,10 +286,11 @@ final class MixinPoints {
             }
             int ordinal = point[2] == null ? -1 : Integer.parseInt(point[2]);
             GameCode.Slot slot = GameCode.slot(port.code(port.a), port.code(port.b), port::cls, new String[] { m[1].owner.name, m[1].name, m[1].desc },
-                new String[] { m[0].owner.name, m[0].name, m[0].desc }, 'm', target.group(1), target.group(2), target.group(3), ordinal);
+                new String[] { m[0].owner.name, m[0].name, m[0].desc }, 'm', target.group(1), target.group(2), target.group(3), ordinal,
+                port.standIn.reaches(target.group(1), target.group(2), target.group(3)));
             String[] x = slot.member();
             boolean inject = inj.kind().equals(MixinRetargets.INJECT);
-            if (x == null || !(Set.of("same name", "overload").contains(slot.game()) || inject && slot.game().equals("named")) || ordinal >= 0 && slot.ordinal() != ordinal) {
+            if (x == null || !(Set.of("same name", "overload").contains(slot.game()) || inject && Set.of("named", "stand-in").contains(slot.game())) || ordinal >= 0 && slot.ordinal() != ordinal) {
                 continue;
             }
             int taken = takesMoved(handlerDesc, inj, target.group(3), x[3]);
