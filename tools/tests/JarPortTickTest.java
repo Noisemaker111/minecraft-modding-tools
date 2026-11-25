@@ -17,6 +17,9 @@ import org.objectweb.asm.*;
  * one of its float, which the update took from the parameters, stays reported. Glyph.draw(r, g, b, a) became draw(color),
  * and Font, which worked the four out of its colour, now passes the colour: a handler of draw gets them out of it the same
  * way.
+ * Level.mark and Level.dot changed the same way, and in each the call to Pen of 1.0 is a call to Ink with one more int in
+ * 2.0. An @Inject with no ordinal at mark's Pen.tip stays reported, as 2.0's mark calls Ink.tip once more after; a
+ * @ModifyArg of dot's int stays reported, as either of Ink.dot's ints could be it.
  */
 final class JarPortTickTest {
 
@@ -91,9 +94,12 @@ final class JarPortTickTest {
             JarPortTest.snap(s, "g9/Main", 0, null, "frame(" + f + ")V", "lerp(F)V");
             JarPortTest.snap(s, "g9/Both", 0, null, "render(" + GFX + f + ")V");
             JarPortTest.snap(s, "g9/Panel", 0, null, "paint()V");
-            JarPortTest.snap(s, "g9/Level", 0, null, "draw(" + (old ? "FJZ" : TICK + "Z") + ")V", "fill(" + (old ? "FJZ" : TICK + "Z") + ")V");
             JarPortTest.snap(s, "g9/Glyph", 0, null, "draw(" + (old ? "FFFF" : "I") + ")V");
             JarPortTest.snap(s, "g9/Font", 0, null, "text(I)V");
+            JarPortTest.snap(s, "g9/Level", 0, null, "draw(" + (old ? "FJZ" : TICK + "Z") + ")V", "fill(" + (old ? "FJZ" : TICK + "Z") + ")V",
+                "mark(" + (old ? "FJZ" : TICK + "Z") + ")V", "dot(" + (old ? "FJZ" : TICK + "Z") + ")V");
+            JarPortTest.snap(s, "g9/Pen", 0, null, "tip(I)V", "dot(I)V");
+            JarPortTest.snap(s, "g9/Ink", 0, null, "tip(II)V", "dot(II)V");
             GameDiff.Cls argb = JarPortTest.snap(s, "g9/Argb", 0, null);
             argb.methods.put("red(I)I", new GameDiff.Meth(argb, "red", "(I)I", Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC));
         }
@@ -107,6 +113,8 @@ final class JarPortTickTest {
                             {"owner": "g9.Both", "from": "render", "desc": "(Lg9/Gfx;F)V", "to": "render", "newDesc": "(Lg9/Gfx;Lg9/Tick;)V"},
                             {"owner": "g9.Level", "from": "draw", "desc": "(FJZ)V", "to": "draw", "newDesc": "(Lg9/Tick;Z)V"},
                             {"owner": "g9.Level", "from": "fill", "desc": "(FJZ)V", "to": "fill", "newDesc": "(Lg9/Tick;Z)V"},
+                            {"owner": "g9.Level", "from": "mark", "desc": "(FJZ)V", "to": "mark", "newDesc": "(Lg9/Tick;Z)V"},
+                            {"owner": "g9.Level", "from": "dot", "desc": "(FJZ)V", "to": "dot", "newDesc": "(Lg9/Tick;Z)V"},
                             {"owner": "g9.Glyph", "from": "draw", "desc": "(FFFF)V", "to": "draw", "newDesc": "(I)V"}]}
             """);
         JarPort port = new JarPort(a, b, map);
@@ -124,10 +132,13 @@ final class JarPortTickTest {
             Map.entry("m9/FlagMixin.class", variable("m9/FlagMixin", "(Z)Z", Opcodes.ILOAD)), Map.entry("m9/JitterMixin.class", variable("m9/JitterMixin", "(F)F", Opcodes.FLOAD)),
             Map.entry("m9/LocalFlagMixin.class", variable("m9/LocalFlagMixin", "(Z)Z", Opcodes.ILOAD, "RETURN", false, "draw")),
             Map.entry("m9/LocalFillMixin.class", variable("m9/LocalFillMixin", "(Z)Z", Opcodes.ILOAD, "RETURN", false, "fill")),
-            Map.entry("m9.mixins.json", "{\"package\": \"m9\", \"mixins\": [\"HudMixin\", \"WorldMixin\", \"BothMixin\", \"PanelMixin\", \"FlagMixin\", \"LocalFlagMixin\", \"LocalFillMixin\", \"JitterMixin\", \"GlyphMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8)))),
+            Map.entry("m9/MarkMixin.class", mark()),
+            Map.entry("m9/DotMixin.class", dot()),
+            Map.entry("m9.mixins.json", "{\"package\": \"m9\", \"mixins\": [\"HudMixin\", \"WorldMixin\", \"BothMixin\", \"PanelMixin\", \"FlagMixin\", \"LocalFlagMixin\", \"LocalFillMixin\", \"JitterMixin\", \"GlyphMixin\", \"MarkMixin\", \"DotMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8)))),
             "follow.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
-        JarPortTest.expect(unlinked.equals(List.of("mixin target changed signature: g9.Both.render(Lg9/Gfx;F)V", "mixin target changed signature: g9.Level.draw(FJZ)V")),
+        JarPortTest.expect(unlinked.equals(List.of("mixin target changed signature: g9.Both.render(Lg9/Gfx;F)V", "mixin target changed signature: g9.Level.dot(FJZ)V",
+                "mixin target changed signature: g9.Level.draw(FJZ)V", "mixin target changed signature: g9.Level.mark(FJZ)V")),
             "handlers of Hud.render and World.render, and the redirect of bar, follow; Both.render's float reached two readings and stays reported: " + unlinked);
         // Level.draw(float, long, boolean) became draw(Tick, boolean): its boolean is at another slot but still the one boolean.
         String flag = JarPortFixesTest.strings(ported.get("m9/FlagMixin.class")).getOrDefault("flag(Z)Z", "");
@@ -209,6 +220,28 @@ final class JarPortTickTest {
                 m.visitEnd();
             }
             body(w, "fill", "(" + (old ? "FJZ" : TICK + "Z") + ")V", m -> { });
+            body(w, "mark", "(" + (old ? "FJZ" : TICK + "Z") + ")V", m -> {
+                if (!old) {
+                    m.visitLdcInsn(0);
+                }
+                m.visitLdcInsn(1);
+                m.visitMethodInsn(Opcodes.INVOKESTATIC, old ? "g9/Pen" : "g9/Ink", "tip", old ? "(I)V" : "(II)V", false);
+                m.visitVarInsn(Opcodes.ALOAD, 0);
+                m.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "hashCode", "()I", false);
+                m.visitInsn(Opcodes.POP);
+                if (!old) {
+                    m.visitLdcInsn(0);
+                    m.visitLdcInsn(2);
+                    m.visitMethodInsn(Opcodes.INVOKESTATIC, "g9/Ink", "tip", "(II)V", false);
+                }
+            });
+            body(w, "dot", "(" + (old ? "FJZ" : TICK + "Z") + ")V", m -> {
+                if (!old) {
+                    m.visitLdcInsn(9);
+                }
+                m.visitLdcInsn(1);
+                m.visitMethodInsn(Opcodes.INVOKESTATIC, old ? "g9/Pen" : "g9/Ink", "dot", old ? "(I)V" : "(II)V", false);
+            });
         }));
         if (!old) {
             out.put("g9/Tick", tick());
@@ -429,6 +462,39 @@ final class JarPortTickTest {
             m.visitVarInsn(Opcodes.FLOAD, slot);
             m.visitMethodInsn(Opcodes.INVOKESTATIC, "m9/Seen", "saw", "(F)V", false);
         });
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** m9.MarkMixin: an @Inject with no ordinal at Level.mark's call of Pen.tip. */
+    static byte[] mark() {
+        ClassWriter w = JarPortRetypeTest.writer("m9/MarkMixin", "java/lang/Object");
+        mixinOf(w, "g9/Level");
+        JarPortFixesTest.handler(w, INJECT, "onTip", "(" + CI + ")V", "mark(FJZ)V", "INVOKE", "Lg9/Pen;tip(I)V", null);
+        w.visitEnd();
+        return w.toByteArray();
+    }
+
+    /** m9.DotMixin: a @ModifyArg of the int Level.dot passes Pen.dot. */
+    static byte[] dot() {
+        ClassWriter w = JarPortRetypeTest.writer("m9/DotMixin", "java/lang/Object");
+        mixinOf(w, "g9/Level");
+        MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, "onDot", "(I)I", null, null);
+        AnnotationVisitor av = m.visitAnnotation("Lorg/spongepowered/asm/mixin/injection/ModifyArg;", false);
+        AnnotationVisitor methods = av.visitArray("method");
+        methods.visit(null, "dot(FJZ)V");
+        methods.visitEnd();
+        AnnotationVisitor point = av.visitAnnotation("at", "Lorg/spongepowered/asm/mixin/injection/At;");
+        point.visit("value", "INVOKE");
+        point.visit("target", "Lg9/Pen;dot(I)V");
+        point.visitEnd();
+        av.visit("index", 0);
+        av.visitEnd();
+        m.visitCode();
+        m.visitVarInsn(Opcodes.ILOAD, 1);
+        m.visitInsn(Opcodes.IRETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
         w.visitEnd();
         return w.toByteArray();
     }

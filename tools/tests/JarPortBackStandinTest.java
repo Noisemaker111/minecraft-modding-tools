@@ -370,12 +370,14 @@ final class JarPortBackStandinTest {
         String hud = """
             package net.minecraft.g5;
             public class Hud {
-                static Painter painter;
+                static java.util.List<Painter> painters = new java.util.ArrayList<>();
                 public static void register(Painter p) {
-                    painter = p;
+                    painters.add(p);
                 }
                 public static void run(Pose pose) {
-                    painter.paint(%s, 4);
+                    for (Painter painter : painters) {
+                        painter.paint(%s, 4);
+                    }
                 }
             }
             """;
@@ -389,23 +391,30 @@ final class JarPortBackStandinTest {
             package n8;
             import net.minecraft.g5.Gfx;
             public interface Layer {
-                void draw(Gfx g, int x);
+                boolean draw(Gfx g, int x);
             }
             """, "n8/Box.java", """
             package n8;
             import net.minecraft.g5.Gfx;
             public class Box implements Layer {
                 @Override
-                public void draw(Gfx g, int x) {
+                public boolean draw(Gfx g, int x) {
                     g.fill(x + 3);
+                    return true;
                 }
             }
             """, "n8/Wire.java", """
             package n8;
+            import net.minecraft.g5.Gfx;
             import net.minecraft.g5.Hud;
             public class Wire {
                 public static void wire(Layer layer) {
                     Hud.register(layer::draw);
+                    Hud.register(Wire::mark);
+                    Hud.register(Wire::mark);
+                }
+                static void mark(Gfx g, int x) {
+                    g.fill(x);
                 }
             }
             """), dir.resolve("newer/classes"));
@@ -455,6 +464,8 @@ final class JarPortBackStandinTest {
         } catch (ReflectiveOperationException | LinkageError failed) {
             got = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(got.equals("fill7;"), "the older game's callback reaches the mod's method with the stand-in made from its Pose: " + got);
+        // The mod's method returns a value the void callback drops; a static method referenced twice moves once, and the
+        // second reference's adapter calls it as it was.
+        JarPortTest.expect(got.equals("fill7;fill4;fill4;"), "the older game's callback reaches the mod's methods with the stand-in made from its Pose: " + got);
     }
 }

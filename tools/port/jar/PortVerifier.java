@@ -48,7 +48,7 @@ final class PortVerifier {
                 unfit.clear();
             }
             kept = null;
-            Set<String> standIn = round == 4 ? Set.of() : unanswered(made, dropped);
+            Set<String> standIn = round == 4 ? new TreeSet<>() : unanswered(made, dropped);
             standIn.removeAll(tried);
             if ((dropped.containsAll(unfit) && standIn.isEmpty()) || round == 4) {
                 if (!dropped.isEmpty() && !made.isEmpty()) {

@@ -668,7 +668,7 @@ final class StandinClasses {
         String file = "mmt-standin-types-" + typesTag() + ".jar";
         if (fabric) {
             String path = "META-INF/jars/" + file;
-            Map<String, Object> meta = Json.object(Json.parseLastWins(new String(entries.get("fabric.mod.json"), StandardCharsets.UTF_8)));
+            Map<String, Object> meta = Json.object(Json.parse(new String(entries.get("fabric.mod.json"), StandardCharsets.UTF_8)));
             List<Object> jars = new ArrayList<>(meta.get("jars") instanceof List<?> l ? l : List.of());
             jars.add(new LinkedHashMap<>(Map.of("file", path)));
             meta.put("jars", jars);

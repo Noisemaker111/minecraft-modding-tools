@@ -272,8 +272,13 @@ final class Overrides {
         }
         System.arraycopy(now, 0, params, caps.length, now.length);
         List<Reference> own = mod.references.computeIfAbsent(rc.name, k -> new ArrayList<>());
-        Reference ref = new Reference(impl, iface, sam, "mmt$ref$" + impl.getName() + "$" + own.size(), Type.getMethodDescriptor(Type.getReturnType(moved[2]), params), caps.length, from, steps);
+        // The adapter gives what the method gives, and the lambda factory adapts it to the interface's result as it did
+        // for the reference (a value a void callback drops). It calls the method as it was, so a body that moves for
+        // another reference (lambdaBody) stays too.
+        Type result = Type.getType(port.desc(Type.getReturnType(impl.getDesc()).getDescriptor()));
+        Reference ref = new Reference(impl, iface, sam, "mmt$ref$" + impl.getName() + "$" + own.size(), Type.getMethodDescriptor(result, params), caps.length, from, steps);
         own.add(ref);
+        mod.kept.add(impl.getName() + impl.getDesc());
         return ref;
     }
 

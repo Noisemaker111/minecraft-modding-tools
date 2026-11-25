@@ -297,6 +297,12 @@ final class MixinPoints {
             if (taken == NOT_TAKEN) {
                 continue;
             }
+            // Without an ordinal the injector takes every place: the new method must make the new call as often as the
+            // old one made the old call, or the hook would also run at calls that were never the one it chose.
+            if (ordinal < 0 && uses(port.code(port.a), port.a, m[1], 'm', target.group(1), target.group(2), target.group(3))
+                != uses(port.code(port.b), port.b, m[0], 'm', x[1], x[2], x[3], true)) {
+                continue;
+            }
             index[0] = taken;
             out.set(i, new MixinMembers.Found(point[1], null, null, 'r', x[1], x[2], x[3], "L" + x[1] + ";" + x[2] + x[3]));
         }
@@ -324,7 +330,9 @@ final class MixinPoints {
         if (!inj.kind().endsWith(MixinRetargets.MODIFY_ARG) || hp.length != 1) {
             return NOT_TAKEN;
         }
-        int[] at = new int[was.length];
+        // The old arguments in the new call, aligned from the left and from the right: where the two differ, an added
+        // argument of the same type stands beside one of them, and which one the hook took is not known.
+        int[] at = new int[was.length], late = new int[was.length];
         int j = 0;
         for (int k = 0; k < was.length; k++) {
             while (j < now.length && !now[j].equals(was[k])) {
@@ -335,11 +343,18 @@ final class MixinPoints {
             }
             at[k] = j++;
         }
+        j = now.length - 1;
+        for (int k = was.length - 1; k >= 0; k--) {
+            while (!now[j].equals(was[k])) {
+                j--;
+            }
+            late[k] = j--;
+        }
         int index = inj.ordinal().length > 1 ? inj.ordinal()[1] : -1;
         if (index < 0) {
             return Arrays.stream(was).filter(hp[0]::equals).count() == 1 && Arrays.stream(now).filter(hp[0]::equals).count() == 1 ? -1 : NOT_TAKEN;
         }
-        if (index >= was.length || !was[index].equals(hp[0])) {
+        if (index >= was.length || !was[index].equals(hp[0]) || at[index] != late[index]) {
             return NOT_TAKEN;
         }
         return at[index] == index ? -1 : at[index];
