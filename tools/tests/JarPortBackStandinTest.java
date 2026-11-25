@@ -1,0 +1,185 @@
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.*;
+
+/**
+ * A port back across an update that replaced static drawing helpers with an object passed to every screen, as 1.20's
+ * GuiGraphics replaced 1.19.4's GuiComponent statics and the PoseStack they took. Release 2.0 has Gfx (around a Pose)
+ * and Widget.render(Gfx, int), Widget.label(Gfx, int); release 1.0 has Comp.fill(Pose, int) and Widget.render(Pose, int),
+ * Widget.label(Pose, int). A stand-in (knowledge/standins/2.0-1.0/) writes Gfx on 1.0, with from(Pose) for what 1.0's
+ * game passes. Ported back, a mod's widget runs on 1.0's real classes: its render override is the one 1.0 calls, handed
+ * a Gfx made from the Pose; the stand-in draws through 1.0's Comp; and its calls passing the Gfx where 1.0 takes the
+ * Pose (label, in the override and in a helper of its own handed the Gfx, and super.render) pass the Pose the stand-in
+ * holds. The change map routes Gfx to Comp, as 1.20's map
+ * routes GuiGraphics to GuiComponent; the stand-in leaves fewer uses unlinked, so the port keeps it for this mod.
+ */
+final class JarPortBackStandinTest {
+
+    static final String POSE = """
+        package net.minecraft.g5;
+        public class Pose {
+            public final StringBuilder log = new StringBuilder();
+        }
+        """;
+
+    static final String NEWER_GFX = """
+        package net.minecraft.g5;
+        public class Gfx {
+            final Pose pose;
+            public Gfx(Pose pose) {
+                this.pose = pose;
+            }
+            public Pose pose() {
+                return pose;
+            }
+            public void fill(int color) {
+                pose.log.append("fill" + color + ";");
+            }
+        }
+        """;
+
+    static final String NEWER_WIDGET = """
+        package net.minecraft.g5;
+        public class Widget {
+            public void render(Gfx g, int x) {
+                g.fill(x);
+            }
+            protected void label(Gfx g, int c) {
+                g.fill(c * 10);
+            }
+        }
+        """;
+
+    static final String OLDER_COMP = """
+        package net.minecraft.g5;
+        public class Comp {
+            public static void fill(Pose pose, int color) {
+                pose.log.append("fill" + color + ";");
+            }
+        }
+        """;
+
+    static final String OLDER_WIDGET = """
+        package net.minecraft.g5;
+        public class Widget extends Comp {
+            public void render(Pose pose, int x) {
+                fill(pose, x);
+            }
+            protected void label(Pose pose, int c) {
+                fill(pose, c * 10);
+            }
+        }
+        """;
+
+    static final String MOD = """
+        package n6;
+        import net.minecraft.g5.Gfx;
+        import net.minecraft.g5.Widget;
+        public class Mine extends Widget {
+            @Override
+            public void render(Gfx g, int x) {
+                g.fill(x + 1);
+                label(g, 2);
+                deco(g);
+                super.render(g, x);
+            }
+            void deco(Gfx g) {
+                label(g, 3);
+            }
+        }
+        """;
+
+    static final String STANDIN = """
+        package mmt.standin.net.minecraft.g5;
+        import net.minecraft.g5.Comp;
+        import net.minecraft.g5.Pose;
+        public class Gfx {
+            final Pose pose;
+            public Gfx(Pose pose) {
+                this.pose = pose;
+            }
+            public static Gfx from(Pose pose) {
+                return new Gfx(pose);
+            }
+            public Pose pose() {
+                return pose;
+            }
+            public void fill(int color) {
+                Comp.fill(pose, color);
+            }
+        }
+        """;
+
+    public static void main(String[] args) throws Exception {
+        Path scratch = Files.createDirectories(Path.of(args[0]).resolve("back-standin"));
+        Map<String, byte[]> newer = JarPortBackTest.compile(scratch.resolve("newer"),
+            Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Gfx.java", NEWER_GFX, "net/minecraft/g5/Widget.java", NEWER_WIDGET), null);
+        Map<String, byte[]> older = JarPortBackTest.compile(scratch.resolve("older"),
+            Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Comp.java", OLDER_COMP, "net/minecraft/g5/Widget.java", OLDER_WIDGET), null);
+        Map<String, byte[]> mod = JarPortBackTest.compile(scratch.resolve("mod"), Map.of("n6/Mine.java", MOD), scratch.resolve("newer/classes"));
+
+        GameDiff.Snap a = GameDiff.read("2.0", new ArrayList<>(newer.values()), null, null);
+        GameDiff.Snap b = GameDiff.read("1.0", new ArrayList<>(older.values()), null, null);
+        b.loaderVersion = "1.0.1";
+        Path map = scratch.resolve("route.json");
+        // As the game's change map reads the update back: the class Gfx became Comp (the game's own methods switched from
+        // one to the other), and Widget's methods take the Pose again.
+        Files.writeString(map, """
+            {"classes": [{"from": "net.minecraft.g5.Gfx", "to": "net.minecraft.g5.Comp"}],
+             "signatures": [{"owner": "net.minecraft.g5.Widget", "from": "render", "desc": "(Lnet/minecraft/g5/Gfx;I)V", "to": "render", "newDesc": "(Lnet/minecraft/g5/Pose;I)V"},
+                            {"owner": "net.minecraft.g5.Widget", "from": "label", "desc": "(Lnet/minecraft/g5/Gfx;I)V", "to": "label", "newDesc": "(Lnet/minecraft/g5/Pose;I)V"}]}
+            """);
+        JarPort port = new JarPort(a, b, map);
+        port.oldCode = new GameCode(newer::get, null, newer);
+        port.newCode = new GameCode(older::get, null, older);
+        Path standin = scratch.resolve("standins/2.0-1.0/net/minecraft/g5/Gfx.java");
+        Files.createDirectories(standin.getParent());
+        Files.writeString(standin, STANDIN);
+        port.standIn.standins(List.of(scratch.resolve("standins/2.0-1.0")));
+
+        Map<String, byte[]> files = new HashMap<>();
+        mod.forEach((name, bytes) -> files.put(name + ".class", bytes));
+        files.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n6\"\n".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> runs = new ArrayList<>();
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "back-standin.jar", runs));
+        List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        JarPortTest.expect(unlinked.isEmpty(), "the widget links against 1.0 with the stand-in: " + unlinked);
+
+        Map<String, byte[]> classes = new HashMap<>(older);
+        for (var e : ported.entrySet()) {
+            if (e.getKey().endsWith(".class")) {
+                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+            }
+            if (e.getKey().endsWith(".jar")) {
+                for (var inner : JarPortTest.entries(e.getValue()).entrySet()) {
+                    if (inner.getKey().endsWith(".class")) {
+                        classes.put(inner.getKey().substring(0, inner.getKey().length() - 6), inner.getValue());
+                    }
+                }
+            }
+        }
+        ClassLoader loader = new ClassLoader(null) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                byte[] bytes = classes.get(name.replace('.', '/'));
+                if (bytes == null) {
+                    return Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                }
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        };
+        String trace;
+        try {
+            Class<?> mine = loader.loadClass("n6.Mine"), widget = loader.loadClass("net.minecraft.g5.Widget"), pose = loader.loadClass("net.minecraft.g5.Pose");
+            Object p = pose.getConstructor().newInstance();
+            // As 1.0's game calls it: Widget.render(Pose, int), on the mod's widget.
+            widget.getMethod("render", pose, int.class).invoke(mine.getConstructor().newInstance(), p, 5);
+            trace = String.valueOf(pose.getField("log").get(p));
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+        JarPortTest.expect(trace.equals("fill6;fill20;fill30;fill5;"),
+            "1.0's game runs the mod's render with a Gfx made from its Pose; label, from the override and from a helper handed the Gfx, and super.render get the Pose it holds: " + trace);
+        JarPortTest.finish("JarPortBackStandinTest");
+    }
+}

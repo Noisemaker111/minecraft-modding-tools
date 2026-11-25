@@ -22,7 +22,14 @@ final class ConvertedCalls {
         }
         boolean isStatic = opcode == Opcodes.INVOKESTATIC;
         String[] t = sites.port.route.method(declOwner, name, desc);
-        Type[] before = Type.getArgumentTypes(sites.port.desc(desc)), after = Type.getArgumentTypes(t[2]);
+        Type[] before = Type.getArgumentTypes(sites.port.desc(desc));
+        if (Exposure.declaring(sites.port.b, t[0], 'm', t[1], t[2]) == null) {
+            t = alike(t, before);
+            if (t == null) {
+                return false;
+            }
+        }
+        Type[] after = Type.getArgumentTypes(t[2]);
         Type was = Type.getReturnType(sites.port.desc(desc)), now = Type.getReturnType(t[2]);
         if (before.length != after.length || !(was.equals(now) || was.getSort() != Type.VOID && sites.port.links.usable(now, was)) || !isStatic && !sites.isA(sites.port.cls(owner), t[0])) {
             return false;
@@ -79,6 +86,30 @@ final class ConvertedCalls {
         sites.mod.change(Arrays.stream(read).anyMatch(Objects::nonNull) ? "argument read from the stand-in that holds what the game takes now"
             : "argument made into the type the game takes now, with its constructor");
         return true;
+    }
+
+    /**
+     * Where the route names a signature the game does not have (a class route rewrites every descriptor: 1.20's
+     * renderScrollingString(GuiGraphics, ...) as one taking GuiComponent), the one method of that name on the same class
+     * with as many parameters, each taking the argument as it is or what a stand-in passed there holds (1.19.4's
+     * renderScrollingString(PoseStack, ...)); null when there is not exactly one.
+     */
+    String[] alike(String[] t, Type[] before) {
+        String[] found = null;
+        for (GameDiff.Meth m : MixinMembers.named(sites.port.b, t[0], t[1])) {
+            Type[] p = Type.getArgumentTypes(m.desc);
+            boolean fits = p.length == before.length;
+            for (int i = 0; fits && i < p.length; i++) {
+                fits = sites.port.links.usable(before[i], p[i]) || held(before[i], p[i]) != null;
+            }
+            if (fits) {
+                if (found != null) {
+                    return null;
+                }
+                found = new String[] { t[0], t[1], m.desc };
+            }
+        }
+        return found;
     }
 
     /**
