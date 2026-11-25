@@ -163,14 +163,23 @@ final class ModMetadata {
         try (ZipInputStream z = new ZipInputStream(new ByteArrayInputStream(jar))) {
             for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
                 if (e.getName().equals("fabric.mod.json")) {
-                    Object id = Json.object(Json.parse(new String(z.readAllBytes(), StandardCharsets.UTF_8))).get("id");
-                    return id instanceof String s && platformIds.contains(s) ? s : null;
+                    return platformId(z.readAllBytes());
                 }
             }
         } catch (IOException | RuntimeException unreadable) {
             return null;
         }
         return null;
+    }
+
+    /** The mod id a fabric.mod.json gives when the platform provides it, else null. */
+    String platformId(byte[] fmj) {
+        try {
+            Object id = Json.object(Json.parse(new String(fmj, StandardCharsets.UTF_8))).get("id");
+            return id instanceof String s && platformIds.contains(s) ? s : null;
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
     }
 
     // ---- Metadata.

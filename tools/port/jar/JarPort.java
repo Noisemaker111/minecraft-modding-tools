@@ -1004,9 +1004,12 @@ public final class JarPort {
             entries.putIfAbsent(atFiles.get(0), new byte[0]);
         }
         // The platform's own modules the jar nests, by file: left out, and asked of the platform the game runs (see below).
+        // Not when the jar is the platform itself (Fabric API, every module nested), which players replace by the release's
+        // own build and which, emptied, would link with nothing in it.
         Map<String, String> platformNested = new TreeMap<>();
+        boolean platformItself = fmj != null && modMetadata.platformId(fmj) != null;
         for (var e : entries.entrySet()) {
-            if (nested.contains(e.getKey()) && modMetadata.platformModule(e.getValue()) instanceof String id) {
+            if (!platformItself && nested.contains(e.getKey()) && modMetadata.platformModule(e.getValue()) instanceof String id) {
                 platformNested.put(e.getKey(), id);
             }
         }
@@ -1075,16 +1078,19 @@ public final class JarPort {
                     }
                     data = text.getBytes(StandardCharsets.UTF_8);
                 } else if (nested.contains(n) || n.startsWith("META-INF/jarjar/") && n.endsWith(".jar")) {
-                    String nestedId = platformNested.get(n);
-                    if (nestedId != null) {
+                    String nestedId = platformItself ? modMetadata.platformModule(data) : platformNested.get(n);
+                    if (platformItself && nestedId != null) {
+                        mod.skipped.add(n + ": the platform's own module, in the platform itself: the release's own build runs instead");
+                    } else if (nestedId != null) {
                         // The platform's own module (a Fabric API module a mod nests) is the old release's build of it. Fabric
                         // Loader runs the newest copy of a mod id, which on a port back is this one, made for the newer game
                         // (Mod Menu's fabric-screen-api-v1 from 1.20.1 failed its mixins in a 1.19.4 client). Left out, the
                         // mod depends on the id instead (fabricMetadata), which the release's own platform provides.
                         mod.skipped.add(n + ": the platform's own module, left out: the release's own " + nestedId + " runs instead");
                         continue;
+                    } else {
+                        data = portedNested.get(n);
                     }
-                    data = portedNested.get(n);
                 } else if (rewritten.containsKey(n)) {
                     data = rewritten.get(n);
                 } else if (atFiles.contains(n)) {

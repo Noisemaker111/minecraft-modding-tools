@@ -399,6 +399,10 @@ final class JarPortRetypeTest {
         JarPortTest.expect(String.valueOf(nestsMeta.get("jars")).equals("[{file=META-INF/jars/own-lib.jar}]"),
             "and no longer listed, since the loader refuses a jar listed and missing: " + nestsMeta.get("jars"));
         JarPortTest.expect("*".equals(asks.get("platform-more")), "a platform module the mod nested without asking for it is now asked of the platform: " + asks);
+        byte[] itself = port.port(JarPortTest.jar(Map.of("META-INF/jars/platform-part.jar", JarPortTest.jar(Map.of("fabric.mod.json", "{\"id\": \"platform-part\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+            "fabric.mod.json", "{\"id\": \"platform-top\", \"jars\": [{\"file\": \"META-INF/jars/platform-part.jar\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "top.jar", new ArrayList<>());
+        JarPortTest.expect(JarPortTest.entries(itself).containsKey("META-INF/jars/platform-part.jar"),
+            "the platform itself keeps its modules: emptied, it would link with nothing in it: " + JarPortTest.entries(itself).keySet());
         JarPortTest.expect("*".equals(asks.get("platform-part")), "the version of a nested platform module the mod asks for is left to the new release's platform: " + asks);
         JarPortTest.expect("*".equals(asks.get("platform-top")), "the version of the platform the mod asks for, numbered as the old release's was, is left to the new one's: " + asks);
         JarPortTest.expect("*".equals(asks.get("plat-api")) && !asks.containsKey("plat"),
