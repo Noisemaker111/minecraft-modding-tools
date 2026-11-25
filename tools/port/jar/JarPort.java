@@ -1057,6 +1057,7 @@ public final class JarPort {
             if (between && outermost) {
                 out.setLevel(Deflater.NO_COMPRESSION);
             }
+            Set<String> folders = new HashSet<>();
             for (var e : entries.entrySet()) {
                 String n = e.getKey();
                 byte[] data = e.getValue();
@@ -1105,6 +1106,7 @@ public final class JarPort {
                 if (mod.lowered > 0 && n.endsWith(".json") && !n.equals("fabric.mod.json")) {
                     data = OlderJava.mixinLevel(data, mod.lowered);
                 }
+                JarEntries.folders(out, folders, n, times);
                 ZipEntry entry = new ZipEntry(n);
                 entry.setTime(times.getOrDefault(n, 0L));
                 out.putNextEntry(entry);
@@ -1113,6 +1115,7 @@ public final class JarPort {
             }
             if (typesPath != null) {
                 // Written after the loop: the types are on the new release already, so this step does not port them again.
+                JarEntries.folders(out, folders, typesPath, times);
                 ZipEntry entry = new ZipEntry(typesPath);
                 entry.setTime(0L);
                 out.putNextEntry(entry);

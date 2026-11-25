@@ -716,7 +716,9 @@ final class StandinClasses {
         }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (ZipOutputStream out = new ZipOutputStream(buffer)) {
+            Set<String> folders = new HashSet<>();
             for (var e : files.entrySet()) {
+                JarEntries.folders(out, folders, e.getKey(), Map.of());
                 ZipEntry entry = new ZipEntry(e.getKey());
                 entry.setTime(0L);
                 out.putNextEntry(entry);

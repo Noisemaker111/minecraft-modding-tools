@@ -79,7 +79,20 @@ final class JarPortFabricTest {
             Map.of("g5/Entity.tick()V", "method_5773", "g5/Entity.getLevel()Lg5/Level;", "method_37908", "g5/Ticker.tick()V", "method_9999",
                 "g5/Entity.lambda$tick$0()V", "method_9001"),
             Map.of("g5/Entity.level", "field_6002"), b);
-        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "m5.jar", results));
+        byte[] portedJar = port.port(JarPortTest.jar(files), "m5.jar", results);
+        Map<String, byte[]> ported = JarPortTest.entries(portedJar);
+        // A mod that finds its classes by package (YUNG's API's registrations, through org.reflections) asks the class loader
+        // for the package's folder, which only a jar listing its folders has: the ported jar, as handed back, and the jar
+        // nested in it.
+        Path written = scratch.resolve("m5-ported.jar");
+        Files.write(written, portedJar);
+        Path innerWritten = scratch.resolve("m5-inner-ported.jar");
+        Files.write(innerWritten, ported.get("META-INF/jars/inner.jar"));
+        try (java.net.URLClassLoader loader = new java.net.URLClassLoader(new java.net.URL[] { written.toUri().toURL(), innerWritten.toUri().toURL() }, null)) {
+            List<java.net.URL> folders = Collections.list(loader.getResources("m5/"));
+            JarPortTest.expect(folders.size() == 2 && loader.getResource("m5/forge/") != null,
+                "the class loader finds the mod's packages as folders in the ported jar and its nested jar: " + folders);
+        }
         // A nested jar's result comes before its parent's.
         List<String> unlinked = results.stream().filter(r -> "m5.jar".equals(r.get("jar"))).flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
 
