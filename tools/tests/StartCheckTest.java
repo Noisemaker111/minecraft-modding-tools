@@ -220,5 +220,12 @@ public final class StartCheckTest {
             "[main/WARN]: Failed to load datapacks, can't proceed with server load. You can either fix your datapacks or reset to vanilla with --safeMode");
         named = PackChecks.suspects(data, List.of(), scan, fabric).stream().map(s -> Json.text(s, "jar", "")).toList();
         expect(named.equals(List.of("datamod.jar")), "a data pack the release refuses names the jar it is in: " + named);
+        // NeoForge names a jar whose mod class it did not find by its file, in a folder of the run.
+        for (String folder : List.of("C:\\packs\\server-1\\mods\\", "/home/packs/server-1/mods/")) {
+            String unbuilt = "[main/FATAL] [ne.ne.fm.ModLoader/LOADING]: File " + folder + "broken.jar constructed 0 mods: [], but had 1 mods specified: [broken]\n"
+                + "[main/FATAL] [ne.ne.fm.ModLoader/CORE]: Failed to initialize mod containers";
+            named = PackChecks.suspects(unbuilt, List.of(), scan, PackLoaders.find(harness, "neoforge")).stream().map(s -> Json.text(s, "jar", "")).toList();
+            expect(named.equals(List.of("broken.jar")), "a jar whose mod class the loader did not find is named by its file: " + named);
+        }
     }
 }

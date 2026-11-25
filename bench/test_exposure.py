@@ -556,8 +556,10 @@ check(kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"
 # A game proof starts the client beside the server, and no server when every mod to start is client-only by its own
 # metadata: fabric 1.18.1 -> 1.18.2 spent 147 s starting a server with neither of its two client-only mods on it. Run
 # through load with the game's starts stood in for; a client start that fails still fails the gate.
-def proof(mods, client_ok, server_waits_for_client):
+def proof(mods, client_ok, server_waits_for_client, refused=None):
+    """refused: what start-check (stood in for) fails before any start, {side: {jar: why}}."""
     S, G = portboard.settings, portboard.gameload
+    refused, asked = refused or {}, []
     stubs = [(portboard.porter, "mojang_names"), (portboard.porter, "jar_port"), (portboard.porter, "fabric_api"), (portboard.dependencies, "choose"),
              (portboard.javalevels, "platform_ids"), (portboard.javalevels, "newer_java"), (G, "pack_check")]
     kept = [(m, n, getattr(m, n)) for m, n in stubs]
@@ -598,12 +600,14 @@ def proof(mods, client_ok, server_waits_for_client):
         portboard.javalevels.platform_ids, portboard.javalevels.newer_java, G.pack_check = (lambda loader, to: []), (lambda *a: {}), start
         sys.stdout = io.StringIO()
         try:
-            summary = G.load("fabric", "9.1", "9.2", False, sorted(mods))
+            summary = G.load("fabric", "9.1", "9.2", False, sorted(mods), check=lambda pack, to, loader, jars: asked.append(sorted(jars)) or {
+                "seconds": 1.0, "receipt": None, "sides": {side: {"failed": dict(refused.get(side, {}))} for side in ("server", "client")}})
         finally:
             sys.stdout = sys.__stdout__
             S.ROOT, S.PINS, S.HOME = real
             for m, n, f in kept:
                 setattr(m, n, f)
+    check(asked == [sorted(f"{s}--{s}.jar" for s in mods)], f"start-check is asked once, for the mods and not the platform: {asked}")
     return summary, starts
 
 
@@ -616,6 +620,13 @@ check(starts[0] == "client" and "server" not in starts and not portboard.portche
 summary, starts = proof({"csl": "client", "chunky": "*"}, True, True)
 check(sorted(set(starts)) == ["client", "server"] and summary["verdicts"]["chunky--chunky.jar"] == "loaded" and portboard.portcheck.load_gate(summary)[1]
       and summary["time"]["starts"] >= 0, f"with a mod a server runs, the server and the client start side by side: {starts} {summary['verdicts']}")
+# A mod start-check fails is not started on that side, and fails the proof with start-check's reason; the other side still starts it.
+for side, other in (("server", "client"), ("client", "server")):
+    summary, starts = proof({"chunky": "*"}, True, False, {side: {"chunky--chunky.jar": "Mixin refuses its mixin"}})
+    said = {"server": summary["verdicts"], "client": summary["client"]["verdicts"]}
+    check(starts == [other] and said[side]["chunky--chunky.jar"].startswith("failed: Mixin refuses its mixin (decided by start-check") and said[other]["chunky--chunky.jar"] == "loaded"
+          and summary["startCheck"]["failed"][side] == {"chunky--chunky.jar": "Mixin refuses its mixin"} and not portboard.portcheck.load_gate(summary)[1],
+          f"a mod start-check fails on the {side} is not started there and fails the proof: {starts} {said}")
 
 # Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
 main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,

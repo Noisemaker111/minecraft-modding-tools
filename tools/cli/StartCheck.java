@@ -351,7 +351,9 @@ final class StartCheck {
         if (reached) for (PackCheck.Mod mod : pack.mods()) if (!side.failed.containsKey(mod.file()) && !side.leftOut.containsKey(mod.file())) side.passed.add(mod.file());
         side.checks.put("dependencies", dependencies(last));
         side.checks.put("mixins", mixins(last));
+        boolean window = reached && String.valueOf(last.stop().get("reason")).equals(CLIENT_STOP);
         side.checks.put("start code", !reached ? "not checked: no run reached the point where the game asks for its window"
+            : !window ? "not checked: the check ended as the game loaded its window library, before its start code"
             : startsModsBeforeWindow(owner) ? "the game's client Bootstrap and the mods' own client start code ran, up to where the game asks for its window"
             : "the game's client Bootstrap ran, up to where the game asks for its window; not checked: the mods' own start code, which this loader runs once the window is there");
         side.checks.put("resources", "not checked: the game reads models, textures and language files once it has a window");
@@ -506,13 +508,16 @@ final class StartCheck {
                 command = clientCommand(owner, context, pack, install, agent, instance);
             }
             Launch made = launch(owner, command, instance, owner.loader.id() + "-first-" + side);
-            if (made.stop() == null) throw new IOException("The " + owner.loader.id() + " " + side + " did not start with no mods (see " + made.logFile() + "), so its first-start files were not made.");
+            if (made.stop() == null) {
+                throw new IOException("The " + owner.loader.id() + " " + side + " did not start with no mods (see " + made.logFile() + "), so its first-start files were not made.");
+            }
             for (Object file : files) {
                 Path source = instance.resolve(String.valueOf(file));
                 if (!Files.exists(source)) throw new IOException(owner.loader.id() + "'s first " + side + " start wrote no " + file + " (pack-loaders.json, firstStart)");
-                Files.createDirectories(folder.resolve(String.valueOf(file)).getParent());
-                Files.move(source, folder.resolve(String.valueOf(file)));
+                // Copied, not moved: Windows refuses to move a folder while anything (a virus scanner reading the new jar) has a file of it open.
+                PackCheck.copyTree(source, folder.resolve(String.valueOf(file)));
             }
+            tidy(instance);
         });
     }
 

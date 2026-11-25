@@ -556,10 +556,10 @@ def load(loader, frm, to, save, mods=None, out=None, game=True, check=startcheck
         print(line)
     sides = checked.get("sides", {})
     decided = {side: {n: why for n, why in sides.get(side, {}).get("failed", {}).items()} for side in ("server", "client")}
-    for side, folder in (("server", pack), ("client", pack.with_name(pack.name + "-client"))):
+    for side, side_pack in (("server", pack), ("client", pack.with_name(pack.name + "-client"))):
         for name, why in sorted(decided[side].items()):
             print(f"  {name}: start-check fails it on the {side}, so it is not started there: {why[:300]}")
-        leave_out(folder, decided[side])
+        leave_out(side_pack, decided[side])
     if not game:
         return checked_only(loader, frm, to, scope, asked, checked, links, libraries, left, round(time.monotonic() - began, 1), ported_in, out)
     present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
