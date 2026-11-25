@@ -79,7 +79,20 @@ final class JarPortFabricTest {
             Map.of("g5/Entity.tick()V", "method_5773", "g5/Entity.getLevel()Lg5/Level;", "method_37908", "g5/Ticker.tick()V", "method_9999",
                 "g5/Entity.lambda$tick$0()V", "method_9001"),
             Map.of("g5/Entity.level", "field_6002"), b);
-        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "m5.jar", results));
+        byte[] portedJar = port.port(JarPortTest.jar(files), "m5.jar", results);
+        Map<String, byte[]> ported = JarPortTest.entries(portedJar);
+        // A mod that finds its classes by package (YUNG's API's registrations, through org.reflections) asks the class loader
+        // for the package's folder, which only a jar listing its folders has: the ported jar, as handed back, and the jar
+        // nested in it.
+        Path written = scratch.resolve("m5-ported.jar");
+        Files.write(written, portedJar);
+        Path innerWritten = scratch.resolve("m5-inner-ported.jar");
+        Files.write(innerWritten, ported.get("META-INF/jars/inner.jar"));
+        try (java.net.URLClassLoader loader = new java.net.URLClassLoader(new java.net.URL[] { written.toUri().toURL(), innerWritten.toUri().toURL() }, null)) {
+            List<java.net.URL> folders = Collections.list(loader.getResources("m5/"));
+            JarPortTest.expect(folders.size() == 2 && loader.getResource("m5/forge/") != null,
+                "the class loader finds the mod's packages as folders in the ported jar and its nested jar: " + folders);
+        }
         // A nested jar's result comes before its parent's.
         List<String> unlinked = results.stream().filter(r -> "m5.jar".equals(r.get("jar"))).flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
 
@@ -106,8 +119,8 @@ final class JarPortFabricTest {
             "a mixin's target and injection point are written out in intermediary: " + mixin);
         JarPortTest.expect("Lnet/minecraft/class_1297;hashCode()I".equals(mixin.get("onHash(I)I")),
             "a library method named through a game class keeps its name, with the class in intermediary: " + mixin.get("onHash(I)I"));
-        JarPortTest.expect("<init> NEW net/minecraft/class_1297".equals(mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V")),
-            "an @At(\"NEW\") class target is written in intermediary: " + mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V"));
+        JarPortTest.expect("<init> NEW net/minecraft/class_1297 class=Lnet/minecraft/class_1297;".equals(mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V")),
+            "an @At(\"NEW\") class, as its target or its args, is written in intermediary: " + mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V"));
         Map<String, byte[]> inner = JarPortTest.entries(ported.get("META-INF/jars/inner.jar"));
         JarPortTest.expect(new String(inner.get("fabric.mod.json"), StandardCharsets.UTF_8).contains("\"minecraft\":\"2.0\"")
             && calls(inner.get("m5/Timer.class")).stream().anyMatch(c -> c.contains("mmt$fix")) && results.stream().anyMatch(r -> String.valueOf(r.get("jar")).endsWith("inner.jar")),
@@ -443,6 +456,9 @@ final class JarPortFabricTest {
         AnnotationVisitor at = news.visitAnnotation(null, "Lorg/spongepowered/asm/mixin/injection/At;");
         at.visit("value", "NEW");
         at.visit("target", "g5/Entity");
+        AnnotationVisitor args = at.visitArray("args");
+        args.visit(null, "class=Lg5/Entity;");
+        args.visitEnd();
         at.visitEnd();
         news.visitEnd();
         inject.visitEnd();

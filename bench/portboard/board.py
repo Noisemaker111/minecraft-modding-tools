@@ -1,4 +1,5 @@
 """One update's scoreboard: every mod ported and linked, what holds each back by type of break, and the whole table over every update."""
+import hashlib
 import json
 import os
 import re
@@ -131,13 +132,15 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
     for work in works.values():
         work.mkdir(parents=True, exist_ok=True)
     empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
-    for work in works.values():
-        shutil.rmtree(work / "mods", ignore_errors=True)  # a run before this one may have kept its jars (--mods)
+    if not only:
+        for work in works.values():
+            shutil.rmtree(work / "mods", ignore_errors=True)  # jars a run of named mods kept
     reports = timed("port", porter.jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
     if only and mods:
         # A run of named mods is someone looking at those mods: their ported jars are kept and every file the port read
         # is printed (files_lines). A mod whose port was read from the cache has no jar yet, so it is ported once more.
-        unwritten = [m for m in mods if not (works[tos[0]] / "mods" / m.name).is_file()]
+        rows = {r["mod"]: r for r in reports[tos[0]]["mods"]}
+        unwritten = [m for m in mods if not kept_jar(works[tos[0]] / "mods" / m.name, rows.get(m.name, {}))]
         if unwritten:
             timed("port", porter.jar_ports, loader, frm, [(tos[0], works[tos[0]] / "mods", works[tos[0]] / "report-kept.json")], unwritten)
     else:
@@ -164,6 +167,14 @@ def port_reads(loader, chain, steps):
     from their game jars and Fabric API. Stand-ins are per step, plus the Java ones a port to an older Java uses."""
     folder = settings.ROOT / "knowledge" / "standins"
     return list(chain), [folder / f"{a}-{b}{x}" for a, b in zip(steps, steps[1:]) for x in ("", f".{loader}")] + [folder / "jdk"]
+
+
+def kept_jar(jar, row):
+    """Whether a ported jar kept by a run before this one is the jar this run's port writes: its content is the one the
+    port's own report row names (the start of its SHA-256). So a repeat run of named mods ports nothing (it ported each
+    again, 9 s where a repeat had taken 1.3 s), and a jar another porter wrote, or one cut short while it was being
+    written, is ported again."""
+    return bool(row.get("ported")) and jar.is_file() and hashlib.sha256(jar.read_bytes()).hexdigest().startswith(row["ported"])
 
 
 def game_files(version):

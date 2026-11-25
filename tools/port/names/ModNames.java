@@ -106,16 +106,8 @@ public final class ModNames {
 
     /** One jar, nested jars included, in Mojang names. */
     byte[] jar(byte[] bytes, Counts n) throws IOException {
-        Map<String, byte[]> entries = new LinkedHashMap<>();
         Map<String, Long> times = new HashMap<>();
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
-            for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
-                if (!e.isDirectory()) {
-                    entries.put(e.getName(), zip.readAllBytes());
-                    times.put(e.getName(), e.getTime());
-                }
-            }
-        }
+        Map<String, byte[]> entries = JarEntries.entries(bytes, "", times);
         Map<String, Object> meta = Map.of();
         byte[] fmj = entries.get("fabric.mod.json");
         if (fmj != null) {
@@ -178,7 +170,9 @@ public final class ModNames {
         }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
+            Set<String> folders = new HashSet<>();
             for (var e : out.entrySet()) {
+                JarEntries.folders(zip, folders, e.getKey(), times);
                 ZipEntry entry = new ZipEntry(e.getKey());
                 entry.setTime(times.getOrDefault(e.getKey(), 0L));
                 zip.putNextEntry(entry);
@@ -963,16 +957,8 @@ public final class ModNames {
         }
 
         byte[] jar(byte[] bytes, Jar shared) throws IOException {
-            Map<String, byte[]> entries = new LinkedHashMap<>();
             Map<String, Long> times = new HashMap<>();
-            try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
-                for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
-                    if (!e.isDirectory()) {
-                        entries.put(e.getName(), zip.readAllBytes());
-                        times.put(e.getName(), e.getTime());
-                    }
-                }
-            }
+            Map<String, byte[]> entries = JarEntries.entries(bytes, "", times);
             Map<String, Object> meta = Map.of();
             if (entries.get("fabric.mod.json") != null) {
                 try {
@@ -1014,7 +1000,9 @@ public final class ModNames {
             JarEntries.redigest(out, entries, handed);
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
+                Set<String> folders = new HashSet<>();
                 for (var e : out.entrySet()) {
+                    JarEntries.folders(zip, folders, e.getKey(), times);
                     ZipEntry entry = new ZipEntry(e.getKey());
                     entry.setTime(times.getOrDefault(e.getKey(), 0L));
                     zip.putNextEntry(entry);
@@ -1192,6 +1180,15 @@ public final class ModNames {
                     @Override
                     public AnnotationVisitor visitArray(String name) {
                         AnnotationVisitor inner = super.visitArray(name);
+                        if (inner != null && "args".equals(name)) {
+                            // @At args naming a class ("class=a/b/C" for NEW, "classValue=..." for CONSTANT) are matched by the game's names too.
+                            return new AnnotationVisitor(Opcodes.ASM9, inner) {
+                                @Override
+                                public void visit(String n, Object value) {
+                                    super.visit(n, value instanceof String s ? arg(s) : value);
+                                }
+                            };
+                        }
                         if (inner == null || name == null || !MEMBER_KEYS.contains(name)) {
                             return strings(inner);
                         }
@@ -1219,6 +1216,18 @@ public final class ModNames {
                         return strings(super.visitAnnotation(name, desc));
                     }
                 };
+            }
+
+            String arg(String text) {
+                int eq = text.indexOf('=');
+                String key = eq < 0 ? "" : text.substring(0, eq).trim(), value = eq < 0 ? "" : text.substring(eq + 1).trim();
+                if (!key.equals("class") && !key.equals("classValue") || value.isEmpty()) {
+                    return text;
+                }
+                if (value.startsWith("L") && value.endsWith(";")) {
+                    return key + "=" + desc(value);
+                }
+                return key + "=" + (value.contains(".") ? cls(value.replace('.', '/')).replace('/', '.') : cls(value));
             }
 
             List<String> member(String key, String text) {

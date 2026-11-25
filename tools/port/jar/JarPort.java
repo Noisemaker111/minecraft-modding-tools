@@ -101,6 +101,7 @@ public final class JarPort {
         final Set<String> staticized = new HashSet<>(); // class.handler+desc of handlers made static, as their targets now are
         final Map<String, Integer> argIndexes = new HashMap<>(); // class.handler+desc of a @ModifyArg -> the index its argument has in the call's new signature
         final Map<String, List<Overrides.Bridge>> bridges = new HashMap<>(); // class -> methods added with a game method's new signature
+        final Map<String, List<Overrides.Reference>> references = new HashMap<>(); // class -> adapters its method references are made through
         final Set<String> grants = new TreeSet<>(); // lines the port adds to the mod's access transformer (new names)
         boolean canWiden; // the loader reads this jar's access transformer
         final Set<String> kept = new HashSet<>(); // name+desc of moved methods also kept as they were, for calls that cannot follow
@@ -1007,11 +1008,14 @@ public final class JarPort {
         if (fmj == null && !mod.grants.isEmpty()) {
             entries.putIfAbsent(atFiles.get(0), new byte[0]);
         }
-        // The platform's own modules the jar nests: the platform's copy runs instead, so what the mod asks of them is asked of it.
-        Set<String> platformNested = new HashSet<>();
+        // The platform's own modules the jar nests, by file: left out, and asked of the platform the game runs (see below).
+        // Not when the jar is the platform itself (Fabric API, every module nested), which players replace by the release's
+        // own build and which, emptied, would link with nothing in it.
+        Map<String, String> platformNested = new TreeMap<>();
+        boolean platformItself = fmj != null && modMetadata.platformId(fmj) != null;
         for (var e : entries.entrySet()) {
-            if (nested.contains(e.getKey()) && modMetadata.platformModule(e.getValue()) instanceof String id) {
-                platformNested.add(id);
+            if (!platformItself && nested.contains(e.getKey()) && modMetadata.platformModule(e.getValue()) instanceof String id) {
+                platformNested.put(e.getKey(), id);
             }
         }
         // Nested jars first: whether any jar of the tree uses a stand-in type decides what the outermost one carries.
@@ -1048,7 +1052,7 @@ public final class JarPort {
                 typesPath = standIn.carryTypes(entries, fmj != null);
                 mod.change("stand-in types carried in " + typesPath);
             } catch (RuntimeException unreadable) {
-                // Metadata Json cannot read (a key given twice) cannot list the jar, and the loader loads no jar it does not list.
+                // Metadata Json cannot read cannot list the jar, and the loader loads no jar it does not list.
                 mod.unlinked.add("stand-in types not carried: the jar's metadata cannot be read (" + unreadable.getMessage() + ")");
             }
         }
@@ -1057,6 +1061,7 @@ public final class JarPort {
             if (between && outermost) {
                 out.setLevel(Deflater.NO_COMPRESSION);
             }
+            Set<String> folders = new HashSet<>();
             for (var e : entries.entrySet()) {
                 String n = e.getKey();
                 byte[] data = e.getValue();
@@ -1079,11 +1084,16 @@ public final class JarPort {
                     }
                     data = text.getBytes(StandardCharsets.UTF_8);
                 } else if (nested.contains(n) || n.startsWith("META-INF/jarjar/") && n.endsWith(".jar")) {
-                    String nestedId = modMetadata.platformModule(data);
-                    if (nestedId != null) {
-                        // The platform's own module (a Fabric API module a mod nests): the loader runs the platform's newer
-                        // copy of that mod id instead, so this one is no part of the mod there.
-                        mod.skipped.add(n + ": the platform's own module, its copy of " + nestedId + " runs instead");
+                    String nestedId = platformItself ? modMetadata.platformModule(data) : platformNested.get(n);
+                    if (platformItself && nestedId != null) {
+                        mod.skipped.add(n + ": the platform's own module, in the platform itself: the release's own build runs instead");
+                    } else if (nestedId != null) {
+                        // The platform's own module (a Fabric API module a mod nests) is the old release's build of it. Fabric
+                        // Loader runs the newest copy of a mod id, which on a port back is this one, made for the newer game
+                        // (Mod Menu's fabric-screen-api-v1 from 1.20.1 failed its mixins in a 1.19.4 client). Left out, the
+                        // mod depends on the id instead (fabricMetadata), which the release's own platform provides.
+                        mod.skipped.add(n + ": the platform's own module, left out: the release's own " + nestedId + " runs instead");
+                        continue;
                     } else {
                         data = portedNested.get(n);
                     }
@@ -1100,6 +1110,7 @@ public final class JarPort {
                 if (mod.lowered > 0 && n.endsWith(".json") && !n.equals("fabric.mod.json")) {
                     data = OlderJava.mixinLevel(data, mod.lowered);
                 }
+                JarEntries.folders(out, folders, n, times);
                 ZipEntry entry = new ZipEntry(n);
                 entry.setTime(times.getOrDefault(n, 0L));
                 out.putNextEntry(entry);
@@ -1108,6 +1119,7 @@ public final class JarPort {
             }
             if (typesPath != null) {
                 // Written after the loop: the types are on the new release already, so this step does not port them again.
+                JarEntries.folders(out, folders, typesPath, times);
                 ZipEntry entry = new ZipEntry(typesPath);
                 entry.setTime(0L);
                 out.putNextEntry(entry);
@@ -1298,7 +1310,7 @@ public final class JarPort {
                             };
                         }
                         if (MixinRetargets.INJECTORS.contains(annotation)) {
-                            MixinRetargets.Injector inj = new MixinRetargets.Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1, -1 }, new boolean[1], new boolean[1]);
+                            MixinRetargets.Injector inj = new MixinRetargets.Injector(annotation, new ArrayList<>(), new ArrayList<>(), new int[] { -1 }, new int[] { -1, -1, -1 }, new boolean[1], new boolean[1]);
                             mod.injectors.put(rc.name + "." + name + desc, inj);
                             return MixinRetargets.injection(inj, null);
                         }
@@ -1408,6 +1420,13 @@ public final class JarPort {
                 for (String t : targets) {
                     if (a.classes.containsKey(t) && !b.classes.containsKey(cls(t))) {
                         mod.unlinked.add("mixin target class gone: " + Exposure.dotted(t) + " (in " + Exposure.dotted(rc.name) + ")");
+                    } else if (a.classes.containsKey(t) && cls(t).startsWith(StandinClasses.STANDIN)
+                        && mod.injectors.keySet().stream().anyMatch(k -> k.startsWith(rc.name + "."))) {
+                        // The older game lacks the class and a stand-in answers it: code injected into the stand-in runs only
+                        // where mods call it, never where the older game does its work (Patchouli's into 1.20's
+                        // GuiGraphics.renderTooltip, whose tooltips 1.19.4 draws in Screen; it failed in game). An accessor
+                        // reads the stand-in's own fields, which Mixin can apply to the one copy every port shares.
+                        mod.unlinked.add("mixin target class gone: " + Exposure.dotted(t) + ", only a stand-in has it (in " + Exposure.dotted(rc.name) + ")");
                     }
                 }
                 mixinMembers.selfCasts(mod, rc.name, targets);
@@ -1677,6 +1696,10 @@ public final class JarPort {
             public void visitEnd() {
                 for (FinalOverrides.Copy copy : mod.copies.getOrDefault(self[0], List.of())) {
                     finalOverrides.copyBody(copy, self[0], remap);
+                }
+                for (Overrides.Reference ref : mod.references.getOrDefault(self[0], List.of())) {
+                    int open = mod.selfInterface && mod.selfVersion < Opcodes.V9 ? Opcodes.ACC_PUBLIC : Opcodes.ACC_PRIVATE;
+                    overrides.referenceCode(super.visitMethod(open | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, ref.name(), oldDesc(ref.desc()), null, null), ref);
                 }
                 for (Overrides.Bridge br : mod.bridges.getOrDefault(self[0], List.of())) {
                     if (br.via() != null) {

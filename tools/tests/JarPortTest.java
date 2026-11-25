@@ -710,11 +710,14 @@ public final class JarPortTest {
         return buffer.toByteArray();
     }
 
+    /** A jar's files by name, its folders left out (JarPortFabricTest asks a class loader for those). */
     static Map<String, byte[]> entries(byte[] jar) throws IOException {
         Map<String, byte[]> out = new LinkedHashMap<>();
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(jar))) {
             for (ZipEntry e; (e = zip.getNextEntry()) != null; ) {
-                out.put(e.getName(), zip.readAllBytes());
+                if (!e.isDirectory()) {
+                    out.put(e.getName(), zip.readAllBytes());
+                }
             }
         }
         return out;

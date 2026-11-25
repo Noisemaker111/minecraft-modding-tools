@@ -84,8 +84,8 @@ final class StandinClasses {
                         Exposure.dotted(name) + ".isInstance($1)"));
                     continue;
                 }
-                if (gone) {
-                    continue; // the class's own members, which references reach through the class map
+                if (gone || conversion(name, mm.methodType().stringValue(), n)) {
+                    continue; // the class's own members, which references reach through the class map; from(T), an override's argument
                 }
                 // Matched in the new release's names: each old member's descriptor carried forward against the stand-in's.
                 // (Carrying the stand-in's back is ambiguous where an old class now goes by a name another old class had.)
@@ -123,7 +123,14 @@ final class StandinClasses {
                     member = n + "=";
                 }
                 if (member == null) {
-                    throw new IllegalArgumentException("stand-in " + Exposure.dotted(name) + "." + n + desc + " answers no member of " + Exposure.dotted(old) + " in " + port.a.version);
+                    List<String> carried = new ArrayList<>();
+                    for (GameDiff.Meth m : was.methods.values()) {
+                        if (m.name.equals(n)) {
+                            carried.add(port.desc(m.desc));
+                        }
+                    }
+                    throw new IllegalArgumentException("stand-in " + Exposure.dotted(name) + "." + n + desc + " answers no member of " + Exposure.dotted(old) + " in " + port.a.version
+                        + (carried.isEmpty() ? "" : " (its " + n + " carried into " + port.b.version + "'s names: " + String.join(", ", carried) + ")"));
                 }
                 for (int i = receiver ? 0 : 1; i < (receiver ? params.length : params.length + 1); i++) {
                     args.append(args.isEmpty() ? "" : ", ").append('$').append(i);
@@ -135,6 +142,32 @@ final class StandinClasses {
                 }
             }
         }
+    }
+
+    /**
+     * Whether a stand-in's public static method is from(T): the stand-in made from a value of a type of the new release,
+     * which is what an override of a game method that now takes T is given where the old method took the stand-in's class
+     * (1.20's GuiGraphics, from the PoseStack 1.19.4's Screen.render passes). It answers no old member.
+     */
+    static boolean conversion(String standin, String desc, String name) {
+        Type[] params = Type.getArgumentTypes(desc);
+        return name.equals("from") && params.length == 1 && params[0].getSort() == Type.OBJECT && Type.getReturnType(desc).getInternalName().equals(standin);
+    }
+
+    /** The from(T) of the stand-in for a class (old name), for a value of type got (new names), as a conversion step; or null. */
+    String from(String old, String got) {
+        byte[] bytes = standins.get(STANDIN + old);
+        if (bytes == null) {
+            return null;
+        }
+        for (MethodModel mm : ClassFile.of().parse(bytes).methods()) {
+            String desc = mm.methodType().stringValue();
+            if ((mm.flags().flagsMask() & (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC)) == (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC)
+                && conversion(STANDIN + old, desc, mm.methodName().stringValue()) && Type.getArgumentTypes(desc)[0].getDescriptor().equals(got)) {
+                return "s:" + STANDIN + old + ".from" + desc;
+            }
+        }
+        return null;
     }
 
     /**
@@ -190,13 +223,83 @@ final class StandinClasses {
     }
 
     /**
+     * The game calls ("owner.name desc", new names) a stand-in's answer for an old method (old names) can make, following
+     * the stand-in's calls into its own classes; empty when no stand-in answers it. The answer is the class's own method
+     * where the stand-in is the class, else its static method taking the old receiver first.
+     */
+    Set<String> reaches(String owner, String name, String desc) {
+        byte[] bytes = standins.get(STANDIN + owner);
+        if (bytes == null) {
+            return Set.of();
+        }
+        String now = port.desc(desc);
+        String args = now.substring(1, now.indexOf(')'));
+        Set<String> out = new TreeSet<>(), seen = new HashSet<>();
+        for (MethodModel mm : ClassFile.of().parse(bytes).methods()) {
+            String d = mm.methodType().stringValue();
+            boolean isStatic = (mm.flags().flagsMask() & Opcodes.ACC_STATIC) != 0;
+            Type[] params = Type.getArgumentTypes(d);
+            boolean onSelf = isStatic && params.length > 0 && d.substring(1 + params[0].getDescriptor().length()).equals(args + ")" + Type.getReturnType(now).getDescriptor());
+            if (mm.methodName().stringValue().equals(name) && (d.equals(now) || onSelf)) {
+                calls(STANDIN + owner, name, d, out, seen);
+            }
+        }
+        return out;
+    }
+
+    private void calls(String cls, String name, String desc, Set<String> out, Set<String> seen) {
+        byte[] bytes = standins.get(cls);
+        if (bytes == null || !seen.add(cls + "." + name + desc)) {
+            return;
+        }
+        List<String[]> made = new ArrayList<>();
+        new org.objectweb.asm.ClassReader(bytes).accept(new org.objectweb.asm.ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public org.objectweb.asm.MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                if (!n.equals(name) || !d.equals(desc)) {
+                    return null;
+                }
+                return new org.objectweb.asm.MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String o, String mn, String md, boolean itf) {
+                        made.add(new String[] { o, mn, md });
+                    }
+                };
+            }
+        }, org.objectweb.asm.ClassReader.SKIP_FRAMES);
+        for (String[] m : made) {
+            if (m[0].startsWith(STANDIN)) {
+                calls(m[0], m[1], m[2], out, seen);
+            } else if (port.b.classes.containsKey(m[0])) {
+                out.add(m[0] + "." + m[1] + m[2]);
+            }
+        }
+    }
+
+    /**
+     * The class map as a port that leaves the route out for every class the older release lacks by its own name and a
+     * stand-in is written for (PortVerifier.fitting): a stand-in's methods name those stand-ins (1.20's
+     * SignBlockEntity.getFrontText gives the SignText stand-in, though the route reads SignText as SignBlockEntity).
+     */
+    Map<String, String> standing() {
+        Map<String, String> out = new HashMap<>(port.classMap);
+        for (String name : standins.keySet()) {
+            String old = name.substring(STANDIN.length());
+            if (!old.contains("$") && port.a.classes.containsKey(old) && !port.b.classes.containsKey(old)) {
+                out.put(old, name);
+            }
+        }
+        return out;
+    }
+
+    /**
      * The old release's descriptor of a method of an old class (or one it inherits) whose descriptor, carried into the new
      * release's names, is newDesc; null if none. A constructor is looked up on the class itself.
      */
     String oldMember(String old, String name, boolean isStatic, String newDesc) {
         for (GameDiff.Cls c = port.a.classes.get(old); c != null; c = name.equals("<init>") || c.sup == null ? null : port.a.classes.get(c.sup)) {
             for (GameDiff.Meth m : c.methods.values()) {
-                if (m.name.equals(name) && ((m.flags & Opcodes.ACC_STATIC) != 0) == isStatic && port.desc(m.desc).equals(newDesc)) {
+                if (m.name.equals(name) && ((m.flags & Opcodes.ACC_STATIC) != 0) == isStatic && (port.desc(m.desc).equals(newDesc) || JarPort.mapDesc(m.desc, standing()).equals(newDesc))) {
                     return m.desc;
                 }
             }
@@ -207,7 +310,8 @@ final class StandinClasses {
     /** Whether the old class has a field of that name whose type, carried into the new release's names, is newType. */
     boolean oldField(GameDiff.Cls was, String name, String newType) {
         GameDiff.Fld f = was.fields.get(name);
-        return f != null && port.desc(f.desc).equals(newType);
+        // Read as the route reads its type, or as the stand-ins do (1.20's AbstractSignEditScreen.text, a SignText).
+        return f != null && (port.desc(f.desc).equals(newType) || JarPort.mapDesc(f.desc, standing()).equals(newType));
     }
 
     /**
@@ -510,6 +614,10 @@ final class StandinClasses {
      * This update's stand-ins for classes it dropped, which stand in for the class itself, with their nested classes and
      * every stand-in they use. Mods name these types in their own methods and fields, and so do the libraries nested in
      * them, so all of them name one copy: a jar of its own (typesJar) the loader loads once, whichever mods carry it.
+     * Its contents are the same for every mod of the update, since the loader keeps one jar of that id: a class the
+     * newer game has and the older lacks by its own name is one, even where a mod's port routes it to another class
+     * (GuiGraphics, which the route maps to GuiComponent where PortVerifier.fitting keeps the route). A Fabric pack of
+     * ports that each carried only what their own route used ran the copy without GuiGraphics, and Puzzle failed.
      */
     Set<String> standinTypes() {
         if (types == null) {
@@ -517,7 +625,9 @@ final class StandinClasses {
             Deque<String> todo = new ArrayDeque<>();
             for (String name : standins.keySet()) {
                 String outer = name.contains("$") ? name.substring(0, name.indexOf('$')) : name;
-                if (port.classMap.containsValue(name) || port.classMap.containsValue(outer)) {
+                String old = outer.substring(STANDIN.length());
+                boolean dropped = port.a.classes.containsKey(old) && !port.b.classes.containsKey(old) && becameType(old, standins.get(outer)) == null;
+                if (port.classMap.containsValue(name) || port.classMap.containsValue(outer) || dropped) {
                     todo.push(name);
                 }
             }
@@ -610,7 +720,9 @@ final class StandinClasses {
         }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (ZipOutputStream out = new ZipOutputStream(buffer)) {
+            Set<String> folders = new HashSet<>();
             for (var e : files.entrySet()) {
+                JarEntries.folders(out, folders, e.getKey(), Map.of());
                 ZipEntry entry = new ZipEntry(e.getKey());
                 entry.setTime(0L);
                 out.putNextEntry(entry);

@@ -7,6 +7,7 @@
   no longer has does.
 Run: python bench/test_exposure.py"""
 import io
+import hashlib
 import json
 import os
 import shutil
@@ -301,6 +302,49 @@ with tempfile.TemporaryDirectory() as tmp:
         portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
           f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
+    # A mod whose metadata asks for nothing still gets what its Modrinth version lists as required: REI checks for
+    # Architectury and Cloth Config itself at start and stops the game without them.
+    (folder / "rei--rei.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "rei", "depends": {"minecraft": "*"}})}))
+    pins = [{"slug": "rei", "file": "rei.jar", "project": "P-rei", "version": "v-rei"}]
+    listed = {"v-rei": ["P-cloth"]}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["rei--rei.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["rei--rei.jar"] and list(ready) == ["cloth.jar"],
+          f"a mod that names no library in its metadata gets the ones its Modrinth version requires: {chosen} {ready}")
+    # A library's file for the new release can answer under another id than the one the mod asks (Balm 6 for 1.19.4 is
+    # balm-fabric, Balm 7, which Waystones asks for as balm, is balm): its old file is ported instead.
+    (folder / "stones--stones.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "stones", "depends": {"balm": ">=7.0.0"}})}))
+    balm_new, balm_old = Path(tmp) / "balm-new.jar", Path(tmp) / "balm-old.jar"
+    balm_new.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "balm-fabric", "version": "6.0.2"})}))
+    balm_old.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "balm", "version": "7.3.44"})}))
+    pins = [{"slug": "stones", "file": "stones.jar", "project": "P-stones", "version": "v-stones"}]
+    listed = {"v-stones": ["P-balm"]}
+    balm_files = {("P-balm", "2.0"): (balm_new, "v-bn"), ("P-balm", "1.0"): (balm_old, "v-bo")}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: balm_files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["stones--stones.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["stones--stones.jar"] and not ready and list(to_port) == ["balm-old.jar"],
+          f"a library whose new file drops the id a mod asks is ported from its old file: {chosen} {ready} {to_port} {left}")
+    # On a port back the new release's file is the older version: REI checks for Cloth Config 11 itself, and 1.19.4's is
+    # 10, so the one REI was built with is ported.
+    cloth_ten, cloth_eleven = Path(tmp) / "cloth-10.jar", Path(tmp) / "cloth-11.jar"
+    cloth_ten.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "cloth-config", "version": "10.1.135+fabric"})}))
+    cloth_eleven.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "cloth-config", "version": "11.1.136+fabric"})}))
+    pins = [{"slug": "rei", "file": "rei.jar", "project": "P-rei", "version": "v-rei"}]
+    listed = {"v-rei": ["P-cloth"]}
+    cloth_files = {("P-cloth", "2.0"): (cloth_ten, "v-c10"), ("P-cloth", "1.0"): (cloth_eleven, "v-c11")}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: cloth_files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["rei--rei.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check(not ready and list(to_port) == ["cloth-11.jar"],
+          f"a library whose file for the new release is older than the mod's is ported from the mod's release: {ready} {to_port}")
     # A mod that nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod
     # and starts; a top mod that is the platform itself is left out with that reason, never silently.
     (folder / "presence--presence.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "presence"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
@@ -338,6 +382,43 @@ with tempfile.TemporaryDirectory() as tmp:
         portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["strict--strict.jar"] and not ready and list(to_port) == ["libipn-1.jar"],
           f"a library outside the mod's range for the new version is ported from the old one: {ready} {to_port}")
+    # The same for Fabric, whose depends are predicates (">=3.6.6"), compared without build metadata (3.1.1+1.19.4 is 3.1.1):
+    # Zoomify for 1.20.1 asks YACL >=3.6.6, and YACL's 1.19.4 release is 3.1.1, so the loader would refuse to start.
+    check(portboard.dependencies.fabric_in("7.2.1", ">=7.2") and not portboard.dependencies.fabric_in("3.1.1+1.19.4", ">=3.6.6")
+          and portboard.dependencies.fabric_in("1.5", "^1.2") and not portboard.dependencies.fabric_in("2.0", "^1.2")
+          and not portboard.dependencies.fabric_in("1.3.0", "~1.2") and portboard.dependencies.fabric_in("1.2.4", "1.2.x")
+          and not portboard.dependencies.fabric_in("1.2.1", "1.2") and portboard.dependencies.fabric_in("0.5", [">=1", "<0.6"])
+          and not portboard.dependencies.fabric_in("5.0", ">=4 <5") and not portboard.dependencies.fabric_in("1.0.0-beta.2", ">=1.0.0"),
+          "versions are read against Fabric's depends predicates as Fabric Loader reads them")
+    zoom = Path(tmp) / "zoom.jar"
+    zoom.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "zoom", "version": "2.15", "depends": {"minecraft": "*", "yacl": ">=3.6.6"}})}))
+    (folder / "zoom--zoom.jar").write_bytes(zoom.read_bytes())
+    yacl_new, yacl_old = Path(tmp) / "yacl-new.jar", Path(tmp) / "yacl-old.jar"
+    yacl_new.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.1.1+1.19.4"})}))
+    yacl_old.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.6.6+1.20.1"})}))
+    pins.append({"slug": "zoom", "file": "zoom.jar", "project": "P-zoom", "version": "v-zoom"})
+    listed["v-zoom"] = ["P-yacl"]
+    yacls = {("P-yacl", "2.0"): (yacl_new, "v-yacl"), ("P-yacl", "1.0"): (yacl_old, "v-yacl-old")}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: yacls.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["zoom--zoom.jar"], folder, pins, set())
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["zoom--zoom.jar"] and not ready and list(to_port) == ["yacl-old.jar"],
+          f"a Fabric library older than the mod's depends for the new version is ported from the old one: {ready} {to_port} {left}")
+    # A mod may ask a library by an id the library "provides" (YUNG's mods ask cloth-config2 of Cloth Config, whose own id
+    # is cloth-config): its version is checked under that id too, or the too-old release is taken and the loader refuses.
+    zoom.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "zoom", "version": "2.15", "depends": {"minecraft": "*", "yacl2": ">=3.6.6"}})}))
+    (folder / "zoom--zoom.jar").write_bytes(zoom.read_bytes())
+    yacl_new.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.1.1+1.19.4", "provides": ["yacl2"]})}))
+    yacl_old.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.6.6+1.20.1", "provides": ["yacl2"]})}))
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: yacls.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["zoom--zoom.jar"], folder, pins, set())
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["zoom--zoom.jar"] and not ready and list(to_port) == ["yacl-old.jar"],
+          f"a library asked by an id it provides is checked under that id: {ready} {to_port} {left}")
     # Two mods needing the same library: the release for the new version has to fit both ranges, not the last one read.
     loose = Path(tmp) / "loose.jar"
     loose.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("loose") + '[[dependencies.loose]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,)"\n'}))
@@ -1049,6 +1130,19 @@ with tempfile.TemporaryDirectory() as tmp:
                        "  sound", f"  game 2.0: {here / 'game-named.jar'}", f"  game 2.0: {here / 'client.jar'}", f"  Fabric API for 2.0: {here / 'api.jar'}",
                        f"  route map: {here / 'route.json'}", f"  stand-ins: {here / 'standins'}"],
           f"a run of named mods names each file of the port that is there, and no other: {said}")
+# A jar a run of named mods kept is the next run's only when it is the jar the port's report names.
+with tempfile.TemporaryDirectory() as tmp:
+    kept = Path(tmp) / "clumps.jar"
+    whole = b"ported jar " * 50
+    row = {"mod": "clumps.jar", "ported": hashlib.sha256(whole).hexdigest()[:16]}
+    check(not portboard.board.kept_jar(kept, row), "a mod with no kept jar is ported")
+    kept.write_bytes(whole)
+    check(portboard.board.kept_jar(kept, row), "a repeat run keeps the jar its port wrote, so it ports nothing")
+    kept.write_bytes(whole[:200])
+    check(not portboard.board.kept_jar(kept, row), "a jar cut short while it was written is ported again")
+    kept.write_bytes(b"another porter's jar")
+    check(not portboard.board.kept_jar(kept, row), "a jar a changed porter or stand-in wrote is ported again")
+    check(not portboard.board.kept_jar(kept, {"mod": "clumps.jar", "error": "unreadable"}), "a mod whose port failed has no jar to keep")
 read, standins = portboard.board.port_reads("fabric", ["3.0", "2.0", "1.0"], ["3.0", "1.0"])
 check(read == ["3.0", "2.0", "1.0"] and [p.name for p in standins] == ["3.0-1.0", "3.0-1.0.fabric", "jdk"],
       f"a step across two updates lists the release between, whose game jar and Fabric API its composed map was built from: {read} {standins}")

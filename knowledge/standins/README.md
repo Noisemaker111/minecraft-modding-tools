@@ -18,10 +18,15 @@ nest it.
   - `R name(A...)` the old static method (or static field)
   - `Owner init(A...)` the old constructor `new Owner(A...)` (not a `super(...)` call)
   - `boolean isInstance(Object)` what `x instanceof Owner` meant
+  - `Owner from(T)` on a stand-in that is a class itself: what an override of a game method gets where the old method
+    passed `Owner` and the new one passes a `T` (1.20's `GuiGraphics` around the `PoseStack` 1.19.4's `Screen.render`
+    passes). It answers no old member.
   - A stand-in for a class the new release dropped, with nothing the route or a rule moves it to, stands in for the class.
     Where the route moves the class to one a mod's code cannot use as the old one (the JVM's verifier refuses the ported
     class: TranslatableComponent -> TranslatableContents in 1.19, which is no component), the port leaves the route out
-    for that mod and the stand-in stands in for the class there; mods the route suits keep it. Such a stand-in is the old
+    for that mod and the stand-in stands in for the class there; mods the route suits keep it. The same happens where
+    the route leaves a mod's uses of the class's members unanswered (1.20's `GuiGraphics`, routed back to the
+    `PoseStack` it holds): the stand-in is kept for that mod when it leaves fewer references unlinked. Such a stand-in is the old
     class itself (not a holder of static methods): constructors, instance methods, and a supertype a mod can extend.
   - A stand-in for a class mods extend is written as that class (`public abstract class GuiComponent` with its `public`
     constructor and instance members, not `final` with a private constructor): mods' subclasses of the old class extend

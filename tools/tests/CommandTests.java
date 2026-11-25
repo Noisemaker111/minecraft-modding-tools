@@ -278,12 +278,12 @@ public final class CommandTests {
             Json.object(json).get("unicode").equals("mod 🧱"),
             "structured results preserve Unicode and quoted paths"
         );
-        try {
-            Json.parse("{\"ok\":true,\"ok\":false}");
-            throw new AssertionError("duplicate accepted");
-        } catch (IllegalArgumentException expected) {
-            count++;
-        }
+        // A key given twice keeps its last value, as Gson and Fabric Loader read a mod's files (Physics Mod's
+        // fabric.mod.json names "environment" twice, and the loader runs it).
+        check(
+            Boolean.FALSE.equals(Json.object(Json.parse("{\"ok\":true,\"ok\":false}")).get("ok")),
+            "a key given twice keeps its last value"
+        );
         fastLaneChecks();
         compileResultChecks(scratch);
         pluginCheckChecks(home);

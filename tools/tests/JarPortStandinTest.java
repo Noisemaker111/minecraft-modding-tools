@@ -141,17 +141,20 @@ final class JarPortStandinTest {
         nested(port);
         became(scratch);
 
-        // A jar whose fabric.mod.json gives a key twice (Physics Mod's "environment"), which Json refuses: the types cannot be
-        // listed, so the port says so instead of failing the jar.
+        // A jar whose fabric.mod.json gives a key twice (Physics Mod's "environment"), which Fabric Loader reads with the last
+        // value winning: the types are carried and listed, the key given once with that value.
         String saved = port.loader;
         port.loader = "fabric";
         List<Map<String, Object>> twiceRuns = new ArrayList<>();
         Map<String, byte[]> twiceFiles = new HashMap<>(Map.of("n9/Mod.class", mod(),
-            "fabric.mod.json", "{\"schemaVersion\": 1, \"id\": \"n9\", \"version\": \"1\", \"environment\": \"*\", \"environment\": \"*\"}".getBytes(StandardCharsets.UTF_8)));
-        port.port(JarPortTest.jar(twiceFiles), "twice.jar", twiceRuns, null);
+            "fabric.mod.json", "{\"schemaVersion\": 1, \"id\": \"n9\", \"version\": \"1\", \"environment\": \"server\", \"environment\": \"*\"}".getBytes(StandardCharsets.UTF_8)));
+        Map<String, byte[]> twicePorted = JarPortTest.entries(port.port(JarPortTest.jar(twiceFiles), "twice.jar", twiceRuns, null));
         port.loader = saved;
         List<String> twice = twiceRuns.stream().flatMap(r -> Json.array(r.get("unlinked")).stream()).map(String::valueOf).toList();
-        JarPortTest.expect(twice.stream().anyMatch(u -> u.startsWith("stand-in types not carried")), "a jar whose metadata cannot be read is ported, its types reported: " + twice);
+        Map<String, Object> twiceMeta = Json.object(Json.parse(new String(twicePorted.get("fabric.mod.json"), StandardCharsets.UTF_8)));
+        JarPortTest.expect(twice.stream().noneMatch(u -> u.startsWith("stand-in types not carried")) && "*".equals(twiceMeta.get("environment"))
+                && String.valueOf(twiceMeta.get("jars")).contains("mmt-standin-types"),
+            "a jar whose metadata gives a key twice carries its types, read as Fabric Loader reads it: " + twice + " " + twiceMeta);
 
         List<Map<String, Object>> plainRuns = new ArrayList<>();
         Map<String, byte[]> plain = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("n9/Plain.class", plain())), "plain.jar", plainRuns));

@@ -163,14 +163,23 @@ final class ModMetadata {
         try (ZipInputStream z = new ZipInputStream(new ByteArrayInputStream(jar))) {
             for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
                 if (e.getName().equals("fabric.mod.json")) {
-                    Object id = Json.object(Json.parse(new String(z.readAllBytes(), StandardCharsets.UTF_8))).get("id");
-                    return id instanceof String s && platformIds.contains(s) ? s : null;
+                    return platformId(z.readAllBytes());
                 }
             }
         } catch (IOException | RuntimeException unreadable) {
             return null;
         }
         return null;
+    }
+
+    /** The mod id a fabric.mod.json gives when the platform provides it, else null. */
+    String platformId(byte[] fmj) {
+        try {
+            Object id = Json.object(Json.parse(new String(fmj, StandardCharsets.UTF_8))).get("id");
+            return id instanceof String s && platformIds.contains(s) ? s : null;
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
     }
 
     // ---- Metadata.
@@ -347,7 +356,7 @@ final class ModMetadata {
      * fabric.mod.json asks for the new release: its "minecraft" dependency becomes the release ported to, and it names the
      * access widener the port wrote when the mod had none. Anything unreadable is left as it is.
      */
-    byte[] fabricMetadata(byte[] data, String widener, Set<String> platformNested) {
+    byte[] fabricMetadata(byte[] data, String widener, Map<String, String> platformNested) {
         Map<String, Object> meta;
         try {
             meta = Json.object(Json.parse(new String(data, StandardCharsets.UTF_8)));
@@ -363,7 +372,7 @@ final class ModMetadata {
             // A version of the platform (or one of its modules) the mod asks for is numbered as the old release's platform
             // was (Konkrete for 1.20.2 asks Fabric API 0.91.6, while 1.20.3's is 0.91.1): the new release's platform is its own.
             for (String id : List.copyOf(asks.keySet())) {
-                if (platformNested.contains(id) || platformIds.contains(id)) {
+                if (platformNested.containsValue(id) || platformIds.contains(id)) {
                     asks.put(id, "*");
                 }
             }
@@ -372,6 +381,17 @@ final class ModMetadata {
                     asks.put(alias.getValue(), "*");
                 }
             }
+        }
+        // The platform's modules the jar nested are left out of it: no longer listed, and asked of the platform instead.
+        if (!platformNested.isEmpty()) {
+            if (meta.get("jars") instanceof List<?> jars) {
+                meta.put("jars", new ArrayList<>(jars.stream().filter(j -> !(j instanceof Map<?, ?> m && platformNested.containsKey(String.valueOf(m.get("file"))))).toList()));
+            }
+            Map<String, Object> asks = meta.get("depends") instanceof Map<?, ?> d ? Json.object(d) : new LinkedHashMap<>();
+            for (String id : new TreeSet<>(platformNested.values())) {
+                asks.putIfAbsent(id, "*");
+            }
+            meta.put("depends", asks);
         }
         if (widener != null && !meta.containsKey("accessWidener")) {
             meta.put("accessWidener", widener);

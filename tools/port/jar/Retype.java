@@ -72,6 +72,26 @@ final class Retype {
                 continue;
             }
             String wanted = port.desc(was[i].getDescriptor());
+            if (wanted.startsWith("L" + StandinClasses.STANDIN)) {
+                // The old type is a stand-in's (a class the new release does not have yet, on a port back): what its from(T)
+                // makes of the one new parameter of type T (1.20's GuiGraphics from the PoseStack 1.19.4 passes).
+                String old = wanted.substring(1 + StandinClasses.STANDIN.length(), wanted.length() - 1);
+                int at = -1, fits = 0;
+                String via = null;
+                for (int j = 0; j < now.length; j++) {
+                    String step = port.standIn.from(old, now[j].getDescriptor());
+                    if (step != null) {
+                        at = j;
+                        via = step;
+                        fits++;
+                    }
+                }
+                if (fits == 1) {
+                    out[i] = new String[] { String.valueOf(at), via };
+                    any = true;
+                    continue;
+                }
+            }
             int only = -1, count = 0;
             String steps = null;
             for (int j = 0; j < now.length; j++) {
