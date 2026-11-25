@@ -321,6 +321,30 @@ with tempfile.TemporaryDirectory() as tmp:
         portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["strict--strict.jar"] and not ready and list(to_port) == ["libipn-1.jar"],
           f"a library outside the mod's range for the new version is ported from the old one: {ready} {to_port}")
+    # The same for Fabric, whose depends are predicates (">=3.6.6"), compared without build metadata (3.1.1+1.19.4 is 3.1.1):
+    # Zoomify for 1.20.1 asks YACL >=3.6.6, and YACL's 1.19.4 release is 3.1.1, so the loader would refuse to start.
+    check(portboard.dependencies.fabric_in("7.2.1", ">=7.2") and not portboard.dependencies.fabric_in("3.1.1+1.19.4", ">=3.6.6")
+          and portboard.dependencies.fabric_in("1.5", "^1.2") and not portboard.dependencies.fabric_in("2.0", "^1.2")
+          and not portboard.dependencies.fabric_in("1.3.0", "~1.2") and portboard.dependencies.fabric_in("1.2.4", "1.2.x")
+          and not portboard.dependencies.fabric_in("1.2.1", "1.2") and portboard.dependencies.fabric_in("0.5", [">=1", "<0.6"])
+          and not portboard.dependencies.fabric_in("5.0", ">=4 <5") and not portboard.dependencies.fabric_in("1.0.0-beta.2", ">=1.0.0"),
+          "versions are read against Fabric's depends predicates as Fabric Loader reads them")
+    zoom = Path(tmp) / "zoom.jar"
+    zoom.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "zoom", "version": "2.15", "depends": {"minecraft": "*", "yacl": ">=3.6.6"}})}))
+    (folder / "zoom--zoom.jar").write_bytes(zoom.read_bytes())
+    yacl_new, yacl_old = Path(tmp) / "yacl-new.jar", Path(tmp) / "yacl-old.jar"
+    yacl_new.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.1.1+1.19.4"})}))
+    yacl_old.write_bytes(jar({"fabric.mod.json": json.dumps({"schemaVersion": 1, "id": "yacl", "version": "3.6.6+1.20.1"})}))
+    pins.append({"slug": "zoom", "file": "zoom.jar", "project": "P-zoom", "version": "v-zoom"})
+    listed["v-zoom"] = ["P-yacl"]
+    yacls = {("P-yacl", "2.0"): (yacl_new, "v-yacl"), ("P-yacl", "1.0"): (yacl_old, "v-yacl-old")}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: yacls.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["zoom--zoom.jar"], folder, pins, set())
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["zoom--zoom.jar"] and not ready and list(to_port) == ["yacl-old.jar"],
+          f"a Fabric library older than the mod's depends for the new version is ported from the old one: {ready} {to_port} {left}")
     # Two mods needing the same library: the release for the new version has to fit both ranges, not the last one read.
     loose = Path(tmp) / "loose.jar"
     loose.write_bytes(jar({"META-INF/neoforge.mods.toml": toml("loose") + '[[dependencies.loose]]\nmodId="libipn"\ntype="required"\nversionRange="[1.0,)"\n'}))

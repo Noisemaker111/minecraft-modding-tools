@@ -106,8 +106,8 @@ final class JarPortFabricTest {
             "a mixin's target and injection point are written out in intermediary: " + mixin);
         JarPortTest.expect("Lnet/minecraft/class_1297;hashCode()I".equals(mixin.get("onHash(I)I")),
             "a library method named through a game class keeps its name, with the class in intermediary: " + mixin.get("onHash(I)I"));
-        JarPortTest.expect("<init> NEW net/minecraft/class_1297".equals(mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V")),
-            "an @At(\"NEW\") class target is written in intermediary: " + mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V"));
+        JarPortTest.expect("<init> NEW net/minecraft/class_1297 class=Lnet/minecraft/class_1297;".equals(mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V")),
+            "an @At(\"NEW\") class, as its target or its args, is written in intermediary: " + mixin.get("onNew(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V"));
         Map<String, byte[]> inner = JarPortTest.entries(ported.get("META-INF/jars/inner.jar"));
         JarPortTest.expect(new String(inner.get("fabric.mod.json"), StandardCharsets.UTF_8).contains("\"minecraft\":\"2.0\"")
             && calls(inner.get("m5/Timer.class")).stream().anyMatch(c -> c.contains("mmt$fix")) && results.stream().anyMatch(r -> String.valueOf(r.get("jar")).endsWith("inner.jar")),
@@ -443,6 +443,9 @@ final class JarPortFabricTest {
         AnnotationVisitor at = news.visitAnnotation(null, "Lorg/spongepowered/asm/mixin/injection/At;");
         at.visit("value", "NEW");
         at.visit("target", "g5/Entity");
+        AnnotationVisitor args = at.visitArray("args");
+        args.visit(null, "class=Lg5/Entity;");
+        args.visitEnd();
         at.visitEnd();
         news.visitEnd();
         inject.visitEnd();

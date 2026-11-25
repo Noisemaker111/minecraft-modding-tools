@@ -203,12 +203,13 @@ def library(project, loader, version):
 
 
 def ranges(jar, loader):
-    """The version ranges a NeoForge mod's metadata asks of each mod it requires ({mod id: "[21.1,21.2)"}); none for Fabric."""
+    """The versions a mod's metadata asks of each mod it requires: a NeoForge range ({mod id: "[21.1,21.2)"}), or Fabric's
+    depends ({mod id: ">=7.2"}, a list where any one will do)."""
     import zipfile
-    if loader == "fabric":
-        return {}
     with zipfile.ZipFile(jar) as z:
         meta = javalevels.metadata(z, loader) or {}
+    if loader == "fabric":
+        return {i: r for i, r in (meta.get("depends") or {}).items() if i not in ("minecraft", "java", "fabricloader") and r not in ("*", "")}
     return {d.get("modId"): d.get("versionRange") for blocks in meta.get("dependencies", {}).values() for d in (blocks if isinstance(blocks, list) else [])
             if d.get("versionRange") and str(d.get("type", "required" if d.get("mandatory", True) else "optional")).lower() == "required"}
 
@@ -216,32 +217,66 @@ def ranges(jar, loader):
 def versions(jar, loader):
     """{mod id: version} a jar declares, its manifest's Implementation-Version where the metadata leaves it to the build."""
     import zipfile
-    if loader == "fabric":
-        return {}
     with zipfile.ZipFile(jar) as z:
         meta = javalevels.metadata(z, loader) or {}
+        if loader == "fabric":
+            return {meta["id"]: str(meta.get("version", ""))} if meta.get("id") else {}
         manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace") if "META-INF/MANIFEST.MF" in z.namelist() else ""
     built = next((line.split(":", 1)[1].strip() for line in manifest.splitlines() if line.startswith("Implementation-Version:")), None)
     return {m.get("modId"): (built if str(m.get("version", "")).startswith("$") else m.get("version")) for m in meta.get("mods", [])}
 
 
-def in_range(version, spec):
-    """Whether a version is inside a Maven range as NeoForge reads one ("[21.1,21.2)", "[1.0,)", "1.2" for at least 1.2)."""
+def cmp(x, y):
+    """Orders two versions as Maven does: a qualifier (beta, rc) comes before any number, so 0.6.0-beta.5 is below 0.6.0."""
     def key(v):
         return [int(p) if p.isdigit() else p for p in re.split(r"[.\-+]", str(v)) if p]
 
-    def cmp(x, y):
-        # As Maven orders them: a qualifier (beta, rc) comes before any number, so 0.6.0-beta.5 is below 0.6.0.
-        a, b = key(x), key(y)
-        for p, q in zip(a, b):
-            if p != q:
-                return (p > q) - (p < q) if type(p) is type(q) else (isinstance(q, str)) - (isinstance(p, str))
-        rest = a[len(b):] or b[len(a):]
-        if not rest or all(r == 0 for r in rest):
-            return 0
-        longer = 1 if len(a) > len(b) else -1
-        return -longer if isinstance(rest[0], str) else longer
+    a, b = key(x), key(y)
+    for p, q in zip(a, b):
+        if p != q:
+            return (p > q) - (p < q) if type(p) is type(q) else (isinstance(q, str)) - (isinstance(p, str))
+    rest = a[len(b):] or b[len(a):]
+    if not rest or all(r == 0 for r in rest):
+        return 0
+    longer = 1 if len(a) > len(b) else -1
+    return -longer if isinstance(rest[0], str) else longer
 
+
+def fits(version, spec, loader):
+    """Whether a version is one a mod's metadata asks for, read as its loader reads it."""
+    return fabric_in(version, spec) if loader == "fabric" else in_range(version, spec)
+
+
+def fabric_in(version, spec):
+    """Whether a version meets a Fabric depends value as Fabric Loader reads it: a list is any of its entries, an entry
+    every space-separated predicate (">=7.2", "<8", "^3.1" same major, "~3.1" same minor, "1.2.x", "=1.2" or "1.2"
+    exactly, "*"). Build metadata after "+" is not compared (3.1.1+1.19.4 is 3.1.1)."""
+    if isinstance(spec, list):
+        return not spec or any(fabric_in(version, s) for s in spec)
+    v = str(version).split("+")[0]
+    if not v:
+        return True
+    for term in str(spec).split():
+        op = re.match(r"(>=|<=|>|<|=|\^|~)?(.*)", term)
+        sign, want = op.group(1) or "", op.group(2).split("+")[0]
+        if want in ("*", "x", "X", ""):
+            continue
+        if re.search(r"\.[xX*]$", want):
+            if v.split(".")[:want.count(".")] != want.split(".")[:-1]:
+                return False
+            continue
+        c = cmp(v, want)
+        parts = [int(p) for p in re.findall(r"\d+", want)[:2]] or [0]
+        ok = {">=": c >= 0, "<=": c <= 0, ">": c > 0, "<": c < 0, "": c == 0, "=": c == 0,
+              "^": c >= 0 and cmp(v, f"{parts[0] + 1}") < 0,
+              "~": c >= 0 and cmp(v, f"{parts[0]}.{(parts[1] if len(parts) > 1 else 0) + 1}") < 0}[sign]
+        if not ok:
+            return False
+    return True
+
+
+def in_range(version, spec):
+    """Whether a version is inside a Maven range as NeoForge reads one ("[21.1,21.2)", "[1.0,)", "1.2" for at least 1.2)."""
     if not version or not spec or spec.strip() == "*":
         return True
     for part in re.findall(r"[\[(][^\])]*[\])]|[^,\s]+", spec):
@@ -319,7 +354,7 @@ def choose(loader, frm, to, linked, folder, pins, platform):
         for w in waiting:
             for mid, r in ranges(w, loader).items():
                 asked_range.setdefault(mid, []).append(r)
-        if got and any(not in_range(v, r) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
+        if got and any(not fits(v, r, loader) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
             got = None
         if not got:
             got, where = library(project, loader, frm), to_port

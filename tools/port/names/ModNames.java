@@ -1192,6 +1192,15 @@ public final class ModNames {
                     @Override
                     public AnnotationVisitor visitArray(String name) {
                         AnnotationVisitor inner = super.visitArray(name);
+                        if (inner != null && "args".equals(name)) {
+                            // @At args naming a class ("class=a/b/C" for NEW, "classValue=..." for CONSTANT) are matched by the game's names too.
+                            return new AnnotationVisitor(Opcodes.ASM9, inner) {
+                                @Override
+                                public void visit(String n, Object value) {
+                                    super.visit(n, value instanceof String s ? arg(s) : value);
+                                }
+                            };
+                        }
                         if (inner == null || name == null || !MEMBER_KEYS.contains(name)) {
                             return strings(inner);
                         }
@@ -1219,6 +1228,18 @@ public final class ModNames {
                         return strings(super.visitAnnotation(name, desc));
                     }
                 };
+            }
+
+            String arg(String text) {
+                int eq = text.indexOf('=');
+                String key = eq < 0 ? "" : text.substring(0, eq).trim(), value = eq < 0 ? "" : text.substring(eq + 1).trim();
+                if (!key.equals("class") && !key.equals("classValue") || value.isEmpty()) {
+                    return text;
+                }
+                if (value.startsWith("L") && value.endsWith(";")) {
+                    return key + "=" + desc(value);
+                }
+                return key + "=" + (value.contains(".") ? cls(value.replace('.', '/')).replace('/', '.') : cls(value));
             }
 
             List<String> member(String key, String text) {
