@@ -33,8 +33,11 @@ it, in every update. One changed part of the game as a rule comes second, for wh
 - The PR's Port check is the proof: marked ready, it ports what your change can move (the ports a `Port check:
   LOADER:FROM:TO [mods=SLUG,...] [type=TEXT]` line in the description names, the update whose stand-ins changed, or a
   sample when the porter itself changed), fails if a mod that links on main stops, and starts the mods that newly link
-  (`python bench/exposure.py load`). By hand, `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2 [-f mods=SLUG,...]`
-  runs the same proof for a whole update: the mods `jars` says link, with the libraries they
+  (`python bench/exposure.py load`). While you work, run that proof yourself for the mods your change freed:
+  `python bench/exposure.py load --loader L --from A --to B --mods SLUG,...` takes about a minute on this PC (GitHub's
+  runners took 8 to 14 minutes for the same mods on 2026-11-25, and two runs hung for 36 and 48), and under its verdict
+  table it prints why each mod failed and the folder of that start's game logs. `tools/cloud-run load -f
+  updates=neoforge:1.21.1:1.21.2` runs the same proof for a whole update: the mods `jars` says link, with the libraries they
   require, are ported and started on a real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side
   client`), each mod's two verdicts side by side, in `.runs/cloud/load-RUNID/`, with what moved against the receipt main
   keeps for the update in `compare.md`. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads

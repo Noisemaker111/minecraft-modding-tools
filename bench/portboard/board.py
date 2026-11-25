@@ -131,16 +131,58 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
     for work in works.values():
         work.mkdir(parents=True, exist_ok=True)
     empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
-    reports = timed("port", porter.jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
     for work in works.values():
-        shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
+        shutil.rmtree(work / "mods", ignore_errors=True)  # a run before this one may have kept its jars (--mods)
+    reports = timed("port", porter.jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
+    if only and mods:
+        # A run of named mods is someone looking at those mods: their ported jars are kept and every file the port read
+        # is printed (files_lines). A mod whose port was read from the cache has no jar yet, so it is ported once more.
+        unwritten = [m for m in mods if not (works[tos[0]] / "mods" / m.name).is_file()]
+        if unwritten:
+            timed("port", porter.jar_ports, loader, frm, [(tos[0], works[tos[0]] / "mods", works[tos[0]] / "report-kept.json")], unwritten)
+    else:
+        for work in works.values():
+            shutil.rmtree(work / "mods", ignore_errors=True)  # only the report is read; load ports the mods it starts itself
     summaries = {}
     for to in tos:
         # What the targets shared, and each one's own questions to the game after it.
         own = dict(seconds)
         target = out if out is None or (len(tos) == 1 and not Path(out).is_dir()) else Path(out) / f"{loader}-{frm}-{to}.json"
         summaries[to] = summarize(loader, frm, to, mods, unread, reports[to], written[to], works[to], partial, save, target, quiet, timer(own), own)
+    if only and mods and not quiet:
+        steps = porter.stops(loader, frm, tos[0])
+        shipped = {p.name: p for p in pinned}
+        print("\n".join(files_lines([(m.name.split("--", 1)[0], shipped.get(m.name), m, works[tos[0]] / "mods" / m.name) for m in mods],
+                                    {v: game_files(v) for v in steps}, porter.fabric_apis(steps) if loader == "fabric" else {},
+                                    porter.routes(loader, frm, tos[0]),
+                                    [settings.ROOT / "knowledge" / "standins" / f"{a}-{b}{x}" for a, b in zip(steps, steps[1:]) for x in ("", f".{loader}")])))
     return summaries
+
+
+def game_files(version):
+    """A release's files on this machine: its jar in Mojang's names where mmt has made one, and the jar and name table
+    the porter reads."""
+    return [settings.MAPPINGS.parent / "game" / version / f"minecraft-{version}-named.jar", settings.MAPPINGS / f"client-{version}.jar",
+            settings.MAPPINGS / f"client-{version}.txt"]
+
+
+def files_lines(mods, games, apis, maps, standins):
+    """What a run of named mods prints last: where each file of the port is, so it is opened (javap, a decompiler, a
+    diff) instead of searched for; agents searched ~/.mmt for these 17 times in one session, up to two minutes a search.
+    mods: (slug, the jar as shipped, the jar in Mojang's names, the ported jar); only files that are there are named."""
+    def there(paths):
+        return [str(p) for p in paths if p and Path(p).exists()]
+    lines = ["", "Files of this port:"]
+    for slug, shipped, named, ported in mods:
+        lines.append(f"  {slug}")
+        for label, path in (("as shipped", shipped), ("in Mojang's names", named if named != shipped else None), ("ported (Mojang's names)", ported)):
+            lines += [f"    {label}: {p}" for p in there([path])]
+    for version, paths in games.items():
+        lines += [f"  game {version}: {p}" for p in there(paths)]
+    lines += [f"  Fabric API for {version}: {p}" for version, path in apis.items() for p in there([path])]
+    lines += [f"  route map: {p}" for p in there(maps)]
+    lines += [f"  stand-ins: {p}" for p in there(standins)]
+    return lines
 
 
 def timer(seconds):

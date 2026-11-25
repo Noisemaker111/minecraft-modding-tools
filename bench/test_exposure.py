@@ -996,6 +996,43 @@ with tempfile.TemporaryDirectory() as tmp:
           and (Path(tmp) / "load-client" / "mods" / "lib.jar").is_file(),
           f"a library the Java warning lists stays when the start fails on another mod: {client['verdicts']}")
 
+    # A mod that fails is printed with why and with where that start's game logs are: an agent read "failed" in the table
+    # and then looked for the crash on disk (17 searches, 7 minutes, in one session of 2026-11-25).
+    portboard.gameload.FAILED_LOGS.clear()
+
+    def crashing(pack):
+        opened = not (pack / "mods" / "bad.jar").is_file()
+        suspects = [] if opened else [{"jar": "bad.jar", "why": ["its mixin BadMixin fails to apply"]}]
+        return {"receipt": str(Path(tmp) / "starts" / ("ok" if opened else "crash") / "result.json"),
+                "result": {"client": {"opened": opened, "failure": "" if opened else "crashed at the title screen"},
+                           "findings": [{"kind": "client-start", "severity": "problem", "suspects": suspects}]}}
+
+    client = portboard.gameload.client_starts("fabric", "2.0", server, ["mod.jar", "bad.jar"], ["lib.jar", "api.jar"], {"api.jar"}, run=crashing)
+    said = portboard.gameload.why_lines({"mod.jar": "loaded", "bad.jar": "loaded"}, client["verdicts"], portboard.gameload.FAILED_LOGS)
+    check(len(said) == 4 and said[1] == "  bad.jar" and "client: its mixin BadMixin fails to apply | crashed at the title screen" in said[2]
+          and said[3].strip() == "logs: " + str(Path(tmp) / "starts" / "crash"),
+          f"a mod that fails in the client is printed with its reason and the failed start's log folder: {said}")
+    both = portboard.gameload.why_lines({"a.jar": "failed: no world opened", "b.jar": "client-only: its metadata", "c.jar": "clash: loads alone"},
+                                        {"a.jar": "loaded", "b.jar": "loaded"}, {("server", "a.jar"): "X"})
+    check(both[1:] == ["  a.jar", "    server: no world opened", "      logs: X", "  c.jar", "    server: loads alone"],
+          f"only the sides that failed are explained, a client-only mod is not a failure: {both}")
+    check(portboard.gameload.why_lines({"mod.jar": "loaded"}, {"mod.jar": "loaded"}, {}) == [], "a run where every mod loads prints no reasons")
+
+# A run of named mods ends with where each file of the port is, and names only what is there: a path that is not on this
+# machine would be opened and found missing.
+with tempfile.TemporaryDirectory() as tmp:
+    here = Path(tmp)
+    for name in ("shipped.jar", "named.jar", "ported.jar", "game-named.jar", "client.jar", "api.jar", "route.json"):
+        (here / name).write_bytes(b"x")
+    (here / "standins").mkdir()
+    said = portboard.board.files_lines([("clumps", here / "shipped.jar", here / "named.jar", here / "ported.jar"), ("sound", here / "s.jar", here / "s.jar", here / "none.jar")],
+                                       {"2.0": [here / "game-named.jar", here / "client.jar", here / "client.txt"], "1.0": [here / "gone.jar"]},
+                                       {"2.0": here / "api.jar", "1.0": None}, [here / "route.json"], [here / "standins", here / "standins.fabric"])
+    check(said[2:] == ["  clumps", f"    as shipped: {here / 'shipped.jar'}", f"    in Mojang's names: {here / 'named.jar'}", f"    ported (Mojang's names): {here / 'ported.jar'}",
+                       "  sound", f"  game 2.0: {here / 'game-named.jar'}", f"  game 2.0: {here / 'client.jar'}", f"  Fabric API for 2.0: {here / 'api.jar'}",
+                       f"  route map: {here / 'route.json'}", f"  stand-ins: {here / 'standins'}"],
+          f"a run of named mods names each file of the port that is there, and no other: {said}")
+
 # One Java check serves the link check and the game proof: a jar is failed when a class the JVM loads of it needs a newer
 # Java than the release runs on (version.json's javaVersion). For a jar the loader starts, that is its start classes (its
 # mixins, its entrypoints, NeoForge's @Mod classes) for the side; on Fabric 1.15 (Java 8) a Java 17 mixin crashed every
