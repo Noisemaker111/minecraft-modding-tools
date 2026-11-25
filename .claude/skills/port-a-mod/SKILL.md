@@ -32,9 +32,9 @@ it, in every update. One changed part of the game as a rule comes second, for wh
   read in Mojang's names through intermediary first (tools/port/names/ModNames.java).
 - The PR's Port check is the proof: marked ready, it ports what your change can move (the ports a `Port check:
   LOADER:FROM:TO [mods=SLUG,...] [type=TEXT]` line in the description names, the update whose stand-ins changed, or a
-  sample when the porter itself changed), fails if a mod that links on main stops, and starts the mods that newly link
-  (`python bench/exposure.py load`). By hand, `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2 [-f mods=SLUG,...]`
-  runs the same proof for a whole update: the mods `jars` says link, with the libraries they
+  sample when the porter itself changed) and fails if a mod that links on main stops. It starts no game, and a PR never
+  waits on one. By hand, `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2 [-f mods=SLUG,...]`
+  starts a whole update's mods (`python bench/exposure.py load`): the mods `jars` says link, with the libraries they
   require, are ported and started on a real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side
   client`), each mod's two verdicts side by side, in `.runs/cloud/load-RUNID/`, with what moved against the receipt main
   keeps for the update in `compare.md`. Server: 23 of 25 load (one client-only, one with no code fails on its data). Client: 23 of 24 load; Puzzle loads
