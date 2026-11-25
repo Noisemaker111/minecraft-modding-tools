@@ -361,8 +361,15 @@ def choose(loader, frm, to, linked, folder, pins, platform):
                 asked_range.setdefault(mid, []).append(r)
         if got and any(not fits(v, r, loader) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
             got = None
+        old = library(project, loader, frm)
+        # The new release's file may answer under other ids than the one the mods were built against (Balm 6 for 1.19.4
+        # is balm-fabric, Balm 7, which Waystones asks for as balm, is balm): it fits only when it answers every id of
+        # the old file's that a waiting mod asks.
+        asked = set().union(*(needs(w, loader) or set() for w in waiting))
+        if got and old and (provides(old[0], loader, frm) & asked) - provides(got[0], loader, to):
+            got = None
         if not got:
-            got, where = library(project, loader, frm), to_port
+            got, where = old, to_port
         if not got or provides(got[0], loader) & own - {"loader:*"}:
             return None
         return got, where

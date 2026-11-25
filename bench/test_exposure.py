@@ -296,6 +296,22 @@ with tempfile.TemporaryDirectory() as tmp:
         portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["rei--rei.jar"] and list(ready) == ["cloth.jar"],
           f"a mod that names no library in its metadata gets the ones its Modrinth version requires: {chosen} {ready}")
+    # A library's file for the new release can answer under another id than the one the mod asks (Balm 6 for 1.19.4 is
+    # balm-fabric, Balm 7, which Waystones asks for as balm, is balm): its old file is ported instead.
+    (folder / "stones--stones.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "stones", "depends": {"balm": ">=7.0.0"}})}))
+    balm_new, balm_old = Path(tmp) / "balm-new.jar", Path(tmp) / "balm-old.jar"
+    balm_new.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "balm-fabric", "version": "6.0.2"})}))
+    balm_old.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "balm", "version": "7.3.44"})}))
+    pins = [{"slug": "stones", "file": "stones.jar", "project": "P-stones", "version": "v-stones"}]
+    listed = {"v-stones": ["P-balm"]}
+    balm_files = {("P-balm", "2.0"): (balm_new, "v-bn"), ("P-balm", "1.0"): (balm_old, "v-bo")}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: balm_files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["stones--stones.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["stones--stones.jar"] and not ready and list(to_port) == ["balm-old.jar"],
+          f"a library whose new file drops the id a mod asks is ported from its old file: {chosen} {ready} {to_port} {left}")
     # A mod that nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod
     # and starts; a top mod that is the platform itself is left out with that reason, never silently.
     (folder / "presence--presence.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "presence"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
