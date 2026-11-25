@@ -676,7 +676,11 @@ public final class GameDiff {
         Cls read(String entry) {
             try {
                 ZipFile z = zip();
-                Cls c = libraryClass(z.getInputStream(z.getEntry(entry)).readAllBytes(), library);
+                Cls c;
+                // Closed at once: an entry's stream holds one of the archive's inflaters until it is closed.
+                try (InputStream in = z.getInputStream(z.getEntry(entry))) {
+                    c = libraryClass(in.readAllBytes(), library);
+                }
                 if (!entry.equals(c.name + ".class")) {
                     // The table lists a class by its entry, before it is read; a whole read names it from its own file.
                     throw new IllegalStateException(library.jar() + " holds the class " + c.name + " as " + entry);

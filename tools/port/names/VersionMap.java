@@ -747,8 +747,11 @@ public final class VersionMap {
         static Proguard read(Path file) throws IOException {
             Proguard known = READ.get(file);
             if (known == null) {
-                READ.putIfAbsent(file, parse(Files.readString(file, StandardCharsets.UTF_8)));
-                known = READ.get(file);
+                // Its own parse, or the one a thread beside it put first: a second lookup can find the release
+                // forgotten in between (forget, by a worker done with it) and hand back null.
+                Proguard parsed = parse(Files.readString(file, StandardCharsets.UTF_8));
+                Proguard first = READ.putIfAbsent(file, parsed);
+                known = first == null ? parsed : first;
             }
             return known;
         }
