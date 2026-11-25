@@ -880,6 +880,7 @@ public final class JarPort {
         boolean outermost = grants == null;
         if (outermost) {
             standIn.typesUsed = false;
+            olderJava.treeStandins.clear();
             Map<String, List<byte[]>> all = new HashMap<>();
             carried(entries, name, all);
             tree = new Carried(all);
@@ -1034,6 +1035,9 @@ public final class JarPort {
             }
         }
         JarEntries.redigest(entries, entries, portedNested);
+        if (outermost) {
+            olderJava.carryStandins(mod, entries);
+        }
         String typesPath = null;
         if (outermost && standIn.typesUsed) {
             try {

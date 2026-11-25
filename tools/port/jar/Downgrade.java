@@ -6,7 +6,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.*;
 import org.objectweb.asm.*;
 import org.objectweb.asm.commons.ClassRemapper;
-import org.objectweb.asm.commons.SimpleRemapper;
 
 /**
  * Downgrade - carry a mod's compiled classes to a release that runs an older Java than they were built for.
@@ -77,12 +76,13 @@ final class Downgrade {
             }
         }
         Set<String> used = new TreeSet<>();
+        Map<String, String> lacked = standins.classesLacked(declared, home);
         for (var e : classes.entrySet()) {
             Info info = infos.get(Info.name(e.getValue()));
             if (info == null || info.major <= major) {
                 continue;
             }
-            e.setValue(lowerClass(e.getValue(), info, widen, home, used, breaks, changed));
+            e.setValue(lowerClass(e.getValue(), info, widen, lacked, home, used, breaks, changed));
             changed.merge("classes lowered to Java " + target, 1, Integer::sum);
         }
         return standins.carry(used, home);
@@ -174,8 +174,8 @@ final class Downgrade {
         }
     }
 
-    byte[] lowerClass(byte[] bytes, Info info, Set<String> widen, String home, Set<String> used, Set<String> breaks, Map<String, Integer> changed) {
-        Map<String, String> types = new HashMap<>();
+    byte[] lowerClass(byte[] bytes, Info info, Set<String> widen, Map<String, String> lacked, String home, Set<String> used, Set<String> breaks, Map<String, Integer> changed) {
+        Map<String, String> types = new HashMap<>(lacked);
         if (target < 16) {
             types.put("java/lang/Record", "java/lang/Object");
         }
@@ -184,7 +184,26 @@ final class Downgrade {
         }
         ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         Lowering lowering = new Lowering(w, info, widen, home, used, breaks, changed);
-        new ClassReader(bytes).accept(new ClassRemapper(lowering, new SimpleRemapper(types)), 0);
+        Set<String> named = new TreeSet<>();
+        new ClassReader(bytes).accept(new ClassRemapper(lowering, new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
+            @Override
+            public String map(String name) {
+                String to = types.get(name);
+                if (to == null) {
+                    return name;
+                }
+                if (lacked.containsKey(name)) {
+                    named.add(name);
+                }
+                return to;
+            }
+        }), 0);
+        for (String n : named) {
+            used.add(Standins.PREFIX + n);
+        }
+        if (!named.isEmpty()) {
+            changed.merge("JDK classes Java " + target + " lacks named as their stand-ins", 1, Integer::sum);
+        }
         return w.toByteArray();
     }
 
@@ -333,6 +352,31 @@ final class Downgrade {
             });
         }
 
+        /** A member of a JDK class the release's Java lacks, named as its stand-in now: a break unless the stand-in answers it. */
+        void standinMember(String owner, String member) {
+            if (!owner.startsWith(home) || !standins.classes.containsKey(Standins.PREFIX + owner.substring(home.length()))) {
+                return;
+            }
+            if (!standins.answers(Standins.PREFIX + owner.substring(home.length()), inStandin(member), declared)) {
+                lacks(dotted(owner.substring(home.length())) + "." + inJdk(member));
+            }
+        }
+
+        /** A descriptor in the stand-ins' own names, as they were compiled. */
+        String inStandin(String desc) {
+            return desc.replace("L" + home, "L" + Standins.PREFIX);
+        }
+
+        /** A descriptor in the names of the stand-ins this jar carries. */
+        String inHome(String desc) {
+            return desc.replace("L" + Standins.PREFIX + "java/", "L" + home + "java/");
+        }
+
+        /** A descriptor in the JDK's names, as a break names it. */
+        String inJdk(String desc) {
+            return desc.replace("L" + home, "L");
+        }
+
         boolean stillPrivate(String member) {
             return info.privates.contains(member) && !widen.contains(info.name + "." + member);
         }
@@ -343,6 +387,42 @@ final class Downgrade {
                 super(Opcodes.ASM9, next);
             }
 
+            // The objects made (new) and not yet constructed, innermost first, as javac constructs them: class, and whether
+            // the next instruction duplicated it (javac's new X; dup), which a constructor stand-in needs.
+            final Deque<String[]> news = new ArrayDeque<>();
+            String[] fresh; // the new just visited, until the next instruction
+
+            void next(int op) {
+                if (fresh != null && op == Opcodes.DUP) {
+                    fresh[1] = "dup";
+                }
+                fresh = null;
+            }
+
+            @Override
+            public void visitInsn(int op) {
+                next(op);
+                super.visitInsn(op);
+            }
+
+            @Override
+            public void visitIntInsn(int op, int operand) {
+                next(op);
+                super.visitIntInsn(op, operand);
+            }
+
+            @Override
+            public void visitVarInsn(int op, int var) {
+                next(op);
+                super.visitVarInsn(op, var);
+            }
+
+            @Override
+            public void visitJumpInsn(int op, Label label) {
+                next(op);
+                super.visitJumpInsn(op, label);
+            }
+
             @Override
             public void visitMethodInsn(int op, String owner, String name, String desc, boolean itf) {
                 if (target < 11 && owner.equals(info.name) && (op == Opcodes.INVOKEVIRTUAL || op == Opcodes.INVOKEINTERFACE) && stillPrivate(name + desc)) {
@@ -350,12 +430,31 @@ final class Downgrade {
                     op = Opcodes.INVOKESPECIAL;
                     change("calls to own private methods made with invokespecial (Java 11 nestmates)");
                 }
+                next(op);
+                standinMember(owner, name + desc);
+                // A constructor call on an object this method made (new) and duplicated, not a constructor's super(...) or this(...).
+                boolean made = false;
+                if (op == Opcodes.INVOKESPECIAL && name.equals("<init>") && !news.isEmpty() && news.peek()[0].equals(owner)) {
+                    made = news.pop()[1] != null;
+                }
                 if (owner.startsWith("[") || !jdk(owner)) {
                     super.visitMethodInsn(op, owner, name, desc, itf);
                     return;
                 }
                 if (declared.cls(owner) != null && declared.method(owner, name, desc)) {
                     super.visitMethodInsn(op, owner, name, desc, itf);
+                    return;
+                }
+                String init = desc.substring(0, desc.indexOf(')') + 1) + "L" + owner + ";";
+                if (made && declared.cls(owner) != null && standins.methods.contains(Standins.PREFIX + owner + ".init" + inStandin(init))) {
+                    // The made object is left unconstructed and dropped: the stand-in makes the one the code goes on with.
+                    used.add(Standins.PREFIX + owner);
+                    super.visitMethodInsn(Opcodes.INVOKESTATIC, home + owner, "init", inHome(init), false);
+                    super.visitInsn(Opcodes.DUP_X2);
+                    super.visitInsn(Opcodes.POP);
+                    super.visitInsn(Opcodes.POP);
+                    super.visitInsn(Opcodes.POP);
+                    change("JDK constructors Java " + target + " lacks called through stand-ins");
                     return;
                 }
                 String narrower = declared.cls(owner) == null || op == Opcodes.INVOKESTATIC ? null : declared.wider(owner, name, desc);
@@ -366,10 +465,10 @@ final class Downgrade {
                     change("JDK calls whose return type narrowed later called as Java " + target + " declares them");
                     return;
                 }
-                String[] standin = standins.find(op, owner, name, desc);
+                String[] standin = standins.find(op, owner, name, inStandin(desc));
                 if (standin != null) {
                     used.add(standin[0]);
-                    super.visitMethodInsn(Opcodes.INVOKESTATIC, home + standin[0].substring(Standins.PREFIX.length()), standin[1], standin[2], false);
+                    super.visitMethodInsn(Opcodes.INVOKESTATIC, home + standin[0].substring(Standins.PREFIX.length()), standin[1], inHome(standin[2]), false);
                     change("JDK methods Java " + target + " lacks called through stand-ins");
                     return;
                 }
@@ -379,6 +478,8 @@ final class Downgrade {
 
             @Override
             public void visitFieldInsn(int op, String owner, String name, String desc) {
+                next(op);
+                standinMember(owner, name + ":" + desc);
                 if (jdk(owner) && (declared.cls(owner) == null || !declared.field(owner, name, desc))) {
                     lacks(declared.cls(owner) == null ? "class " + dotted(owner) : dotted(owner) + "." + name + ":" + desc);
                 }
@@ -387,6 +488,11 @@ final class Downgrade {
 
             @Override
             public void visitTypeInsn(int op, String type) {
+                next(op);
+                if (op == Opcodes.NEW) {
+                    fresh = new String[] { type, null };
+                    news.push(fresh);
+                }
                 needType(type.startsWith("[") ? Type.getType(type) : Type.getObjectType(type));
                 super.visitTypeInsn(op, type);
             }
@@ -407,6 +513,7 @@ final class Downgrade {
 
             @Override
             public void visitLdcInsn(Object value) {
+                next(Opcodes.LDC);
                 if (value instanceof Type t) {
                     needType(t);
                 } else if (value instanceof Handle h) {
@@ -419,15 +526,16 @@ final class Downgrade {
 
             /** A method handle constant: one to a private method of this class is made as Java 8's javac makes it. */
             Handle handle(Handle h) {
+                standinMember(h.getOwner(), h.getTag() <= Opcodes.H_PUTSTATIC ? h.getName() + ":" + h.getDesc() : h.getName() + h.getDesc());
                 if (jdk(h.getOwner()) && h.getTag() >= Opcodes.H_INVOKEVIRTUAL && !declared.method(h.getOwner(), h.getName(), h.getDesc())) {
                     // A method reference (String::isBlank) to a stand-in: LambdaMetafactory passes the receiver as its first argument.
                     int op = h.getTag() == Opcodes.H_INVOKESTATIC ? Opcodes.INVOKESTATIC : h.getTag() == Opcodes.H_INVOKEVIRTUAL ? Opcodes.INVOKEVIRTUAL
                         : h.getTag() == Opcodes.H_INVOKEINTERFACE ? Opcodes.INVOKEINTERFACE : -1;
-                    String[] standin = op < 0 || declared.cls(h.getOwner()) == null ? null : standins.find(op, h.getOwner(), h.getName(), h.getDesc());
+                    String[] standin = op < 0 || declared.cls(h.getOwner()) == null ? null : standins.find(op, h.getOwner(), h.getName(), inStandin(h.getDesc()));
                     if (standin != null) {
                         used.add(standin[0]);
                         change("JDK methods Java " + target + " lacks called through stand-ins");
-                        return new Handle(Opcodes.H_INVOKESTATIC, home + standin[0].substring(Standins.PREFIX.length()), standin[1], standin[2], false);
+                        return new Handle(Opcodes.H_INVOKESTATIC, home + standin[0].substring(Standins.PREFIX.length()), standin[1], inHome(standin[2]), false);
                     }
                     lacks(dotted(h.getOwner()) + "." + h.getName() + h.getDesc());
                 }
@@ -441,6 +549,7 @@ final class Downgrade {
 
             @Override
             public void visitInvokeDynamicInsn(String name, String desc, Handle bsm, Object... args) {
+                next(Opcodes.INVOKEDYNAMIC);
                 String factory = bsm.getOwner() + "." + bsm.getName();
                 if (target < 9 && factory.startsWith("java/lang/invoke/StringConcatFactory.makeConcat")) {
                     String recipe = factory.endsWith("WithConstants") ? (String) args[0] : "\u0001".repeat(Type.getArgumentTypes(desc).length);
@@ -835,6 +944,10 @@ final class Downgrade {
             } catch (IOException unreadable) {
                 throw new UncheckedIOException(unreadable);
             }
+            return parse(name, bytes);
+        }
+
+        static Cls parse(String name, byte[] bytes) {
             Map<String, Integer> methods = new HashMap<>();
             Set<String> fields = new HashSet<>();
             ClassReader r = new ClassReader(bytes);
@@ -933,10 +1046,13 @@ final class Downgrade {
     }
 
     /**
-     * Stand-ins for JDK methods an older Java lacks (knowledge/standins/java/), compiled for Java 8 so every release can
-     * run them. Each is a public static method of mmt.standin + the JDK class's name:
+     * Stand-ins for the JDK an older Java lacks (knowledge/standins/jdk/), compiled for Java 8 so every release can run
+     * them, each in mmt.standin + the JDK class's name. For a class the older Java has, public static methods:
      *   R name(Owner self, A...)   the instance method Owner.name(A...)R   (also found for a call on a subtype of Owner)
      *   R name(A...)               the static method Owner.name(A...)R
+     *   Owner init(A...)           the constructor new Owner(A...)
+     * For a class the older Java lacks (java.util.HexFormat on Java 8), the class itself, of the same kind (class,
+     * interface, enum) with the members it answers: the mod names it in place of the JDK's.
      */
     static final class Standins {
 
@@ -946,6 +1062,57 @@ final class Downgrade {
 
         final Map<String, byte[]> classes; // mmt/standin/java/... -> bytes
         final Set<String> methods = new HashSet<>(); // class.name+desc of each public static method
+        final Map<String, Api.Cls> parsed = new ConcurrentHashMap<>();
+
+        Api.Cls cls(String name) {
+            byte[] bytes = classes.get(name);
+            return bytes == null ? null : parsed.computeIfAbsent(name, n -> Api.parse(n, bytes));
+        }
+
+        /** The JDK classes the release's Java lacks that a stand-in is written as: JDK name -> where the jar carries it. */
+        Map<String, String> classesLacked(Api declared, String home) {
+            Map<String, String> out = new HashMap<>();
+            for (var e : classes.entrySet()) {
+                String jdk = e.getKey().substring(PREFIX.length());
+                if ((new ClassReader(e.getValue()).getAccess() & Opcodes.ACC_PUBLIC) != 0 && declared.cls(jdk) == null) {
+                    out.put(jdk, home + jdk);
+                }
+            }
+            return out;
+        }
+
+        /**
+         * Whether a stand-in class answers a member (name+desc, or name:desc for a field, in stand-in names): declared on
+         * it or on a type above it, a stand-in's or the release's JDK's.
+         */
+        boolean answers(String cls, String member, Api declared) {
+            Deque<String> todo = new ArrayDeque<>(List.of(cls));
+            Set<String> seen = new HashSet<>();
+            boolean field = !member.contains("(");
+            while (!todo.isEmpty()) {
+                String n = todo.poll();
+                if (!seen.add(n)) {
+                    continue;
+                }
+                Api.Cls c = cls(n);
+                if (c == null) {
+                    int colon = member.indexOf(':'), paren = member.indexOf('(');
+                    if (field ? declared.field(n, member.substring(0, colon), member.substring(colon + 1))
+                        : declared.method(n, member.substring(0, paren), member.substring(paren))) {
+                        return true;
+                    }
+                    continue;
+                }
+                if (field ? c.fields().contains(member) : c.methods().containsKey(member)) {
+                    return true;
+                }
+                if (c.sup() != null) {
+                    todo.add(c.sup());
+                }
+                todo.addAll(List.of(c.ifaces()));
+            }
+            return false;
+        }
 
         Standins(Map<String, byte[]> classes) {
             this.classes = classes;
@@ -1045,7 +1212,8 @@ final class Downgrade {
                 if (!all.add(n) || !classes.containsKey(n)) {
                     continue;
                 }
-                new ClassReader(classes.get(n)).accept(new ClassRemapper(new ClassVisitor(Opcodes.ASM9) {}, new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
+                // Written out so the remapper sees method bodies too: a stand-in may name another only in its code (throw new X).
+                new ClassReader(classes.get(n)).accept(new ClassRemapper(new ClassWriter(0), new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
                     @Override
                     public String map(String name) {
                         if (classes.containsKey(name)) {
