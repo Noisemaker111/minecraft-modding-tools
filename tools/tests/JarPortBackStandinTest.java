@@ -141,9 +141,17 @@ final class JarPortBackStandinTest {
         mod.forEach((name, bytes) -> files.put(name + ".class", bytes));
         files.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n6\"\n".getBytes(StandardCharsets.UTF_8));
         List<Map<String, Object>> runs = new ArrayList<>();
-        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "back-standin.jar", runs));
+        byte[] portedJar = port.port(JarPortTest.jar(files), "back-standin.jar", runs);
+        Map<String, byte[]> ported = JarPortTest.entries(portedJar);
         List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(unlinked.isEmpty(), "the widget links against 1.0 with the stand-in: " + unlinked);
+        // A NeoForge port is written by the porter alone (no hand-back to other names): it lists its folders, so a mod
+        // finding its classes by package (ClassLoader.getResources) finds them.
+        Path written = scratch.resolve("back-standin-ported.jar");
+        Files.write(written, portedJar);
+        try (java.net.URLClassLoader folders = new java.net.URLClassLoader(new java.net.URL[] { written.toUri().toURL() }, null)) {
+            JarPortTest.expect(folders.getResource("n6/") != null, "the ported jar lists the mod's package as a folder");
+        }
 
         Map<String, byte[]> classes = new HashMap<>(older);
         for (var e : ported.entrySet()) {
