@@ -6,7 +6,6 @@
   "bench/convert_sweep.py": 6,
   "bench/loader_api.py": 8,
   "bench/pack_sweep.py": 5,
-  "bench/portboard/gameload.py": 12,
   "tools/ApiDiff.java": 38,
   "tools/GamePrep.java": 63,
   "tools/LabAgent.java": 9,

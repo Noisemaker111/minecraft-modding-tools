@@ -13,6 +13,37 @@ from portboard import board, dependencies, gamereleases, javalevels, porter, set
 
 # Every pack-check a game proof starts, in order: its side, its seconds and mmt's own stages (load reports them).
 STARTS = []
+# (side, jar) -> the folder holding the logs of the start that failed it, for this run's own printout: a path on this
+# machine, so it is not part of a receipt.
+FAILED_LOGS = {}
+# jar -> the result of the smallest start that failed with it, when halving named it (first_failing): that start's logs
+# show the jar failing with the fewest others, where the whole pack's start named no mod.
+ISOLATED = {}
+
+
+def blame(side, name, result):
+    """Remembers where the failed start's logs are for a jar it failed: the start that isolated it, when halving did."""
+    result = ISOLATED.pop(name, result)
+    if result.get("receipt"):
+        FAILED_LOGS[(side, name)] = str(Path(result["receipt"]).parent)
+
+
+def why_lines(verdicts, client_verdicts, logs):
+    """What to print under the verdict table: each mod that did not load, with each side's reason in full and the folder of
+    that start's game logs, so the cause is read from the run's own output instead of looked for on disk."""
+    lines = []
+    for name in sorted(set(verdicts) | set(client_verdicts)):
+        sides = [(side, said[name]) for side, said in (("server", verdicts), ("client", client_verdicts))
+                 if name in said and said[name].split(":")[0] in ("failed", "clash")]
+        if not sides:
+            continue
+        lines.append(f"  {name}")
+        for side, verdict in sides:
+            where = logs.get((side, name))
+            lines.append(f"    {side}: {verdict.split(': ', 1)[-1]}")
+            if where:
+                lines.append(f"      logs: {where}")
+    return ["why (each side's reason, and the folder of that start's game logs):"] + lines if lines else []
 
 
 def pack_check(pack, to, loader, side="server"):
@@ -141,6 +172,7 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(),
             verdicts[name] = "failed: " + (java[name] + "; " if name in java and name not in misfits else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
             if name not in misfits:
+                blame("client", name, result)
                 print(f"  {name}: failed in the client")
         found = {}
     # As on the server, a dropped mod gets one more start with the mods that loaded: a log can name a bystander. One its
@@ -222,8 +254,11 @@ def first_failing(pack, present, loader, start, failure, opened=client_opened):
             elif n in keep and (held / n).is_file():
                 (held / n).rename(mods / n)
         result, _ = start()
+        if not opened(result):
+            failed[count] = result
         return not opened(result)
 
+    failed = {}
     low, high = 0, len(present)
     try:
         if fails(0):
@@ -239,6 +274,8 @@ def first_failing(pack, present, loader, start, failure, opened=client_opened):
             if (held / n).is_file():
                 (held / n).rename(mods / n)
     culprit = present[high - 1]
+    if high in failed:
+        ISOLATED[culprit] = failed[high]
     print(f"  {culprit}: the game starts with the jars before it and fails once it is added")
     return {culprit: f"the game starts without it and fails with it (named by halving; the start alone said: {failure[:300]})"}
 
@@ -406,6 +443,8 @@ def load(loader, frm, to, save, mods=None, out=None):
     places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only. The
     receipt's time says where the proof's time went: the port before any start, and each side's starts with mmt's stages."""
     STARTS.clear()
+    FAILED_LOGS.clear()
+    ISOLATED.clear()
     began = time.monotonic()
     work = settings.ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}"
     report = proof_report(work, mods)
@@ -514,6 +553,7 @@ def load(loader, frm, to, save, mods=None, out=None):
                 for name in present:
                     if name in skipped:
                         verdicts[name] = "failed: " + skipped[name]
+                        blame("server", name, result)
                         (pack / "mods" / name).rename(pack / "dropped" / name)
                         print(f"  {name}: failed, the loader did not load it")
                     verdicts.setdefault(name, "loaded")
@@ -539,6 +579,7 @@ def load(loader, frm, to, save, mods=None, out=None):
             verdicts[name] = "failed: " + (java[name] + "; " if name in java and name not in misfits else "") + why
             (pack / "mods" / name).rename(pack / "dropped" / name)
             if name not in misfits:
+                blame("server", name, result)
                 print(f"  {name}: failed")
         culprits = {}
     # A failed start can name a bystander along with the mod at fault, so each dropped mod that links gets one more start
@@ -591,6 +632,8 @@ def load(loader, frm, to, save, mods=None, out=None):
     print(f"{'mod':<60} {'server':<12} client")
     for name in sorted(verdicts):
         print(f"{name[:60]:<60} {verdicts[name].split(':')[0]:<12} {client['verdicts'].get(name, 'not started').split(':')[0]}")
+    for line in why_lines(verdicts, client["verdicts"], FAILED_LOGS):
+        print(line)
     # Each line counts what its side did: a client-only mod is not loaded by a server, so it is counted apart there, and
     # one that fails in the client is named in the client's line whatever the server said.
     client_failed = sorted(n for n, v in client["verdicts"].items() if v.startswith("failed"))
