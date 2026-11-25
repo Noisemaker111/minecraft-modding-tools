@@ -209,17 +209,9 @@ final class Overrides {
         for (int i = 0; i < now.length; i++) {
             params[k + i] = now[i];
         }
-        for (int i = 0; i < was.length; i++) {
-            if (paired[i] >= 0) {
-                from[k + i] = k + paired[i];
-            } else if (via != null && via[i] != null) {
-                from[k + i] = k + Integer.parseInt(via[i][0]);
-                steps[k + i] = Arrays.copyOfRange(via[i], 1, via[i].length);
-            } else if (unread != null && unread[k + i]) {
-                from[k + i] = -1; // the body never reads it ((mc, parent) -> new Screen(parent)): a default goes there
-            } else {
-                return null;
-            }
+        // An old parameter the body never reads ((mc, parent) -> new Screen(parent)) gets a default.
+        if (!sources(paired, via, k, from, steps, i -> unread != null && unread[k + i])) {
+            return null;
         }
         String newDesc = Type.getMethodDescriptor(Type.getType(port.desc(Type.getReturnType(m.desc).getDescriptor())), params);
         if (Arrays.stream(steps).allMatch(Objects::isNull)) {
@@ -256,15 +248,8 @@ final class Overrides {
         String[][] via = Retype.withoutThis(port.retype.conversions(iface, name, sam, moved, paired));
         int[] from = new int[was.length];
         String[][] steps = new String[was.length][];
-        for (int i = 0; i < was.length; i++) {
-            if (paired[i] >= 0) {
-                from[i] = paired[i];
-            } else if (via != null && via[i] != null) {
-                from[i] = Integer.parseInt(via[i][0]);
-                steps[i] = Arrays.copyOfRange(via[i], 1, via[i].length);
-            } else {
-                return null;
-            }
+        if (!sources(paired, via, 0, from, steps, i -> false)) {
+            return null;
         }
         Type[] params = new Type[caps.length + now.length];
         for (int i = 0; i < caps.length; i++) {
@@ -419,20 +404,7 @@ final class Overrides {
 
     /** At least half of two bodies' instructions (as GameCode.bodies writes them) in common, counted as multisets. */
     static boolean alike(String x, String y) {
-        Map<String, Integer> left = new HashMap<>();
-        String[] a = GameCode.instructions(x), b = GameCode.instructions(y);
-        for (String t : a) {
-            left.merge(t, 1, Integer::sum);
-        }
-        int common = 0;
-        for (String t : b) {
-            Integer n = left.get(t);
-            if (n != null && n > 0) {
-                common++;
-                left.put(t, n - 1);
-            }
-        }
-        return common * 2 >= Math.max(a.length, b.length);
+        return GameCode.instructions(x).length + GameCode.instructions(y).length == 0 || MixinMovedCode.likeness(x, y) * 2 >= 1;
     }
 
     /**
@@ -531,17 +503,9 @@ final class Overrides {
             + " unread=" + Arrays.toString(unread));
         from = new int[was.length];
         String[][] steps = new String[was.length][];
-        for (int i = 0; i < was.length; i++) {
-            if (paired[i] >= 0) {
-                from[i] = paired[i];
-            } else if (via != null && via[i] != null) {
-                from[i] = Integer.parseInt(via[i][0]);
-                steps[i] = Arrays.copyOfRange(via[i], 1, via[i].length);
-            } else if (unread != null && unread[i] || onlyPassed(mod, rc.name, m, Conversions.slots(was)[i])) {
-                from[i] = -1;
-            } else {
-                return false;
-            }
+        boolean[] unused = unread;
+        if (!sources(paired, via, 0, from, steps, i -> unused != null && unused[i] || onlyPassed(mod, rc.name, m, Conversions.slots(was)[i]))) {
+            return false;
         }
         mod.bridges.computeIfAbsent(rc.name, k -> new ArrayList<>()).add(new Bridge(moved[1], moved[2], m.name, m.desc, from, m.flags & ~Opcodes.ACC_ABSTRACT, steps));
         return true;
@@ -585,6 +549,27 @@ final class Overrides {
                     return false;
                 }
             } else if (!passedOnly(mod, k, slot, seen)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Where each old parameter (paired: its place among the new ones, or -1) comes from, written into from and steps at
+     * at + its index: the new parameter it pairs with, else the one the game's code works it out from (via), else none
+     * (-1) where unused says nothing reads it. False when one has no source.
+     */
+    static boolean sources(int[] paired, String[][] via, int at, int[] from, String[][] steps, java.util.function.IntPredicate unused) {
+        for (int i = 0; i < paired.length; i++) {
+            if (paired[i] >= 0) {
+                from[at + i] = at + paired[i];
+            } else if (via != null && via[i] != null) {
+                from[at + i] = at + Integer.parseInt(via[i][0]);
+                steps[at + i] = Arrays.copyOfRange(via[i], 1, via[i].length);
+            } else if (unused.test(i)) {
+                from[at + i] = -1;
+            } else {
                 return false;
             }
         }
