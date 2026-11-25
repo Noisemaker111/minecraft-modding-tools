@@ -54,7 +54,10 @@ final class JarEntries {
         return -1;
     }
 
-    /** A jar's files by name (directories left out); times gets each file's time. An entry pointing outside the jar refuses it. */
+    /**
+     * A jar's files by name (directories left out); times gets each file's time, and each directory's. An entry pointing
+     * outside the jar refuses it.
+     */
     static Map<String, byte[]> entries(byte[] jar, String name, Map<String, Long> times) throws IOException {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(jar))) {
@@ -64,8 +67,8 @@ final class JarEntries {
                 }
                 if (!e.isDirectory()) {
                     entries.put(e.getName(), zip.readAllBytes());
-                    times.put(e.getName(), e.getTime());
                 }
+                times.put(e.getName(), e.getTime());
             }
         }
         return entries;
@@ -247,6 +250,24 @@ final class JarEntries {
         }
         nested.retainAll(entries.keySet());
         return nested;
+    }
+
+    /**
+     * Writes the directory entries of a file's folders that are not written yet (written holds them), before the file, as
+     * the jar tool and Gradle write a jar. A mod that finds its own classes by package asks the class loader for the
+     * package's folder (ClassLoader.getResources("a/b/"), as org.reflections' forPackage does for YUNG's API's
+     * registrations), which a jar without the folder's entry does not have: nothing is found, and nothing registered.
+     */
+    static void folders(ZipOutputStream out, Set<String> written, String file, Map<String, Long> times) throws IOException {
+        for (int slash = file.indexOf('/'); slash >= 0; slash = file.indexOf('/', slash + 1)) {
+            String folder = file.substring(0, slash + 1);
+            if (written.add(folder)) {
+                ZipEntry entry = new ZipEntry(folder);
+                entry.setTime(times.getOrDefault(folder, 0L));
+                out.putNextEntry(entry);
+                out.closeEntry();
+            }
+        }
     }
 
     /** An entry name that an unzip would write outside its folder: absolute, a drive, a backslash or a ".." part. */

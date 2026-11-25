@@ -31,7 +31,10 @@ final class MixinRetargets {
      * A handler's injector (its annotation): the target method strings, each @At's {value, target, ordinal} (in @Slice
      * too), and its require (-1: the mixin config's defaultRequire).
      */
-    /** ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none, then its index (a @ModifyArg's argument); an @At's is in ats. */
+    /**
+     * ordinal: the injector's own (a @ModifyVariable's nth local of its type), -1 when it gives none, then its index (a
+     * @ModifyArg's argument), then 1 where a @ModifyVariable names its local; an @At's is in ats.
+     */
     record Injector(String kind, List<String> methods, List<String[]> ats, int[] require, int[] ordinal, boolean[] cancellable, boolean[] argsOnly) {}
 
     /**
@@ -73,6 +76,8 @@ final class MixinRetargets {
                     public void visit(String x, Object v) {
                         if (at == null && "method".equals(n) && v instanceof String s) {
                             inj.methods().add(s);
+                        } else if (at == null && "name".equals(n)) {
+                            inj.ordinal()[2] = 1; // a @ModifyVariable naming its local: found by the local variable table
                         }
                     }
 
@@ -342,7 +347,16 @@ final class MixinRetargets {
             // with argsOnly: otherwise its candidates are the live locals too, and the new body may have one more of the type.
             Type variable = Type.getReturnType(port.desc(handler.desc));
             boolean byType = inj.argsOnly()[0] && inj.ordinal()[1] < 0 && Arrays.stream(bp).filter(variable::equals).count() == Arrays.stream(ap).filter(variable::equals).count();
-            if (inj.kind().endsWith("/ModifyVariable;") && !byType && !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray())) {
+            // Without argsOnly, an index or a name, Mixin finds the variable by its type among the arguments and the live
+            // locals (the one of that type, or the nth with an ordinal): it follows where that is the same local in the
+            // new method (localFound, as for a @Local). Cardinal Components' BlockEntity in ChunkHolder.broadcastBlockEntity,
+            // which 1.20 gave the player list as a first parameter.
+            boolean slotsMoved = !Arrays.equals(Arrays.stream(bp).mapToInt(Type::getSize).toArray(), Arrays.stream(ap).mapToInt(Type::getSize).toArray());
+            boolean byLocal = slotsMoved && !byType && !inj.argsOnly()[0] && inj.ordinal()[1] < 0 && inj.ordinal()[2] < 0
+                && localFound(key, before, after, inj, port.mixinPoints.inPlace(targets, inj, handler.desc, into,
+                    inj.ats().stream().map(at -> at[1] == null ? null : port.mixinMembers.find(targets, "target", at[1])).toList(), new int[] { -1 }),
+                    variable, inj.ordinal()[0], false);
+            if (inj.kind().endsWith("/ModifyVariable;") && !byType && !byLocal && slotsMoved) {
                 { JarPort.why(key, "O3 a local named by its slot would be another one"); return; } // a local named by its slot would be another one
             }
             for (int n = Math.min(hp.length, bp.length); n >= 1; n--) {
@@ -354,7 +368,9 @@ final class MixinRetargets {
                 }
             }
         }
-        List<MixinMembers.Found> ats = inj.ats().stream().map(at -> at[1] == null ? null : port.mixinMembers.find(targets, "target", at[1])).toList();
+        List<MixinMembers.Found> found = inj.ats().stream().map(at -> at[1] == null ? null : port.mixinMembers.find(targets, "target", at[1])).toList();
+        int[] index = { -1 };
+        List<MixinMembers.Found> ats = port.mixinPoints.inPlace(targets, inj, handler.desc, into, found, index);
         if (!port.mixinPoints.pointsKept(targets, inj, into, ats)) {
             { JarPort.why(key, "O5"); return; }
         }
@@ -362,6 +378,14 @@ final class MixinRetargets {
             if (into.get(i).kind() == 's') {
                 mod.retargets.put(key + " " + inj.methods().get(i), into.get(i).changed());
             }
+        }
+        for (int i = 0; i < ats.size(); i++) {
+            if (ats.get(i) != found.get(i)) {
+                mod.retargets.put(key + " " + inj.ats().get(i)[1], ats.get(i).changed());
+            }
+        }
+        if (index[0] >= 0) {
+            mod.argIndexes.put(key, index[0]);
         }
     }
 
@@ -786,6 +810,7 @@ final class MixinRetargets {
                     }
                 }
             }
+            ats = port.mixinPoints.inPlace(targets, inj, handler.desc, into, ats, new int[] { -1 });
             if (!port.mixinPoints.pointsKept(targets, inj, into, ats)) {
                 { JarPort.why(key, "I9"); return; }
             }

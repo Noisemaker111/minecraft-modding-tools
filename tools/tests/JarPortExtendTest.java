@@ -72,7 +72,7 @@ final class JarPortExtendTest {
         } catch (ReflectiveOperationException | LinkageError failed) {
             trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(trace.matches("mmt\\.standin\\.m[0-9a-f]+\\.s9\\.Panel 12"),
+        JarPortTest.expect(trace.matches("mmt\\.standin\\.[mu][0-9a-f]+\\.s9\\.Panel 12"),
             "the subclass extends the stand-in and reaches the static and instance helpers it inherits: " + trace);
 
         List<Map<String, Object>> plateRuns = new ArrayList<>();

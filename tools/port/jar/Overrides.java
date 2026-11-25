@@ -22,6 +22,15 @@ final class Overrides {
     record Bridge(String name, String desc, String target, String targetDesc, int[] from, int access, String[][] via) {}
 
     /**
+     * A static method of the class making a lambda, written for a method reference whose method cannot move to its
+     * interface method's new parameters (an abstract method of the mod's own interface: overlay::render for 1.20's
+     * HudRenderCallback). It takes what the lambda captures, then the interface method's new parameters, works out each
+     * old one from them (via, as for a moved body) and calls the referenced method. desc in new names, its first caps
+     * parameters what the lambda captures; iface and sam the interface method as the jar names it.
+     */
+    record Reference(Handle impl, String iface, String sam, String name, String desc, int caps, int[] from, String[][] via) {}
+
+    /**
      * The game method a mod method overrides, found through the mod's own parents up to the game (ModChild.foo over
      * ModBase.foo over GameBase.foo is GameBase.foo), so every member of an override family follows a rename.
      */
@@ -155,7 +164,12 @@ final class Overrides {
             String where = Exposure.dotted(iface) + "." + name + sam + " (in " + Exposure.dotted(rc.name) + ")";
             Bridge body = holder == null || !moved[1].equals(name) || !sam.equals(l[5]) ? null : lambdaBody(mod, rc, impl, captured, iface, name, sam, moved);
             if (body == null) {
-                mod.unlinked.add("lambda for a changed method: " + where);
+                Reference ref = holder == null || !moved[1].equals(name) || !sam.equals(l[5]) ? null : reference(mod, rc, impl, captured, iface, name, sam, moved);
+                if (ref == null) {
+                    mod.unlinked.add("lambda for a changed method: " + where);
+                } else {
+                    mod.change("method reference made through an adapter for its interface method's new parameter types");
+                }
                 continue;
             }
             mod.bridges.computeIfAbsent(impl.getOwner(), k -> new ArrayList<>()).add(body);
@@ -195,17 +209,9 @@ final class Overrides {
         for (int i = 0; i < now.length; i++) {
             params[k + i] = now[i];
         }
-        for (int i = 0; i < was.length; i++) {
-            if (paired[i] >= 0) {
-                from[k + i] = k + paired[i];
-            } else if (via != null && via[i] != null) {
-                from[k + i] = k + Integer.parseInt(via[i][0]);
-                steps[k + i] = Arrays.copyOfRange(via[i], 1, via[i].length);
-            } else if (unread != null && unread[k + i]) {
-                from[k + i] = -1; // the body never reads it ((mc, parent) -> new Screen(parent)): a default goes there
-            } else {
-                return null;
-            }
+        // An old parameter the body never reads ((mc, parent) -> new Screen(parent)) gets a default.
+        if (!sources(paired, via, k, from, steps, i -> unread != null && unread[k + i])) {
+            return null;
         }
         String newDesc = Type.getMethodDescriptor(Type.getType(port.desc(Type.getReturnType(m.desc).getDescriptor())), params);
         if (Arrays.stream(steps).allMatch(Objects::isNull)) {
@@ -213,6 +219,78 @@ final class Overrides {
             return new Bridge(m.name, newDesc, m.name, m.desc, from, m.flags | Opcodes.ACC_SYNTHETIC, null);
         }
         return new Bridge(m.name, newDesc, m.name, m.desc, from, m.flags, steps);
+    }
+
+    /**
+     * The adapter a method reference is made through when its method cannot move (lambdaBody refuses it), or null. Only a
+     * reference to a method of the mod's own classes, called as the reference calls it; the receiver of a bound reference
+     * is captured, of an unbound one the first parameter. Each old parameter is a new one of the same type or one the game's
+     * code works out from a new one (Retype); there is no body to say a parameter goes unread.
+     */
+    Reference reference(JarPort.Mod mod, GameDiff.RawCls rc, Handle impl, String captured, String iface, String name, String sam, String[] moved) {
+        int tag = impl.getTag();
+        if (tag != Opcodes.H_INVOKEINTERFACE && tag != Opcodes.H_INVOKEVIRTUAL && tag != Opcodes.H_INVOKESTATIC || !mod.classes.containsKey(impl.getOwner())
+            || mod.bytes.get(rc.name) == null || (new ClassReader(mod.bytes.get(rc.name)).readShort(6) & 0xFFFF) < Opcodes.V1_8) {
+            return null;
+        }
+        for (Reference r : mod.references.getOrDefault(rc.name, List.of())) {
+            if (r.impl().equals(impl) && r.iface().equals(iface) && r.sam().equals(sam)) {
+                return r;
+            }
+        }
+        Type[] caps = Type.getArgumentTypes(captured), was = Type.getArgumentTypes(port.desc(sam)), now = Type.getArgumentTypes(moved[2]);
+        int receiver = tag == Opcodes.H_INVOKESTATIC ? 0 : 1;
+        if (Type.getArgumentTypes(impl.getDesc()).length + receiver != caps.length + was.length
+            || !Type.getReturnType(port.desc(sam)).equals(Type.getReturnType(moved[2]))) {
+            return null;
+        }
+        int[] paired = pair(now, was);
+        String[][] via = Retype.withoutThis(port.retype.conversions(iface, name, sam, moved, paired));
+        int[] from = new int[was.length];
+        String[][] steps = new String[was.length][];
+        if (!sources(paired, via, 0, from, steps, i -> false)) {
+            return null;
+        }
+        Type[] params = new Type[caps.length + now.length];
+        for (int i = 0; i < caps.length; i++) {
+            params[i] = Type.getType(port.desc(caps[i].getDescriptor()));
+        }
+        System.arraycopy(now, 0, params, caps.length, now.length);
+        List<Reference> own = mod.references.computeIfAbsent(rc.name, k -> new ArrayList<>());
+        // The adapter gives what the method gives, and the lambda factory adapts it to the interface's result as it did
+        // for the reference (a value a void callback drops). It calls the method as it was, so a body that moves for
+        // another reference (lambdaBody) stays too.
+        Type result = Type.getType(port.desc(Type.getReturnType(impl.getDesc()).getDescriptor()));
+        Reference ref = new Reference(impl, iface, sam, "mmt$ref$" + impl.getName() + "$" + own.size(), Type.getMethodDescriptor(result, params), caps.length, from, steps);
+        own.add(ref);
+        mod.kept.add(impl.getName() + impl.getDesc());
+        return ref;
+    }
+
+    /** The code of a method reference's adapter (Reference), written in the old release's names. */
+    void referenceCode(MethodVisitor mv, Reference ref) {
+        Type[] params = Type.getArgumentTypes(port.oldDesc(ref.desc()));
+        int[] slots = Conversions.slots(params, 0);
+        mv.visitCode();
+        int stack = 0;
+        for (int i = 0; i < ref.caps(); i++) {
+            mv.visitVarInsn(params[i].getOpcode(Opcodes.ILOAD), slots[i]);
+            stack += params[i].getSize();
+        }
+        for (int i = 0; i < ref.from().length; i++) {
+            int at = ref.caps() + ref.from()[i];
+            mv.visitVarInsn(params[at].getOpcode(Opcodes.ILOAD), slots[at]);
+            port.conversions.steps(mv, ref.via()[i]);
+            stack += 2;
+        }
+        Handle h = ref.impl();
+        int op = h.getTag() == Opcodes.H_INVOKESTATIC ? Opcodes.INVOKESTATIC : h.getTag() == Opcodes.H_INVOKEINTERFACE ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL;
+        mv.visitMethodInsn(op, h.getOwner(), h.getName(), h.getDesc(), h.isInterface());
+        Type ret = Type.getReturnType(h.getDesc());
+        mv.visitInsn(ret.getOpcode(Opcodes.IRETURN));
+        int locals = params.length == 0 ? 0 : slots[params.length - 1] + params[params.length - 1].getSize();
+        mv.visitMaxs(Math.max(stack + 2, ret.getSize()), locals);
+        mv.visitEnd();
     }
 
     /**
@@ -326,20 +404,7 @@ final class Overrides {
 
     /** At least half of two bodies' instructions (as GameCode.bodies writes them) in common, counted as multisets. */
     static boolean alike(String x, String y) {
-        Map<String, Integer> left = new HashMap<>();
-        String[] a = GameCode.instructions(x), b = GameCode.instructions(y);
-        for (String t : a) {
-            left.merge(t, 1, Integer::sum);
-        }
-        int common = 0;
-        for (String t : b) {
-            Integer n = left.get(t);
-            if (n != null && n > 0) {
-                common++;
-                left.put(t, n - 1);
-            }
-        }
-        return common * 2 >= Math.max(a.length, b.length);
+        return GameCode.instructions(x).length + GameCode.instructions(y).length == 0 || MixinMovedCode.likeness(x, y) * 2 >= 1;
     }
 
     /**
@@ -438,17 +503,9 @@ final class Overrides {
             + " unread=" + Arrays.toString(unread));
         from = new int[was.length];
         String[][] steps = new String[was.length][];
-        for (int i = 0; i < was.length; i++) {
-            if (paired[i] >= 0) {
-                from[i] = paired[i];
-            } else if (via != null && via[i] != null) {
-                from[i] = Integer.parseInt(via[i][0]);
-                steps[i] = Arrays.copyOfRange(via[i], 1, via[i].length);
-            } else if (unread != null && unread[i] || onlyPassed(mod, rc.name, m, Conversions.slots(was)[i])) {
-                from[i] = -1;
-            } else {
-                return false;
-            }
+        boolean[] unused = unread;
+        if (!sources(paired, via, 0, from, steps, i -> unused != null && unused[i] || onlyPassed(mod, rc.name, m, Conversions.slots(was)[i]))) {
+            return false;
         }
         mod.bridges.computeIfAbsent(rc.name, k -> new ArrayList<>()).add(new Bridge(moved[1], moved[2], m.name, m.desc, from, m.flags & ~Opcodes.ACC_ABSTRACT, steps));
         return true;
@@ -492,6 +549,27 @@ final class Overrides {
                     return false;
                 }
             } else if (!passedOnly(mod, k, slot, seen)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Where each old parameter (paired: its place among the new ones, or -1) comes from, written into from and steps at
+     * at + its index: the new parameter it pairs with, else the one the game's code works it out from (via), else none
+     * (-1) where unused says nothing reads it. False when one has no source.
+     */
+    static boolean sources(int[] paired, String[][] via, int at, int[] from, String[][] steps, java.util.function.IntPredicate unused) {
+        for (int i = 0; i < paired.length; i++) {
+            if (paired[i] >= 0) {
+                from[at + i] = at + paired[i];
+            } else if (via != null && via[i] != null) {
+                from[at + i] = at + Integer.parseInt(via[i][0]);
+                steps[at + i] = Arrays.copyOfRange(via[i], 1, via[i].length);
+            } else if (unused.test(i)) {
+                from[at + i] = -1;
+            } else {
                 return false;
             }
         }

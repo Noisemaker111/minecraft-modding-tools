@@ -13,6 +13,10 @@ public final class Json {
         this.source = source;
     }
 
+    /**
+     * A key given twice in an object takes its last value, as Gson, Fabric Loader and Python read it: mods ship such files
+     * (Physics Mod's fabric.mod.json names "environment" twice) and the loader runs them.
+     */
     public static Object parse(String source) {
         Json parser = new Json(source);
         Object value = parser.value();
@@ -171,7 +175,6 @@ public final class Json {
                 String key = string();
                 space();
                 require(':');
-                if (map.containsKey(key)) throw new IllegalArgumentException("Duplicate JSON key: " + key);
                 map.put(key, value());
                 space();
                 if (take('}')) return map;
