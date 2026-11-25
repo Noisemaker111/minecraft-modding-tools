@@ -116,10 +116,11 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(),
     (Fabric API) goes in as it did on the server and is not counted; kept names the jars of it that no failure drops.
     run: a stand-in for one pack-check of the client pack folder (tests), returning its JSON. made: the client pack
     is there already (client_pack), made before the server's starts that run beside this one move jars out of its pack.
-    decided: {jar: why} for the jars start-check failed on the client: out of the pack already, and not started."""
+    decided: {jar: verdict} for the jars start-check says do not start in the client (startcheck.decided): out of the
+    pack already, and not started."""
     pack = server_pack.with_name(server_pack.name + "-client") if made else client_pack(server_pack, names, platform)
     decided = decided or {}
-    verdicts = {name: not_started(why) for name, why in decided.items() if name in names}
+    verdicts = {name: verdict for name, verdict in decided.items() if name in names}
     if not any(p.name not in platform for p in (pack / "mods").glob("*.jar")):
         # Nothing left to start: a client with only the platform in it proves nothing of the mods.
         for name in names:
@@ -221,11 +222,6 @@ def client_culprits(pack, present, libraries, loader, start):
     if not found and not res.get("client", {}).get("toolError"):
         found = first_failing(pack, present + libraries, loader, start, failure)
     return found, result, res, done
-
-
-def not_started(why):
-    """The verdict of a jar start-check failed: it is not started in a game, and says so with start-check's reason."""
-    return f"failed: {why} (decided by start-check with no world or window; not started in a game)"
 
 
 def leave_out(pack, failed):
@@ -555,10 +551,10 @@ def load(loader, frm, to, save, mods=None, out=None, game=True, check=startcheck
     for line in ([f"start-check gave no answer, so every jar goes to the game: {checked['error']}"] if "error" in checked else []):
         print(line)
     sides = checked.get("sides", {})
-    decided = {side: {n: why for n, why in sides.get(side, {}).get("failed", {}).items()} for side in ("server", "client")}
+    decided = {side: startcheck.decided(sides.get(side, {})) for side in ("server", "client")}
     for side, side_pack in (("server", pack), ("client", pack.with_name(pack.name + "-client"))):
-        for name, why in sorted(decided[side].items()):
-            print(f"  {name}: start-check fails it on the {side}, so it is not started there: {why[:300]}")
+        for name, verdict in sorted(decided[side].items()):
+            print(f"  {name}: not started on the {side}, start-check says: {verdict[:300]}")
         leave_out(side_pack, decided[side])
     if not game:
         return checked_only(loader, frm, to, scope, asked, checked, links, libraries, left, round(time.monotonic() - began, 1), ported_in, out)
@@ -571,9 +567,9 @@ def load(loader, frm, to, save, mods=None, out=None, game=True, check=startcheck
     # A server leaves out a mod whose own metadata says it is client-only, so with only those to start it would run the
     # platform alone and prove nothing of the port (fabric 1.18.1 -> 1.18.2: 147 s for two client-only mods).
     own = {n: client_only_jar(pack / "mods" / n, loader) for n in present}
-    for name, why in decided["server"].items():
+    for name, verdict in decided["server"].items():
         if name in asked:
-            verdicts[name] = not_started(why)
+            verdicts[name] = verdict
     # With every mod failed by start-check there is nothing to start: a server of the platform alone proves nothing.
     serve = bool(present) and not all(own.values())
     if present and not serve:
@@ -670,8 +666,8 @@ def load(loader, frm, to, save, mods=None, out=None, game=True, check=startcheck
         # A mod whose client start classes need a newer Java (its client entrypoint) is no sign of that.
         "loadedOnServerFailedInClient": sorted(n for n, v in client["verdicts"].items() if v.startswith("failed") and verdicts.get(n) == "loaded" and links.get(n)
                                                and n not in client.get("newerJava", ())),
-        # What start-check decided before any start, each side's {jar: why}: those jars were not started in a game.
-        "startCheck": {"failed": decided, "seconds": checked["seconds"], **({"error": checked["error"]} if "error" in checked else {})},
+        # What start-check decided before any start, each side's {jar: verdict}: those jars were not started in a game.
+        "startCheck": {"decided": decided, "seconds": checked["seconds"], **({"error": checked["error"]} if "error" in checked else {})},
         "time": {"port": ported_in, "startCheck": checked["seconds"], **start_times(STARTS), "starts": starts_took},
     }
     print(f"{'mod':<60} {'server':<12} client")
@@ -713,7 +709,8 @@ def checked_only(loader, frm, to, scope, asked, checked, links, libraries, left,
         print(line)
     for side in sides:
         runs = sides[side]["runs"]
-        print(f"{side}: {len(sides[side]['passed'])} passed, {len(sides[side]['failed'])} failed, {len(sides[side]['leftOut'])} left out, in {len(runs)} run(s) "
+        print(f"{side}: {len(sides[side]['passed'])} passed, {len(sides[side]['failed'])} failed, {len(sides[side].get('clash', {}))} clash, "
+              f"{len(sides[side]['leftOut'])} left out, in {len(runs)} run(s) "
               f"of {', '.join(f'{r['seconds']:.0f} s' for r in runs)}")
         for name, what in sides[side]["checks"].items():
             print(f"  {name}: {what}")

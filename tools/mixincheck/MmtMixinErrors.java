@@ -15,10 +15,18 @@ import java.util.*;
  */
 public final class MmtMixinErrors implements IMixinErrorHandler {
     @Override public ErrorAction onPrepareError(IMixinConfig config, Throwable th, IMixinInfo mixin, ErrorAction action) {
-        report("prepare", null, config, th, mixin, action); return ErrorAction.WARN;
+        report("prepare", null, config, th, mixin, action); return answer(action);
     }
     @Override public ErrorAction onApplyError(String target, Throwable th, IMixinInfo mixin, ErrorAction action) {
-        report("apply", target, mixin == null ? null : mixin.getConfig(), th, mixin, action); return ErrorAction.WARN;
+        report("apply", target, mixin == null ? null : mixin.getConfig(), th, mixin, action); return answer(action);
+    }
+    /**
+     * mixin-check lists every error of a source checkout's mixins, so it lets Mixin go on past each. start-check answers
+     * what the game does (mmt.mixincheck.asTheGame): Mixin's own action stands, and the class fails to load as in the game.
+     * Going on left later classes in a state no game reaches: a mixin that applies alone failed after two others had.
+     */
+    static ErrorAction answer(ErrorAction action) {
+        return Boolean.getBoolean("mmt.mixincheck.asTheGame") ? action : ErrorAction.WARN;
     }
     static synchronized void report(String phase, String target, IMixinConfig config, Throwable th, IMixinInfo mixin, ErrorAction action) {
         StringBuilder line = new StringBuilder("{\"event\":\"error\"");

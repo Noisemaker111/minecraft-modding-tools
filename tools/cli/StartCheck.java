@@ -32,6 +32,8 @@ import java.util.regex.Pattern;
  * A run that fails names the jars at fault, read as pack-check reads a failed start (PackChecks.suspects). Those are
  * failed with the loader's, Mixin's or the game's own words and left out, and the rest run again, so every jar ends
  * failed, left out of the server as client-only, or passed, with the checks that passing covers named for each side.
+ * A jar Mixin refused is started once more with only the jars it requires: when its mixins apply there, two jars here
+ * change the same game code and it is a clash, the pairing's fault and not the jar's own.
  */
 final class StartCheck {
 
@@ -39,6 +41,7 @@ final class StartCheck {
 
     static final String SERVER_STOP = "the game started its server thread";
     static final String CLIENT_STOP = "the game asked for its window";
+    static final String MIXINS_STOP = "the mixins were read";
     /** The game's own line for the data packs it read (recipes since 1.14, advancements beside them). */
     static final Pattern DATA_READ = Pattern.compile("Loaded \\d+ (?:recipes|advancements)");
 
@@ -48,6 +51,10 @@ final class StartCheck {
         final String name;
         final Map<String, String> failed = new TreeMap<>();
         final Map<String, String> leftOut = new TreeMap<>();
+        /** Jars whose mixins apply with only the jars they require and not next to the others here: the pairing's fault, with what Mixin said. */
+        final Map<String, String> clash = new TreeMap<>();
+        /** The failed jars that Mixin refused (the others the loader or the game's start refused). */
+        final Set<String> byMixin = new LinkedHashSet<>();
         final List<String> passed = new ArrayList<>();
         final List<Object> runs = new ArrayList<>();
         final Map<String, String> checks = new LinkedHashMap<>();
@@ -76,6 +83,10 @@ final class StartCheck {
         Set<String> asked = new LinkedHashSet<>();
         for (String jar : owner.options.get("jars", "").split(",")) if (!jar.isBlank()) asked.add(jar.strip());
         return asked;
+    }
+
+    static boolean decided(Side side, String jar) {
+        return side.failed.containsKey(jar) || side.clash.containsKey(jar) || side.leftOut.containsKey(jar);
     }
 
     static boolean answered(PackCheck owner, Side side) {
@@ -115,10 +126,13 @@ final class StartCheck {
             for (var entry : side.failed.entrySet()) owner.findings.add(Json.map("kind", "start-check", "severity", "problem", "summary",
                 entry.getKey() + " does not start on the " + side.name + ": " + entry.getValue(),
                 "suspects", List.of(Json.map("jar", entry.getKey(), "mod", PackCheck.mod(owner.scan, entry.getKey()), "why", List.of(entry.getValue())))));
+            for (var entry : side.clash.entrySet()) owner.findings.add(Json.map("kind", "start-check", "severity", "problem", "summary",
+                entry.getKey() + " does not start next to the other jars on the " + side.name + ", and its mixins apply without them: " + entry.getValue(),
+                "suspects", List.of(Json.map("jar", entry.getKey(), "mod", PackCheck.mod(owner.scan, entry.getKey()), "why", List.of(entry.getValue())))));
             if (side.undecided != null) owner.findings.add(Json.map("kind", "start-check", "severity", "problem", "summary",
                 "The " + side.name + " start gave no answer for " + (side.runs.isEmpty() ? "any jar" : "the jars still in it") + ": " + side.undecided));
-            ok &= side.failed.isEmpty() && side.undecided == null;
-            bySide.put(side.name, Json.map("failed", side.failed, "leftOut", side.leftOut, "passed", side.passed, "undecided", side.undecided, "tool", side.tool,
+            ok &= side.failed.isEmpty() && side.clash.isEmpty() && side.undecided == null;
+            bySide.put(side.name, Json.map("failed", side.failed, "clash", side.clash, "leftOut", side.leftOut, "passed", side.passed, "undecided", side.undecided, "tool", side.tool,
                 "checks", side.checks, "runs", side.runs));
         }
         result.put("sides", bySide);
@@ -132,6 +146,7 @@ final class StartCheck {
     /** A jar's verdict on a side, in words that say what was and was not run; null for a jar the side never held. */
     static String verdict(Side side, String jar) {
         if (side.failed.containsKey(jar)) return "failed: " + side.failed.get(jar);
+        if (side.clash.containsKey(jar)) return "clash: its mixins apply with only the jars it requires, and not next to the other jars here: " + side.clash.get(jar);
         if (side.leftOut.containsKey(jar)) return "left out: " + side.leftOut.get(jar);
         if (side.passed.contains(jar)) return "passed: " + String.join("; ", ran(side)) + " (no world or window was opened)";
         if (side.undecided != null) return "undecided: " + side.undecided;
@@ -148,9 +163,14 @@ final class StartCheck {
         StringBuilder out = new StringBuilder();
         for (Side side : sides) {
             out.append(side.name).append(": ").append(side.passed.size()).append(" passed, ").append(side.failed.size()).append(" failed");
+            if (!side.clash.isEmpty()) out.append(", ").append(side.clash.size()).append(" clash with another jar");
             if (!side.leftOut.isEmpty()) out.append(", ").append(side.leftOut.size()).append(" left out");
-            out.append(" of ").append(side.passed.size() + side.failed.size() + side.leftOut.size()).append(" jar(s), in ").append(side.runs.size()).append(" run(s)\n");
+            out.append(" of ").append(side.passed.size() + side.failed.size() + side.clash.size() + side.leftOut.size()).append(" jar(s), in ").append(side.runs.size()).append(" run(s)\n");
             for (var entry : side.failed.entrySet()) out.append("  failed  ").append(entry.getKey()).append(": ").append(entry.getValue().lines().findFirst().orElse("")).append('\n');
+            for (var entry : side.clash.entrySet()) {
+                out.append("  clash  ").append(entry.getKey()).append(": its mixins apply with only the jars it requires; next to the other jars: ");
+                out.append(entry.getValue().lines().findFirst().orElse("")).append('\n');
+            }
             for (var entry : side.leftOut.entrySet()) out.append("  left out  ").append(entry.getKey()).append(": ").append(entry.getValue()).append('\n');
             if (side.undecided != null) out.append("  no answer: ").append(side.undecided).append('\n');
             for (var check : side.checks.entrySet()) out.append("  ").append(check.getKey()).append(": ").append(check.getValue()).append('\n');
@@ -173,11 +193,7 @@ final class StartCheck {
             List<PackCheck.Mod> mods = pack.mods().stream().filter(m -> chosen.kept().contains(m.file())).toList();
             if (mods.isEmpty() && round > 1 || answered(owner, side)) break;
             Path instance = instance(owner, pack, mods, "server-" + round, first, install);
-            writeServerFiles(instance);
-            List<String> command = new ArrayList<>(jvm(owner, context, agent, "server", instance));
-            command.addAll(owner.loader.launch(install, instance, pack.minecraft(), pack.loaderVersion()));
-            command.add("nogui");
-            last = launch(owner, command, instance, "server-" + round);
+            last = launch(owner, serverCommand(owner, context, pack, install, agent, instance, "server"), instance, "server-" + round);
             Map<String, String> blamed = judge(owner, side, last, instance, mods, round);
             tidy(instance);
             if (blamed == null) break;
@@ -197,8 +213,9 @@ final class StartCheck {
             side.failed.putAll(blamed);
             if (answered(owner, side)) break;
         }
+        alone(owner, pack, side, first, install, (instance, mixins) -> serverCommand(owner, context, pack, install, agent, instance, mixins));
         boolean reached = last != null && last.stop() != null && reached(side, last.stop());
-        if (reached) for (PackCheck.Mod mod : pack.mods()) if (!side.failed.containsKey(mod.file()) && !side.leftOut.containsKey(mod.file())) side.passed.add(mod.file());
+        if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
         boolean data = reached && DATA_READ.matcher(last.log()).find();
         side.checks.put("dependencies", dependencies(last));
         side.checks.put("mixins", mixins(last));
@@ -221,6 +238,7 @@ final class StartCheck {
         Map<String, String> refused = refusedByMixin(owner, run, present);
         side.runs.add(Json.map("round", round, "jars", mods.size(), "seconds", run.seconds(), "log", run.logFile().toString(),
             "ended", stop == null ? "by itself" : stop.get("reason"), "at", stop == null ? null : stop.get("seconds"), "failed", new ArrayList<>(refused.keySet())));
+        side.byMixin.addAll(refused.keySet());
         if (!refused.isEmpty()) return refused;
         if (run.timedOut()) {
             side.undecided = "the start said nothing more for " + owner.options.get("timeout", "300") + " s and was stopped; its log: " + run.logFile();
@@ -338,7 +356,7 @@ final class StartCheck {
             List<PackCheck.Mod> mods = pack.mods().stream().filter(m -> !"server".equals(m.side()) && !side.failed.containsKey(m.file())).toList();
             if (mods.isEmpty() && round > 1) break;
             Path instance = instance(owner, pack, mods, "client-" + round, first, install);
-            last = launch(owner, clientCommand(owner, context, pack, install, agent, instance), instance, "client-" + round);
+            last = launch(owner, clientCommand(owner, context, pack, install, agent, instance, "client"), instance, "client-" + round);
             Map<String, String> blamed = judge(owner, side, last, instance, mods, round);
             tidy(instance);
             if (blamed == null) break;
@@ -347,8 +365,9 @@ final class StartCheck {
             if (answered(owner, side)) break;
         }
         for (PackCheck.Mod mod : pack.mods()) if ("server".equals(mod.side())) side.leftOut.put(mod.file(), "server-only (" + mod.source() + ")");
+        alone(owner, pack, side, first, install, (instance, mixins) -> clientCommand(owner, context, pack, install, agent, instance, mixins));
         boolean reached = last != null && last.stop() != null && reached(side, last.stop());
-        if (reached) for (PackCheck.Mod mod : pack.mods()) if (!side.failed.containsKey(mod.file()) && !side.leftOut.containsKey(mod.file())) side.passed.add(mod.file());
+        if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
         side.checks.put("dependencies", dependencies(last));
         side.checks.put("mixins", mixins(last));
         boolean window = reached && String.valueOf(last.stop().get("reason")).equals(CLIENT_STOP);
@@ -382,11 +401,65 @@ final class StartCheck {
         Files.write(file, lines, StandardCharsets.UTF_8);
     }
 
-    static List<String> clientCommand(PackCheck owner, PackLoaders.Context context, PackCheck.Pack pack, Path install, Path agent, Path instance) throws Exception {
+    /** One start of the loader's server, in a folder made for it. asked: what the agent is asked for ("server", or "server,mixins"). */
+    static List<String> serverCommand(PackCheck owner, PackLoaders.Context context, PackCheck.Pack pack, Path install, Path agent, Path instance, String asked) throws Exception {
+        writeServerFiles(instance);
+        List<String> command = new ArrayList<>(jvm(owner, context, agent, asked, instance));
+        command.addAll(owner.loader.launch(install, instance, pack.minecraft(), pack.loaderVersion()));
+        command.add("nogui");
+        return command;
+    }
+
+    /** How a side starts a folder: (the folder, what the agent is asked for) -> the command. */
+    interface Starter {
+        List<String> command(Path instance, String asked) throws Exception;
+    }
+
+    /** The jar and every jar it requires, and those in turn, of the pack's own files; null when one of them failed (its start alone would fail for that). */
+    static List<PackCheck.Mod> withRequired(PackCheck owner, PackCheck.Pack pack, Side side, String jar) {
+        Set<String> wanted = new LinkedHashSet<>(List.of(jar));
+        List<String> todo = new ArrayList<>(List.of(jar));
+        while (!todo.isEmpty()) {
+            String next = todo.remove(todo.size() - 1);
+            for (var d : owner.scan.dependencies) {
+                if (!d.kind().equals("required") || !PackCheck.top(d.owner()).equals(next)) continue;
+                for (PackMods.Provider p : owner.scan.providers.getOrDefault(d.id(), List.of())) if (wanted.add(PackCheck.top(p.jar()))) todo.add(PackCheck.top(p.jar()));
+            }
+        }
+        wanted.remove(jar);
+        if (wanted.stream().anyMatch(side.failed::containsKey)) return null;
+        wanted.add(jar);
+        return pack.mods().stream().filter(m -> wanted.contains(m.file())).toList();
+    }
+
+    /**
+     * Each jar Mixin refused, started once more with only the jars it requires and asked only whether its mixins apply.
+     * When they do, the jar is not at fault alone: another jar here changes the same game code (two mods redirect one
+     * call), which fails on any release, ported or not. It moves from failed to clash, with what Mixin said.
+     */
+    static void alone(PackCheck owner, PackCheck.Pack pack, Side side, Path first, Path install, Starter starter) throws Exception {
+        int run = 0;
+        for (String jar : new ArrayList<>(side.byMixin)) {
+            List<PackCheck.Mod> mods = side.failed.containsKey(jar) ? withRequired(owner, pack, side, jar) : null;
+            if (mods == null || mods.size() == pack.mods().size()) continue;
+            String name = side.name + "-alone-" + ++run;
+            Path instance = instance(owner, pack, mods, name, first, install);
+            Launch launch = launch(owner, starter.command(instance, side.name + ",mixins"), instance, name);
+            tidy(instance);
+            Set<String> present = new LinkedHashSet<>();
+            for (PackCheck.Mod mod : mods) present.add(mod.file());
+            boolean applied = launch.stop() != null && MIXINS_STOP.equals(launch.stop().get("reason")) && refusedByMixin(owner, launch, present).isEmpty();
+            side.runs.add(Json.map("alone", jar, "jars", mods.size(), "seconds", launch.seconds(), "log", launch.logFile().toString(),
+                "ended", launch.stop() == null ? "by itself" : launch.stop().get("reason"), "mixinsApply", applied));
+            if (applied) side.clash.put(jar, side.failed.remove(jar));
+        }
+    }
+
+    static List<String> clientCommand(PackCheck owner, PackLoaders.Context context, PackCheck.Pack pack, Path install, Path agent, Path instance, String asked) throws Exception {
         // The native code old releases ask for by folder; nothing draws, but a mod's start code may load LWJGL's classes.
         PackClient.natives(install, pack.minecraft(), Files.createDirectories(instance.resolve("natives")));
         noOwnWindow(owner, instance);
-        List<String> options = new ArrayList<>(jvm(owner, context, agent, "client", instance).subList(1, 6));
+        List<String> options = new ArrayList<>(jvm(owner, context, agent, asked, instance).subList(1, 6));
         // The game asks Mojang's services who the player is as it starts; a check has no player, and nothing outside this machine is asked.
         for (String host : List.of("auth", "account", "session", "services", "profiles")) options.add("-Dminecraft.api." + host + ".host=http://127.0.0.1:9");
         // The assets folder is only named: the game reads it once it has a window.
@@ -394,9 +467,9 @@ final class StartCheck {
     }
 
     // ------------------------------------------------------------------ one launch
-    /** java and the options every start-check launch has: little memory, the quick compiler only (a start is all it runs), the agent and its file. */
-    static List<String> jvm(PackCheck owner, PackLoaders.Context context, Path agent, String side, Path instance) {
-        return List.of(context.java().java().toString(), "-Xmx" + owner.options.get("memory", "2G"), "-XX:TieredStopAtLevel=1", "-javaagent:" + agent + "=" + side,
+    /** java and the options every start-check launch has: little memory, the quick compiler only (a start is all it runs), the agent (asked for a side) and its file. */
+    static List<String> jvm(PackCheck owner, PackLoaders.Context context, Path agent, String asked, Path instance) {
+        return List.of(context.java().java().toString(), "-Xmx" + owner.options.get("memory", "2G"), "-XX:TieredStopAtLevel=1", "-javaagent:" + agent + "=" + asked,
             "-Dmmt.mixincheck.out=" + instance.resolve("mmt-start-check.jsonl"), "-Djava.awt.headless=true");
     }
 
@@ -499,14 +572,8 @@ final class StartCheck {
             PackCheck.deleteTree(instance);
             Files.createDirectories(instance.resolve("mods"));
             List<String> command;
-            if (side.equals("server")) {
-                writeServerFiles(instance);
-                command = new ArrayList<>(jvm(owner, context, agent, side, instance));
-                command.addAll(owner.loader.launch(install, instance, pack.minecraft(), pack.loaderVersion()));
-                command.add("nogui");
-            } else {
-                command = clientCommand(owner, context, pack, install, agent, instance);
-            }
+            if (side.equals("server")) command = serverCommand(owner, context, pack, install, agent, instance, side);
+            else command = clientCommand(owner, context, pack, install, agent, instance, side);
             Launch made = launch(owner, command, instance, owner.loader.id() + "-first-" + side);
             if (made.stop() == null) {
                 throw new IOException("The " + owner.loader.id() + " " + side + " did not start with no mods (see " + made.logFile() + "), so its first-start files were not made.");

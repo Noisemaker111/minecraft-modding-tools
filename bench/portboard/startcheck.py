@@ -32,15 +32,27 @@ def verdicts(side):
     passed (never "loaded": no game was started; with the checks that ran), left out (a server leaves a client-only mod
     out) and undecided."""
     out = {name: "failed: " + why for name, why in side["failed"].items()}
+    out |= {name: CLASH + why for name, why in side.get("clash", {}).items()}
     out |= {name: "left out: " + why for name, why in side["leftOut"].items()}
     ran = "; ".join(name for name, what in side["checks"].items() if not what.startswith("not checked"))
     out |= {name: f"passed: {ran} (no world or window was opened)" for name in side["passed"]}
     return out
 
 
-# A game proof's verdict kinds beside start-check's: a mod that fails only next to the others (clash) fails in the
-# pack start-check runs too.
-SAME = {"loaded": "passed", "failed": "failed", "clash": "failed", "client-only": "left out"}
+CLASH = "clash: its mixins apply with only the jars it requires, and not next to the other jars: "
+NOT_STARTED = " (decided by start-check with no world or window; not started in a game)"
+
+
+def decided(side):
+    """The verdicts a game proof gives the jars start-check says do not start next to the others on a side, {jar:
+    verdict}: failed, or clash for one whose mixins apply without the others. Neither is started in a game."""
+    out = {name: "failed: " + why + NOT_STARTED for name, why in side.get("failed", {}).items()}
+    return out | {name: CLASH + why + NOT_STARTED for name, why in side.get("clash", {}).items()}
+
+
+# A game proof's verdict kinds beside start-check's. Failed and clash are one fact of the pack both ran (the mod does not
+# start next to the others); which of the two it is hangs on a second start alone, which each makes only for some mods.
+SAME = {"loaded": ("passed",), "failed": ("failed", "clash"), "clash": ("failed", "clash"), "client-only": ("left out",)}
 
 
 def agreement_of(receipt, summary):
@@ -62,9 +74,9 @@ def agreement(receipt, said):
             if theirs not in SAME:
                 continue
             row["both"] += 1
-            if SAME[theirs] == mine:
+            if mine in SAME[theirs]:
                 row["same"] += 1
-            elif theirs == "loaded" and mine == "failed":
+            elif theirs == "loaded" and mine in ("failed", "clash"):
                 row["wronglyFailed"][name] = [game[name], ours[name]]
             elif theirs in ("failed", "clash") and mine == "passed":
                 row["missed"][name] = [game[name], ours[name]]

@@ -9,6 +9,8 @@ import java.io.PrintStream;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.security.ProtectionDomain;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -53,9 +55,14 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
     /** The system property the replaced glfwInit reads this agent from: java.base is all a class in any module can name. */
     static final String KEY = "mmt.nogame.stop";
     static String side = "server";
+    /** Asked for with "SIDE,mixins": the check ends once the mixins are read, for a start that is only asked whether they apply. */
+    static boolean mixinsOnly;
+    static final String MIXINS_STOP = "the mixins were read";
 
     public static void premain(String arguments, Instrumentation instrumentation) {
-        side = "client".equals(arguments) ? "client" : "server";
+        List<String> asked = Arrays.asList(String.valueOf(arguments).split(","));
+        side = asked.contains("client") ? "client" : "server";
+        mixinsOnly = asked.contains("mixins");
         MmtNoGame agent = new MmtNoGame();
         if (side.equals("client")) {
             System.getProperties().put(KEY, agent);
@@ -102,6 +109,7 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         boolean entry = side.equals("server") ? SERVER_MAIN.equals(name) || OLD_SERVER_MAIN.equals(name) : CLIENT_MAIN.equals(name);
         if (entry && loader != null && MIXINS_READ.compareAndSet(false, true)) {
             readMixins(loader, name.replace('/', '.'));
+            if (mixinsOnly) stop(MIXINS_STOP);
             windowStillReplaced();
         }
         if (side.equals("client") && WINDOW_CLASS.equals(name)) {
@@ -131,6 +139,8 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
      */
     static void readMixins(ClassLoader game, String defining) {
         int refused;
+        // Mixin's error handler is a class of Mixin's own loader: a system property is all this agent shares with it.
+        System.setProperty("mmt.mixincheck.asTheGame", "true");
         try {
             refused = MmtMixinCheck.check(game, side.toUpperCase(Locale.ROOT), START, defining);
         } catch (ClassNotFoundException noMixin) {

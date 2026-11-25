@@ -116,6 +116,11 @@ public final class StartCheckTest {
                 "the game's main ran and its server thread did no work (" + first + ")");
             expect(run[1].contains("has no Mixin"), "a launch with no Mixin says no mixins were read: " + run[1]);
         }
+        // Asked only whether the mixins apply, a start ends once they are read: nothing of the game's own start-up runs.
+        Path asked = Files.createTempDirectory(scratch, "run");
+        String[] mixins = start(agent, "server,mixins", classes, "net.minecraft.server.Main", asked, "prints");
+        expect(mixins[0].equals("0") && mixins[1].contains("the mixins were read") && !Files.exists(asked.resolve("data-read")),
+            "a start asked only for its mixins ends before the game's main runs: " + Arrays.toString(mixins));
         Path folder = Files.createTempDirectory(scratch, "run");
         String[] crashed = start(agent, "server", classes, "net.minecraft.server.Main", folder, "crash");
         expect(!crashed[0].equals("0") && !crashed[1].contains("\"event\":\"stop\"") && crashed[2].contains("a mod's start code failed"),

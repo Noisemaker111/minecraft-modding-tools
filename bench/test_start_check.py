@@ -33,9 +33,10 @@ def jar(meta):
     return data.getvalue()
 
 
-def side(failed=(), passed=(), left=(), checks_ran=("dependencies", "mixins")):
+def side(failed=(), passed=(), left=(), checks_ran=("dependencies", "mixins"), clash=()):
     names = {"dependencies": "the loader resolved them", "mixins": "Mixin applied them", "start code": "it ran", "data": "the game read it"}
-    return {"failed": {n: f"{n} is refused" for n in failed}, "leftOut": {n: "client-only" for n in left}, "passed": list(passed), "undecided": None,
+    return {"failed": {n: f"{n} is refused" for n in failed}, "clash": {n: f"{n} and another redirect one call" for n in clash},
+            "leftOut": {n: "client-only" for n in left}, "passed": list(passed), "undecided": None,
             "checks": {n: names[n] if n in checks_ran else "not checked: no run reached it" for n in names}, "runs": []}
 
 
@@ -51,16 +52,18 @@ for ran in (("dependencies", "mixins"), ("dependencies", "mixins", "start code",
 receipt = {"verdicts": {"a.jar": "loaded", "b.jar": "failed: its mixin fails", "c.jar": "loaded", "d.jar": "failed: crashes in a world", "e.jar": "client-only: its metadata",
                         "f.jar": "clash: loads alone, fails next to the other mods", "g.jar": "loaded"},
            "client": {"verdicts": {"a.jar": "loaded", "b.jar": "failed: its mixin fails"}}}
-ours = {"server": startcheck.verdicts(side(failed=["b.jar", "c.jar", "f.jar"], passed=["a.jar", "d.jar"], left=["e.jar"])),
+ours = {"server": startcheck.verdicts(side(failed=["b.jar", "c.jar"], clash=["f.jar", "g.jar"], passed=["a.jar", "d.jar"], left=["e.jar"])),
         "client": startcheck.verdicts(side(failed=["a.jar"], passed=["b.jar"]))}
+check(ours["server"]["f.jar"].startswith("clash: its mixins apply with only the jars it requires") and "another redirect one call" in ours["server"]["f.jar"],
+      f"a jar that fails only next to the others is a clash, with what Mixin said: {ours['server']['f.jar']}")
 found = startcheck.agreement(receipt, ours)
-check((found["server"]["both"], found["server"]["same"]) == (6, 4), f"the server's verdicts are compared over the mods both judged, a clash counted as failed: {found['server']}")
-check(list(found["server"]["wronglyFailed"]) == ["c.jar"] and list(found["server"]["missed"]) == ["d.jar"] and not found["server"]["other"],
-      f"a mod the game loaded and start-check failed is named apart from one the game failed and it passed: {found['server']}")
+check((found["server"]["both"], found["server"]["same"]) == (7, 4), f"the server's verdicts are compared over the mods both judged, failed and clash as one fact of the pack: {found['server']}")
+check(list(found["server"]["wronglyFailed"]) == ["c.jar", "g.jar"] and list(found["server"]["missed"]) == ["d.jar"] and not found["server"]["other"],
+      f"a mod the game loaded and start-check failed (or found clashing) is named apart from one the game failed and it passed: {found['server']}")
 check(list(found["client"]["wronglyFailed"]) == ["a.jar"] and list(found["client"]["missed"]) == ["b.jar"] and found["client"]["same"] == 0,
       f"the client is judged on its own verdicts: {found['client']}")
 lines = startcheck.agreement_lines(found)
-check(lines[0].startswith("server: 4/6 verdicts the same") and any("game loaded, start-check failed: c.jar" in line for line in lines)
+check(lines[0].startswith("server: 4/7 verdicts the same") and any("game loaded, start-check failed: c.jar" in line for line in lines)
       and any("crashes in a world" in line for line in lines), f"every disagreement is printed with both verdicts: {lines}")
 same = startcheck.agreement(receipt, {"server": {n: ("passed: x" if v.startswith("loaded") else "left out: x" if v.startswith("client-only") else "failed: x")
                                                for n, v in receipt["verdicts"].items()}})
@@ -76,7 +79,7 @@ with tempfile.TemporaryDirectory() as tmp:
         for n in mods + ["api.jar"]:
             (server / "mods" / n).write_bytes(jar({"id": n[:-4]}))
         client = gameload.client_pack(server, mods, ["api.jar"])
-        decided = {n: f"Mixin refuses {n}" for n in failed}
+        decided = startcheck.decided({"failed": {n: f"Mixin refuses {n}" for n in failed[:1]}, "clash": {n: f"Mixin refuses {n}" for n in failed[1:]}})
         gameload.leave_out(client, decided)
         check(sorted(p.name for p in (client / "dropped").glob("*.jar")) == sorted(failed), f"the jars start-check failed are out of the pack: {failed}")
         started = []
@@ -91,7 +94,8 @@ with tempfile.TemporaryDirectory() as tmp:
         for n in mods:
             verdict = said["verdicts"][n]
             if n in failed:
-                check(verdict.startswith(f"failed: Mixin refuses {n}") and "not started in a game" in verdict, f"a jar start-check failed says so and was not started: {verdict}")
+                check(verdict.startswith("failed: Mixin refuses bad.jar" if n == "bad.jar" else startcheck.CLASH + "Mixin refuses worse.jar") and "not started in a game" in verdict,
+                      f"a jar start-check failed, or found clashing, says so and was not started: {verdict}")
             else:
                 check(verdict == "loaded", f"a jar start-check passed is judged by the game: {verdict}")
 
@@ -107,7 +111,7 @@ with tempfile.TemporaryDirectory() as tmp:
     def never(pack):
         raise AssertionError("a client was started with no mod to start")
 
-    said = gameload.client_starts("fabric", "2.0", server, ["bad.jar"], ["api.jar"], {"api.jar"}, run=never, made=True, decided={"bad.jar": "the loader refuses it"})
+    said = gameload.client_starts("fabric", "2.0", server, ["bad.jar"], ["api.jar"], {"api.jar"}, run=never, made=True, decided=startcheck.decided({"failed": {"bad.jar": "the loader refuses it"}}))
     check(said["loaded"] == 0 and said["verdicts"]["bad.jar"].startswith("failed: the loader refuses it"), f"a mod start-check failed costs no client start: {said}")
 
 # The receipt's time line says what start-check took, beside the port and the starts.

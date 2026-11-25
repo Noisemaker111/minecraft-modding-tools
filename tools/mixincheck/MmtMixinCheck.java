@@ -210,6 +210,9 @@ public final class MmtMixinCheck {
                 "exception",
                 exception
             );
+            // As the game's entry class loads (start-check), the first class that fails is where the game stops: what
+            // Mixin does to the classes after it is no part of any start.
+            if (defining != null && unloadable > 0) break;
         }
         // Every mixin of the mod's configs, and whether Mixin finished applying it: Mixin records that
         // on the mixin's own ClassInfo once it has merged it into a target.

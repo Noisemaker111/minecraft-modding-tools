@@ -625,7 +625,7 @@ for side, other in (("server", "client"), ("client", "server")):
     summary, starts = proof({"chunky": "*"}, True, False, {side: {"chunky--chunky.jar": "Mixin refuses its mixin"}})
     said = {"server": summary["verdicts"], "client": summary["client"]["verdicts"]}
     check(starts == [other] and said[side]["chunky--chunky.jar"].startswith("failed: Mixin refuses its mixin (decided by start-check") and said[other]["chunky--chunky.jar"] == "loaded"
-          and summary["startCheck"]["failed"][side] == {"chunky--chunky.jar": "Mixin refuses its mixin"} and not portboard.portcheck.load_gate(summary)[1],
+          and list(summary["startCheck"]["decided"][side]) == ["chunky--chunky.jar"] and not portboard.portcheck.load_gate(summary)[1],
           f"a mod start-check fails on the {side} is not started there and fails the proof: {starts} {said}")
 
 # Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
