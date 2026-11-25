@@ -1081,6 +1081,8 @@ public final class Mmt {
             "config, then the game's own start-up code runs (Bootstrap, the mods' start code, and on a server the data packs of a new world: recipes,\n" +
             "tags, registries) and the JVM ends where the game would open its world or its window. A run that fails names the jars at fault in the\n" +
             "loader's, Mixin's or the game's own words; they are left out and the rest run again, so every jar ends failed, left out or passed.\n" +
+            "A jar Mixin refused is started once more with only the jars it requires: if its mixins apply there it is a clash (two jars here change\n" +
+            "the same game code), not a fault of its own.\n" +
             "Passed means the checks the output names found no fault. Not covered: anything in a world, client resources (models, textures), and on\n" +
             "NeoForge's client the mods' own start code. Nothing is kept between runs but what the loader's installer and first start write.\n" +
             "--jars names the jars the answer is asked for (a ported mod beside the libraries it needs): a side ends once each is decided.\n" +
