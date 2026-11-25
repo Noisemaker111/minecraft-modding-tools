@@ -96,7 +96,8 @@ final class PortVerifier {
                 || !port.standIn.standins.containsKey(StandinClasses.STANDIN + old)) {
                 continue;
             }
-            Pattern member = Pattern.compile(Pattern.quote(Exposure.dotted(old)) + "\\.[\\w$<]");
+            // A member of the class, or a member that takes or gives it (SignBlockEntity.getFrontText()L.../SignText;).
+            Pattern member = Pattern.compile(Pattern.quote(Exposure.dotted(old)) + "\\.[\\w$<]|" + Pattern.quote("L" + old + ";"));
             for (Map<String, Object> r : made) {
                 for (Object u : r.get("unlinked") == null ? List.of() : Json.array(r.get("unlinked"))) {
                     if (member.matcher(u.toString()).find()) {

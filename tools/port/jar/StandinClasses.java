@@ -123,7 +123,14 @@ final class StandinClasses {
                     member = n + "=";
                 }
                 if (member == null) {
-                    throw new IllegalArgumentException("stand-in " + Exposure.dotted(name) + "." + n + desc + " answers no member of " + Exposure.dotted(old) + " in " + port.a.version);
+                    List<String> carried = new ArrayList<>();
+                    for (GameDiff.Meth m : was.methods.values()) {
+                        if (m.name.equals(n)) {
+                            carried.add(port.desc(m.desc));
+                        }
+                    }
+                    throw new IllegalArgumentException("stand-in " + Exposure.dotted(name) + "." + n + desc + " answers no member of " + Exposure.dotted(old) + " in " + port.a.version
+                        + (carried.isEmpty() ? "" : " (its " + n + " carried into " + port.b.version + "'s names: " + String.join(", ", carried) + ")"));
                 }
                 for (int i = receiver ? 0 : 1; i < (receiver ? params.length : params.length + 1); i++) {
                     args.append(args.isEmpty() ? "" : ", ").append('$').append(i);
@@ -270,13 +277,29 @@ final class StandinClasses {
     }
 
     /**
+     * The class map as a port that leaves the route out for every class the older release lacks by its own name and a
+     * stand-in is written for (PortVerifier.fitting): a stand-in's methods name those stand-ins (1.20's
+     * SignBlockEntity.getFrontText gives the SignText stand-in, though the route reads SignText as SignBlockEntity).
+     */
+    Map<String, String> standing() {
+        Map<String, String> out = new HashMap<>(port.classMap);
+        for (String name : standins.keySet()) {
+            String old = name.substring(STANDIN.length());
+            if (!old.contains("$") && port.a.classes.containsKey(old) && !port.b.classes.containsKey(old)) {
+                out.put(old, name);
+            }
+        }
+        return out;
+    }
+
+    /**
      * The old release's descriptor of a method of an old class (or one it inherits) whose descriptor, carried into the new
      * release's names, is newDesc; null if none. A constructor is looked up on the class itself.
      */
     String oldMember(String old, String name, boolean isStatic, String newDesc) {
         for (GameDiff.Cls c = port.a.classes.get(old); c != null; c = name.equals("<init>") || c.sup == null ? null : port.a.classes.get(c.sup)) {
             for (GameDiff.Meth m : c.methods.values()) {
-                if (m.name.equals(name) && ((m.flags & Opcodes.ACC_STATIC) != 0) == isStatic && port.desc(m.desc).equals(newDesc)) {
+                if (m.name.equals(name) && ((m.flags & Opcodes.ACC_STATIC) != 0) == isStatic && (port.desc(m.desc).equals(newDesc) || JarPort.mapDesc(m.desc, standing()).equals(newDesc))) {
                     return m.desc;
                 }
             }

@@ -244,6 +244,105 @@ final class JarPortBackStandinTest {
         port.port(JarPortTest.jar(withAccessor), "gfx-accessor.jar", accessorRuns);
         List<String> accessorUnlinked = Json.array(accessorRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(accessorUnlinked.isEmpty(), "an accessor into a class only a stand-in has reads the stand-in's own field, and links: " + accessorUnlinked);
+        valueClass(scratch);
         JarPortTest.finish("JarPortBackStandinTest");
+    }
+
+    /**
+     * A value class the older release lacks that the route reads as another (1.20's SignText, which the change map moves
+     * to SignBlockEntity, whose one side holds its fields on 1.19.4): a stand-in method of an existing class gives the
+     * value class's stand-in, and the port takes the stand-in route although the mod only names the value class as what
+     * a call gives (Board.note()L.../Note;).
+     */
+    static void valueClass(Path scratch) throws Exception {
+        Path dir = Files.createDirectories(scratch.resolve("value-class"));
+        String note = """
+            package net.minecraft.g5;
+            public class Note {
+                final String t;
+                public Note(String t) {
+                    this.t = t;
+                }
+                public String text() {
+                    return t;
+                }
+            }
+            """;
+        Map<String, byte[]> newer = JarPortBackTest.compile(dir.resolve("newer"), Map.of("net/minecraft/g5/Note.java", note, "net/minecraft/g5/Board.java", """
+            package net.minecraft.g5;
+            public class Board {
+                public Note note() {
+                    return new Note("hi");
+                }
+            }
+            """), null);
+        Map<String, byte[]> older = JarPortBackTest.compile(dir.resolve("older"), Map.of("net/minecraft/g5/Board.java", """
+            package net.minecraft.g5;
+            public class Board {
+                public String text() {
+                    return "hi";
+                }
+            }
+            """), null);
+        Map<String, byte[]> mod = JarPortBackTest.compile(dir.resolve("mod"), Map.of("n7/Reader.java", """
+            package n7;
+            import net.minecraft.g5.Board;
+            public class Reader {
+                public static String read(Board b) {
+                    return b.note().text();
+                }
+            }
+            """), dir.resolve("newer/classes"));
+        GameDiff.Snap a = GameDiff.read("2.0", new ArrayList<>(newer.values()), null, null);
+        GameDiff.Snap b = GameDiff.read("1.0", new ArrayList<>(older.values()), null, null);
+        b.loaderVersion = "1.0.1";
+        Path map = dir.resolve("route.json");
+        Files.writeString(map, "{\"classes\": [{\"from\": \"net.minecraft.g5.Note\", \"to\": \"net.minecraft.g5.Board\"}]}");
+        JarPort port = new JarPort(a, b, map);
+        port.oldCode = new GameCode(newer::get, null, newer);
+        port.newCode = new GameCode(older::get, null, older);
+        Path standins = dir.resolve("standins/2.0-1.0/net/minecraft/g5");
+        Files.createDirectories(standins);
+        Files.writeString(standins.resolve("Note.java"), note.replace("package net.minecraft.g5;", "package mmt.standin.net.minecraft.g5;"));
+        Files.writeString(standins.resolve("Board.java"), """
+            package mmt.standin.net.minecraft.g5;
+            public final class Board {
+                private Board() {
+                }
+                public static Note note(net.minecraft.g5.Board self) {
+                    return new Note(self.text());
+                }
+            }
+            """);
+        port.standIn.standins(List.of(dir.resolve("standins/2.0-1.0")));
+        Map<String, byte[]> files = new HashMap<>();
+        mod.forEach((name, bytes) -> files.put(name + ".class", bytes));
+        files.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n7\"\n".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> runs = new ArrayList<>();
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "value-class.jar", runs));
+        List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        JarPortTest.expect(unlinked.isEmpty(), "a call giving a value class the older release lacks links through the stand-ins, route left out: " + unlinked);
+        Map<String, byte[]> classes = new HashMap<>(older);
+        for (var e : ported.entrySet()) {
+            if (e.getKey().endsWith(".class")) {
+                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+            }
+            if (e.getKey().endsWith(".jar")) {
+                for (var inner : JarPortTest.entries(e.getValue()).entrySet()) {
+                    if (inner.getKey().endsWith(".class")) {
+                        classes.put(inner.getKey().substring(0, inner.getKey().length() - 6), inner.getValue());
+                    }
+                }
+            }
+        }
+        String got;
+        try {
+            Class<?> board = JarPortStandinTest.loader(classes).loadClass("net.minecraft.g5.Board");
+            Class<?> reader = board.getClassLoader().loadClass("n7.Reader");
+            got = String.valueOf(reader.getMethod("read", board).invoke(null, board.getConstructor().newInstance()));
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            got = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+        JarPortTest.expect(got.equals("hi"), "and reads the older release's own value: " + got);
     }
 }
