@@ -125,8 +125,8 @@ the first row above.
    `python bench/learn_diff.py --loader neoforge|fabric` and read every reading that is new, gone or changed against
    main before the sweep: a wrong reading that links is invisible to the count (kill() learned as discard()).
 5. Commit, write `Port check: LOADER:A:B type=TYPE` (or `mods=...`) in the PR description, push, and when the last
-   commit is in, mark the PR ready and end the turn (a draft's pushes start no check; each push to a ready PR starts them all again). Its Port check ports those mods against main's row and starts the ones that newly link on a real
-   server and in a real client, with the library mods they require; no mod that links may stop or fail.
+   commit is in, mark the PR ready and end the turn (a draft's pushes start no check; each push to a ready PR starts them all again). Its Port check ports those mods with the PR and with its base; no mod that links on the base may stop. It starts no
+   game, and nothing waits on one.
    `python bench/port_board.py --changed` builds the pinned source ports your rule crosses.
 
 Stop and tell Jon when: three parts in a row each freed no mod (the list has reached parts that need the game class
@@ -139,8 +139,9 @@ read in both versions; say which); a rule needs to name a mod; or the count of m
   posts; Jon, 2026-11-21), quoted in the stand-in and checked against both releases' code. Never how another mod was
   ported. Mod jars are only counted.
 - No AI call inside the tool. What you work out is saved as a rule with a test.
-- Prove in game before the PR ends, on GitHub's runners and never by starting Minecraft here: many agents share one PC.
-  The Port check does it when the PR is ready (step 5); the whole corpus once, on the PR's final commit:
+- A port's PR is proven by linking (the Port check, step 5), not by a game start: starting freed mods held pull
+  requests for 26 minutes and more a push. Never start Minecraft here for a port (many agents share one PC); a game
+  start by hand is `tools/cloud-run load`, and no PR waits on it. The whole corpus once, on the PR's final commit:
   `tools/cloud-run ports`; then hand back, never watching CI. Locally: edit, compile and the offline checks (`exposure.py jars`, `python bench/run_tests.py`).
 - Each type of break is a commit on the step's open PR, not a new step or PR (`CONTRIBUTING.md`, "How the work
   runs"). End the session by writing the state back in the step's own file (`coverage/roadmap/goal-2/NNN-ID.json`):
