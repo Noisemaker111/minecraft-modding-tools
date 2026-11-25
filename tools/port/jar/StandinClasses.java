@@ -253,12 +253,20 @@ final class StandinClasses {
             return;
         }
         List<String[]> made = new ArrayList<>();
+        boolean[] declared = { false };
+        String[] sup = { null };
         new org.objectweb.asm.ClassReader(bytes).accept(new org.objectweb.asm.ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public void visit(int version, int access, String n, String signature, String superName, String[] interfaces) {
+                sup[0] = superName;
+            }
+
             @Override
             public org.objectweb.asm.MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
                 if (!n.equals(name) || !d.equals(desc)) {
                     return null;
                 }
+                declared[0] = true;
                 return new org.objectweb.asm.MethodVisitor(Opcodes.ASM9) {
                     @Override
                     public void visitMethodInsn(int opcode, String o, String mn, String md, boolean itf) {
@@ -267,6 +275,11 @@ final class StandinClasses {
                 };
             }
         }, org.objectweb.asm.ClassReader.SKIP_FRAMES);
+        // A stand-in class extending a game class (GuiGraphics' Tooltips, a Screen) calls what it inherits on itself.
+        GameDiff.Cls inherited = declared[0] || sup[0] == null || !port.b.classes.containsKey(sup[0]) ? null : Exposure.declaring(port.b, sup[0], 'm', name, desc);
+        if (inherited != null) {
+            out.add(inherited.name + "." + name + desc);
+        }
         for (String[] m : made) {
             if (m[0].startsWith(STANDIN)) {
                 calls(m[0], m[1], m[2], out, seen);
@@ -517,13 +530,20 @@ final class StandinClasses {
                 }
 
                 void need(String owner, char kind, String member, String desc) {
-                    GameDiff.Cls site = port.b.classes.get(owner);
+                    // A stand-in class extending a game class (GuiGraphics' Tooltips, a Screen) reaches what it inherits,
+                    // where what is protected is open to it.
+                    boolean sub = owner.startsWith(STANDIN);
+                    for (int up = 0; owner != null && owner.startsWith(STANDIN) && up < 8; up++) {
+                        byte[] own = standins.get(owner);
+                        owner = own == null ? null : new ClassReader(own).getSuperName();
+                    }
+                    GameDiff.Cls site = owner == null ? null : port.b.classes.get(owner);
                     GameDiff.Cls holder = site == null || site.library ? null : Exposure.declaring(port.b, owner, kind, member, kind == 'f' ? null : desc);
                     if (holder == null || holder.library) {
                         return;
                     }
                     int flags = kind == 'f' ? holder.fields.get(member).flags : holder.methods.get(member + desc).flags;
-                    boolean classOpen = (site.flags & Opcodes.ACC_PUBLIC) != 0, memberOpen = (flags & Opcodes.ACC_PUBLIC) != 0;
+                    boolean classOpen = (site.flags & Opcodes.ACC_PUBLIC) != 0, memberOpen = (flags & (sub ? Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED : Opcodes.ACC_PUBLIC)) != 0;
                     if (classOpen && memberOpen) {
                         return;
                     }
