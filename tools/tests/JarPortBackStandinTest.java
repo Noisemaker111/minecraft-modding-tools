@@ -180,6 +180,48 @@ final class JarPortBackStandinTest {
         }
         JarPortTest.expect(trace.equals("fill6;fill20;fill30;fill5;"),
             "1.0's game runs the mod's render with a Gfx made from its Pose; label, from the override and from a helper handed the Gfx, and super.render get the Pose it holds: " + trace);
+
+        // Every port of the update carries the same jar of stand-in types, whatever its own route kept: the loader loads one
+        // jar of that id. A port that has not chosen the stand-in route (Gfx still routed to Comp) lists Gfx all the same.
+        JarPort fresh = new JarPort(a, b, map);
+        fresh.standIn.standins(List.of(scratch.resolve("standins/2.0-1.0")));
+        JarPortTest.expect(fresh.standIn.standinTypes().contains("mmt/standin/net/minecraft/g5/Gfx"),
+            "the stand-in for a class the older release lacks is one of the update's types for every port: " + fresh.standIn.standinTypes());
+
+        // A mixin into the class only the stand-in has changes nothing the older game runs (its code never calls the copy),
+        // so it does not link.
+        org.objectweb.asm.ClassWriter w = JarPortRetypeTest.writer("n6/GfxMixin", "java/lang/Object");
+        org.objectweb.asm.AnnotationVisitor target = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        org.objectweb.asm.AnnotationVisitor value = target.visitArray("value");
+        value.visit(null, org.objectweb.asm.Type.getObjectType("net/minecraft/g5/Gfx"));
+        value.visitEnd();
+        target.visitEnd();
+        org.objectweb.asm.MethodVisitor m = w.visitMethod(org.objectweb.asm.Opcodes.ACC_PRIVATE, "onFill", "(I" + JarPortPointTest.CI + ")V", null, null);
+        org.objectweb.asm.AnnotationVisitor inject = m.visitAnnotation(JarPortFixesTest.INJECT, false);
+        org.objectweb.asm.AnnotationVisitor methods = inject.visitArray("method");
+        methods.visit(null, "fill(I)V");
+        methods.visitEnd();
+        org.objectweb.asm.AnnotationVisitor ats = inject.visitArray("at");
+        org.objectweb.asm.AnnotationVisitor head = ats.visitAnnotation(null, MixinRetargets.AT);
+        head.visit("value", "HEAD");
+        head.visitEnd();
+        ats.visitEnd();
+        inject.visitEnd();
+        m.visitCode();
+        m.visitInsn(org.objectweb.asm.Opcodes.RETURN);
+        m.visitMaxs(0, 0);
+        m.visitEnd();
+        w.visitEnd();
+        // Beside the widget, whose port takes the stand-in route, as Patchouli's screens and its mixin into GuiGraphics.
+        Map<String, byte[]> withMixin = new HashMap<>(files);
+        withMixin.put("n6/GfxMixin.class", w.toByteArray());
+        withMixin.put("n6.mixins.json", "{\"package\": \"n6\", \"mixins\": [\"GfxMixin\"]}".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> mixinRuns = new ArrayList<>();
+        Map<String, byte[]> mixinPorted = JarPortTest.entries(port.port(JarPortTest.jar(withMixin), "gfx-mixin.jar", mixinRuns));
+        List<String> mixinUnlinked = Json.array(mixinRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        boolean intoStandin = new String(mixinPorted.get("n6/GfxMixin.class"), StandardCharsets.ISO_8859_1).contains("mmt/standin/");
+        JarPortTest.expect(!(intoStandin && mixinUnlinked.isEmpty()),
+            "a mixin into a class only a stand-in has does not link (into the stand-in the older game never calls): " + mixinUnlinked);
         JarPortTest.finish("JarPortBackStandinTest");
     }
 }

@@ -587,6 +587,10 @@ final class StandinClasses {
      * This update's stand-ins for classes it dropped, which stand in for the class itself, with their nested classes and
      * every stand-in they use. Mods name these types in their own methods and fields, and so do the libraries nested in
      * them, so all of them name one copy: a jar of its own (typesJar) the loader loads once, whichever mods carry it.
+     * Its contents are the same for every mod of the update, since the loader keeps one jar of that id: a class the
+     * newer game has and the older lacks by its own name is one, even where a mod's port routes it to another class
+     * (GuiGraphics, which the route maps to GuiComponent where PortVerifier.fitting keeps the route). A Fabric pack of
+     * ports that each carried only what their own route used ran the copy without GuiGraphics, and Puzzle failed.
      */
     Set<String> standinTypes() {
         if (types == null) {
@@ -594,7 +598,9 @@ final class StandinClasses {
             Deque<String> todo = new ArrayDeque<>();
             for (String name : standins.keySet()) {
                 String outer = name.contains("$") ? name.substring(0, name.indexOf('$')) : name;
-                if (port.classMap.containsValue(name) || port.classMap.containsValue(outer)) {
+                String old = outer.substring(STANDIN.length());
+                boolean dropped = port.a.classes.containsKey(old) && !port.b.classes.containsKey(old) && becameType(old, standins.get(outer)) == null;
+                if (port.classMap.containsValue(name) || port.classMap.containsValue(outer) || dropped) {
                     todo.push(name);
                 }
             }
