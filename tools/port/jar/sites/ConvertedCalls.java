@@ -59,7 +59,10 @@ final class ConvertedCalls {
         }
         GameDiff.Cls holder = Exposure.declaring(sites.port.b, t[0], 'm', t[1], t[2]);
         GameDiff.Meth m = holder == null ? null : holder.methods.get(t[1] + t[2]);
-        if (!any || m == null || m.isStatic() != isStatic || !sites.port.links.linksNew(sites.mod, sites.callers, t[0], 'm', t[1], t[2])) {
+        // A member closed to the caller (a copy of the newer game's code calling a protected method) is opened through the
+        // mod's access transformer or widener where the loader reads one.
+        if (!any || m == null || m.isStatic() != isStatic || !sites.port.links.linksNew(sites.mod, sites.callers, t[0], 'm', t[1], t[2])
+            && !sites.port.links.opened(sites.mod, sites.callers, t[0], 'm', t[1], t[2])) {
             return false;
         }
         Type[] old = Type.getArgumentTypes(desc);
