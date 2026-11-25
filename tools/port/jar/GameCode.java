@@ -933,7 +933,40 @@ final class GameCode {
                 return found(now, like.get(0), "renamed", 'm');
             }
         }
+        if (kind == 'm') {
+            // The one call of the same name in its place on another class, taking the point's arguments in order and
+            // others beside: the call made through what the old receiver stood for (1.20's graphics.drawString(font, ...)
+            // is 1.19.4's GuiComponent.drawString(pose, font, ...), the GuiGraphics an object around that PoseStack).
+            // Several such calls in a row pair up in order when the old code has as many of the point there.
+            List<String[]> same = gap.stream().filter(x -> x[0].equals("m") && x[2].equals(point[2]) && !x[1].equals(point[1]) && within(point[3], x[3])).toList();
+            int from = p, to = p;
+            while (from > 0 && map[from - 1] < 0) {
+                from--;
+            }
+            while (to < was.size() - 1 && map[to + 1] < 0) {
+                to++;
+            }
+            List<Integer> olds = new ArrayList<>();
+            for (int i = from; i <= to; i++) {
+                if (named(was.get(i)).equals(named(point))) {
+                    olds.add(i);
+                }
+            }
+            if (!same.isEmpty() && same.size() == olds.size()) {
+                return found(now, same.get(olds.indexOf(p)), "same name", 'm');
+            }
+        }
         return new Slot("dropped", gap.isEmpty() ? "nothing in its place" : gap.size() + " other instructions in its place", null, -1);
+    }
+
+    /** Whether the arguments of descriptor a stand in b's in their order, b taking at least one more. */
+    static boolean within(String a, String b) {
+        Type[] x = Type.getArgumentTypes(a), y = Type.getArgumentTypes(b);
+        int j = 0;
+        for (int i = 0; i < y.length && j < x.length; i++) {
+            j += y[i].equals(x[j]) ? 1 : 0;
+        }
+        return j == x.length && y.length > x.length;
     }
 
     /** A slot holding x, with its ordinal among the instructions of the new code that name the same. */

@@ -163,7 +163,7 @@ final class MixinPoints {
         boolean inject = inj.kind().equals(MixinRetargets.INJECT);
         boolean moves = switch (slot.game()) {
             case "ordinal" -> ordinal >= 0;
-            case "overload" -> inject;
+            case "overload", "same name" -> inject;
             case "renamed", "accessor" -> true;
             default -> false;
         };
@@ -260,6 +260,86 @@ final class MixinPoints {
             }
         }
         return true;
+    }
+
+    /**
+     * An @Inject's @At at a call its moved method no longer makes, as the call the new method makes in the same place
+     * where the game shows one (GameCode.slot: another signature of the call, or the same call made on another class
+     * with more arguments), where its handler still takes what it took there (takesMoved; index[0] gets a @ModifyArg's
+     * new index, or -1). Kind 'r', the new call's text in changed.
+     */
+    List<MixinMembers.Found> inPlace(List<String> targets, MixinRetargets.Injector inj, String handlerDesc, List<MixinMembers.Found> into, List<MixinMembers.Found> ats, int[] index) {
+        List<GameDiff.Meth[]> methods = enclosing(targets, inj, into);
+        if (methods == null || methods.size() != 1) {
+            return ats;
+        }
+        GameDiff.Meth[] m = methods.get(0);
+        List<MixinMembers.Found> out = new ArrayList<>(ats);
+        for (int i = 0; i < ats.size(); i++) {
+            String[] point = inj.ats().get(i);
+            MixinMembers.Found at = ats.get(i);
+            Matcher target = point[1] == null ? null : MixinMembers.MEMBER.matcher(point[1]);
+            if (!Set.of("INVOKE", "INVOKE_ASSIGN").contains(point[0]) || target == null || !target.matches() || target.group(3) == null
+                || at != null && at.kind() != 0 && at.desc() != null && pointKept(point, at, m)) {
+                continue;
+            }
+            int ordinal = point[2] == null ? -1 : Integer.parseInt(point[2]);
+            GameCode.Slot slot = GameCode.slot(port.code(port.a), port.code(port.b), port::cls, new String[] { m[1].owner.name, m[1].name, m[1].desc },
+                new String[] { m[0].owner.name, m[0].name, m[0].desc }, 'm', target.group(1), target.group(2), target.group(3), ordinal);
+            String[] x = slot.member();
+            if (x == null || !Set.of("same name", "overload").contains(slot.game()) || ordinal >= 0 && slot.ordinal() != ordinal) {
+                continue;
+            }
+            int taken = takesMoved(handlerDesc, inj, target.group(3), x[3]);
+            if (taken == NOT_TAKEN) {
+                continue;
+            }
+            index[0] = taken;
+            out.set(i, new MixinMembers.Found(point[1], null, null, 'r', x[1], x[2], x[3], "L" + x[1] + ";" + x[2] + x[3]));
+        }
+        return out;
+    }
+
+    /**
+     * Whether an injector's handler still takes what it took at a call moved to another one in its place (oldDesc in old
+     * names, newDesc in new ones): an @Inject takes only the place; a @ModifyExpressionValue the result, which must be of
+     * the same type; a @ModifyArg one argument, found where the old call's arguments stand in the new one in their
+     * order, with the index it has there (-1: unchanged) or, with none given, its type in the new call once. Others take
+     * every argument and are not moved (NOT_TAKEN).
+     */
+    static final int NOT_TAKEN = -2;
+
+    int takesMoved(String handlerDesc, MixinRetargets.Injector inj, String oldDesc, String newDesc) {
+        if (inj.kind().equals(MixinRetargets.INJECT)) {
+            return -1;
+        }
+        Type[] was = Type.getArgumentTypes(port.desc(oldDesc)), now = Type.getArgumentTypes(newDesc);
+        if (inj.kind().endsWith(MixinRetargets.MODIFY_VALUE)) {
+            return Type.getReturnType(port.desc(oldDesc)).equals(Type.getReturnType(newDesc)) ? -1 : NOT_TAKEN;
+        }
+        Type[] hp = Type.getArgumentTypes(port.desc(handlerDesc));
+        if (!inj.kind().endsWith(MixinRetargets.MODIFY_ARG) || hp.length != 1) {
+            return NOT_TAKEN;
+        }
+        int[] at = new int[was.length];
+        int j = 0;
+        for (int k = 0; k < was.length; k++) {
+            while (j < now.length && !now[j].equals(was[k])) {
+                j++;
+            }
+            if (j == now.length) {
+                return NOT_TAKEN;
+            }
+            at[k] = j++;
+        }
+        int index = inj.ordinal().length > 1 ? inj.ordinal()[1] : -1;
+        if (index < 0) {
+            return Arrays.stream(was).filter(hp[0]::equals).count() == 1 && Arrays.stream(now).filter(hp[0]::equals).count() == 1 ? -1 : NOT_TAKEN;
+        }
+        if (index >= was.length || !was[index].equals(hp[0])) {
+            return NOT_TAKEN;
+        }
+        return at[index] == index ? -1 : at[index];
     }
 
     /**

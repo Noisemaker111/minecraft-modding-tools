@@ -18,6 +18,9 @@ import org.objectweb.asm.*;
  *   p9.Ui.close() calls the new closeAll(), which the new fresh() calls too: the injector would run where it never ran,
  *   so it stays reported.
  * - p9.Ui.blend() stopped calling Gl.blend() with nothing in its place (1.21.2's LoadingOverlay): reported.
+ * - p9.Ui.paint() called Pen.fill(int) twice; the new code calls Gl.fill(Scr, int) twice in their place, the same call
+ *   through what the old receiver stood for (1.20's graphics.fill(...) in 1.19.4's LoadingOverlay is GuiComponent.fill(pose,
+ *   ...)). An @Inject at the second moves to the second.
  */
 final class JarPortPointTest {
 
@@ -35,12 +38,13 @@ final class JarPortPointTest {
         for (GameDiff.Snap s : List.of(a, b)) {
             JarPortTest.snap(s, "p9/Scr", 0, null);
             JarPortTest.snap(s, "p9/Sink", 0, null, "a()V", "b()V", "c()V");
-            JarPortTest.snap(s, "p9/Gl", 0, null, "blend()V");
+            JarPortTest.snap(s, "p9/Gl", 0, null, "blend()V", "fill(" + SCR + "I)V");
+            JarPortTest.snap(s, "p9/Pen", 0, null, "fill(I)V");
         }
         GameDiff.Cls oldUi = JarPortTest.snap(a, "p9/Ui", 0, null, "key()V", "text()V", "draw" + DRAW, "tick()V", "air()V", "quit(" + SCR + ")V",
-            "close()V", "isDown()Z", "blend()V", "label()V");
+            "close()V", "isDown()Z", "blend()V", "label()V", "paint()V");
         GameDiff.Cls newUi = JarPortTest.snap(b, "p9/Ui", 0, null, "key()V", "text()V", "draw" + DRAW, "draw" + DRAW3, "tick()V", "air()V",
-            "quit(" + SCR + ")V", "quit(" + SCR + "Z)V", "close()V", "closeAll()V", "fresh()V", "isDown()Z", "blend()V", "label()V");
+            "quit(" + SCR + ")V", "quit(" + SCR + "Z)V", "close()V", "closeAll()V", "fresh()V", "isDown()Z", "blend()V", "label()V", "paint()V");
         JarPortTest.snap(a, "p9/Inv", 0, null);
         JarPortTest.snap(b, "p9/Inv", 0, null, "setSelected(I)V");
         for (GameDiff.Snap x : List.of(a, b)) {
@@ -88,6 +92,9 @@ final class JarPortPointTest {
             "not into a method a new way also reaches: " + unlinked);
         JarPortTest.expect(unlinked.stream().anyMatch(u -> u.startsWith("mixin injection point gone: p9.Gl.blend()V in p9.Ui.blend()V")),
             "a call the method dropped with nothing in its place stays reported: " + unlinked);
+        JarPortTest.expect(s.getOrDefault("onSecondFill(" + CI + ")V", "").equals("paint()V INVOKE Lp9/Gl;fill(" + SCR + "I)V") && ordinals.get("onSecondFill(" + CI + ")V") == 1
+                && unlinked.stream().noneMatch(u -> u.contains("in p9.Ui.paint")),
+            "an @Inject at a call the new code makes on another class in its place, with more arguments, moves there, in order: " + s + " " + unlinked);
 
         // What the scoreboard says the game did, from the same reading.
         GameCode then = port.oldCode, now = port.newCode;
@@ -96,6 +103,9 @@ final class JarPortPointTest {
                 && GameCode.slot(then, now, x -> x, new String[] { ui[0], "close", "()V" }, new String[] { ui[0], "close", "()V" }, 'm', "p9/Ui", "isDown", "()Z", -1).game().equals("helper")
                 && GameCode.slot(then, now, x -> x, new String[] { ui[0], "text", "()V" }, new String[] { ui[0], "text", "()V" }, 'm', "p9/Ui", "draw", DRAW, -1).game().equals("overload"),
             "the reading names what the game did: dropped, moved into a method, another signature");
+        GameCode.Slot first = GameCode.slot(then, now, x -> x, new String[] { ui[0], "paint", "()V" }, new String[] { ui[0], "paint", "()V" }, 'm', "p9/Pen", "fill", "(I)V", 0);
+        JarPortTest.expect(first.game().equals("same name") && first.member()[1].equals("p9/Gl") && first.ordinal() == 0,
+            "the first of the calls in a row pairs with the first in their place: " + first);
     }
 
     /** Each handler's @At ordinal, where it gives one. */
@@ -155,6 +165,7 @@ final class JarPortPointTest {
         handler(w, JarPortFixesTest.INJECT, "onQuit", "(" + SCR + CI + ")V", "quit(" + SCR + ")V", "INVOKE", "Lp9/Ui;isDown()Z", -1, true);
         handler(w, JarPortFixesTest.INJECT, "onClose", "(" + CI + ")V", "close()V", "INVOKE", "Lp9/Ui;isDown()Z", -1, false);
         handler(w, JarPortFixesTest.INJECT, "onBlend", "(" + CI + ")V", "blend()V", "INVOKE", "Lp9/Gl;blend()V", -1, false);
+        handler(w, JarPortFixesTest.INJECT, "onSecondFill", "(" + CI + ")V", "paint()V", "INVOKE", "Lp9/Pen;fill(I)V", 1, false);
         w.visitEnd();
         return w.toByteArray();
     }
@@ -268,6 +279,18 @@ final class JarPortPointTest {
             JarPortFollowTest.method(w, "closeAll", "()V", Opcodes.ACC_PUBLIC, JarPortPointTest::closing);
             JarPortFollowTest.method(w, "fresh", "()V", Opcodes.ACC_PUBLIC, m -> JarPortFollowTest.call(m, "p9/Ui", "closeAll", "()V"));
         }
+        JarPortFollowTest.method(w, "paint", "()V", Opcodes.ACC_PUBLIC, m -> {
+            sink(m, "a");
+            for (int i = 1; i <= 2; i++) {
+                if (!old) {
+                    m.visitInsn(Opcodes.ACONST_NULL);
+                }
+                // Values the two releases work out differently, so nothing between the calls lines them up one by one.
+                m.visitLdcInsn(old ? i : 10 + i);
+                m.visitMethodInsn(Opcodes.INVOKESTATIC, old ? "p9/Pen" : "p9/Gl", "fill", old ? "(I)V" : "(" + SCR + "I)V", false);
+            }
+            sink(m, "b");
+        });
         JarPortFollowTest.method(w, "blend", "()V", Opcodes.ACC_PUBLIC, m -> {
             sink(m, "a");
             if (old) {

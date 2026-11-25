@@ -354,7 +354,9 @@ final class MixinRetargets {
                 }
             }
         }
-        List<MixinMembers.Found> ats = inj.ats().stream().map(at -> at[1] == null ? null : port.mixinMembers.find(targets, "target", at[1])).toList();
+        List<MixinMembers.Found> found = inj.ats().stream().map(at -> at[1] == null ? null : port.mixinMembers.find(targets, "target", at[1])).toList();
+        int[] index = { -1 };
+        List<MixinMembers.Found> ats = port.mixinPoints.inPlace(targets, inj, handler.desc, into, found, index);
         if (!port.mixinPoints.pointsKept(targets, inj, into, ats)) {
             { JarPort.why(key, "O5"); return; }
         }
@@ -362,6 +364,14 @@ final class MixinRetargets {
             if (into.get(i).kind() == 's') {
                 mod.retargets.put(key + " " + inj.methods().get(i), into.get(i).changed());
             }
+        }
+        for (int i = 0; i < ats.size(); i++) {
+            if (ats.get(i) != found.get(i)) {
+                mod.retargets.put(key + " " + inj.ats().get(i)[1], ats.get(i).changed());
+            }
+        }
+        if (index[0] >= 0) {
+            mod.argIndexes.put(key, index[0]);
         }
     }
 
@@ -786,6 +796,7 @@ final class MixinRetargets {
                     }
                 }
             }
+            ats = port.mixinPoints.inPlace(targets, inj, handler.desc, into, ats, new int[] { -1 });
             if (!port.mixinPoints.pointsKept(targets, inj, into, ats)) {
                 { JarPort.why(key, "I9"); return; }
             }
