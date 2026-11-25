@@ -1040,7 +1040,7 @@ public final class JarPort {
                 typesPath = standIn.carryTypes(entries, fmj != null);
                 mod.change("stand-in types carried in " + typesPath);
             } catch (RuntimeException unreadable) {
-                // Metadata Json cannot read (a key given twice) cannot list the jar, and the loader loads no jar it does not list.
+                // Metadata Json cannot read cannot list the jar, and the loader loads no jar it does not list.
                 mod.unlinked.add("stand-in types not carried: the jar's metadata cannot be read (" + unreadable.getMessage() + ")");
             }
         }

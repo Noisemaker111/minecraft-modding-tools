@@ -8,9 +8,23 @@ public final class Json {
 
     private final String source;
     private int at;
+    private boolean lastWins;
 
     private Json(String source) {
         this.source = source;
+    }
+
+    /**
+     * As parse, but a key given twice in an object takes its last value instead of failing, as Fabric Loader reads a
+     * fabric.mod.json (Physics Mod's names "environment" twice).
+     */
+    public static Object parseLastWins(String source) {
+        Json parser = new Json(source);
+        parser.lastWins = true;
+        Object value = parser.value();
+        parser.space();
+        if (parser.at != source.length()) throw new IllegalArgumentException("Trailing JSON at " + parser.at);
+        return value;
     }
 
     public static Object parse(String source) {
@@ -171,7 +185,7 @@ public final class Json {
                 String key = string();
                 space();
                 require(':');
-                if (map.containsKey(key)) throw new IllegalArgumentException("Duplicate JSON key: " + key);
+                if (!lastWins && map.containsKey(key)) throw new IllegalArgumentException("Duplicate JSON key: " + key);
                 map.put(key, value());
                 space();
                 if (take('}')) return map;

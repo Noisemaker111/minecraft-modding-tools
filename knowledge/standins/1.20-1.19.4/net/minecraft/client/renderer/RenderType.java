@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import mmt.standin.com.mojang.blaze3d.vertex.VertexSorting;
 import net.minecraft.client.renderer.GameRenderer;
 
 /**
@@ -19,6 +20,10 @@ import net.minecraft.client.renderer.GameRenderer;
  * same quads with the position-color shader (GuiComponent.fill, EditBox.renderHighlight), which these use. Built from
  * the RenderSystem calls 1.20's RenderStateShards make, through RenderType's public constructor (the class is abstract
  * with nothing left to write), as 256-byte buffers as 1.20's are.
+ *
+ * And 1.20's end(buffer, sorting), which is 1.19.4's end(buffer, x, y, z) with the point the sorting is by distance to,
+ * the origin for any other (see VertexSorting; 1.19.4's BufferSource.endBatch passes 0, 0, 0 where 1.20's passes
+ * RenderSystem.getVertexSorting()).
  */
 public final class RenderType {
 
@@ -63,6 +68,14 @@ public final class RenderType {
             RenderSystem.defaultBlendFunc();
         }) {
         };
+    }
+
+    public static void end(net.minecraft.client.renderer.RenderType self, com.mojang.blaze3d.vertex.BufferBuilder buffer, VertexSorting sorting) {
+        if (sorting instanceof VertexSorting.Point p) {
+            self.end(buffer, Math.round(p.x), Math.round(p.y), Math.round(p.z));
+        } else {
+            self.end(buffer, 0, 0, 0);
+        }
     }
 
     public static net.minecraft.client.renderer.RenderType gui() {
