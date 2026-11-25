@@ -222,45 +222,7 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         out.writeShort(in.readUnsignedShort());
         int count = in.readUnsignedShort();
         out.writeShort(count + 26);
-        String[] utf8 = new String[count];
-        for (int i = 1; i < count; i++) {
-            int tag = in.readUnsignedByte();
-            out.writeByte(tag);
-            switch (tag) {
-                case 1:
-                    utf8[i] = in.readUTF();
-                    out.writeUTF(utf8[i]);
-                    break;
-                case 7:
-                case 8:
-                case 16:
-                case 19:
-                case 20:
-                    out.writeShort(in.readUnsignedShort());
-                    break;
-                case 15:
-                    out.writeByte(in.readUnsignedByte());
-                    out.writeShort(in.readUnsignedShort());
-                    break;
-                case 3:
-                case 4:
-                case 9:
-                case 10:
-                case 11:
-                case 12:
-                case 17:
-                case 18:
-                    out.writeInt(in.readInt());
-                    break;
-                case 5:
-                case 6:
-                    out.writeLong(in.readLong());
-                    i++;
-                    break;
-                default:
-                    throw new IOException("unknown constant tag " + tag);
-            }
-        }
+        String[] utf8 = MmtNeoForgeTarget.constants(in, out, count, null, null);
         int access = in.readUnsignedShort();
         int thisClass = in.readUnsignedShort();
         int n = count;
