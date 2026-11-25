@@ -391,13 +391,15 @@ def choose(loader, frm, to, linked, folder, pins, platform):
             continue
         waiting = [j for j in candidates if j not in chosen]
         found = False
-        # What each mod's Modrinth version lists as required, which is what its author says players install.
-        for j in waiting:
+        # What each mod's Modrinth version lists as required, which is what its author says players install: for every
+        # mod, started or waiting. One whose metadata asks for nothing may check for them itself at start (REI stops
+        # without Architectury and Cloth Config, which its fabric.mod.json does not name).
+        for j in candidates:
             listed = required_projects(by_jar[j]["version"]) if j in by_jar and j not in looked else []
             looked.add(j)
             for project in listed:
                 if project not in asked_for:
-                    picked = pick(project, waiting)
+                    picked = pick(project, candidates)
                     if picked:
                         add(project, *picked)
                         found = True

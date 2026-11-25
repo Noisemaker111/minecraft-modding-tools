@@ -284,6 +284,18 @@ with tempfile.TemporaryDirectory() as tmp:
         portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["hud--hud.jar"] and list(ready) == ["cloth.jar"] and not to_port,
           f"a library the platform already is is not added again: {chosen} {ready} {to_port}")
+    # A mod whose metadata asks for nothing still gets what its Modrinth version lists as required: REI checks for
+    # Architectury and Cloth Config itself at start and stops the game without them.
+    (folder / "rei--rei.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "rei", "depends": {"minecraft": "*"}})}))
+    pins = [{"slug": "rei", "file": "rei.jar", "project": "P-rei", "version": "v-rei"}]
+    listed = {"v-rei": ["P-cloth"]}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["rei--rei.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check([j.name for j in chosen] == ["rei--rei.jar"] and list(ready) == ["cloth.jar"],
+          f"a mod that names no library in its metadata gets the ones its Modrinth version requires: {chosen} {ready}")
     # A mod that nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod
     # and starts; a top mod that is the platform itself is left out with that reason, never silently.
     (folder / "presence--presence.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "presence"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
