@@ -51,8 +51,10 @@ public class GuiGraphics {
     public static final float MIN_GUI_Z = -10000.0F;
 
     private final Minecraft minecraft;
-    private final PoseStack pose;
-    private final MultiBufferSource.BufferSource bufferSource;
+    // Public where 1.20's are private: mods open these two with their access wideners and read them directly, and a
+    // widener line for a class the older game lacks opens nothing.
+    public final PoseStack pose;
+    public final MultiBufferSource.BufferSource bufferSource;
     private Tooltips tooltips;
 
     public GuiGraphics(Minecraft minecraft, MultiBufferSource.BufferSource bufferSource) {
