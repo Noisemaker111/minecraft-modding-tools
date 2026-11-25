@@ -162,6 +162,7 @@ public final class Mmt {
             "quiet",
             "pack",
             "focus",
+            "jars",
             "side",
             "minecraft",
             "loader",
@@ -271,6 +272,7 @@ public final class Mmt {
         "preferences",
         "legacy-agent",
         "pack-check",
+        "start-check",
         "fingerprint",
         "fingerprint-diff",
         "help"
@@ -352,7 +354,7 @@ public final class Mmt {
                 else System.out.println(String.valueOf(result.getOrDefault("details", "")).strip() + "\nReceipt: " + output.get("receipt"));
                 System.exit(exit);
             }
-            if (options.command.equals("pack-check")) {
+            if (options.command.equals("pack-check") || options.command.equals("start-check")) {
                 // A modpack, not a mod's source: no Gradle build and no project lock. Receipts go with the pack cache.
                 report = new Report(PackCheck.receipts(), options.command);
                 Map<String, Object> result = new PackCheck(home, options, report).run();
@@ -360,7 +362,8 @@ public final class Mmt {
                 Map<String, Object> output = report.finish(exit, result);
                 if (options.has("json")) System.out.println(Json.write(output));
                 else System.out.printf(
-                    "pack-check: %s (%.0f seconds)%n%s%nReceipt: %s%n",
+                    "%s: %s (%.0f seconds)%n%s%nReceipt: %s%n",
+                    options.command,
                     exit == 0 ? "passed" : "failed",
                     output.get("seconds"),
                     String.valueOf(result.getOrDefault("details", "")).strip(),
@@ -1072,6 +1075,16 @@ public final class Mmt {
             "compared, after the game's renames (knowledge/fingerprint-normalise.json, or --map). Prints each differing section and the first leaves.\n" +
             "--baseline B1.json,B2.json --candidate C1.json,C2.json decides perf-optimize's fingerprint gate on recorded launches: leaves the baselines\n" +
             "disagree on are left out and named, and every other leaf of each candidate must equal its paired baseline's.";
+            case "start-check" -> "Whether mod jars start on a release, decided with no world and no window: mmt start-check --pack FOLDER|PACK --minecraft 1.21.1 --loader fabric [--side server|client|both] [--jars A.jar,B.jar] [--json]\n" +
+            "--pack is a folder with mods/ (or with the jars themselves), or any pack pack-check reads. Each side is the loader's own launch in a new folder,\n" +
+            "one cold JVM: the loader resolves the jars (missing or wrong-version dependencies, game version, Java), Mixin applies every mixin of every\n" +
+            "config, then the game's own start-up code runs (Bootstrap, the mods' start code, and on a server the data packs of a new world: recipes,\n" +
+            "tags, registries) and the JVM ends where the game would open its world or its window. A run that fails names the jars at fault in the\n" +
+            "loader's, Mixin's or the game's own words; they are left out and the rest run again, so every jar ends failed, left out or passed.\n" +
+            "Passed means the checks the output names found no fault. Not covered: anything in a world, client resources (models, textures), and on\n" +
+            "NeoForge's client the mods' own start code. Nothing is kept between runs but what the loader's installer and first start write.\n" +
+            "--jars names the jars the answer is asked for (a ported mod beside the libraries it needs): a side ends once each is decided.\n" +
+            "Exit 1 when a jar fails or a side gives no answer.";
             case "pack-check" -> "Check a modpack the way its players run it: mmt pack-check --pack PACK [--world SAVE] [--only ITEM,ITEM] [--focus MODID,MODID] [--fix] [--json]\n" +
             "--pack is a CurseForge export (.zip or folder), a Modrinth .mrpack (or folder), a CurseForge app, Prism/MultiMC or vanilla launcher\n" +
             "instance, or any folder with mods/. --minecraft 1.21.1 and --loader neoforge[-21.1.77] override what the pack says; with no loader\n" +
@@ -1109,6 +1122,7 @@ public final class Mmt {
             "  eval, reload           talk to the running game          game-status, game-stop\n" +
             "  plugin-check           Paper/Bukkit plugin on a fake Paper server (MockBukkit), no real server\n" +
             "  server-check           plugin on a real Paper server with a bot player and a scenario\n" +
+            "  start-check            mod jars on a release with no world or window: the loader, Mixin and the game's start-up code decide\n" +
             "  pack-check             a modpack on its real Forge/NeoForge/Fabric/Quilt server: crashes, conflicts, worlds that will not reopen\n" +
             "  preferences            show or change your game window and sound choices\n" +
             "  perf, perf-report      where a mod's CPU, memory, I/O and frame/tick time go\n" +

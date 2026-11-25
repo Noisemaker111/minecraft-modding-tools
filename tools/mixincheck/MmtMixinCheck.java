@@ -105,6 +105,15 @@ public final class MmtMixinCheck {
     }
 
     static void check(ClassLoader game, String side, long start) throws Throwable {
+        check(game, side, start, null);
+    }
+
+    /**
+     * defining: a class whose definition this runs inside (MmtNoGame, as the game's entry class loads), left alone; null
+     * for none. Returns how many failures the game would stop on: Mixin's errors of that kind (MmtMixinErrors counts
+     * them) and the target classes that did not load.
+     */
+    static int check(ClassLoader game, String side, long start, String defining) throws Throwable {
         Class<?> mixins = Class.forName("org.spongepowered.asm.mixin.Mixins", true, game);
         registerHandler(mixins);
         String mixinVersion = "";
@@ -146,7 +155,7 @@ public final class MmtMixinCheck {
         // Mixin selects and prepares its configs on the first class it transforms. The game's own
         // entry point is in every launch; it is loaded, never run.
         String entry = side.equals("CLIENT") ? "net.minecraft.client.main.Main" : "net.minecraft.server.Main";
-        try {
+        if (defining == null) try {
             Class.forName(entry, false, game);
         } catch (Throwable failure) {
             emit("note", "message", "Could not load " + entry + " to start Mixin: " + messages(unwrap(failure)));
@@ -171,11 +180,11 @@ public final class MmtMixinCheck {
                 "ours",
                 ours
             );
-            if (ours) for (String target : names) if (!targets.containsKey(target.replace('/', '.'))) targets.put(
-                target.replace('/', '.'),
-                name
-            );
+            if (ours) for (String target : names) if (
+                !targets.containsKey(target.replace('/', '.')) && !target.replace('/', '.').equals(defining)
+            ) targets.put(target.replace('/', '.'), name);
         }
+        int unloadable = 0;
         for (Map.Entry<String, String> target : targets.entrySet()) {
             String error = null, exception = null;
             try {
@@ -184,6 +193,9 @@ public final class MmtMixinCheck {
                 Throwable cause = unwrap(failure);
                 error = messages(cause);
                 exception = cause.getClass().getName();
+                // A target this side of the game does not have is never loaded by it either; any other failure is the
+                // one the game meets when it loads the class.
+                if (!(cause instanceof ClassNotFoundException)) unloadable++;
             }
             emit(
                 "target",
@@ -248,7 +260,11 @@ public final class MmtMixinCheck {
             }
         }
         emit("done", "seconds", seconds(start), "targets", targets.size());
+        return Integer.getInteger(STOPPING, 0) + unloadable;
     }
+
+    /** The system property MmtMixinErrors counts in: Mixin loads that class with its own loader, which may not see this one. */
+    static final String STOPPING = "mmt.mixincheck.stopping";
 
     /**
      * Mixin creates error handlers by name with its own class loader. Where that loader can see this

@@ -204,6 +204,8 @@ final class PackCheck {
             Json.map("file", mod.file(), "side", mod.side(), "ids", idsByJar.getOrDefault(mod.file(), List.of()))
         );
         result.put("modFiles", modFiles);
+        // start-check: the same pack, read and installed the same way, decided with no world or window (StartCheck).
+        if (options.command.equals("start-check")) return StartCheck.run(this, checked, context, install, result);
         readDropped();
         // A repair known from the jars is known now: the repaired pack's server starts beside the shipped one.
         List<Map<String, Object>> chosen = new ArrayList<>(options.has("fix") ? fixes : List.of());

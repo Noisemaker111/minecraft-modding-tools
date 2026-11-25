@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from portboard import board, dependencies, gamereleases, javalevels, porter, settings
+from portboard import board, dependencies, gamereleases, javalevels, porter, settings, startcheck
 
 
 # Every pack-check a game proof starts, in order: its side, its seconds and mmt's own stages (load reports them).
@@ -76,10 +76,10 @@ def start_times(starts):
 
 def time_line(times):
     """A load receipt's time, as one line: the port before any start, then each side's starts and mmt's stages in them."""
-    parts = [f"port {times.get('port', 0):.0f} s"]
+    parts = [f"port {times.get('port', 0):.0f} s"] + ([f"start-check {times['startCheck']:.0f} s"] if "startCheck" in times else [])
     for side in ("server", "client"):
         t = times.get(side)
-        if t:
+        if isinstance(t, dict):
             stages = ", ".join(f"{n} {v:.0f} s" for n, v in sorted(t["stages"].items(), key=lambda kv: -kv[1]))
             parts.append(f"{side} {t['starts']} start{'s' if t['starts'] != 1 else ''} {t['seconds']:.0f} s" + (f" ({stages})" if stages else ""))
     if "starts" in times:
@@ -109,15 +109,22 @@ def client_pack(server_pack, names, platform=()):
     return pack
 
 
-def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(), run=None, made=False):
+def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(), run=None, made=False, decided=None):
     """The same ported jars in a real client of the new release (mmt pack-check --side client): the title screen, a world, the
     inventory and every creative tab. A start that fails drops the jar its log names and starts again; each mod ends loaded or
     failed (with why). A server never runs client code, so this is where rendering and screen code is proven. The platform
     (Fabric API) goes in as it did on the server and is not counted; kept names the jars of it that no failure drops.
     run: a stand-in for one pack-check of the client pack folder (tests), returning its JSON. made: the client pack
-    is there already (client_pack), made before the server's starts that run beside this one move jars out of its pack."""
+    is there already (client_pack), made before the server's starts that run beside this one move jars out of its pack.
+    decided: {jar: why} for the jars start-check failed on the client: out of the pack already, and not started."""
     pack = server_pack.with_name(server_pack.name + "-client") if made else client_pack(server_pack, names, platform)
-    verdicts = {}
+    decided = decided or {}
+    verdicts = {name: not_started(why) for name, why in decided.items() if name in names}
+    if not any(p.name not in platform for p in (pack / "mods").glob("*.jar")):
+        # Nothing left to start: a client with only the platform in it proves nothing of the mods.
+        for name in names:
+            verdicts.setdefault(name, "not started: its jar is in neither the server's pack nor what it dropped")
+        return {"mods": len(names), "loaded": 0, "verdicts": verdicts, "newerJava": []}
 
     def start():
         if run:
@@ -177,7 +184,7 @@ def client_starts(loader, to, server_pack, names, platform=(), kept=frozenset(),
         found = {}
     # As on the server, a dropped mod gets one more start with the mods that loaded: a log can name a bystander. One its
     # class files fail is not started again.
-    for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and n not in misfits):
+    for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and n not in misfits and n not in decided):
         (pack / "dropped" / name).rename(pack / "mods" / name)
         again, _ = start()
         if again.get("result", {}).get("client", {}).get("opened"):
@@ -214,6 +221,18 @@ def client_culprits(pack, present, libraries, loader, start):
     if not found and not res.get("client", {}).get("toolError"):
         found = first_failing(pack, present + libraries, loader, start, failure)
     return found, result, res, done
+
+
+def not_started(why):
+    """The verdict of a jar start-check failed: it is not started in a game, and says so with start-check's reason."""
+    return f"failed: {why} (decided by start-check with no world or window; not started in a game)"
+
+
+def leave_out(pack, failed):
+    """Moves the jars start-check failed out of a pack's mods/ into its dropped/, so no start holds them."""
+    for name in failed:
+        if (pack / "mods" / name).is_file():
+            (pack / "mods" / name).rename(pack / "dropped" / name)
 
 
 def with_needs(chosen, asks, gives):
@@ -434,14 +453,19 @@ def proof_report(work, mods):
     return whole
 
 
-def load(loader, frm, to, save, mods=None, out=None):
+def load(loader, frm, to, save, mods=None, out=None, game=True, check=startcheck.run):
     """The mods the jar scoreboard says link, ported as jars and started on a real server of the new release with the library
     mods they need (choose), then in a real client of it (client_starts), with both verdicts side by side. mods: only these
     (Modrinth slugs), with the libraries they need.
 
     One start holds them all; a start that fails drops the jar its log names and starts again, until a start opens a world,
     places every block item and opens it again. Each mod ends loaded, failed (with why) or left out as client-only. The
-    receipt's time says where the proof's time went: the port before any start, and each side's starts with mmt's stages."""
+    receipt's time says where the proof's time went: the port before any start, and each side's starts with mmt's stages.
+
+    Before any start the same jars go through mmt start-check (check: startcheck.run, or a stand-in in tests), which decides
+    with no world and no window what the loader, Mixin and the game's own start-up code decide. A jar it fails is not
+    started and carries its reason; the starts hold only what it passed. game False ends there: the answer of start-check
+    alone, each mod failed, passed (the checks that ran, never "loaded") or left out, and no game is started."""
     STARTS.clear()
     FAILED_LOGS.clear()
     ISOLATED.clear()
@@ -526,14 +550,33 @@ def load(loader, frm, to, save, mods=None, out=None):
     # hang on the server's verdicts, and one after the other the two took 54 to 147 s and 69 to 78 s (2026-11-23).
     on_platform = [n for n in platform if (pack / "mods" / n).is_file()]
     client_pack(pack, present, on_platform)
+    asked = list(present)
+    checked = check(pack, to, loader, asked)
+    for line in ([f"start-check gave no answer, so every jar goes to the game: {checked['error']}"] if "error" in checked else []):
+        print(line)
+    sides = checked.get("sides", {})
+    decided = {side: {n: why for n, why in sides.get(side, {}).get("failed", {}).items()} for side in ("server", "client")}
+    for side, folder in (("server", pack), ("client", pack.with_name(pack.name + "-client"))):
+        for name, why in sorted(decided[side].items()):
+            print(f"  {name}: start-check fails it on the {side}, so it is not started there: {why[:300]}")
+        leave_out(folder, decided[side])
+    if not game:
+        return checked_only(loader, frm, to, scope, asked, checked, links, libraries, left, round(time.monotonic() - began, 1), ported_in, out)
+    present = sorted(p.name for p in (pack / "mods").glob("*.jar") if p.name not in platform)
+    on_platform = [n for n in platform if (pack / "mods" / n).is_file()]
     starting = time.monotonic()
     beside = ThreadPoolExecutor(1)
-    client_run = beside.submit(client_starts, loader, to, pack, present, on_platform, set(platform) - set(libraries), None, True)
+    client_run = beside.submit(client_starts, loader, to, pack, asked, [n for n in platform if (pack.with_name(pack.name + "-client") / "mods" / n).is_file()],
+                               set(platform) - set(libraries), None, True, decided["client"])
     # A server leaves out a mod whose own metadata says it is client-only, so with only those to start it would run the
     # platform alone and prove nothing of the port (fabric 1.18.1 -> 1.18.2: 147 s for two client-only mods).
     own = {n: client_only_jar(pack / "mods" / n, loader) for n in present}
-    serve = not (present and all(own.values()))
-    if not serve:
+    for name, why in decided["server"].items():
+        if name in asked:
+            verdicts[name] = not_started(why)
+    # With every mod failed by start-check there is nothing to start: a server of the platform alone proves nothing.
+    serve = bool(present) and not all(own.values())
+    if present and not serve:
         for name in present:
             verdicts[name] = f"client-only: {own[name]}; no server was started, as none of the mods would run on one"
         print(f"  no server start: every mod to start is client-only by its own metadata ({', '.join(present)})")
@@ -586,7 +629,7 @@ def load(loader, frm, to, save, mods=None, out=None):
     # with the mods that loaded; it counts as loaded only if that start opens a world too. One its class files fail is
     # not started again: the release's Java refuses it whatever else is in the pack.
     if result.get("ok"):
-        for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and n not in misfits):
+        for name in sorted(n for n, v in verdicts.items() if v.startswith("failed") and links.get(n) and n not in misfits and n not in decided["server"]):
             (pack / "dropped" / name).rename(pack / "mods" / name)
             again, done = pack_check(pack, to, loader)
             left_out = again.get("result", {}).get("game", {}).get("leftOut") or {}
@@ -627,7 +670,9 @@ def load(loader, frm, to, save, mods=None, out=None):
         # A mod whose client start classes need a newer Java (its client entrypoint) is no sign of that.
         "loadedOnServerFailedInClient": sorted(n for n, v in client["verdicts"].items() if v.startswith("failed") and verdicts.get(n) == "loaded" and links.get(n)
                                                and n not in client.get("newerJava", ())),
-        "time": {"port": ported_in, **start_times(STARTS), "starts": starts_took},
+        # What start-check decided before any start, each side's {jar: why}: those jars were not started in a game.
+        "startCheck": {"failed": decided, "seconds": checked["seconds"], **({"error": checked["error"]} if "error" in checked else {})},
+        "time": {"port": ported_in, "startCheck": checked["seconds"], **start_times(STARTS), "starts": starts_took},
     }
     print(f"{'mod':<60} {'server':<12} client")
     for name in sorted(verdicts):
@@ -647,6 +692,36 @@ def load(loader, frm, to, save, mods=None, out=None):
           + (f"; built for a newer Java than {to} runs on, not started: {summary['newerJava']}" if summary["newerJava"] else ""))
     print(time_line(summary["time"]))
     keep_load(summary, out, save)
+    return summary
+
+
+def checked_only(loader, frm, to, scope, asked, checked, links, libraries, left, took, ported_in, out):
+    """The answer of start-check alone (load with game False): each asked mod's verdict on each side in start-check's own
+    words, the checks each side ran, and where the seconds went. No game was started, so no verdict says loaded."""
+    sides = checked.get("sides", {})
+    said = {side: startcheck.verdicts(sides[side]) if side in sides else {} for side in ("server", "client")}
+    summary = {"loader": loader, "from": frm, "to": to, "scope": scope, "mods": len(asked), "linked": sum(bool(links.get(n)) for n in asked),
+               "verdicts": {n: said["server"].get(n, "undecided: " + str(sides.get("server", {}).get("undecided") or checked.get("error"))) for n in asked},
+               "client": {"mods": len(asked), "verdicts": {n: said["client"].get(n, "undecided: " + str(sides.get("client", {}).get("undecided") or checked.get("error"))) for n in asked}},
+               "libraries": libraries, "notStarted": left, "checks": {side: sides[side]["checks"] for side in sides},
+               "runs": {side: sides[side]["runs"] for side in sides}, "receipt": checked.get("receipt"),
+               "time": {"port": ported_in, "startCheck": checked["seconds"], "all": took}}
+    print(f"{'mod':<60} {'server':<12} client")
+    for name in asked:
+        print(f"{name[:60]:<60} {summary['verdicts'][name].split(':')[0]:<12} {summary['client']['verdicts'][name].split(':')[0]}")
+    for line in why_lines(summary["verdicts"], summary["client"]["verdicts"], {}):
+        print(line)
+    for side in sides:
+        runs = sides[side]["runs"]
+        print(f"{side}: {len(sides[side]['passed'])} passed, {len(sides[side]['failed'])} failed, {len(sides[side]['leftOut'])} left out, in {len(runs)} run(s) "
+              f"of {', '.join(f'{r['seconds']:.0f} s' for r in runs)}")
+        for name, what in sides[side]["checks"].items():
+            print(f"  {name}: {what}")
+    print(f"time: port {ported_in:.0f} s; start-check {checked['seconds']:.0f} s; no game was started (receipt {checked.get('receipt')})")
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
+        print(f"saved {out}")
     return summary
 
 

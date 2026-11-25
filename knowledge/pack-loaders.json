@@ -101,6 +101,8 @@
       "clientProfile": "https://meta.fabricmc.net/v2/versions/loader/{mc}/{version}/profile/json",
       "launchJar": "fabric-server-launch.jar",
       "launcherProperties": "fabric-server-launcher.properties",
+      "firstStart": { "server": [".fabric/remappedJars", "libraries", "versions"], "client": [".fabric/remappedJars"] },
+      "startsModsBeforeWindow": true,
       "intermediary": "https://maven.fabricmc.net/net/fabricmc/intermediary/{mc}/intermediary-{mc}-v2.jar",
       "metadata": [{ "file": "fabric.mod.json" }],
       "builtIn": ["fabricloader", "fabric-loader"],
@@ -112,8 +114,9 @@
         "Mixin (?:prepare|apply) for mod ([a-z0-9_\\-]+) failed",
         "NEG_HARD_DEP \\S+ \\S+ \\{breaks ([a-z0-9_\\-]+) @",
         "\\bHARD_DEP ([a-z0-9_\\-]+) \\S+ \\{depends ",
-        "Mod '[^']*' \\(([a-z0-9_\\-]+)\\)",
-        "from mod ([a-z0-9_\\-]+)\\]"
+        "Mod '[^']*' \\(([a-z0-9_\\-]+)\\) \\S+ (?!recommends |conflicts )",
+        "from mod ([a-z0-9_\\-]+)\\]",
+        "Failed to parse \\S+ from pack ([a-z0-9_.\\-]+)"
       ],
       "clientOnly": ["in environment type SERVER", "NoClassDefFoundError: net/minecraft/client/", "ClassNotFoundException: net.minecraft.client.", "NoClassDefFoundError: net/fabricmc/fabric/api/client/"]
     },
@@ -136,8 +139,9 @@
         "Mixin (?:prepare|apply) for mod ([a-z0-9_\\-]+) failed",
         "NEG_HARD_DEP \\S+ \\S+ \\{breaks ([a-z0-9_\\-]+) @",
         "\\bHARD_DEP ([a-z0-9_\\-]+) \\S+ \\{depends ",
-        "Mod '[^']*' \\(([a-z0-9_\\-]+)\\)",
-        "from mod ([a-z0-9_\\-]+)\\]"
+        "Mod '[^']*' \\(([a-z0-9_\\-]+)\\) \\S+ (?!recommends |conflicts )",
+        "from mod ([a-z0-9_\\-]+)\\]",
+        "Failed to parse \\S+ from pack ([a-z0-9_.\\-]+)"
       ],
       "clientOnly": ["in environment type SERVER", "NoClassDefFoundError: net/minecraft/client/", "ClassNotFoundException: net.minecraft.client.", "NoClassDefFoundError: net/fabricmc/fabric/api/client/"]
     }

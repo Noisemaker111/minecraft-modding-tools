@@ -25,6 +25,8 @@ public final class MmtMixinErrors implements IMixinErrorHandler {
         add(line, "phase", phase); add(line, "target", target); add(line, "mixin", mixin == null ? null : mixin.getClassName());
         add(line, "config", config == null ? null : config.getName()); add(line, "configRequired", config != null && config.isRequired());
         add(line, "action", action == null ? null : action.name()); add(line, "exception", th.getClass().getName()); add(line, "message", messages(th));
+        // Mixin's own verdict: ERROR is what stops the game (a required config's mixin); MmtMixinCheck reads the count.
+        if (action == ErrorAction.ERROR) System.setProperty("mmt.mixincheck.stopping", String.valueOf(Integer.getInteger("mmt.mixincheck.stopping", 0) + 1));
         // An injector's own counts: what it expected, needed and actually did, from Mixin's injection object.
         try {
             Object context = th.getClass().getMethod("getContext").invoke(th);
