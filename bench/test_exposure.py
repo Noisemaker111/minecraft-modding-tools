@@ -1032,6 +1032,19 @@ with tempfile.TemporaryDirectory() as tmp:
                        "  sound", f"  game 2.0: {here / 'game-named.jar'}", f"  game 2.0: {here / 'client.jar'}", f"  Fabric API for 2.0: {here / 'api.jar'}",
                        f"  route map: {here / 'route.json'}", f"  stand-ins: {here / 'standins'}"],
           f"a run of named mods names each file of the port that is there, and no other: {said}")
+# The jars a run of named mods kept are the next run's only when the same port wrote them.
+with tempfile.TemporaryDirectory() as tmp:
+    kept = Path(tmp) / "mods"
+    portboard.board.keep_same_port(kept, "port-a")
+    (kept / "clumps.jar").write_bytes(b"ported by a")
+    portboard.board.keep_same_port(kept, "port-a")
+    check((kept / "clumps.jar").read_bytes() == b"ported by a", "a repeat run of the same port keeps the jar it wrote, so it ports nothing")
+    portboard.board.keep_same_port(kept, "port-b")
+    check(not (kept / "clumps.jar").exists() and (kept / "port-key.txt").read_text(encoding="utf-8") == "port-b",
+          "a changed porter or stand-in throws the kept jars away: they are another port's")
+    (kept / "clumps.jar").write_bytes(b"ported by b")
+    portboard.board.keep_same_port(kept, None)
+    check(not kept.exists(), "a run of the whole update keeps no jar")
 read, standins = portboard.board.port_reads("fabric", ["3.0", "2.0", "1.0"], ["3.0", "1.0"])
 check(read == ["3.0", "2.0", "1.0"] and [p.name for p in standins] == ["3.0-1.0", "3.0-1.0.fabric", "jdk"],
       f"a step across two updates lists the release between, whose game jar and Fabric API its composed map was built from: {read} {standins}")

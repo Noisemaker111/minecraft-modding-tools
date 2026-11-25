@@ -131,8 +131,9 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
     for work in works.values():
         work.mkdir(parents=True, exist_ok=True)
     empty = {"linked": 0, "mods": [], "unlinkedByMods": []}
-    for work in works.values():
-        shutil.rmtree(work / "mods", ignore_errors=True)  # a run before this one may have kept its jars (--mods)
+    for to, work in works.items():
+        # A run of named mods before this one kept its jars; they are this run's too only when the same port wrote them.
+        keep_same_port(work / "mods", porter.port_key(loader, frm, to) if only else None)
     reports = timed("port", porter.jar_ports, loader, frm, [(to, works[to] / "mods", written[to]) for to in tos], mods, False, True) if mods else {to: dict(empty) for to in tos}
     if only and mods:
         # A run of named mods is someone looking at those mods: their ported jars are kept and every file the port read
@@ -164,6 +165,18 @@ def port_reads(loader, chain, steps):
     from their game jars and Fabric API. Stand-ins are per step, plus the Java ones a port to an older Java uses."""
     folder = settings.ROOT / "knowledge" / "standins"
     return list(chain), [folder / f"{a}-{b}{x}" for a, b in zip(steps, steps[1:]) for x in ("", f".{loader}")] + [folder / "jdk"]
+
+
+def keep_same_port(folder, key):
+    """Empties a folder of kept ported jars unless the port that wrote them is this run's (key: porter.port_key; None
+    for a run that keeps none), and marks it as this run's. A mod's jar ported by an equal key is the jar this run would
+    write, so a repeat run of named mods ports nothing (it ported each again, 9 s where a repeat had taken 1.3 s)."""
+    marker = folder / "port-key.txt"
+    if key is None or not marker.is_file() or marker.read_text(encoding="utf-8") != key:
+        shutil.rmtree(folder, ignore_errors=True)
+    if key is not None:
+        folder.mkdir(parents=True, exist_ok=True)
+        marker.write_text(key, encoding="utf-8")
 
 
 def game_files(version):
