@@ -84,8 +84,8 @@ final class StandinClasses {
                         Exposure.dotted(name) + ".isInstance($1)"));
                     continue;
                 }
-                if (gone) {
-                    continue; // the class's own members, which references reach through the class map
+                if (gone || conversion(name, mm.methodType().stringValue(), n)) {
+                    continue; // the class's own members, which references reach through the class map; from(T), an override's argument
                 }
                 // Matched in the new release's names: each old member's descriptor carried forward against the stand-in's.
                 // (Carrying the stand-in's back is ambiguous where an old class now goes by a name another old class had.)
@@ -135,6 +135,32 @@ final class StandinClasses {
                 }
             }
         }
+    }
+
+    /**
+     * Whether a stand-in's public static method is from(T): the stand-in made from a value of a type of the new release,
+     * which is what an override of a game method that now takes T is given where the old method took the stand-in's class
+     * (1.20's GuiGraphics, from the PoseStack 1.19.4's Screen.render passes). It answers no old member.
+     */
+    static boolean conversion(String standin, String desc, String name) {
+        Type[] params = Type.getArgumentTypes(desc);
+        return name.equals("from") && params.length == 1 && params[0].getSort() == Type.OBJECT && Type.getReturnType(desc).getInternalName().equals(standin);
+    }
+
+    /** The from(T) of the stand-in for a class (old name), for a value of type got (new names), as a conversion step; or null. */
+    String from(String old, String got) {
+        byte[] bytes = standins.get(STANDIN + old);
+        if (bytes == null) {
+            return null;
+        }
+        for (MethodModel mm : ClassFile.of().parse(bytes).methods()) {
+            String desc = mm.methodType().stringValue();
+            if ((mm.flags().flagsMask() & (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC)) == (Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC)
+                && conversion(STANDIN + old, desc, mm.methodName().stringValue()) && Type.getArgumentTypes(desc)[0].getDescriptor().equals(got)) {
+                return "s:" + STANDIN + old + ".from" + desc;
+            }
+        }
+        return null;
     }
 
     /**

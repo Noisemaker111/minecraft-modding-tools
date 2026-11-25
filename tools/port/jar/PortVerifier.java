@@ -22,25 +22,90 @@ final class PortVerifier {
      * mod's code can use as the old one: a subclass or a value passed as the old class's supertype fails the verifier.
      * Without the route the old class is a stand-in's where one is written for its update (knowledge/standins), and is
      * otherwise reported gone. A mod whose use of the class verifies keeps the route.
+     *
+     * A route is also left out where the mod still names members of the removed class that nothing answered through it
+     * and a stand-in is written for the class (1.20's GuiGraphics on 1.19.4, which the route moves to the PoseStack it
+     * holds): the stand-in is the class for that mod, kept only when the port then leaves fewer references unlinked.
      */
     byte[] fitting(byte[] jar, String name, List<Map<String, Object>> results) throws IOException {
-        Set<String> dropped = new TreeSet<>();
+        Set<String> dropped = new TreeSet<>(), answered = new TreeSet<>(), tried = new TreeSet<>();
+        byte[] kept = null;
+        List<Map<String, Object>> keptResults = null;
+        Set<String> keptDropped = null, keptAnswered = null;
         for (int round = 0; ; round++) {
             int before = results.size();
             unfit.clear();
             byte[] out = without(dropped, () -> port.port(jar, name, results, null));
-            if (dropped.containsAll(unfit) || round == 4) {
-                if (!dropped.isEmpty() && results.size() > before) {
-                    @SuppressWarnings("unchecked") Map<String, Integer> changed = (Map<String, Integer>) results.get(results.size() - 1).get("changed");
+            List<Map<String, Object>> made = new ArrayList<>(results.subList(before, results.size()));
+            if (kept != null && unlinked(made) >= unlinked(keptResults)) {
+                // The stand-in answered no more than the route did: the port with the route stands.
+                results.subList(before, results.size()).clear();
+                results.addAll(keptResults);
+                out = kept;
+                made = keptResults;
+                dropped = keptDropped;
+                answered = keptAnswered;
+                unfit.clear();
+            }
+            kept = null;
+            Set<String> standIn = round == 4 ? Set.of() : unanswered(made, dropped);
+            standIn.removeAll(tried);
+            if ((dropped.containsAll(unfit) && standIn.isEmpty()) || round == 4) {
+                if (!dropped.isEmpty() && !made.isEmpty()) {
+                    @SuppressWarnings("unchecked") Map<String, Integer> changed = (Map<String, Integer>) made.get(made.size() - 1).get("changed");
                     for (String old : dropped) {
-                        changed.merge("class route left out, the verifier refuses it: " + Exposure.dotted(old) + " -> " + Exposure.dotted(port.cls(old)), 1, Integer::sum);
+                        changed.merge((answered.contains(old) ? "class route left out, its stand-in answers the mod's uses: " : "class route left out, the verifier refuses it: ")
+                            + Exposure.dotted(old) + " -> " + Exposure.dotted(port.cls(old)), 1, Integer::sum);
                     }
                 }
                 return out;
             }
+            boolean settled = dropped.containsAll(unfit);
+            dropped = new TreeSet<>(dropped);
+            if (settled) {
+                // The verifier is content: try the stand-ins, keeping this port to fall back on.
+                kept = out;
+                keptResults = made;
+                keptDropped = new TreeSet<>(dropped);
+                keptAnswered = new TreeSet<>(answered);
+                tried.addAll(standIn);
+                answered = new TreeSet<>(answered);
+                answered.addAll(standIn);
+                dropped.addAll(standIn);
+            }
             dropped.addAll(unfit);
             results.subList(before, results.size()).clear();
         }
+    }
+
+    /** References a port left unlinked, over the jar and the jars it nests. */
+    static int unlinked(List<Map<String, Object>> made) {
+        int n = 0;
+        for (Map<String, Object> r : made) {
+            n += r.get("unlinked") == null ? 0 : Json.array(r.get("unlinked")).size();
+        }
+        return n;
+    }
+
+    /** Removed classes still routed whose members the port left unlinked and for which a stand-in is written. */
+    Set<String> unanswered(List<Map<String, Object>> made, Set<String> dropped) {
+        Set<String> out = new TreeSet<>();
+        for (var e : port.classMap.entrySet()) {
+            String old = e.getKey();
+            if (dropped.contains(old) || e.getValue().startsWith(StandinClasses.STANDIN) || port.b.classes.containsKey(old)
+                || !port.standIn.standins.containsKey(StandinClasses.STANDIN + old)) {
+                continue;
+            }
+            Pattern member = Pattern.compile(Pattern.quote(Exposure.dotted(old)) + "\\.[\\w$<]");
+            for (Map<String, Object> r : made) {
+                for (Object u : r.get("unlinked") == null ? List.of() : Json.array(r.get("unlinked"))) {
+                    if (member.matcher(u.toString()).find()) {
+                        out.add(old);
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     interface Porting {
