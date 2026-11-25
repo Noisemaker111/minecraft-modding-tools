@@ -574,6 +574,59 @@ final class GameCode {
         return owner;
     }
 
+    /**
+     * A method's own locals past its arguments as Mixin's STORE and LOAD points and @ModifyVariable read them: each
+     * local the table declares ("slot desc", this release's names, in table order), then each load or store (load true)
+     * or increment, in code order ("opcode slot"). Two methods giving the same have the same locals written (or read) in
+     * the same order, whatever else their code does. Null when the method is not in the jar.
+     */
+    List<String> localUses(String owner, String name, String desc, boolean load) {
+        String jarOwner = toJar.getOrDefault(owner, owner);
+        byte[] file = bytes.apply(jarOwner);
+        if (file == null) {
+            return null;
+        }
+        List<String> table = new ArrayList<>(), uses = new ArrayList<>();
+        boolean[] found = new boolean[1];
+        new ClassReader(file).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                if (found[0] || !names.method(jarOwner, n, d).equals(name) || !names.desc(d).equals(desc)) {
+                    return null;
+                }
+                found[0] = true;
+                int first = (Type.getArgumentsAndReturnSizes(d) >> 2) - ((access & Opcodes.ACC_STATIC) != 0 ? 1 : 0);
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitVarInsn(int opcode, int var) {
+                        if (var >= first && (opcode >= Opcodes.ISTORE) != load && opcode != Opcodes.RET) {
+                            uses.add(opcode + " " + var);
+                        }
+                    }
+
+                    @Override
+                    public void visitIincInsn(int var, int increment) {
+                        if (var >= first) {
+                            uses.add(Opcodes.IINC + " " + var);
+                        }
+                    }
+
+                    @Override
+                    public void visitLocalVariable(String ln, String ld, String signature, Label start, Label end, int index) {
+                        if (index >= first) {
+                            table.add(index + " " + names.desc(ld));
+                        }
+                    }
+                };
+            }
+        }, ClassReader.SKIP_FRAMES);
+        if (!found[0]) {
+            return null;
+        }
+        table.addAll(uses);
+        return table;
+    }
+
     /** A method's own loads and stores of locals, counted by opcode (ILOAD..ALOAD, ISTORE..ASTORE); null when it is not in the jar. */
     int[] locals(String owner, String name, String desc) {
         String jarOwner = toJar.getOrDefault(owner, owner);
