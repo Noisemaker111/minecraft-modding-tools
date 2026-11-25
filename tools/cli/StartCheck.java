@@ -519,18 +519,29 @@ final class StartCheck {
         // The native code old releases ask for by folder; nothing draws, but a mod's start code may load LWJGL's classes.
         PackClient.natives(install, pack.minecraft(), Files.createDirectories(instance.resolve("natives")));
         noOwnWindow(owner, instance);
-        List<String> options = new ArrayList<>(jvm(owner, context, agent, asked, instance).subList(1, 6));
-        // The game asks Mojang's services who the player is as it starts; a check has no player, and nothing outside this machine is asked.
-        for (String host : List.of("auth", "account", "session", "services", "profiles")) options.add("-Dminecraft.api." + host + ".host=http://127.0.0.1:9");
+        List<String> options = new ArrayList<>(jvm(owner, context, agent, asked, instance));
+        options.remove(0);
         // The assets folder is only named: the game reads it once it has a window.
         return PackClient.command(install, context.cache().resolve("assets"), pack.minecraft(), context.java().java(), instance, options);
     }
 
     // ------------------------------------------------------------------ one launch
-    /** java and the options every start-check launch has: little memory, the quick compiler only (a start is all it runs), the agent (asked for a side) and its file. */
+    /**
+     * java and the options every start-check launch has: little memory, the quick compiler only (a start is all it runs),
+     * the agent (asked for a side) and its file, and no network. The game asks Mojang's services who the player is as it
+     * starts (by each service's own address before 26.1, through one discovery address since), and a mod's start code may
+     * look for an update: a check has no player and asks nothing outside this machine, so those addresses and every
+     * proxy Java connects through point at a port of this machine nothing listens on, which refuses at once.
+     */
     static List<String> jvm(PackCheck owner, PackLoaders.Context context, Path agent, String asked, Path instance) {
-        return List.of(context.java().java().toString(), "-Xmx" + owner.options.get("memory", "2G"), "-XX:TieredStopAtLevel=1", "-javaagent:" + agent + "=" + asked,
-            "-Dmmt.mixincheck.out=" + instance.resolve("mmt-start-check.jsonl"), "-Djava.awt.headless=true");
+        List<String> command = new ArrayList<>(List.of(context.java().java().toString(), "-Xmx" + owner.options.get("memory", "2G"), "-XX:TieredStopAtLevel=1",
+            "-javaagent:" + agent + "=" + asked, "-Dmmt.mixincheck.out=" + instance.resolve("mmt-start-check.jsonl"), "-Djava.awt.headless=true"));
+        for (String host : List.of("auth", "account", "session", "services", "profiles", "discovery")) command.add("-Dminecraft.api." + host + ".host=http://127.0.0.1:9");
+        for (String proxy : List.of("http.proxy", "https.proxy", "socksProxy")) {
+            command.add("-D" + proxy + "Host=127.0.0.1");
+            command.add("-D" + proxy + "Port=9");
+        }
+        return command;
     }
 
     static void writeServerFiles(Path instance) throws IOException {
@@ -638,16 +649,14 @@ final class StartCheck {
             if (made.stop() == null) {
                 throw new IOException("The " + owner.loader.id() + " " + side + " did not start with no mods (see " + made.logFile() + "), so its first-start files were not made.");
             }
-            int written = 0;
             for (Object file : files) {
                 Path source = instance.resolve(String.valueOf(file));
-                // A release writes the ones it has: a server from before 1.18 is one jar, with no libraries of its own to unpack.
+                // A release writes the ones it has: a server from before 1.18 is one jar with no libraries of its own to
+                // unpack, and a game that ships in its own names (26.1 on) is not rewritten into others.
                 if (!Files.exists(source)) continue;
-                written++;
                 // Copied, not moved: Windows refuses to move a folder while anything (a virus scanner reading the new jar) has a file of it open.
                 PackCheck.copyTree(source, folder.resolve(String.valueOf(file)));
             }
-            if (written == 0) throw new IOException(owner.loader.id() + "'s first " + side + " start wrote none of " + files + " (pack-loaders.json, firstStart)");
             tidy(instance);
         });
     }

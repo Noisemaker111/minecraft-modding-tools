@@ -128,41 +128,54 @@ public final class StartCheckTest {
     }
 
     // ------------------------------------------------------------------ the client
+    /** A stand-in client: a window library (its class's source) and a main that asks it for a window (call, a boolean) and notes what came back. */
+    static Path clientWith(Path scratch, String library, String source, String call, boolean early) throws Exception {
+        Path classes = Files.createTempDirectory(scratch, "client");
+        String type = library.substring(library.lastIndexOf('.') + 1);
+        if (early) {
+            // Something the mixins are read through loads the window library before the game's own code does.
+            compile(classes, List.of(), Map.of("org/spongepowered/asm/mixin/Mixins.java",
+                "package org.spongepowered.asm.mixin;\npublic class Mixins {\n  static { try { Class.forName(\"" + library + "\"); } catch (Exception e) { throw new Error(e); } }\n}\n"), scratch);
+        }
+        compile(classes, List.of(classes), Map.of(
+            library.replace('.', '/') + ".java", "package " + library.substring(0, library.lastIndexOf('.')) + ";\npublic class " + type + " {\n  public static boolean opened;\n  " + source + "}\n",
+            "net/minecraft/client/main/Main.java",
+            "package net.minecraft.client.main;\n" +
+            "import java.nio.file.*;\n" +
+            "public class Main {\n" +
+            "  public static void main(String[] a) throws Exception {\n" +
+            "    Files.write(Paths.get(a[0], \"version\"), " + library + ".version().getBytes());\n" +
+            "    boolean made = " + library + "." + call + ";\n" +
+            "    Files.write(Paths.get(a[0], \"window-\" + made + \"-\" + " + library + ".opened), new byte[0]);\n" +
+            "  }\n" +
+            "}\n"
+        ), scratch);
+        return classes;
+    }
+
     static void client(Path agent, Path scratch) throws Exception {
-        // GLFW's class differs between LWJGL builds: two-slot constants before the method, and the method first or last.
-        List<String> shapes = List.of(
-            "public static final long BIG = 1234567890123L; public static final double RATIO = 2.5;\n" +
-            "  public static String glfwGetVersionString() { return \"3.3 \" + BIG; }\n  public static boolean glfwInit() { opened = true; return true; }\n",
-            "public static boolean glfwInit() { try { opened = true; return true; } finally { tries++; } }\n  static int tries;\n" +
-            "  public static String glfwGetVersionString() { return \"3.4\"; }\n"
-        );
-        // early: something the mixins are read through loads GLFW before the game's own code does.
-        for (String shape : List.of(shapes.get(0), shapes.get(1), "early")) {
-            Path classes = Files.createTempDirectory(scratch, "client");
-            boolean early = shape.equals("early");
-            if (early) {
-                compile(classes, List.of(), Map.of("org/spongepowered/asm/mixin/Mixins.java",
-                    "package org.spongepowered.asm.mixin;\npublic class Mixins {\n  static { try { Class.forName(\"org.lwjgl.glfw.GLFW\"); } catch (Exception e) { throw new Error(e); } }\n}\n"), scratch);
-                shape = shapes.get(0);
-            }
-            compile(classes, List.of(classes), Map.of(
-                "org/lwjgl/glfw/GLFW.java", "package org.lwjgl.glfw;\npublic class GLFW {\n  public static boolean opened;\n  " + shape + "}\n",
-                "net/minecraft/client/main/Main.java",
-                "package net.minecraft.client.main;\n" +
-                "import java.nio.file.*;\n" +
-                "import org.lwjgl.glfw.GLFW;\n" +
-                "public class Main {\n" +
-                "  public static void main(String[] a) throws Exception {\n" +
-                "    Files.write(Paths.get(a[0], \"version\"), GLFW.glfwGetVersionString().getBytes());\n" +
-                "    boolean made = GLFW.glfwInit();\n" +
-                "    Files.write(Paths.get(a[0], \"window-\" + made + \"-\" + GLFW.opened), new byte[0]);\n" +
-                "  }\n" +
-                "}\n"
-            ), scratch);
+        // A window library's class differs between builds: two-slot constants before the method, the method first or last,
+        // and the library itself between releases (GLFW; SDL since the releases that make their window with it).
+        String glfw = "org.lwjgl.glfw.GLFW", sdl = "org.lwjgl.sdl.SDLInit";
+        String first = "public static final long BIG = 1234567890123L; public static final double RATIO = 2.5;\n" +
+            "  public static String version() { return \"3.3 \" + BIG; }\n  public static boolean glfwInit() { opened = true; return true; }\n";
+        String last = "public static boolean glfwInit() { try { opened = true; return true; } finally { tries++; } }\n  static int tries;\n" +
+            "  public static String version() { return \"3.4\"; }\n";
+        String flags = "public static String version() { return \"3.\"; }\n  public static boolean SDL_Init(int flags) { opened = flags != 0; return true; }\n" +
+            "  public static boolean SDL_InitSubSystem(int flags) { opened = true; return true; }\n";
+        // SDL starts itself when a window is asked for, so a game need not start it first: making the window ends the check too.
+        String makes = "public static String version() { return \"3.\"; }\n" +
+            "  public static long SDL_CreateWindow(CharSequence title, int w, int h, long flags) { opened = true; return 7L; }\n" +
+            "  public static long SDL_CreateWindowWithProperties(int properties) { opened = true; return 7L; }\n";
+        List<Path> clients = List.of(clientWith(scratch, glfw, first, "glfwInit()", false), clientWith(scratch, glfw, last, "glfwInit()", false),
+            clientWith(scratch, glfw, first, "glfwInit()", true), clientWith(scratch, sdl, flags, "SDL_Init(32)", false), clientWith(scratch, sdl, flags, "SDL_InitSubSystem(32)", false),
+            clientWith(scratch, "org.lwjgl.sdl.SDLVideo", makes, "SDL_CreateWindow(\"Minecraft\", 854, 480, 2L) != 0", false),
+            clientWith(scratch, "org.lwjgl.sdl.SDLVideo", makes, "SDL_CreateWindowWithProperties(3) != 0", false));
+        for (Path classes : clients) {
             Path folder = Files.createTempDirectory(scratch, "run");
             String[] run = start(agent, "client", classes, "net.minecraft.client.main.Main", folder);
             expect(run[0].equals("0") && run[1].contains("the game asked for its window"), "a client ends where it asks for its window: " + Arrays.toString(run));
-            expect(Files.readString(folder.resolve("version")).startsWith("3."), "GLFW's other methods run as they were");
+            expect(Files.readString(folder.resolve("version")).startsWith("3."), "the window library's other methods run as they were");
             try (var left = Files.list(folder)) {
                 expect(left.noneMatch(p -> p.getFileName().toString().startsWith("window-")), "the window call never returned, and its own code never ran");
             }
@@ -172,6 +185,29 @@ public final class StartCheckTest {
             plain.getInputStream().readAllBytes();
             plain.waitFor();
             expect(Files.exists(folder.resolve("window-true-true")), "the stand-in asks for a window when nothing ends it");
+        }
+        // A window library the agent does not know starts unseen: where the game binds its graphics library is where the
+        // check ends then. Loading that library is no sign of a window (26.1 on, the game's main loads Vulkan's first).
+        for (String binds : List.of("org.lwjgl.opengl.GL.createCapabilities(true) != null", "org.lwjgl.vulkan.VK10.vkCreateDevice(1L, 2L) == 0")) {
+            Path unknown = Files.createTempDirectory(scratch, "client");
+            compile(unknown, List.of(), Map.of("org/lwjgl/opengl/GL.java", "package org.lwjgl.opengl;\npublic class GL { public static Object createCapabilities(boolean forward) { return \"\"; } }\n",
+                "org/lwjgl/vulkan/VK.java", "package org.lwjgl.vulkan;\npublic class VK { public static String version() { return \"3.\"; } }\n",
+                "org/lwjgl/vulkan/VK10.java", "package org.lwjgl.vulkan;\npublic class VK10 { public static int vkCreateDevice(long physical, long info) { return 0; } }\n"), scratch);
+            compile(unknown, List.of(unknown), Map.of("org/lwjgl/other/Windows.java",
+                "package org.lwjgl.other;\npublic class Windows {\n  public static boolean opened;\n  public static String version() { return org.lwjgl.vulkan.VK.version(); }\n" +
+                "  public static boolean open() { opened = true; return " + binds + "; }\n}\n",
+                "net/minecraft/client/main/Main.java",
+                "package net.minecraft.client.main;\nimport java.nio.file.*;\npublic class Main {\n  public static void main(String[] a) throws Exception {\n" +
+                "    Files.write(Paths.get(a[0], \"version\"), org.lwjgl.other.Windows.version().getBytes());\n" +
+                "    boolean made = org.lwjgl.other.Windows.open();\n    Files.write(Paths.get(a[0], \"window-\" + made), new byte[0]);\n  }\n}\n"), scratch);
+            Path folder = Files.createTempDirectory(scratch, "run");
+            String[] run = start(agent, "client", unknown, "net.minecraft.client.main.Main", folder);
+            expect(run[0].equals("0") && run[1].contains("the game asked for its graphics library") && !run[1].contains("asked for its window"),
+                "a client with a window library nobody knows ends where it binds its graphics library, and says so: " + Arrays.toString(run));
+            expect(Files.exists(folder.resolve("version")), "loading a graphics library alone ends nothing");
+            try (var left = Files.list(folder)) {
+                expect(left.noneMatch(p -> p.getFileName().toString().startsWith("window-")), "nothing after the graphics library was bound ran");
+            }
         }
     }
 

@@ -26,8 +26,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * - a server, when the thread named "Server thread" defines its first class or writes its first line. The game starts
  *   that thread once Main has loaded the data packs, and the thread's first work is to open the port and the world.
  *   That name is the game's own on every release.
- * - a client, when the game calls GLFW.glfwInit(), the first step of making its window: Bootstrap and (on Fabric)
- *   the mods' client start code have run. The call is replaced, in the one class as it loads, by a call back here.
+ * - a client, when the game starts its window library, the first step of making its window (GLFW.glfwInit(), and
+ *   SDL_Init on the releases that make their window with SDL): Bootstrap and (on Fabric) the mods' client start code
+ *   have run. The call is replaced, in the one class as it loads, by a call back here. A window library this agent
+ *   does not know would get past that, so the check also ends when the game binds the graphics library it draws with.
  *
  * Mixin applies a mixin when its target class loads, and a start only loads some of the game. So as the game's own
  * main begins (Mixin has read every config by then), MmtMixinCheck loads every class the configs target: a mixin the
@@ -46,7 +48,25 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
     static final long START = System.nanoTime();
     static final AtomicBoolean STOPPED = new AtomicBoolean();
     static final String SERVER_THREAD = "Server thread";
-    static final String WINDOW_CLASS = "org/lwjgl/glfw/GLFW";
+    /**
+     * Where a window begins, by window library: a class and the names of its static methods that start the library or
+     * make a window, whatever their parameters. The game starts the library first; making a window is named too, as SDL
+     * starts itself when a window is asked for.
+     */
+    static final String[][] WINDOW_CALLS = {
+        { "org/lwjgl/glfw/GLFW", "glfwInit", "glfwCreateWindow", "nglfwCreateWindow" },
+        { "org/lwjgl/sdl/SDLInit", "SDL_Init", "SDL_InitSubSystem" },
+        { "org/lwjgl/sdl/SDLVideo", "SDL_CreateWindow", "nSDL_CreateWindow", "SDL_CreateWindowWithProperties", "SDL_CreatePopupWindow" },
+    };
+    /**
+     * What only a game with a window does: it binds OpenGL to the window's context, or makes a Vulkan device to draw
+     * with. (Loading these libraries is no sign: 26.1 on, the game's main loads Vulkan's before anything else.)
+     */
+    static final String[][] GRAPHICS_CALLS = {
+        { "org/lwjgl/opengl/GL", "createCapabilities" },
+        { "org/lwjgl/vulkan/VK10", "vkCreateDevice", "nvkCreateDevice" },
+    };
+    static final String GRAPHICS_KEY = "mmt.nogame.graphics";
     /** The game's entry classes: the dedicated server's main (MinecraftServer's own before 1.16) and the client's. */
     static final String SERVER_MAIN = "net/minecraft/server/Main";
     static final String OLD_SERVER_MAIN = "net/minecraft/server/MinecraftServer";
@@ -78,6 +98,13 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         MmtNoGame agent = new MmtNoGame();
         if (side.equals("client")) {
             System.getProperties().put(KEY, agent);
+            System.getProperties().put(GRAPHICS_KEY, new Runnable() {
+                @Override
+                public void run() {
+                    MmtMixinCheck.emit("note", "message", "The game went on to its graphics library without starting a window library this check knows.");
+                    stop("the game asked for its graphics library");
+                }
+            });
         }
         System.getProperties().put(MAIN_KEY, new Runnable() {
             @Override
@@ -128,19 +155,30 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
             game = loader;
             entryClass = name.replace('/', '.');
             try {
-                return withCall(bytes, MAIN_KEY, MAIN, MAIN_TYPE, false);
+                return withCall(bytes, MAIN_KEY, new String[] { name, MAIN }, false);
             } catch (Throwable failure) {
                 MmtMixinCheck.emit("note", "message", "Could not put the mixin check in front of " + name + "'s main, so the check ends here: " + failure);
                 stop("the game's entry class could not be given the mixin check");
             }
         }
-        if (side.equals("client") && WINDOW_CLASS.equals(name)) {
+        if (!side.equals("client") || name == null) return null;
+        for (String[] calls : WINDOW_CALLS) {
+            if (!calls[0].equals(name)) continue;
             try {
-                return withCall(bytes, KEY, "glfwInit", "()Z", true);
+                return withCall(bytes, KEY, calls, true);
             } catch (Throwable failure) {
                 // A window must never open here: without the replaced call the check ends where it is.
-                MmtMixinCheck.emit("note", "message", "Could not replace GLFW.glfwInit, so the check ends as GLFW loads: " + failure);
+                MmtMixinCheck.emit("note", "message", "Could not replace the start of " + name + ", so the check ends as it loads: " + failure);
                 stop("the game loaded its window library");
+            }
+        }
+        for (String[] calls : GRAPHICS_CALLS) {
+            if (!calls[0].equals(name)) continue;
+            try {
+                return withCall(bytes, GRAPHICS_KEY, calls, true);
+            } catch (Throwable failure) {
+                MmtMixinCheck.emit("note", "message", "Could not replace the start of " + name + ", so the check ends as it loads: " + failure);
+                stop("the game loaded its graphics library");
             }
         }
         return null;
@@ -207,13 +245,16 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
     }
 
     /**
-     * The class file with a call of ((Runnable) System.getProperties().get(key)).run() in its static method name+type.
-     * instead: the call is the method's whole body, which then returns false (glfwInit). Otherwise it comes first: the
-     * method keeps its code under the name KEPT_MAIN, and a new method of its name makes the call and then calls it.
+     * The class file with a call of ((Runnable) System.getProperties().get(key)).run() in its static methods calls
+     * (the class's name, then the methods' names). instead: the call is the whole body of every method of those names,
+     * which then returns nothing (a window library's start). Otherwise it comes first, for main(String[]): the method
+     * keeps its code under the name KEPT_MAIN, and a new method of its name makes the call and then calls it.
      * Written on the bytes, with no library: the constants are added at the end of the pool, and the code written is
      * straight-line, which needs no stack map.
      */
-    static byte[] withCall(byte[] bytes, String key, String name, String type, boolean instead) throws IOException {
+    static byte[] withCall(byte[] bytes, String key, String[] calls, boolean instead) throws IOException {
+        String name = calls[1];
+        String type = MAIN_TYPE;
         DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
         ByteArrayOutputStream buffer = new ByteArrayOutputStream(bytes.length + 512);
         DataOutputStream out = new DataOutputStream(buffer);
@@ -265,16 +306,16 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         int fields = in.readUnsignedShort();
         out.writeShort(fields);
         for (int i = 0; i < fields; i++) {
-            member(in, out, utf8, null, null, false, n);
+            member(in, out, utf8, null, false, n);
         }
         int methods = in.readUnsignedShort();
         out.writeShort(instead ? methods : methods + 1);
         boolean found = false;
         for (int i = 0; i < methods; i++) {
-            found |= member(in, out, utf8, name, type, instead, n);
+            found |= member(in, out, utf8, calls, instead, n);
         }
         if (!found) {
-            throw new IOException("no static " + name + type + " with code");
+            throw new IOException("no static " + (instead ? Arrays.asList(calls).subList(1, calls.length).toString() : name + type) + " with code");
         }
         if (!instead) {
             out.writeShort(0x0009); // public static
@@ -282,7 +323,7 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
             out.writeShort(n + 22);
             out.writeShort(1);
             out.writeShort(n + 23);
-            byte[] code = callCode(n, false);
+            byte[] code = callCode(n, false, type);
             out.writeInt(code.length);
             out.write(code);
         }
@@ -294,15 +335,19 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
     }
 
     /**
-     * Copies one field or method. The method name+type (null for a field) is the one the call goes into: its body is
-     * replaced by the call (instead), or it is renamed to KEPT_MAIN and kept whole. Returns whether this was that method.
+     * Copies one field or method. The methods of calls (null for a field; withCall says how it reads) are the ones the
+     * call goes into: the body is replaced by the call (instead), or the method is renamed to KEPT_MAIN and kept whole.
+     * Returns whether this was one of them.
      */
-    static boolean member(DataInputStream in, DataOutputStream out, String[] utf8, String name, String type, boolean instead, int n) throws IOException {
+    static boolean member(DataInputStream in, DataOutputStream out, String[] utf8, String[] calls, boolean instead, int n) throws IOException {
         int access = in.readUnsignedShort();
         out.writeShort(access);
         int nameIndex = in.readUnsignedShort();
         int descriptorIndex = in.readUnsignedShort();
-        boolean target = name != null && (access & 0x0008) != 0 && name.equals(utf8[nameIndex]) && type.equals(utf8[descriptorIndex]);
+        boolean target = false;
+        for (int c = 1; calls != null && c < calls.length; c++) {
+            target |= (access & 0x0008) != 0 && calls[c].equals(utf8[nameIndex]) && (instead || MAIN_TYPE.equals(utf8[descriptorIndex]));
+        }
         out.writeShort(target && !instead ? n + 20 : nameIndex);
         out.writeShort(descriptorIndex);
         boolean found = false;
@@ -314,7 +359,7 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
             byte[] body = new byte[in.readInt()];
             in.readFully(body);
             if (target && "Code".equals(utf8[attributeName])) {
-                if (instead) body = callCode(n, true);
+                if (instead) body = callCode(n, true, utf8[descriptorIndex]);
                 found = true;
             }
             out.writeInt(body.length);
@@ -324,14 +369,14 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
     }
 
     /**
-     * A Code attribute's body: the call through the constants added at n, then return false (instead: a method with no
-     * parameters that answers a boolean), or the call of the kept method with this one's argument and return.
+     * A Code attribute's body: the call through the constants added at n, then a return of nothing in the method's own
+     * type (instead), or the call of the kept method with this one's one argument and return. type: the method's.
      */
-    static byte[] callCode(int n, boolean instead) throws IOException {
+    static byte[] callCode(int n, boolean instead, String type) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         DataOutputStream code = new DataOutputStream(buffer);
         code.writeShort(2); // max_stack
-        code.writeShort(instead ? 0 : 1); // max_locals: no parameters, or main's one
+        code.writeShort(parameterSlots(type)); // max_locals: the parameters of a static method
         code.writeInt(instead ? 19 : 22);
         code.writeByte(0xb8); // invokestatic System.getProperties
         code.writeShort(n + 5);
@@ -346,8 +391,16 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         code.writeByte(1);
         code.writeByte(0);
         if (instead) {
-            code.writeByte(0x03); // iconst_0
-            code.writeByte(0xac); // ireturn
+            char answers = type.charAt(type.indexOf(')') + 1);
+            // The call above never comes back; what follows only has to be a valid end for the method's type.
+            int[] end = answers == 'V' ? new int[] { 0x00, 0xb1 } // nop, return
+                : answers == 'J' ? new int[] { 0x09, 0xad } // lconst_0, lreturn
+                : answers == 'F' ? new int[] { 0x0b, 0xae } // fconst_0, freturn
+                : answers == 'D' ? new int[] { 0x0e, 0xaf } // dconst_0, dreturn
+                : answers == 'L' || answers == '[' ? new int[] { 0x01, 0xb0 } // aconst_null, areturn
+                : new int[] { 0x03, 0xac }; // iconst_0, ireturn
+            code.writeByte(end[0]);
+            code.writeByte(end[1]);
         } else {
             code.writeByte(0x2a); // aload_0
             code.writeByte(0xb8); // invokestatic the kept method
@@ -358,6 +411,18 @@ public final class MmtNoGame implements ClassFileTransformer, Runnable {
         code.writeShort(0); // no attributes
         code.flush();
         return buffer.toByteArray();
+    }
+
+    /** The local variable slots a static method's parameters take: two for a long or a double, one for anything else. */
+    static int parameterSlots(String type) {
+        int slots = 0;
+        for (int i = 1; type.charAt(i) != ')'; i++) {
+            char c = type.charAt(i);
+            slots += c == 'J' || c == 'D' ? 2 : 1;
+            while (type.charAt(i) == '[') i++;
+            if (type.charAt(i) == 'L') i = type.indexOf(';', i);
+        }
+        return slots;
     }
 
     static void utf8(DataOutputStream out, String text) throws IOException {
