@@ -63,8 +63,11 @@ final class LoaderNames {
 
     /** Whether a jar's classes, or its nested jars', name the game in Fabric's intermediary (net/minecraft/class_N). */
     static boolean intermediary(byte[] jar) throws IOException {
+        return intermediary(JarEntries.entries(jar, "", new HashMap<>()));
+    }
+
+    static boolean intermediary(Map<String, byte[]> entries) throws IOException {
         byte[] mark = "net/minecraft/class_".getBytes(StandardCharsets.ISO_8859_1);
-        Map<String, byte[]> entries = JarEntries.entries(jar, "", new HashMap<>());
         for (var e : entries.entrySet()) {
             if (e.getKey().endsWith(".class") && JarEntries.indexOf(e.getValue(), mark) >= 0) {
                 return true;

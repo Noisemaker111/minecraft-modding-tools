@@ -107,7 +107,49 @@ final class JarPortHopsTest {
             }
             JarPortTest.expect(trace.equals("42 3"), how + ": the mod runs 2.0's stand-ins, ported onto 3.0 by 3.0's: " + trace);
         }
+
+        // JarPort's own steps hand each hop's jar to the next as its files, never zipped: the jar it ends with is the one
+        // zipping each hop's jar and reading it back gives, byte for byte. The shipped jar's times are not on the zip's
+        // two-second grid, and it has a folder with no files (META-INF/jarjar/), which the first hop's jar leaves out and
+        // the hop carrying the stand-in types writes again, with no time of its own.
+        byte[] shipped = timed();
+        byte[] zipped = shipped;
+        JarEntries.Unpacked files = null;
+        for (int i = 0; i + 1 < stops.size(); i++) {
+            JarPort hop = new JarPort(snaps.get(stops.get(i)), snaps.get(stops.get(i + 1)), map);
+            hop.fixes(book);
+            zipped = hop.port(zipped, "mod.jar", new ArrayList<>());
+            JarPort handing = new JarPort(snaps.get(stops.get(i)), snaps.get(stops.get(i + 1)), map);
+            handing.fixes(book);
+            files = handing.step(i == 0 ? handing.read(shipped, "mod.jar") : handing.read(files, "mod.jar"), "mod.jar", new ArrayList<>());
+        }
+        byte[] handed = files.zip(java.util.zip.Deflater.DEFAULT_COMPRESSION);
+        JarPortTest.expect(Arrays.equals(zipped, handed), "a port handing each step's files on writes the jar zipping each step's jar does ("
+            + zipped.length + " and " + handed.length + " bytes)");
         JarPortTest.finish("JarPortHopsTest");
+    }
+
+    /** The mod with the times a jar built on a machine has, and a folder with nothing in it. */
+    static byte[] timed() throws java.io.IOException {
+        long at = 1694133817500L; // 2023-09-08, an odd second and a half
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream out = new java.util.zip.ZipOutputStream(buffer)) {
+            Object[][] entries = {
+                { "META-INF/", null }, { "META-INF/jarjar/", null },
+                { "META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n9\"\n".getBytes(StandardCharsets.UTF_8) },
+                { "n9/", null }, { "n9/Mod.class", mod() }, { "assets/n9/lang/en_us.json", "{}".getBytes(StandardCharsets.UTF_8) } };
+            for (Object[] e : entries) {
+                java.util.zip.ZipEntry entry = new java.util.zip.ZipEntry((String) e[0]);
+                at += 61_700;
+                entry.setTime(at);
+                out.putNextEntry(entry);
+                if (e[1] != null) {
+                    out.write((byte[]) e[1]);
+                }
+                out.closeEntry();
+            }
+        }
+        return buffer.toByteArray();
     }
 
     /** 3.0's Gauge: twice() is 84. */
