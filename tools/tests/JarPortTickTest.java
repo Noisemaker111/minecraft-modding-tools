@@ -91,7 +91,7 @@ final class JarPortTickTest {
             JarPortTest.snap(s, "g9/Main", 0, null, "frame(" + f + ")V", "lerp(F)V");
             JarPortTest.snap(s, "g9/Both", 0, null, "render(" + GFX + f + ")V");
             JarPortTest.snap(s, "g9/Panel", 0, null, "paint()V");
-            JarPortTest.snap(s, "g9/Level", 0, null, "draw(" + (old ? "FJZ" : TICK + "Z") + ")V");
+            JarPortTest.snap(s, "g9/Level", 0, null, "draw(" + (old ? "FJZ" : TICK + "Z") + ")V", "fill(" + (old ? "FJZ" : TICK + "Z") + ")V");
             JarPortTest.snap(s, "g9/Glyph", 0, null, "draw(" + (old ? "FFFF" : "I") + ")V");
             JarPortTest.snap(s, "g9/Font", 0, null, "text(I)V");
             GameDiff.Cls argb = JarPortTest.snap(s, "g9/Argb", 0, null);
@@ -106,6 +106,7 @@ final class JarPortTickTest {
                             {"owner": "g9.Main", "from": "frame", "desc": "(F)V", "to": "frame", "newDesc": "(Lg9/Tick;)V"},
                             {"owner": "g9.Both", "from": "render", "desc": "(Lg9/Gfx;F)V", "to": "render", "newDesc": "(Lg9/Gfx;Lg9/Tick;)V"},
                             {"owner": "g9.Level", "from": "draw", "desc": "(FJZ)V", "to": "draw", "newDesc": "(Lg9/Tick;Z)V"},
+                            {"owner": "g9.Level", "from": "fill", "desc": "(FJZ)V", "to": "fill", "newDesc": "(Lg9/Tick;Z)V"},
                             {"owner": "g9.Glyph", "from": "draw", "desc": "(FFFF)V", "to": "draw", "newDesc": "(I)V"}]}
             """);
         JarPort port = new JarPort(a, b, map);
@@ -114,15 +115,16 @@ final class JarPortTickTest {
         port.newCode = new GameCode(after::get, null, after);
 
         List<Map<String, Object>> results = new ArrayList<>();
-        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m9/Seen.class", seen(),
-            "m9/HudMixin.class", injector("m9/HudMixin", "g9/Hud", "render(" + GFX + "F)V", "(" + GFX + "F" + CI + ")V", 2),
-            "m9/WorldMixin.class", injector("m9/WorldMixin", "g9/World", "render(F)V", "(F" + CI + ")V", 1),
-            "m9/BothMixin.class", injector("m9/BothMixin", "g9/Both", "render(" + GFX + "F)V", "(" + GFX + "F" + CI + ")V", 2),
-            "m9/PanelMixin.class", redirect(),
-            "m9/GlyphMixin.class", glyphs(),
-            "m9/FlagMixin.class", variable("m9/FlagMixin", "(Z)Z", Opcodes.ILOAD), "m9/JitterMixin.class", variable("m9/JitterMixin", "(F)F", Opcodes.FLOAD),
-            "m9/LocalFlagMixin.class", variable("m9/LocalFlagMixin", "(Z)Z", Opcodes.ILOAD, "RETURN", false),
-            "m9.mixins.json", "{\"package\": \"m9\", \"mixins\": [\"HudMixin\", \"WorldMixin\", \"BothMixin\", \"PanelMixin\", \"FlagMixin\", \"LocalFlagMixin\", \"JitterMixin\", \"GlyphMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(Map.ofEntries(Map.entry("m9/Seen.class", seen()),
+            Map.entry("m9/HudMixin.class", injector("m9/HudMixin", "g9/Hud", "render(" + GFX + "F)V", "(" + GFX + "F" + CI + ")V", 2)),
+            Map.entry("m9/WorldMixin.class", injector("m9/WorldMixin", "g9/World", "render(F)V", "(F" + CI + ")V", 1)),
+            Map.entry("m9/BothMixin.class", injector("m9/BothMixin", "g9/Both", "render(" + GFX + "F)V", "(" + GFX + "F" + CI + ")V", 2)),
+            Map.entry("m9/PanelMixin.class", redirect()),
+            Map.entry("m9/GlyphMixin.class", glyphs()),
+            Map.entry("m9/FlagMixin.class", variable("m9/FlagMixin", "(Z)Z", Opcodes.ILOAD)), Map.entry("m9/JitterMixin.class", variable("m9/JitterMixin", "(F)F", Opcodes.FLOAD)),
+            Map.entry("m9/LocalFlagMixin.class", variable("m9/LocalFlagMixin", "(Z)Z", Opcodes.ILOAD, "RETURN", false, "draw")),
+            Map.entry("m9/LocalFillMixin.class", variable("m9/LocalFillMixin", "(Z)Z", Opcodes.ILOAD, "RETURN", false, "fill")),
+            Map.entry("m9.mixins.json", "{\"package\": \"m9\", \"mixins\": [\"HudMixin\", \"WorldMixin\", \"BothMixin\", \"PanelMixin\", \"FlagMixin\", \"LocalFlagMixin\", \"LocalFillMixin\", \"JitterMixin\", \"GlyphMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8)))),
             "follow.jar", results));
         List<String> unlinked = Json.array(results.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(unlinked.equals(List.of("mixin target changed signature: g9.Both.render(Lg9/Gfx;F)V", "mixin target changed signature: g9.Level.draw(FJZ)V")),
@@ -132,10 +134,15 @@ final class JarPortTickTest {
         String jitter = JarPortFixesTest.strings(ported.get("m9/JitterMixin.class")).getOrDefault("flag(F)F", "");
         JarPortTest.expect(flag.contains("draw(Lg9/Tick;Z)V") && jitter.contains("draw(FJZ)V"),
             "a @ModifyVariable of the boolean, found by its type, follows the new signature; one of the float the update took away stays: " + flag + " | " + jitter);
-        // Without argsOnly, at RETURN, Mixin also counts the live locals of its type, and the new body may hold one more.
+        // Without argsOnly, at RETURN, Mixin also counts the live locals of its type: 2.0's draw holds one more boolean
+        // there, so the one boolean is not the same variable; fill holds none, so it is (Cardinal Components' BlockEntity
+        // in ChunkHolder.broadcastBlockEntity, which 1.20 gave a first parameter).
         String local = JarPortFixesTest.strings(ported.get("m9/LocalFlagMixin.class")).getOrDefault("flag(Z)Z", "");
         JarPortTest.expect(local.contains("draw(FJZ)V") && !local.contains("draw(Lg9/Tick;Z)V"),
-            "a @ModifyVariable by type that may also match a local stays reported when the parameters' slots move: " + local);
+            "a @ModifyVariable by type that the new body's own local of that type would also match stays reported when the parameters' slots move: " + local);
+        String fill = JarPortFixesTest.strings(ported.get("m9/LocalFillMixin.class")).getOrDefault("flag(Z)Z", "");
+        JarPortTest.expect(fill.contains("fill(Lg9/Tick;Z)V"),
+            "a @ModifyVariable by type whose variable is still the one of its type follows the new signature though the slots moved: " + fill);
 
         Map<String, byte[]> classes = new HashMap<>(after);
         classes.put("g9/Tick", tick());
@@ -183,7 +190,26 @@ final class JarPortTickTest {
     static Map<String, byte[]> game(boolean old) {
         String f = old ? "F" : TICK;
         Map<String, byte[]> out = new HashMap<>();
-        out.put("g9/Level", JarPortTest.real("g9/Level", "java/lang/Object", 0, new String[0], w -> body(w, "draw", "(" + (old ? "FJZ" : TICK + "Z") + ")V", m -> { })));
+        out.put("g9/Level", JarPortTest.real("g9/Level", "java/lang/Object", 0, new String[0], w -> {
+            // 2.0's draw keeps a boolean of its own until it returns, in its local variable table as javac writes one.
+            if (old) {
+                body(w, "draw", "(FJZ)V", m -> { });
+            } else {
+                MethodVisitor m = w.visitMethod(Opcodes.ACC_PUBLIC, "draw", "(" + TICK + "Z)V", null, null);
+                Label start = new Label();
+                Label end = new Label();
+                m.visitCode();
+                m.visitInsn(Opcodes.ICONST_0);
+                m.visitVarInsn(Opcodes.ISTORE, 3);
+                m.visitLabel(start);
+                m.visitInsn(Opcodes.RETURN);
+                m.visitLabel(end);
+                m.visitLocalVariable("extra", "Z", null, start, end, 3);
+                m.visitMaxs(0, 0);
+                m.visitEnd();
+            }
+            body(w, "fill", "(" + (old ? "FJZ" : TICK + "Z") + ")V", m -> { });
+        }));
         if (!old) {
             out.put("g9/Tick", tick());
         }
@@ -421,17 +447,17 @@ final class JarPortTickTest {
 
     /** A mixin into Level.draw with a @ModifyVariable at HEAD, by type, that returns the variable as it was. */
     static byte[] variable(String name, String desc, int load) {
-        return variable(name, desc, load, "HEAD", true);
+        return variable(name, desc, load, "HEAD", true, "draw");
     }
 
     /** The same @ModifyVariable at point; argsOnly false lets Mixin pick among the live locals of its type too. */
-    static byte[] variable(String name, String desc, int load, String at, boolean argsOnly) {
+    static byte[] variable(String name, String desc, int load, String at, boolean argsOnly, String target) {
         ClassWriter w = JarPortRetypeTest.writer(name, "java/lang/Object");
         mixinOf(w, "g9/Level");
         MethodVisitor m = w.visitMethod(Opcodes.ACC_PRIVATE, "flag", desc, null, null);
         AnnotationVisitor av = m.visitAnnotation("Lorg/spongepowered/asm/mixin/injection/ModifyVariable;", false);
         AnnotationVisitor methods = av.visitArray("method");
-        methods.visit(null, "draw(FJZ)V");
+        methods.visit(null, target + "(FJZ)V");
         methods.visitEnd();
         AnnotationVisitor point = av.visitAnnotation("at", "Lorg/spongepowered/asm/mixin/injection/At;");
         point.visit("value", at);
