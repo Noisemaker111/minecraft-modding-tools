@@ -310,7 +310,8 @@ final class StandinClasses {
     /** Whether the old class has a field of that name whose type, carried into the new release's names, is newType. */
     boolean oldField(GameDiff.Cls was, String name, String newType) {
         GameDiff.Fld f = was.fields.get(name);
-        return f != null && port.desc(f.desc).equals(newType);
+        // Read as the route reads its type, or as the stand-ins do (1.20's AbstractSignEditScreen.text, a SignText).
+        return f != null && (port.desc(f.desc).equals(newType) || JarPort.mapDesc(f.desc, standing()).equals(newType));
     }
 
     /**

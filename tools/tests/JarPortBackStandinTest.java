@@ -261,7 +261,7 @@ final class JarPortBackStandinTest {
      * A value class the older release lacks that the route reads as another (1.20's SignText, which the change map moves
      * to SignBlockEntity, whose one side holds its fields on 1.19.4): a stand-in method of an existing class gives the
      * value class's stand-in, and the port takes the stand-in route although the mod only names the value class as what
-     * a call gives (Board.note()L.../Note;).
+     * a call gives (Board.note()L.../Note;). A field of that type (1.20's AbstractSignEditScreen.text) is answered the same way.
      */
     static void valueClass(Path scratch) throws Exception {
         Path dir = Files.createDirectories(scratch.resolve("value-class"));
@@ -280,6 +280,7 @@ final class JarPortBackStandinTest {
         Map<String, byte[]> newer = JarPortBackTest.compile(dir.resolve("newer"), Map.of("net/minecraft/g5/Note.java", note, "net/minecraft/g5/Board.java", """
             package net.minecraft.g5;
             public class Board {
+                public Note last = new Note("hi");
                 public Note note() {
                     return new Note("hi");
                 }
@@ -298,7 +299,7 @@ final class JarPortBackStandinTest {
             import net.minecraft.g5.Board;
             public class Reader {
                 public static String read(Board b) {
-                    return b.note().text();
+                    return b.note().text() + b.last.text();
                 }
             }
             """), dir.resolve("newer/classes"));
@@ -319,6 +320,9 @@ final class JarPortBackStandinTest {
                 private Board() {
                 }
                 public static Note note(net.minecraft.g5.Board self) {
+                    return new Note(self.text());
+                }
+                public static Note last(net.minecraft.g5.Board self) {
                     return new Note(self.text());
                 }
             }
@@ -352,7 +356,7 @@ final class JarPortBackStandinTest {
         } catch (ReflectiveOperationException | LinkageError failed) {
             got = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
         }
-        JarPortTest.expect(got.equals("hi"), "and reads the older release's own value: " + got);
+        JarPortTest.expect(got.equals("hihi"), "and reads the older release's own value, through a call and through a field of that type: " + got);
     }
 
     /**
