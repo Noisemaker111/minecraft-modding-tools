@@ -23,10 +23,27 @@ final class OlderJava {
         int java = port.b.java > 0 ? port.b.java : StandinClasses.standinJava(port.b.version);
         Set<String> breaks = new TreeSet<>();
         Map<String, Integer> changed = new TreeMap<>();
-        Map<String, byte[]> carried = new Downgrade(java, jdkStandins).lower(rewritten, StandinClasses.standinHome(jarName, "java", "java" + java), breaks, changed);
+        // The classes kept for another loader are lowered too: the port leaves their names as they came, but a loader
+        // that runs them (Sinytra Connector, a Fabric build's classes in a NeoForge jar) does so on this release's JVM,
+        // which refuses a newer class file. What they ask of the JDK is not judged, as nothing else of them is.
+        Map<String, byte[]> classes = new HashMap<>(rewritten);
+        for (String n : mod.foreign) {
+            classes.put(n, entries.get(n));
+        }
+        Map<String, byte[]> carried = new Downgrade(java, jdkStandins).lower(classes, StandinClasses.standinHome(jarName, "java", "java" + java), breaks, changed);
         if (changed.isEmpty()) {
             return;
         }
+        for (String n : mod.foreign) {
+            entries.put(n, classes.get(n));
+        }
+        classes.keySet().removeAll(mod.foreign);
+        rewritten.putAll(classes);
+        Set<String> foreign = new HashSet<>();
+        for (String n : mod.foreign) {
+            foreign.add(Downgrade.dotted(n.substring(0, n.length() - ".class".length())));
+        }
+        breaks.removeIf(b -> b.endsWith(")") && foreign.contains(b.substring(b.lastIndexOf(" (in ") + 5, b.length() - 1)));
         mod.lowered = java;
         mod.unlinked.addAll(breaks);
         changed.forEach((k, v) -> mod.changed.merge(k, v, Integer::sum));

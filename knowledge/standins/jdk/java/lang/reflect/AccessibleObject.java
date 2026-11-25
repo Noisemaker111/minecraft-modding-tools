@@ -4,6 +4,9 @@ package mmt.standin.java.lang.reflect;
  * Java 9's AccessibleObject.trySetAccessible(): "Set the accessible flag for this reflected object to true if possible",
  * true when it is set, false when it cannot be. Java 8 has no modules, so only a SecurityException from setAccessible
  * refuses it.
+ * Java 9's AccessibleObject.canAccess(obj): "Test if the caller can access this reflected object", true once its accessible
+ * flag is set. Java 8 cannot see the caller, so without the flag only a public member of a public class reads as
+ * accessible: a caller told false sets the flag (setAccessible), which Java 8 always allows a mod.
  */
 public final class AccessibleObject {
 
@@ -16,5 +19,16 @@ public final class AccessibleObject {
         } catch (SecurityException refused) {
             return false;
         }
+    }
+
+    public static boolean canAccess(java.lang.reflect.AccessibleObject self, Object obj) {
+        if (self.isAccessible()) {
+            return true;
+        }
+        if (!(self instanceof java.lang.reflect.Member)) {
+            return false;
+        }
+        java.lang.reflect.Member m = (java.lang.reflect.Member) self;
+        return java.lang.reflect.Modifier.isPublic(m.getModifiers()) && java.lang.reflect.Modifier.isPublic(m.getDeclaringClass().getModifiers());
     }
 }

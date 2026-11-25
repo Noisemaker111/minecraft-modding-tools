@@ -8,7 +8,8 @@ import java.util.*;
  * A mod built for Java 21 ported to a release that runs Java 8 (Fabric 1.14.4 to 1.16.5 do): its classes are written in
  * Java 8's class-file version, and what Java 8 cannot run is rewritten (string concatenation, records, nestmates, a private
  * interface method, pattern switches over types, enum constants and enums) or called through the JDK stand-ins (List.of,
- * getFirst, String.isBlank, Optional.isEmpty, Stream.toList, String::isBlank as a method reference), while ByteBuffer.flip()
+ * getFirst, String.isBlank, Optional.isEmpty, Stream.toList, String::isBlank as a method reference, a constructor Java 8
+ * lacks, and whole classes it lacks: HexFormat, and java.net.http against a real local server), while ByteBuffer.flip()
  * is called as Java 8 declares it. The ported classes then run here and give exactly what the original classes give, and
  * no class names a JDK member Java 8 lacks. A class calling StackWalker, which Java 8 has no answer for, is reported, the
  * metadata asks for Java 8, and a port to a release whose Java reads the classes leaves them as they are.
@@ -18,7 +19,12 @@ final class JarPortJavaTest {
     static final String MOD = """
         package d8;
 
+        import java.net.URI;
+        import java.net.http.HttpClient;
+        import java.net.http.HttpRequest;
+        import java.net.http.HttpResponse;
         import java.nio.ByteBuffer;
+        import java.time.Duration;
         import java.util.*;
         import java.util.function.Predicate;
 
@@ -105,8 +111,31 @@ final class JarPortJavaTest {
                     .append(' ').append(Objects.requireNonNullElse(null, "else")).append('\\n');
                 ByteBuffer buffer = ByteBuffer.allocate(4);
                 buffer.put((byte) 1).flip();
-                out.append(buffer.remaining());
+                out.append(buffer.remaining()).append('\\n');
+                out.append(HexFormat.of().formatHex(new byte[] { 1, (byte) 0xab })).append(' ').append(new IndexOutOfBoundsException(3).getMessage()).append('\\n');
+                try {
+                    out.append(http());
+                } catch (Exception e) {
+                    out.append(e);
+                }
                 return out.toString();
+            }
+
+            // java.net.http, which Java 8 lacks: a redirect followed, a POST body, an error status, headers read back.
+            static String http() throws Exception {
+                String base = System.getProperty("d8.http");
+                HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NORMAL).build();
+                HttpResponse<String> moved = client.send(HttpRequest.newBuilder(URI.create(base + "/moved")).header("X-A", "1").GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> posted = client.send(HttpRequest.newBuilder().uri(URI.create(base + "/echo")).header("X-A", "2")
+                    .POST(HttpRequest.BodyPublishers.ofString("sent")).build(), HttpResponse.BodyHandlers.ofString());
+                HttpResponse<byte[]> missing = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(base + "/missing")).build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+                HttpResponse<String> never = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(base + "/moved")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+                return moved.statusCode() + " " + moved.body() + " " + moved.uri().getPath() + " " + moved.headers().firstValue("x-b").orElse("none") + "|"
+                    + posted.statusCode() + " " + posted.body() + "|" + missing.statusCode() + " " + new String(missing.body()) + "|"
+                    + never.statusCode() + " " + never.headers().firstValue("Location").orElse("none");
             }
         }
         """;
@@ -167,10 +196,41 @@ final class JarPortJavaTest {
         }
         JarPortTest.expect(missing.isEmpty(), "no ported class calls a JDK member Java 8 lacks: " + missing);
 
-        String before = run(classes), after = run(classesOf(ported));
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            byte[] body = exchange.getRequestBody().readAllBytes();
+            String reply = exchange.getRequestMethod() + " " + exchange.getRequestHeaders().getFirst("X-A") + " " + new String(body, StandardCharsets.UTF_8);
+            int status = 200;
+            if (path.equals("/moved")) {
+                exchange.getResponseHeaders().add("Location", "/echo");
+                status = 302;
+                reply = "";
+            } else if (path.equals("/missing")) {
+                status = 404;
+                reply = "nope";
+            }
+            exchange.getResponseHeaders().add("X-B", "yes");
+            exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=utf-8");
+            byte[] out = reply.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, out.length == 0 ? -1 : out.length);
+            exchange.getResponseBody().write(out);
+            exchange.close();
+        });
+        server.start();
+        String before, after;
+        try {
+            System.setProperty("d8.http", "http://127.0.0.1:" + server.getAddress().getPort());
+            before = run(classes);
+            after = run(classesOf(ported));
+        } finally {
+            server.stop(0);
+        }
         JarPortTest.expect(after.equals(before), "the ported mod gives what the original gives:\n" + before + "\n--- ported ---\n" + after);
         JarPortTest.expect(before.contains("Point[x=1, y=2, z=3.5, name=a, data=[I@] true false true") && before.contains("red;r;tone green;g;tone blue;other"),
             "the run covers records and pattern switches: " + before);
+        JarPortTest.expect(before.contains("01ab Index out of range: 3") && before.contains("200 GET 1  /echo yes|200 POST 2 sent|404 nope|302 /echo"),
+            "the run covers a JDK class Java 8 lacks (HexFormat, java.net.http) and a constructor it lacks: " + before);
 
         String fmj = new String(ported.get("fabric.mod.json"), StandardCharsets.UTF_8), mixins = new String(ported.get("d8.mixins.json"), StandardCharsets.UTF_8);
         JarPortTest.expect(fmj.contains("\">=8\"") && mixins.contains("\"JAVA_8\""), "the metadata asks for the Java the mod now runs on: " + fmj + " " + mixins);
