@@ -362,12 +362,16 @@ def choose(loader, frm, to, linked, folder, pins, platform):
         if got and any(not fits(v, r, loader) for mid, v in versions(got[0], loader).items() for r in asked_range.get(mid, [])):
             got = None
         old = library(project, loader, frm)
-        # The new release's file may answer under other ids than the one the mods were built against (Balm 6 for 1.19.4
-        # is balm-fabric, Balm 7, which Waystones asks for as balm, is balm): it fits only when it answers every id of
-        # the old file's that a waiting mod asks.
+        # The mods were built against the old release's file. The new release's may answer under other ids (Balm 6 for
+        # 1.19.4 is balm-fabric, Balm 7, which Waystones asks for as balm, is balm) or be an older version, as on a port
+        # back (REI checks for Architectury 9 and Cloth Config 11 itself, which its metadata does not name; 1.19.4's are
+        # 8 and 10): it fits only when it answers every id of the old file's that a waiting mod asks, at no older version.
         asked = set().union(*(needs(w, loader) or set() for w in waiting))
-        if got and old and (provides(old[0], loader, frm) & asked) - provides(got[0], loader, to):
-            got = None
+        if got and old:
+            was, now = versions(old[0], loader), versions(got[0], loader)
+            if (provides(old[0], loader, frm) & asked) - provides(got[0], loader, to) or any(
+                    cmp(now[i].split("+")[0], was[i].split("+")[0]) < 0 for i in was.keys() & now.keys() if was[i] and now[i]):
+                got = None
         if not got:
             got, where = old, to_port
         if not got or provides(got[0], loader) & own - {"loader:*"}:

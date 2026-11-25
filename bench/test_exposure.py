@@ -312,6 +312,21 @@ with tempfile.TemporaryDirectory() as tmp:
         portboard.dependencies.required_projects, portboard.dependencies.library = real
     check([j.name for j in chosen] == ["stones--stones.jar"] and not ready and list(to_port) == ["balm-old.jar"],
           f"a library whose new file drops the id a mod asks is ported from its old file: {chosen} {ready} {to_port} {left}")
+    # On a port back the new release's file is the older version: REI checks for Cloth Config 11 itself, and 1.19.4's is
+    # 10, so the one REI was built with is ported.
+    cloth_ten, cloth_eleven = Path(tmp) / "cloth-10.jar", Path(tmp) / "cloth-11.jar"
+    cloth_ten.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "cloth-config", "version": "10.1.135+fabric"})}))
+    cloth_eleven.write_bytes(jar({"fabric.mod.json": json.dumps({"id": "cloth-config", "version": "11.1.136+fabric"})}))
+    pins = [{"slug": "rei", "file": "rei.jar", "project": "P-rei", "version": "v-rei"}]
+    listed = {"v-rei": ["P-cloth"]}
+    cloth_files = {("P-cloth", "2.0"): (cloth_ten, "v-c10"), ("P-cloth", "1.0"): (cloth_eleven, "v-c11")}
+    portboard.dependencies.required_projects, portboard.dependencies.library = (lambda v: listed.get(v, [])), (lambda project, loader, version: cloth_files.get((project, version)))
+    try:
+        chosen, ready, to_port, left = portboard.dependencies.choose("fabric", "1.0", "2.0", ["rei--rei.jar"], folder, pins, {"fabric-api", "fabric-api-base"})
+    finally:
+        portboard.dependencies.required_projects, portboard.dependencies.library = real
+    check(not ready and list(to_port) == ["cloth-11.jar"],
+          f"a library whose file for the new release is older than the mod's is ported from the mod's release: {ready} {to_port}")
     # A mod that nests a copy of one platform module (CraftPresence and MaLiLib carry fabric-resource-loader-v0) is a mod
     # and starts; a top mod that is the platform itself is left out with that reason, never silently.
     (folder / "presence--presence.jar").write_bytes(jar({"fabric.mod.json": json.dumps({"id": "presence"}), "META-INF/jars/base.jar": module("fabric-api-base")}))
