@@ -231,6 +231,19 @@ public final class StartCheckTest {
             expect(asked.invoke(null, "mod.Common", game, Set.of()) == null, "a class that names only game classes this side has is this side's: " + asked.invoke(null, "mod.Common", game, Set.of()));
             expect(asked.invoke(null, "mod.Widget", game, Set.of("net.minecraft.client.Screen")) == null, "a game class that is a mixin target itself is judged on its own, not here");
             expect(asked.invoke(null, "net.minecraft.Both", game, Set.of()) == null && asked.invoke(null, "mod.Gone", game, Set.of()) == null, "the game's own classes and a class that is not there are not asked");
+            // A class built on one that is not here does not link; with Mixin's own error under it, Mixin refused it.
+            Path mixin = Files.createDirectories(scratch.resolve("side-mixin"));
+            compile(mixin, List.of(), Map.of("org/spongepowered/asm/mixin/throwables/MixinError.java",
+                "package org.spongepowered.asm.mixin.throwables;\npublic class MixinError extends Error { public MixinError(String m) { super(m); } }\n"), scratch);
+            var unlinked = agentClasses.loadClass("MmtMixinCheck").getDeclaredMethod("unlinked", Throwable.class);
+            unlinked.setAccessible(true);
+            Throwable missing = new NoClassDefFoundError("other/mod/Config").initCause(new ClassNotFoundException("other.mod.Config"));
+            expect(Boolean.TRUE.equals(unlinked.invoke(null, missing)), "a class built on one that is not in the pack does not link: no refusal of Mixin's");
+            try (var mixinClasses = new java.net.URLClassLoader(new java.net.URL[] {mixin.toUri().toURL()}, null)) {
+                Throwable refusedBelow = (Throwable) mixinClasses.loadClass("org.spongepowered.asm.mixin.throwables.MixinError").getConstructor(String.class).newInstance("apply failed");
+                expect(Boolean.FALSE.equals(unlinked.invoke(null, new NoClassDefFoundError("mod/Widget").initCause(refusedBelow))), "one that does not link because Mixin refused the class under it is Mixin's refusal");
+            }
+            expect(Boolean.FALSE.equals(unlinked.invoke(null, new IllegalStateException("verify"))), "any other failure is the one the game meets");
         }
         PackCheck owner = new PackCheck(harness, null, null);
         owner.scan.mixins.put("gui.mixins.json", "gui.jar");
@@ -241,7 +254,22 @@ public final class StartCheckTest {
                 Json.map("event", "target", "target", "mod.Widget", "config", "gui.mixins.json", "loaded", false, "exception", "org.spongepowered.asm.mixin.transformer.throwables.MixinTransformerError", "message", refused, "otherSide", other));
             var blamed = StartCheck.refusedByMixin(owner, launch(events), Set.of("gui.jar"));
             expect(blamed.isEmpty() == (other != null), "Mixin's refusal in " + (other == null ? "this side's code refuses the jar" : "the other side's code refuses nobody") + ": " + blamed);
+            // What Mixin logged of that class is no part of what this side's game says; the rest of the log is.
+            String log = String.join("\n",
+                "[12:00:01] [main/INFO]: Loading 3 mods",
+                "[12:00:02] [main/FATAL] [mixin/]: Mixin apply for mod gui failed gui.mixins.json:WidgetMixin from mod gui -> mod.Widget: InvalidMixinException",
+                "org.spongepowered.asm.mixin.transformer.throwables.InvalidMixinException: Unexpected",
+                "\tat org.spongepowered.asm.mixin.transformer.MixinApplicatorStandard.apply(MixinApplicatorStandard.java:1)",
+                "[12:00:03] [main/WARN]: something else",
+                "java.lang.IllegalStateException: of (Lmod/Widget;)V",
+                "[12:00:04] [main/FATAL]: File broken.jar is not a valid mod file");
+            String ours = StartCheck.ofThisSide(new StartCheck.Launch(log, events, Path.of("run.log"), 1.0, 0, false));
+            List<String> expected = other == null ? log.lines().toList() : List.of("[12:00:01] [main/INFO]: Loading 3 mods", "[12:00:04] [main/FATAL]: File broken.jar is not a valid mod file");
+            expect(ours.lines().toList().equals(expected), "the log read for the game's own words " + (other == null ? "is the whole log" : "leaves out the records that name the other side's class") + ": " + ours);
         }
+        var unlinkedTarget = List.of(Json.map("event", "target", "target", "mod.Config", "config", "gui.mixins.json", "loaded", false, "exception", "java.lang.NoClassDefFoundError",
+            "message", "other/mod/Config in gui.mixins.json", "stops", false));
+        expect(StartCheck.refusedByMixin(owner, launch(unlinkedTarget), Set.of("gui.jar")).isEmpty(), "a target the check says no start stops on refuses nobody");
     }
 
     // ------------------------------------------------------------------ whose fault

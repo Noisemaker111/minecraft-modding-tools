@@ -196,7 +196,7 @@ final class StartCheck {
         // A start that failed and named no jar: the loader's own client-only words name a mod a server cannot run, left out as pack-check leaves it.
         Unnamed unnamed = (run, mods) -> {
             Set<String> named = new LinkedHashSet<>();
-            for (String id : PackChecks.clientOnly(run.log(), owner.loader, owner.scan, owner.game::clientOnly)) {
+            for (String id : PackChecks.clientOnly(ofThisSide(run), owner.loader, owner.scan, owner.game::clientOnly)) {
                 for (PackMods.Provider p : owner.scan.providers.getOrDefault(id, List.of())) if (!p.bundled() && mods.stream().anyMatch(m -> m.file().equals(p.jar()))) named.add(p.jar());
             }
             if (clientOnly.addAll(named)) return true;
@@ -244,11 +244,12 @@ final class StartCheck {
             return null;
         }
         Map<String, String> blamed = new LinkedHashMap<>();
+        String log = ofThisSide(run);
         // A mod that reaches client-only code stops a server and is left out of it, not failed: asked first, as pack-check's own start asks.
-        if (side.name.equals("server") && !PackChecks.clientOnly(run.log(), owner.loader, owner.scan, owner.game::clientOnly).isEmpty()) return blamed;
+        if (side.name.equals("server") && !PackChecks.clientOnly(log, owner.loader, owner.scan, owner.game::clientOnly).isEmpty()) return blamed;
         List<String> reports = PackChecks.crashReports(instance, run.wall());
-        String failure = PackChecks.failure(run.log() + "\n" + String.join("\n", reports), owner.loader.failed());
-        blamed.putAll(atFault(PackChecks.suspects(run.log(), reports, owner.scan, owner.loader, owner.game::clientOnly), present, side.unsure));
+        String failure = PackChecks.failure(log + "\n" + String.join("\n", reports), owner.loader.failed());
+        blamed.putAll(atFault(PackChecks.suspects(log, reports, owner.scan, owner.loader, owner.game::clientOnly), present, side.unsure));
         // A jar the loader refuses for a mod an earlier run failed says why that one failed too: its own port may be sound.
         for (var entry : blamed.entrySet()) {
             for (var d : owner.scan.dependencies) {
@@ -373,6 +374,34 @@ final class StartCheck {
         return run != null && run.stop() != null && reached(side, run.stop()) && !refusedInLog(owner, run);
     }
 
+    /**
+     * A run's log without what Mixin logged of the other side's code (the agent's otherSide targets): the check loaded
+     * those classes, no start of this side does, so the lines are no part of what the game says. A log record goes with
+     * the lines under it (its exception and stack) when any of them names such a class.
+     */
+    static String ofThisSide(Launch run) {
+        Set<String> names = new LinkedHashSet<>();
+        for (var event : run.events()) if ("target".equals(event.get("event")) && event.get("otherSide") != null) {
+            names.add(Json.text(event, "target", ""));
+            names.add(Json.text(event, "target", "").replace('.', '/'));
+        }
+        if (names.isEmpty()) return run.log();
+        List<String> kept = new ArrayList<>(), record = new ArrayList<>();
+        boolean named = false;
+        List<String> lines = new ArrayList<>(run.log().lines().toList());
+        lines.add("[");
+        for (String line : lines) {
+            if (line.startsWith("[")) {
+                if (!named) kept.addAll(record);
+                record.clear();
+                named = false;
+            }
+            record.add(line);
+            named |= names.stream().anyMatch(line::contains);
+        }
+        return String.join("\n", kept);
+    }
+
     static final Pattern CONFIG_NAMED = Pattern.compile("([\\w.\\-]+\\.json)");
     static final Pattern MOD_NAMED = Pattern.compile("from mod ([a-z0-9_.\\-]+)");
 
@@ -389,7 +418,8 @@ final class StartCheck {
         for (var event : run.events()) if ("target".equals(event.get("event")) && event.get("otherSide") != null) otherSide.add(Json.text(event, "target", ""));
         for (var event : run.events()) {
             boolean error = "error".equals(event.get("event")) && "ERROR".equals(event.get("action"));
-            boolean unloadable = "target".equals(event.get("event")) && Boolean.FALSE.equals(event.get("loaded")) && !"java.lang.ClassNotFoundException".equals(event.get("exception"));
+            boolean unloadable = "target".equals(event.get("event")) && Boolean.FALSE.equals(event.get("loaded")) && !Boolean.FALSE.equals(event.get("stops"))
+                && !"java.lang.ClassNotFoundException".equals(event.get("exception"));
             if (!error && !unloadable || otherSide.contains(Json.text(event, "target", "").replace('/', '.'))) continue;
             String message = Json.text(event, "message", "");
             Set<String> jars = new LinkedHashSet<>();

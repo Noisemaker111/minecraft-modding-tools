@@ -188,6 +188,7 @@ public final class MmtMixinCheck {
         boolean asTheGame = Boolean.getBoolean("mmt.mixincheck.asTheGame");
         for (Map.Entry<String, String> target : targets.entrySet()) {
             String error = null, exception = null, otherSide = null;
+            boolean stops = false;
             int stopping = Integer.getInteger(STOPPING, 0);
             try {
                 Class.forName(target.getKey(), false, game);
@@ -195,12 +196,14 @@ public final class MmtMixinCheck {
                 Throwable cause = unwrap(failure);
                 error = messages(cause);
                 exception = cause.getClass().getName();
-                boolean absent = cause instanceof ClassNotFoundException;
+                boolean absent = cause instanceof ClassNotFoundException || unlinked(cause);
                 if (asTheGame && !absent) otherSide = otherSide(target.getKey(), game, targets.keySet());
                 // A target this side of the game does not have is never loaded by it either, nor is the other side's
-                // code in a jar; any other failure is the one the game meets when it loads the class.
+                // code in a jar, nor a class built on one that is not here (a mod's screen for another mod that is not
+                // in the pack); any other failure is the one the game meets when it loads the class.
+                stops = !absent && otherSide == null;
                 if (otherSide != null) System.setProperty(STOPPING, String.valueOf(stopping));
-                else if (!absent) unloadable++;
+                if (stops) unloadable++;
             }
             emit(
                 "target",
@@ -215,7 +218,9 @@ public final class MmtMixinCheck {
                 "exception",
                 exception,
                 "otherSide",
-                otherSide
+                otherSide,
+                "stops",
+                stops
             );
             // Answering as the game (start-check), the first class that fails is where the game stops: what Mixin does
             // to the classes after it is no part of any start.
@@ -271,6 +276,16 @@ public final class MmtMixinCheck {
         }
         emit("done", "seconds", seconds(start), "targets", targets.size());
         return Integer.getInteger(STOPPING, 0) + unloadable;
+    }
+
+    /** Whether a class did not load only because a class it is built on is not there: nothing of Mixin's is in the failure. */
+    static boolean unlinked(Throwable cause) {
+        if (!(cause instanceof NoClassDefFoundError)) return false;
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        for (Throwable t = cause; t != null && seen.add(t); t = t.getCause()) {
+            if (t.getClass().getName().startsWith("org.spongepowered.")) return false;
+        }
+        return true;
     }
 
     static final java.util.regex.Pattern GAME_CLASS = java.util.regex.Pattern.compile("(?:net/minecraft|com/mojang)/[\\w/$]+");
