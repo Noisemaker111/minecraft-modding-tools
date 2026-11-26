@@ -203,7 +203,7 @@ public final class GameDiff {
         final String name;
         final String desc;
         int flags; // widened by the loader's access transformer (Exposure.loaderAccess)
-        String ops = "";
+        String ops = ""; // null, as refs is, until its class's code is read in a release read without it (references)
         Ref[] refs = new Ref[0];
         boolean hasCode;
         String id;
@@ -220,6 +220,21 @@ public final class GameDiff {
 
         boolean special() {
             return name.startsWith("<");
+        }
+
+        /**
+         * Its references, its class's code read first where the release was read without it (GameDiff.read): a port
+         * names the game's members and reads the code of a few methods, and reading every body was half of reading a
+         * release. What is read then is what a whole read gives each method of the class.
+         */
+        Ref[] references() {
+            synchronized (owner) {
+                if (refs == null) {
+                    Origin o = owner.origin;
+                    code(owner, parse(o.bytes(), true), o.raw(), o.fallback(), o.names(), o.resolved());
+                }
+                return refs;
+            }
         }
 
         boolean isStatic() {
@@ -305,6 +320,7 @@ public final class GameDiff {
         final List<Cls> children = new ArrayList<>();
         String id;
         boolean library; // read from one of the release's library jars (addLibraries)
+        Origin origin; // the file it was read from, the game's or the loader's; null for a library's class or a stand-in
         String artifact; // that library's Maven group and name, its version left out (com/mojang/datafixerupper)
 
         Cls(String name, int flags, String sup, List<String> ifaces, boolean loader) {
@@ -331,7 +347,8 @@ public final class GameDiff {
         final String version;
         String loaderVersion;
         int java; // the Java the release runs on (its version.json's javaVersion), 0 where not read from Mojang
-        final Map<String, Cls> classes = new LinkedHashMap<>();
+        final Classes classes = new Classes();
+        boolean code = true; // false: read without the game's code (read), each class's read when it is asked for (Meth.references)
         final Set<String> fixPairs = new HashSet<>(); // "old\0new" ids from the game's own datafixes
         final Map<String, Origin> origins = new HashMap<>(); // class -> its bytes, so Learner can read a body again
         final Map<String, Cls> libraries = new HashMap<>(); // the release's library classes, declarations only: what the learner may write calls to
@@ -361,6 +378,24 @@ public final class GameDiff {
             this.version = version;
         }
 
+        /**
+         * The release's own classes (Classes.own), each with its code read, on every processor as a whole read reads it:
+         * for a search over all of a release's code. A library's classes are declarations, and no method of theirs has
+         * a reference.
+         */
+        List<Cls> coded() {
+            List<Cls> own = classes.own();
+            synchronized (this) {
+                if (!coded) {
+                    own.parallelStream().filter(c -> c.origin != null).forEach(c -> c.methods.values().stream().findFirst().ifPresent(Meth::references));
+                    coded = true;
+                }
+            }
+            return own;
+        }
+
+        private boolean coded;
+
         Meth method(String owner, String name, String desc) {
             Cls c = classes.get(owner);
             return c == null ? null : c.methods.get(name + desc);
@@ -385,6 +420,275 @@ public final class GameDiff {
                 n += c.fields.size();
             }
             return n;
+        }
+    }
+
+    /**
+     * A release's classes by name, in the order they were read. A library's class is read from its jar when it is first
+     * asked for: a release lists about 27,000 of them (fastutil alone has 11,000), a mod names a few dozen, and reading
+     * them all was a third of reading a release. One not read yet has its name and its place in the order, so the map
+     * answers and lists as one read whole does; listing the classes themselves (values) reads them.
+     */
+    static final class Classes extends AbstractMap<String, Cls> {
+
+        private final LinkedHashMap<String, Object> slots = new LinkedHashMap<>(); // a Cls, or the Unread it is read from
+
+        private Cls read(Object slot) {
+            if (!(slot instanceof Unread u)) {
+                return (Cls) slot;
+            }
+            boolean first = !u.isRead();
+            Cls c = u.read();
+            if (first) {
+                // What own() rests on: a library is built without the game and its loader, so no class of one extends theirs.
+                for (String sup : supertypes(c)) {
+                    if (slots.get(sup) instanceof Cls game && game.origin != null) {
+                        throw new IllegalStateException("the library class " + c.name + " (" + u.jar.library.jar() + ") extends " + sup + ", a class of the release itself");
+                    }
+                }
+            }
+            return c;
+        }
+
+        /** Whether a class is the release's own (the game's, the loader's, a stand-in's) and not a library jar's. */
+        boolean own(String name) {
+            return slots.get(name) instanceof Cls;
+        }
+
+        /**
+         * The release's own classes, in the order of classes, no library's read: every class that can extend one of
+         * them, since a library is built without the game and its loader.
+         */
+        List<Cls> own() {
+            List<Cls> out = new ArrayList<>();
+            for (Object slot : slots.values()) {
+                if (slot instanceof Cls c) {
+                    out.add(c);
+                }
+            }
+            return out;
+        }
+
+        /** Whether a library jar has a class whose name starts so; none is read. */
+        boolean libraryIn(String packages) {
+            for (Map.Entry<String, Object> e : slots.entrySet()) {
+                if (e.getValue() instanceof Unread && e.getKey().startsWith(packages)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** The classes that can extend a class: the release's own under one of its own, every class under a library's or the JDK's. */
+        Collection<Cls> under(String name) {
+            return own(name) ? own() : values();
+        }
+
+        @Override
+        public Cls get(Object name) {
+            return read(slots.get(name));
+        }
+
+        @Override
+        public boolean containsKey(Object name) {
+            return slots.containsKey(name);
+        }
+
+        @Override
+        public Cls put(String name, Cls c) {
+            return read(slots.put(name, c));
+        }
+
+        @Override
+        public Cls remove(Object name) {
+            return read(slots.remove(name));
+        }
+
+        @Override
+        public int size() {
+            return slots.size();
+        }
+
+        @Override
+        public void clear() {
+            slots.clear();
+        }
+
+        @Override
+        public Set<String> keySet() {
+            return slots.keySet();
+        }
+
+        @Override
+        public Collection<Cls> values() {
+            return new AbstractCollection<>() {
+                @Override
+                public Iterator<Cls> iterator() {
+                    Iterator<Object> each = slots.values().iterator();
+                    return new Iterator<>() {
+                        @Override
+                        public boolean hasNext() {
+                            return each.hasNext();
+                        }
+
+                        @Override
+                        public Cls next() {
+                            return read(each.next());
+                        }
+
+                        @Override
+                        public void remove() {
+                            each.remove();
+                        }
+                    };
+                }
+
+                @Override
+                public int size() {
+                    return slots.size();
+                }
+            };
+        }
+
+        @Override
+        public Set<Map.Entry<String, Cls>> entrySet() {
+            return new AbstractSet<>() {
+                @Override
+                public Iterator<Map.Entry<String, Cls>> iterator() {
+                    Iterator<Map.Entry<String, Object>> each = slots.entrySet().iterator();
+                    return new Iterator<>() {
+                        @Override
+                        public boolean hasNext() {
+                            return each.hasNext();
+                        }
+
+                        @Override
+                        public Map.Entry<String, Cls> next() {
+                            Map.Entry<String, Object> e = each.next();
+                            return new SimpleImmutableEntry<>(e.getKey(), read(e.getValue()));
+                        }
+
+                        @Override
+                        public void remove() {
+                            each.remove();
+                        }
+                    };
+                }
+
+                @Override
+                public int size() {
+                    return slots.size();
+                }
+            };
+        }
+
+        /**
+         * The classes of the libraries a release runs with, as the JVM resolves a mod's references against them:
+         * declarations only, no code, marked as not the game's (as the loader's are). A class the release already has
+         * (the game's, the loader's, an earlier jar's) is kept.
+         */
+        void libraries(List<Library> jars) throws IOException {
+            for (Library lib : jars) {
+                LibraryJar jar = new LibraryJar(lib);
+                for (String entry : jar.classes()) {
+                    slots.putIfAbsent(entry.substring(0, entry.length() - 6), new Unread(jar, entry));
+                }
+            }
+        }
+
+        /** Each library class with the library it is of (null for a stand-in written in a library's place), none of them read. */
+        void libraries(java.util.function.BiConsumer<String, String> each) {
+            for (Map.Entry<String, Object> e : slots.entrySet()) {
+                if (e.getValue() instanceof Unread u) {
+                    each.accept(e.getKey(), u.jar.library.artifact());
+                } else if (((Cls) e.getValue()).library) {
+                    each.accept(e.getKey(), ((Cls) e.getValue()).artifact);
+                }
+            }
+        }
+
+        /** Adds another release's class as that release has it: the one class in both, read once, when either asks. */
+        void carry(String name, Classes from) {
+            slots.put(name, from.slots.get(name));
+        }
+    }
+
+    /** A library class not read yet. */
+    static final class Unread {
+
+        final LibraryJar jar;
+        final String entry;
+        private volatile Cls read;
+
+        Unread(LibraryJar jar, String entry) {
+            this.jar = jar;
+            this.entry = entry;
+        }
+
+        boolean isRead() {
+            return read != null;
+        }
+
+        Cls read() {
+            Cls c = read;
+            if (c == null) {
+                synchronized (this) {
+                    c = read;
+                    if (c == null) {
+                        c = jar.read(entry);
+                        read = c;
+                    }
+                }
+            }
+            return c;
+        }
+    }
+
+    /** One library's jar, kept open while a release that lists it is: its classes are read one at a time, as they are asked for. */
+    static final class LibraryJar {
+
+        final Library library;
+        private ZipFile zip;
+
+        LibraryJar(Library library) {
+            this.library = library;
+        }
+
+        private synchronized ZipFile zip() throws IOException {
+            if (zip == null) {
+                zip = new ZipFile(library.jar().toFile());
+            }
+            return zip;
+        }
+
+        /** Its class files' entries, in the jar's order. */
+        List<String> classes() throws IOException {
+            List<String> out = new ArrayList<>();
+            for (Enumeration<? extends ZipEntry> e = zip().entries(); e.hasMoreElements();) {
+                String n = e.nextElement().getName();
+                if (classFile(n, null)) {
+                    out.add(n);
+                }
+            }
+            return out;
+        }
+
+        Cls read(String entry) {
+            try {
+                ZipFile z = zip();
+                Cls c;
+                // Closed at once: an entry's stream holds one of the archive's inflaters until it is closed.
+                try (InputStream in = z.getInputStream(z.getEntry(entry))) {
+                    c = libraryClass(in.readAllBytes(), library);
+                }
+                if (!entry.equals(c.name + ".class")) {
+                    // The table lists a class by its entry, before it is read; a whole read names it from its own file.
+                    throw new IllegalStateException(library.jar() + " holds the class " + c.name + " as " + entry);
+                }
+                return c;
+            } catch (IOException unreadable) {
+                throw new UncheckedIOException(unreadable);
+            }
         }
     }
 
@@ -434,6 +738,11 @@ public final class GameDiff {
     }
 
     static RawCls parse(byte[] bytes) {
+        return parse(bytes, true);
+    }
+
+    /** One class file; code false: its declarations alone, each method with whether it has code and none of it. */
+    static RawCls parse(byte[] bytes, boolean code) {
         ClassModel cm = ClassFile.of().parse(bytes);
         RawCls rc = new RawCls();
         rc.bytes = bytes;
@@ -460,13 +769,13 @@ public final class GameDiff {
             m.name = mm.methodName().stringValue();
             m.desc = mm.methodType().stringValue();
             m.flags = mm.flags().flagsMask();
-            Optional<CodeModel> code = mm.code();
-            if (code.isPresent()) {
-                m.hasCode = true;
+            Optional<CodeModel> body = code ? mm.code() : Optional.empty();
+            m.hasCode = code ? body.isPresent() : mm.findAttribute(Attributes.code()).isPresent();
+            if (body.isPresent()) {
                 boolean clinit = m.name.equals("<clinit>");
                 List<String> pending = new ArrayList<>();
                 String previous = null;
-                for (CodeElement el : code.get()) {
+                for (CodeElement el : body.get()) {
                     if (el instanceof Instruction ins) {
                         instruction(rc.name, m, ins);
                         String text = ins instanceof ConstantInstruction ci && ci.constantValue() instanceof String str ? str : null;
@@ -638,9 +947,19 @@ public final class GameDiff {
 
     /** Read class files into a snapshot: game classes (names through pg if obfuscated) and loader classes (Mojang names). */
     static Snap read(String version, List<byte[]> game, VersionMap.Proguard pg, List<byte[]> loader) {
+        return read(version, game, pg, loader, true);
+    }
+
+    /**
+     * code false: the classes' declarations alone, for a port. A method's code is read when it is asked for (Meth.references);
+     * what only the whole game's code tells (a field's accessors and registry id, the datafixes' id pairs) is not read,
+     * and the learner, which reads it, refuses such a release (GameHop).
+     */
+    static Snap read(String version, List<byte[]> game, VersionMap.Proguard pg, List<byte[]> loader, boolean code) {
         Snap s = new Snap(version);
+        s.code = code;
         Names names = new Names(pg);
-        Map<String, RawCls> raw = parseAll(game);
+        Map<String, RawCls> raw = parseAll(game, code);
         // The game's classes in Mojang names, for resolving loader references through game supertypes.
         Map<String, RawCls> named = new HashMap<>();
         for (RawCls rc : raw.values()) {
@@ -660,11 +979,11 @@ public final class GameDiff {
         }
         convert(s, raw, null, names, false);
         if (loader != null && !loader.isEmpty()) {
-            Map<String, RawCls> lraw = parseAll(loader);
+            Map<String, RawCls> lraw = parseAll(loader, code);
             convert(s, lraw, named, new Names(null), true);
         }
         for (Cls c : s.classes.values()) {
-            for (Meth m : c.methods.values()) {
+            for (Meth m : code ? c.methods.values() : List.<Meth>of()) {
                 for (Ref r : m.refs) {
                     if (r.kind() == 'f') {
                         Fld f = s.field(r.owner(), r.name());
@@ -699,9 +1018,13 @@ public final class GameDiff {
     }
 
     static Map<String, RawCls> parseAll(List<byte[]> classes) {
+        return parseAll(classes, true);
+    }
+
+    static Map<String, RawCls> parseAll(List<byte[]> classes, boolean code) {
         Map<String, RawCls> raw = new ConcurrentHashMap<>();
         classes.parallelStream().forEach(b -> {
-            RawCls rc = parse(b);
+            RawCls rc = parse(b, code);
             raw.put(rc.name, rc);
         });
         return raw;
@@ -735,17 +1058,17 @@ public final class GameDiff {
                     loader
                 );
                 for (RawMeth rm : rc.methods.values()) {
-                    if ((rm.flags & (ACC_SYNTHETIC | ACC_BRIDGE)) != 0 || rm.name.contains("$")) {
+                    if (!declared(rm)) {
                         continue;
                     }
                     Meth m = new Meth(c, names.method(rc.name, rm.name, rm.desc), names.desc(rm.desc), rm.flags);
-                    StringBuilder ops = new StringBuilder();
-                    List<Ref> refs = new ArrayList<>();
-                    body(rc, rm, ops, refs, raw, fallback, names, resolved, new HashSet<>(), 0);
                     m.hasCode = rm.hasCode;
-                    m.ops = ops.toString();
-                    m.refs = refs.toArray(new Ref[0]);
+                    m.ops = null;
+                    m.refs = null;
                     c.methods.put(m.name + m.desc, m);
+                }
+                if (s.code) {
+                    code(c, rc, raw, fallback, names, resolved);
                 }
                 for (var f : rc.fields.entrySet()) {
                     int ff = Integer.parseInt(f.getValue()[1]);
@@ -762,8 +1085,30 @@ public final class GameDiff {
             })
             .toList();
         for (int i = 0; i < made.size(); i++) {
+            made.get(i).origin = new Origin(keep.get(i).bytes, raw, fallback, names, resolved);
             s.classes.put(made.get(i).name, made.get(i));
-            s.origins.put(made.get(i).name, new Origin(keep.get(i).bytes, raw, fallback, names, resolved));
+            s.origins.put(made.get(i).name, made.get(i).origin);
+        }
+    }
+
+    /** Whether a method of a class file is one of the class's own: not one the compiler added (a bridge, a lambda's body). */
+    static boolean declared(RawMeth rm) {
+        return (rm.flags & (ACC_SYNTHETIC | ACC_BRIDGE)) == 0 && !rm.name.contains("$");
+    }
+
+    /** Gives each method of c its opcodes and references from rc, the class's file read with its code. */
+    static void code(Cls c, RawCls rc, Map<String, RawCls> raw, Map<String, RawCls> fallback, Names names, Map<String, Ref> resolved) {
+        for (RawMeth rm : rc.methods.values()) {
+            if (!declared(rm)) {
+                continue;
+            }
+            // Two of a class file's methods one name in Mojang's names: the class has the one read last, with its own code.
+            Meth m = c.methods.get(names.method(rc.name, rm.name, rm.desc) + names.desc(rm.desc));
+            StringBuilder ops = new StringBuilder();
+            List<Ref> refs = new ArrayList<>();
+            body(rc, rm, ops, refs, raw, fallback, names, resolved, new HashSet<>(), 0);
+            m.ops = ops.toString();
+            m.refs = refs.toArray(new Ref[0]);
         }
     }
 
@@ -891,28 +1236,30 @@ public final class GameDiff {
     static void addLibraries(Map<String, Cls> into, List<Library> jars) throws IOException {
         for (Library lib : jars) {
             for (byte[] bytes : classes(lib.jar(), null)) {
-                ClassModel cm = ClassFile.of().parse(bytes);
-                String name = cm.thisClass().asInternalName();
-                if (into.containsKey(name)) {
-                    continue;
-                }
-                List<String> ifs = new ArrayList<>();
-                for (ClassEntry e : cm.interfaces()) {
-                    ifs.add(e.asInternalName());
-                }
-                Cls c = new Cls(name, cm.flags().flagsMask(), cm.superclass().map(ClassEntry::asInternalName).orElse(null), ifs, true);
-                c.library = true;
-                c.artifact = lib.artifact();
-                for (FieldModel fm : cm.fields()) {
-                    c.fields.put(fm.fieldName().stringValue(), new Fld(c, fm.fieldName().stringValue(), fm.fieldType().stringValue(), fm.flags().flagsMask()));
-                }
-                for (MethodModel mm : cm.methods()) {
-                    Meth m = new Meth(c, mm.methodName().stringValue(), mm.methodType().stringValue(), mm.flags().flagsMask());
-                    c.methods.put(m.name + m.desc, m);
-                }
-                into.put(name, c);
+                Cls c = libraryClass(bytes, lib);
+                into.putIfAbsent(c.name, c);
             }
         }
+    }
+
+    /** One class of a library: its declarations. */
+    static Cls libraryClass(byte[] bytes, Library lib) {
+        ClassModel cm = ClassFile.of().parse(bytes);
+        List<String> ifs = new ArrayList<>();
+        for (ClassEntry e : cm.interfaces()) {
+            ifs.add(e.asInternalName());
+        }
+        Cls c = new Cls(cm.thisClass().asInternalName(), cm.flags().flagsMask(), cm.superclass().map(ClassEntry::asInternalName).orElse(null), ifs, true);
+        c.library = true;
+        c.artifact = lib.artifact();
+        for (FieldModel fm : cm.fields()) {
+            c.fields.put(fm.fieldName().stringValue(), new Fld(c, fm.fieldName().stringValue(), fm.fieldType().stringValue(), fm.flags().flagsMask()));
+        }
+        for (MethodModel mm : cm.methods()) {
+            Meth m = new Meth(c, mm.methodName().stringValue(), mm.methodType().stringValue(), mm.flags().flagsMask());
+            c.methods.put(m.name + m.desc, m);
+        }
+        return c;
     }
 
     static Path verified(String[] dl, String name) throws Exception {
@@ -925,16 +1272,20 @@ public final class GameDiff {
         return p;
     }
 
+    /** Whether a jar's entry is a class to read: under prefix when one is given, and not a module's or a package's own file. */
+    static boolean classFile(String entry, String prefix) {
+        if (!entry.endsWith(".class") || entry.startsWith("META-INF/") || entry.endsWith("module-info.class")) {
+            return false;
+        }
+        return !entry.endsWith("package-info.class") && (prefix == null || entry.startsWith(prefix));
+    }
+
     static List<byte[]> classes(Path jar, String prefix) throws IOException {
         List<byte[]> l = new ArrayList<>();
         try (ZipFile z = new ZipFile(jar.toFile())) {
             for (Enumeration<? extends ZipEntry> e = z.entries(); e.hasMoreElements();) {
                 ZipEntry ze = e.nextElement();
-                String n = ze.getName();
-                if (!n.endsWith(".class") || n.startsWith("META-INF/") || n.endsWith("module-info.class")) {
-                    continue;
-                }
-                if (n.endsWith("package-info.class") || (prefix != null && !n.startsWith(prefix))) {
+                if (!classFile(ze.getName(), prefix)) {
                     continue;
                 }
                 l.add(z.getInputStream(ze).readAllBytes());
@@ -942,6 +1293,33 @@ public final class GameDiff {
         }
         return l;
     }
+
+    /** A release's client jar as Mojang ships it: its class files, and its mappings (null from 26.1, which ships in Mojang's names). */
+    record Client(List<byte[]> classes, VersionMap.Proguard names) {}
+
+    /**
+     * A release's client jar, read once per process and only read after: a release's snapshot and the port's reading of
+     * the game's code (GameCode) both start from it, and each unzipped the jar and parsed its mappings for itself, every
+     * worker of a port at once.
+     */
+    static Client client(String version) throws Exception {
+        try {
+            return CLIENTS.computeIfAbsent(version, v -> {
+                try {
+                    String vj = versionJson(v);
+                    String[] m = download(vj, "client_mappings");
+                    VersionMap.Proguard names = m == null ? null : VersionMap.Proguard.read(verified(m, "client-" + v + ".txt"));
+                    return new Client(classes(verified(download(vj, "client"), "client-" + v + ".jar"), null), names);
+                } catch (Exception failed) {
+                    throw new CompletionException(failed);
+                }
+            });
+        } catch (CompletionException failed) {
+            throw failed.getCause() instanceof Exception e ? e : failed;
+        }
+    }
+
+    static final Map<String, Client> CLIENTS = new ConcurrentHashMap<>();
 
     static final Pattern JAVA_VERSION = Pattern.compile("\"javaVersion\"\\s*:\\s*\\{[^}]*\"majorVersion\"\\s*:\\s*(\\d+)");
 

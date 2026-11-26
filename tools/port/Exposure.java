@@ -54,7 +54,17 @@ public final class Exposure {
             System.err.println("usage: Exposure --from V --to V [--loader neoforge] --report jarport.json --out evidence.json");
             System.exit(2);
         }
-        GameDiff.Snap a = snap(from, loader), b = snap(to, loader);
+        // The two releases side by side, as a port reads its own (JarPort.Reads): one after the other, the second waited on the first.
+        String newer = to, on = loader;
+        java.util.concurrent.FutureTask<GameDiff.Snap> ahead = new java.util.concurrent.FutureTask<>(() -> snap(newer, on));
+        Thread.ofPlatform().daemon().start(ahead);
+        GameDiff.Snap a = snap(from, loader);
+        GameDiff.Snap b;
+        try {
+            b = ahead.get();
+        } catch (java.util.concurrent.ExecutionException failed) {
+            throw failed.getCause() instanceof Exception e ? e : failed;
+        }
         GameHop hop = new GameHop(a, b);
         hop.run();
         Map<String, HopChains.Evidence> evidence = hop.hopChains.evidence();
@@ -203,24 +213,33 @@ public final class Exposure {
      * references to the game, so a loader API change is porting work, not a surprise at load time.
      */
     static GameDiff.Snap snap(String version, String loader) throws Exception {
+        return snap(version, loader, true);
+    }
+
+    /**
+     * code false: for a port, which names the game's members and reads little of its code: the release's declarations,
+     * each class's code read when the port asks for it (GameDiff.read).
+     */
+    static GameDiff.Snap snap(String version, String loader, boolean code) throws Exception {
         Platform p = platform(loader, version);
         String vj = GameDiff.versionJson(version);
-        Path client = GameDiff.verified(GameDiff.download(vj, "client"), "client-" + version + ".jar");
-        String[] m = GameDiff.download(vj, "client_mappings");
-        VersionMap.Proguard pg = m == null ? null : VersionMap.Proguard.parse(Files.readString(GameDiff.verified(m, "client-" + version + ".txt"), StandardCharsets.UTF_8));
-        List<byte[]> game = GameDiff.classes(client, null);
+        GameDiff.Client client = GameDiff.client(version);
+        VersionMap.Proguard pg = client.names();
+        List<byte[]> game = client.classes();
         if (!p.injected().isEmpty()) {
             game = injected(game, pg, p.injected());
         }
-        GameDiff.Snap s = GameDiff.read(version, game, pg, p.classes());
+        GameDiff.Snap s = GameDiff.read(version, game, pg, p.classes(), code);
         s.loaderVersion = p.version();
         s.java = GameDiff.javaOf(vj);
         loaderAccess(s, p.access());
+        long ofLoader = s.classes.values().stream().filter(c -> c.loader).count();
+        int own = s.classes.size();
         // The game's own libraries (JOML, DataFixerUpper, Brigadier, fastutil...) are linked against too: a mod's use of one
         // that changed or moved breaks at run time like a game member does (1.19.3 moved the game's math to JOML).
-        GameDiff.addLibraries(s.classes, GameDiff.libraries(vj));
+        s.classes.libraries(GameDiff.libraries(vj));
         System.out.printf("  read %s with %s: %,d classes (%,d of the loader)%n", version, loader == null ? "no loader" : loader + " " + p.version(),
-            s.classes.size(), s.classes.values().stream().filter(c -> c.loader).count());
+            s.classes.size(), ofLoader + s.classes.size() - own);
         return s;
     }
 
@@ -252,6 +271,9 @@ public final class Exposure {
     static void forget(String version) {
         PLATFORMS.keySet().removeIf(k -> k.endsWith(" " + version));
         Intermediary.FABRIC.remove(version);
+        GameDiff.CLIENTS.remove(version);
+        VersionMap.Proguard.forget(version);
+        VersionMap.Table.MOJMAP.remove(version);
     }
 
     static final String NEOFORGED = "https://maven.neoforged.net/releases/";
@@ -624,7 +646,7 @@ public final class Exposure {
             String url = MODRINTH + "/" + java.net.URLEncoder.encode(build, StandardCharsets.UTF_8);
             java.net.http.HttpResponse<String> response;
             try {
-                response = VersionMap.HTTP.send(
+                response = VersionMap.Http.CLIENT.send(
                     java.net.http.HttpRequest.newBuilder(java.net.URI.create(url)).header("User-Agent", AGENT).build(),
                     java.net.http.HttpResponse.BodyHandlers.ofString()
                 );
@@ -846,7 +868,7 @@ public final class Exposure {
         }
 
         Intermediary(String version) throws Exception {
-            VersionMap.Table t = VersionMap.Table.load(version, "mojmap");
+            VersionMap.Table t = VersionMap.Table.mojmap(version);
             classes.putAll(t.classes);
             Map<String, Set<String>> names = new HashMap<>();
             for (var e : t.methods.entrySet()) {
@@ -906,10 +928,11 @@ public final class Exposure {
             Matcher at = Pattern.compile("\"mappings\"\\s*:\\s*\"([^\"]+)\"").matcher(VersionMap.zipEntry(zip, "config.json"));
             String tsrg = VersionMap.zipEntry(zip, at.find() ? at.group(1) : "config/joined.tsrg");
             String vj = GameDiff.versionJson(version);
-            VersionMap.Proguard pg = VersionMap.Proguard.parse(Files.readString(GameDiff.verified(GameDiff.download(vj, "client_mappings"), "client-" + version + ".txt"), StandardCharsets.UTF_8));
+            VersionMap.Proguard pg = new VersionMap.Proguard();
+            pg.merge(VersionMap.Proguard.read(GameDiff.verified(GameDiff.download(vj, "client_mappings"), "client-" + version + ".txt")));
             String[] server = GameDiff.download(vj, "server_mappings");
             if (server != null) {
-                pg.merge(VersionMap.Proguard.parse(Files.readString(GameDiff.verified(server, "server-" + version + ".txt"), StandardCharsets.UTF_8)));
+                pg.merge(VersionMap.Proguard.read(GameDiff.verified(server, "server-" + version + ".txt")));
             }
             Intermediary out = new Intermediary(Map.of(), srg(tsrg, pg));
             NEOFORM.put(version, out);

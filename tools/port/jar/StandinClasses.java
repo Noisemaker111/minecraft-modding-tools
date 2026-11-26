@@ -210,7 +210,7 @@ final class StandinClasses {
             return null;
         }
         boolean moved = false;
-        for (GameDiff.Cls c : port.a.classes.values()) {
+        for (GameDiff.Cls c : port.a.classes.own()) {
             if (c.library || c.name.equals(old) || !port.b.classes.containsKey(c.name) || !Linking.isA(port.a, c.name, old)) {
                 continue;
             }
@@ -452,7 +452,10 @@ final class StandinClasses {
                 nestedIn.computeIfAbsent(name.substring(0, at), k -> new ArrayList<>()).add(name);
             }
         }
-        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(jar))) {
+        // Through a buffer, and stored: a zip writes each entry's header a few bytes at a time, and straight to the file the
+        // 37,000 stubs took 14 s to write for a compile of 0.7 s; javac reads the jar once and it is deleted.
+        try (ZipOutputStream out = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(jar), 1 << 16))) {
+            out.setLevel(java.util.zip.Deflater.NO_COMPRESSION);
             for (GameDiff.Cls c : release.classes.values()) {
                 if (c.name.startsWith("java/") || c.name.startsWith("javax/") || c.name.startsWith("jdk/") || c.name.startsWith("sun/")) {
                     continue;

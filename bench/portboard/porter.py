@@ -29,7 +29,9 @@ def compile_tools():
     return jar_tools()
 
 
+@functools.cache
 def java_version():
+    """The JVM's own version text, asked once per run: every cache key names it, and a run of one mod asked eight times."""
     return subprocess.run([java(), "-version"], capture_output=True, text=True).stderr.strip()
 
 
@@ -285,7 +287,15 @@ def classes_key(classpath, names):
                        *(a.read_bytes() for a in settings.ASM))
 
 
-LOADED = re.compile(r"\[class,load\] (\S+) source: (?:file:)?(.*)$")
+LOADED = re.compile(r"\[class,load\] (\S+) source: file:(.*)$")
+
+
+def loaded_from(log, folder):
+    """The classes a JVM's class-load log (-Xlog:class+load) says it loaded from one folder of its classpath. The log
+    names a folder as a file: URL (file:/C:/Users/..., file:/home/...); read as a plain path, a Windows one matched
+    nothing, so on Windows no class was part of the key and an edit to Exposure left its old answers in place."""
+    own = Path(folder).resolve()
+    return sorted({m.group(1) for m in map(LOADED.search, log.splitlines()) if m and Path(urllib.request.url2pathname(m.group(2))).resolve() == own})
 
 
 def game_says(loader, frm, to, report):
@@ -299,7 +309,7 @@ def game_says(loader, frm, to, report):
     # The loader releases of each step: a port that stops on the way reads no map of the whole jump, and none is built for it.
     folder = cachekeys.keyed_at("game", cachekeys.content_key(*(cachekeys.platform_key(loader, r) for r in routes(loader, frm, to)), java_version())) / f"{loader}-{frm}-{to}"
     folder.mkdir(parents=True, exist_ok=True)
-    loaded = folder / "loaded.txt"
+    loaded = folder / "classes.txt"  # not loaded.txt, which runs on Windows wrote empty (loaded_from): its answers are not read
     known = folder / (classes_key(classes, loaded.read_text(encoding="utf-8").split()) + ".json") if loaded.is_file() else None
     said = json.loads(known.read_text(encoding="utf-8")) if known and known.is_file() else {"answered": [], "said": {}}
     if settings.VERIFY or not set(asked) <= set(said["answered"]):
@@ -307,9 +317,7 @@ def game_says(loader, frm, to, report):
         log = report.with_name("game-classes.log")
         subprocess.run([java(), f"-Xmx{settings.HEAP}g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
                         "--report", str(report), "--out", str(out), "--loader", loader], check=True, stdout=subprocess.DEVNULL)
-        own = Path(classes.split(os.pathsep)[0]).resolve()
-        names = sorted({m.group(1) for m in map(LOADED.search, log.read_text(encoding="utf-8", errors="replace").splitlines())
-                        if m and Path(urllib.parse.unquote(m.group(2))).resolve() == own})
+        names = loaded_from(log.read_text(encoding="utf-8", errors="replace"), classes.split(os.pathsep)[0])
         fresh = json.loads(out.read_text(encoding="utf-8"))
         target = folder / (classes_key(classes, names) + ".json")
         if target != known:
