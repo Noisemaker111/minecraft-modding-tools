@@ -31,6 +31,19 @@ final class Split extends MethodVisitor {
     }
 
     @Override
+    public void visitParameter(String n, int access) {
+        if (adapter.selfFrom() < 0) {
+            super.visitParameter(n, access); // a body handed its object takes one parameter more than these name
+        }
+    }
+
+    @Override
+    public void visitLocalVariable(String n, String d, String signature, Label start, Label end, int index) {
+        boolean handed = adapter.selfFrom() >= 0 && index == 0;
+        super.visitLocalVariable(handed ? "self" : n, handed ? adapter.selfType() : d, handed ? null : signature, start, end, index);
+    }
+
+    @Override
     public AnnotationVisitor visitParameterAnnotation(int parameter, String d, boolean visible) {
         // What the handler takes after the arguments it re-declares (the CallbackInfo, sugar such as @Local) keeps its
         // annotations on the handler, where Mixin reads them; the body behind it is a plain method.
@@ -53,7 +66,12 @@ final class Split extends MethodVisitor {
         }
         handler.visitCode();
         int stack = isStatic ? 0 : 1;
-        if (!isStatic) {
+        boolean self = adapter.selfFrom() >= 0;
+        if (self) {
+            // The body takes the object its code used as its own (StoodInMixins): made from a new parameter.
+            handler.visitVarInsn(Opcodes.ALOAD, slots[adapter.selfFrom()]);
+            port.conversions.steps(handler, adapter.selfVia());
+        } else if (!isStatic) {
             handler.visitVarInsn(Opcodes.ALOAD, 0);
         }
         for (int j = 0; j < adapter.captured(); j++) {
@@ -74,9 +92,14 @@ final class Split extends MethodVisitor {
             handler.visitVarInsn(now[j].getOpcode(Opcodes.ILOAD), slots[j]);
             stack += now[j].getSize();
         }
-        handler.visitMethodInsn(isStatic ? Opcodes.INVOKESTATIC : Opcodes.INVOKESPECIAL, owner, name + "$mmt", desc, itf);
+        handler.visitMethodInsn(isStatic || self ? Opcodes.INVOKESTATIC : Opcodes.INVOKESPECIAL, owner, name + "$mmt", self ? bodyDesc(adapter, desc) : desc, itf);
         handler.visitInsn(Type.getReturnType(desc).getOpcode(Opcodes.IRETURN));
-        handler.visitMaxs(stack + Conversions.room(adapter.via()), next);
+        handler.visitMaxs(stack + Conversions.room(adapter.via()) + (self ? Conversions.room(new String[][] { adapter.selfVia() }) : 0), next);
         handler.visitEnd();
+    }
+
+    /** The descriptor of a body that takes the object it used as its own first, as a static method. */
+    static String bodyDesc(MixinRetargets.Adapter adapter, String desc) {
+        return "(" + adapter.selfType() + desc.substring(1);
     }
 }

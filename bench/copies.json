@@ -54,7 +54,6 @@
   "tools/port/jar/AccessFiles.java": 6,
   "tools/port/jar/Constants.java": 8,
   "tools/port/jar/FinalOverrides.java": 11,
-  "tools/port/jar/GameCode.java": 71,
   "tools/port/jar/JarPort.java": 9,
   "tools/port/jar/Lining.java": 14,
   "tools/port/jar/Linking.java": 37,

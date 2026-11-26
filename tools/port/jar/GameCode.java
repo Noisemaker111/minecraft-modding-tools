@@ -298,33 +298,41 @@ final class GameCode {
         return body.isEmpty() ? new String[0] : body.split("\n");
     }
 
-    Set<Integer> localStores(String owner, String name, String desc) {
+    /**
+     * Reads one method of this release's jar (this release's names): code is given its access and its first local past
+     * the arguments, and gives the visitor that reads it. False when the method is not in the jar.
+     */
+    boolean read(String owner, String name, String desc, int flags, java.util.function.BiFunction<Integer, Integer, MethodVisitor> code) {
         String jarOwner = toJar.getOrDefault(owner, owner);
         byte[] file = bytes.apply(jarOwner);
         if (file == null) {
-            return null;
+            return false;
         }
-        Set<Integer> out = new HashSet<>();
-        boolean[] seen = { false };
+        boolean[] found = { false };
         new ClassReader(file).accept(new ClassVisitor(Opcodes.ASM9) {
             @Override
             public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
-                if (!(names.method(jarOwner, n, d) + names.desc(d)).equals(name + desc)) {
+                if (found[0] || !names.method(jarOwner, n, d).equals(name) || !names.desc(d).equals(desc)) {
                     return null;
                 }
-                seen[0] = true;
-                int first = (Type.getArgumentsAndReturnSizes(d) >> 2) - ((access & Opcodes.ACC_STATIC) != 0 ? 1 : 0);
-                return new MethodVisitor(Opcodes.ASM9) {
-                    @Override
-                    public void visitVarInsn(int op, int v) {
-                        if (op >= Opcodes.ISTORE && op <= Opcodes.ASTORE && v >= first) {
-                            out.add(op);
-                        }
-                    }
-                };
+                found[0] = true;
+                return code.apply(access, (Type.getArgumentsAndReturnSizes(d) >> 2) - ((access & Opcodes.ACC_STATIC) != 0 ? 1 : 0));
             }
-        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        return seen[0] ? out : null;
+        }, flags);
+        return found[0];
+    }
+
+    Set<Integer> localStores(String owner, String name, String desc) {
+        Set<Integer> out = new HashSet<>();
+        boolean seen = read(owner, name, desc, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES, (access, first) -> new MethodVisitor(Opcodes.ASM9) {
+            @Override
+            public void visitVarInsn(int op, int v) {
+                if (op >= Opcodes.ISTORE && op <= Opcodes.ASTORE && v >= first) {
+                    out.add(op);
+                }
+            }
+        });
+        return seen ? out : null;
     }
 
     /**
@@ -585,31 +593,53 @@ final class GameCode {
         return owner;
     }
 
-    /** A method's own loads and stores of locals, counted by opcode (ILOAD..ALOAD, ISTORE..ASTORE); null when it is not in the jar. */
-    int[] locals(String owner, String name, String desc) {
-        String jarOwner = toJar.getOrDefault(owner, owner);
-        byte[] file = bytes.apply(jarOwner);
-        if (file == null) {
+    /**
+     * A method's own locals past its arguments as Mixin's STORE and LOAD points and @ModifyVariable read them: each
+     * local the table declares ("slot desc", this release's names, in table order), then each load or store (load true)
+     * or increment, in code order ("opcode slot"). Two methods giving the same have the same locals written (or read) in
+     * the same order, whatever else their code does. Null when the method is not in the jar.
+     */
+    List<String> localUses(String owner, String name, String desc, boolean load) {
+        List<String> table = new ArrayList<>(), uses = new ArrayList<>();
+        boolean found = read(owner, name, desc, ClassReader.SKIP_FRAMES, (access, first) -> new MethodVisitor(Opcodes.ASM9) {
+            @Override
+            public void visitVarInsn(int opcode, int var) {
+                if (var >= first && (opcode >= Opcodes.ISTORE) != load && opcode != Opcodes.RET) {
+                    uses.add(opcode + " " + var);
+                }
+            }
+
+            @Override
+            public void visitIincInsn(int var, int increment) {
+                if (var >= first) {
+                    uses.add(Opcodes.IINC + " " + var);
+                }
+            }
+
+            @Override
+            public void visitLocalVariable(String ln, String ld, String signature, Label start, Label end, int index) {
+                if (index >= first) {
+                    table.add(index + " " + names.desc(ld));
+                }
+            }
+        });
+        if (!found) {
             return null;
         }
+        table.addAll(uses);
+        return table;
+    }
+
+    /** A method's own loads and stores of locals, counted by opcode (ILOAD..ALOAD, ISTORE..ASTORE); null when it is not in the jar. */
+    int[] locals(String owner, String name, String desc) {
         int[] out = new int[256];
-        boolean[] found = new boolean[1];
-        new ClassReader(file).accept(new ClassVisitor(Opcodes.ASM9) {
+        boolean found = read(owner, name, desc, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES, (access, first) -> new MethodVisitor(Opcodes.ASM9) {
             @Override
-            public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
-                if (found[0] || !names.method(jarOwner, n, d).equals(name) || !names.desc(d).equals(desc)) {
-                    return null;
-                }
-                found[0] = true;
-                return new MethodVisitor(Opcodes.ASM9) {
-                    @Override
-                    public void visitVarInsn(int opcode, int var) {
-                        out[opcode]++;
-                    }
-                };
+            public void visitVarInsn(int opcode, int var) {
+                out[opcode]++;
             }
-        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        return found[0] ? out : null;
+        });
+        return found ? out : null;
     }
 
     /** {kind, owner, name, desc} of each call and field access in a method's own code; null when it is not in the jar. */
@@ -624,55 +654,41 @@ final class GameCode {
         if (stepsRead.containsKey(key)) {
             return stepsRead.get(key);
         }
-        String jarOwner = toJar.getOrDefault(owner, owner);
-        byte[] file = bytes.apply(jarOwner);
-        List<String[]> out = file == null ? null : new ArrayList<>();
-        boolean[] found = new boolean[1];
-        if (file != null) {
-            new ClassReader(file).accept(new ClassVisitor(Opcodes.ASM9) {
+        List<String[]> out = new ArrayList<>();
+        boolean found = read(owner, name, desc, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES, (access, first) -> new MethodVisitor(Opcodes.ASM9) {
                 @Override
-                public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
-                    if (found[0] || !names.method(jarOwner, n, d).equals(name) || !names.desc(d).equals(desc)) {
-                        return null;
-                    }
-                    found[0] = true;
-                    return new MethodVisitor(Opcodes.ASM9) {
-                        @Override
-                        public void visitMethodInsn(int op, String o, String mn, String md, boolean itf) {
-                            out.add(new String[] { "m", names.cls(o), names.method(declarer(o, mn, md, false), mn, md), names.desc(md) });
-                        }
-
-                        @Override
-                        public void visitFieldInsn(int op, String o, String fn, String fd) {
-                            boolean read = op == Opcodes.GETFIELD || op == Opcodes.GETSTATIC;
-                            out.add(new String[] { read ? "f" : "p", names.cls(o), names.field(declarer(o, fn, fd, true), fn), names.desc(fd) });
-                        }
-
-                        @Override
-                        public void visitLdcInsn(Object v) {
-                            out.add(new String[] { "c", "", v instanceof Type t ? names.desc(t.getDescriptor()) : line(v), "" });
-                        }
-
-                        @Override
-                        public void visitTypeInsn(int op, String t) {
-                            if (op == Opcodes.NEW) {
-                                out.add(new String[] { "n", names.cls(t), "", "" });
-                            }
-                        }
-
-                        @Override
-                        public void visitInvokeDynamicInsn(String n2, String d2, Handle bsm, Object... args) {
-                            for (Object arg : args) {
-                                if (arg instanceof Handle h) {
-                                    out.add(new String[] { "l", names.cls(h.getOwner()), names.method(h.getOwner(), h.getName(), h.getDesc()), names.desc(h.getDesc()) });
-                                }
-                            }
-                        }
-                    };
+                public void visitMethodInsn(int op, String o, String mn, String md, boolean itf) {
+                    out.add(new String[] { "m", names.cls(o), names.method(declarer(o, mn, md, false), mn, md), names.desc(md) });
                 }
-            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        }
-        List<String[]> result = found[0] ? out : null;
+
+                @Override
+                public void visitFieldInsn(int op, String o, String fn, String fd) {
+                    boolean read = op == Opcodes.GETFIELD || op == Opcodes.GETSTATIC;
+                    out.add(new String[] { read ? "f" : "p", names.cls(o), names.field(declarer(o, fn, fd, true), fn), names.desc(fd) });
+                }
+
+                @Override
+                public void visitLdcInsn(Object v) {
+                    out.add(new String[] { "c", "", v instanceof Type t ? names.desc(t.getDescriptor()) : line(v), "" });
+                }
+
+                @Override
+                public void visitTypeInsn(int op, String t) {
+                    if (op == Opcodes.NEW) {
+                        out.add(new String[] { "n", names.cls(t), "", "" });
+                    }
+                }
+
+                @Override
+                public void visitInvokeDynamicInsn(String n2, String d2, Handle bsm, Object... args) {
+                    for (Object arg : args) {
+                        if (arg instanceof Handle h) {
+                            out.add(new String[] { "l", names.cls(h.getOwner()), names.method(h.getOwner(), h.getName(), h.getDesc()), names.desc(h.getDesc()) });
+                        }
+                    }
+                }
+            });
+        List<String[]> result = found ? out : null;
         stepsRead.put(key, result);
         return result;
     }
@@ -1013,33 +1029,18 @@ final class GameCode {
     }
 
     List<String[]> refs(String owner, String name, String desc) {
-        String jarOwner = toJar.getOrDefault(owner, owner);
-        byte[] file = bytes.apply(jarOwner);
-        if (file == null) {
-            return null;
-        }
         List<String[]> out = new ArrayList<>();
-        boolean[] found = new boolean[1];
-        new ClassReader(file).accept(new ClassVisitor(Opcodes.ASM9) {
+        boolean found = read(owner, name, desc, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES, (access, first) -> new MethodVisitor(Opcodes.ASM9) {
             @Override
-            public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
-                if (found[0] || !names.method(jarOwner, n, d).equals(name) || !names.desc(d).equals(desc)) {
-                    return null;
-                }
-                found[0] = true;
-                return new MethodVisitor(Opcodes.ASM9) {
-                    @Override
-                    public void visitMethodInsn(int opcode, String o, String mn, String md, boolean itf) {
-                        out.add(new String[] { "m", names.cls(o), names.method(declarer(o, mn, md, false), mn, md), names.desc(md) });
-                    }
-
-                    @Override
-                    public void visitFieldInsn(int opcode, String o, String fn, String fd) {
-                        out.add(new String[] { "f", names.cls(o), names.field(declarer(o, fn, fd, true), fn), names.desc(fd) });
-                    }
-                };
+            public void visitMethodInsn(int opcode, String o, String mn, String md, boolean itf) {
+                out.add(new String[] { "m", names.cls(o), names.method(declarer(o, mn, md, false), mn, md), names.desc(md) });
             }
-        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        return found[0] ? out : null;
+
+            @Override
+            public void visitFieldInsn(int opcode, String o, String fn, String fd) {
+                out.add(new String[] { "f", names.cls(o), names.field(declarer(o, fn, fd, true), fn), names.desc(fd) });
+            }
+        });
+        return found ? out : null;
     }
 }

@@ -249,6 +249,17 @@ final class MixinPoints {
             if (Set.of("HEAD", "RETURN", "TAIL").contains(value)) {
                 continue;
             }
+            if (Set.of("STORE", "LOAD").contains(value)) {
+                // A store or load of a local finds the same place where the new method declares the same locals and
+                // writes (or reads) them in the same order, whatever else its code now does (1.19.4's HUD code, which
+                // draws through GuiComponent where 1.20's draws through GuiGraphics).
+                boolean load = value.equals("LOAD");
+                if (!methods.stream().allMatch(m -> sameLocals(m, load))) {
+                    JarPort.why(String.valueOf(inj.methods()), "P-locals " + value);
+                    return false;
+                }
+                continue;
+            }
             MixinMembers.Found at = ats.get(i);
             if (!Set.of("INVOKE", "INVOKE_ASSIGN", "FIELD").contains(value) || at == null || at.kind() == 0 || at.desc() == null) {
                 JarPort.why(value + " " + inj.ats().get(i)[1], "P-at " + (at == null ? "none" : at.kind() == 0 ? "gone" : at.desc() == null ? "no-desc" : "kind"));
@@ -382,6 +393,17 @@ final class MixinPoints {
         String owner = m.group(1) != null ? m.group(1) : null;
         int before = uses(port.code(port.a), port.a, method[1], kind, owner, m.group(2), m.group(3) != null ? m.group(3) : m.group(4));
         return before == now && now > Integer.parseInt(point[2]);
+    }
+
+    /** Whether a method injected into ({new, old}) declares and stores (or loads) its locals as it did (GameCode.localUses). */
+    boolean sameLocals(GameDiff.Meth[] method, boolean load) {
+        GameCode oldCode = port.code(port.a), newCode = port.code(port.b);
+        List<String> was = oldCode == null ? null : oldCode.localUses(method[1].owner.name, method[1].name, method[1].desc, load);
+        List<String> now = newCode == null ? null : newCode.localUses(method[0].owner.name, method[0].name, method[0].desc, load);
+        if (was == null || now == null || now.isEmpty()) {
+            return false;
+        }
+        return was.stream().map(u -> u.indexOf('L') < 0 ? u : u.substring(0, u.indexOf(' ') + 1) + port.desc(u.substring(u.indexOf(' ') + 1))).toList().equals(now);
     }
 
     /** The methods an injector's targets name, {new release, old release} each, when all are known on both sides. */
