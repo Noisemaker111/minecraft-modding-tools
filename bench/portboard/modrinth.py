@@ -18,8 +18,8 @@ def api(path, params=None):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=settings.AGENT), timeout=60) as r:
                 return json.load(r)
-        except Exception as error:  # a 429 or a dropped connection: back off and try again
-            if attempt == 3:
+        except Exception as error:  # a 429 or a dropped connection: back off and try again; a 404 is Modrinth's answer
+            if attempt == 3 or getattr(error, "code", None) == 404:
                 raise
             time.sleep(5 * (attempt + 1))
 

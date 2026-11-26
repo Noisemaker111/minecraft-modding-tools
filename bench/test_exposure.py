@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -268,6 +269,21 @@ with tempfile.TemporaryDirectory() as tmp:
     check([j.name for j in chosen] == ["ipn--ktmod.jar"] and list(ready) == ["libipn.jar"] and list(to_port) == ["lang-all.jar"],
           f"a mod is started with the libraries it needs, each library's own found through it: {chosen} {ready} {to_port}")
     check(left == {"lone--lone.jar": ["nowhere"]}, f"a mod whose need nothing answers is named with what it needs: {left}")
+    # A version its author took down from Modrinth lists nothing; any other answer of Modrinth's is still an error.
+    def answers(code):
+        def api(path, params=None):
+            raise urllib.error.HTTPError("https://api.modrinth.com/v2/" + path, code, "answer", None, None)
+        return api
+    asked = {}
+    for code in (404, 500):
+        portboard.modrinth.api = answers(code)
+        try:
+            asked[code] = portboard.dependencies.required_projects(f"taken-down-{code}")
+        except urllib.error.HTTPError as answer:
+            asked[code] = answer.code
+    portboard.modrinth.api = lambda path, params=None: {"dependencies": [{"dependency_type": "required", "project_id": "P-lib"}, {"dependency_type": "optional", "project_id": "P-no"}]}  # noqa: E731
+    asked["there"] = portboard.dependencies.required_projects("still-there")
+    check(asked == {404: [], 500: 500, "there": ["P-lib"]}, f"a version taken down from Modrinth lists no libraries, one that is there lists its required ones, and another error is not swallowed: {asked}")
     # A Fabric mod's Modrinth version lists Fabric API, which the pack already runs as its platform: a second copy as a
     # library stops Fabric ("Mod id fabric-api is in 2 jars"), so only its other library is added.
     api = Path(tmp) / "fabric-api.jar"
