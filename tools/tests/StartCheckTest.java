@@ -568,6 +568,7 @@ public final class StartCheckTest {
         "            c.connect(tcp).get(2, TimeUnit.SECONDS); c.write(ByteBuffer.wrap(new byte[] { 'A' })).get(2, TimeUnit.SECONDS); } });",
         "        attempt(\"DatagramSocket\", () -> { try (DatagramSocket d = new DatagramSocket()) { d.send(new DatagramPacket(new byte[] { 'U' }, 1, udp)); } });",
         "        attempt(\"real path\", () -> java.nio.file.Paths.get(System.getProperty(\"java.home\"), \"bin\").toRealPath());",
+        "        attempt(\"temporary file\", () -> java.io.File.createTempFile(\"level\", \".dat\", new java.io.File(\".\").getAbsoluteFile()).delete());",
         "        attempt(\"DatagramChannel\", () -> { try (DatagramChannel d = DatagramChannel.open()) { d.send(ByteBuffer.wrap(new byte[] { 'D' }), udp); } });",
         "        try (java.io.FileWriter out = new java.io.FileWriter(\"mmt-start-check.jsonl\")) { out.write(\"{\\\"event\\\":\\\"stop\\\",\\\"reason\\\":\\\"done\\\",\\\"seconds\\\":1.0}\\n\"); }",
         "    }",
@@ -652,6 +653,8 @@ public final class StartCheckTest {
                     "and each connection is refused to the code that opened it: " + walled.log());
                 // A container may list neither the drive's root nor the folder of user profiles, and every loader asks Java for its jars' real paths.
                 expect(walled.log().lines().anyMatch("real path: worked"::equals), "behind the wall Java still tells a file's real path: " + walled.log());
+                // Nor may it read the drive's root, which Java asks how long a name may be: the game saves its level through such a file.
+                expect(walled.log().lines().anyMatch("temporary file: worked"::equals), "and still makes a temporary file: " + walled.log());
             }
         }
         if (Runtimes.WINDOWS) {

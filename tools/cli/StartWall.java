@@ -53,12 +53,13 @@ final class StartWall {
         return walled;
     }
 
-    static final List<String> PATHS = List.of("tools/nogame/MmtPathPatch.java", "tools/nogame/sun/nio/fs/MmtListed.java");
+    static final List<String> PATHS = List.of("tools/nogame/MmtPathPatch.java", "tools/nogame/sun/nio/fs/MmtListed.java", "tools/nogame/java/io/MmtFileSystem.java");
 
     /**
-     * The options that give one Java its real-path check behind the wall (tools/nogame/sun/nio/fs/MmtListed.java says
-     * why): that Java's own WindowsLinkSupport with one call moved, and the class it is moved to, put into java.base.
-     * Built once per Java and content of the two sources, by that Java's own compiler: the class it changes is its own.
+     * The options that let one Java tell a file's real path and make a temporary file behind the wall, which may read
+     * no folder above its own (MmtListed and MmtFileSystem under tools/nogame say why): that Java's own classes with a
+     * reference moved (MmtPathPatch), and the two classes they are moved to, put into java.base. Built once per Java
+     * and content of the sources, by that Java's own compiler: the classes it changes are its own.
      */
     static List<String> paths(Path harness, Path cache, Path java) throws Exception {
         String release = Files.isRegularFile(java.resolve("release")) ? Files.readString(java.resolve("release")) : java.toString();
@@ -77,11 +78,16 @@ final class StartWall {
                 // Made first: Java 8's compiler does not make the folder it is told to write to.
                 Path tool = Files.createDirectories(work.resolve("tool")), classes = Files.createDirectories(work.resolve("classes"));
                 said(javac.toString(), "-nowarn", "-encoding", "UTF-8", "-d", tool.toString(), harness.resolve(PATHS.get(0)).toString());
-                said(java.resolve("bin/java.exe").toString(), "-cp", tool.toString(), "MmtPathPatch", classes.toString());
-                // Java 8 has no modules: its compiler is told to read the runtime's own classes, hidden ones too.
+                // Java 8 never asks the drive's root how long a name may be, so its file system stays as it is.
+                List<String> patch = new ArrayList<>(List.of(java.resolve("bin/java.exe").toString(), "-cp", tool.toString(), "MmtPathPatch", classes.toString()));
+                if (feature > 8) patch.add("files");
+                said(patch.toArray(String[]::new));
+                // Compiled into java.base, over the classes just written (the file system is no longer final there). Java 8
+                // has no modules: its compiler is told to read the runtime's own classes, hidden ones too.
                 List<String> compile = new ArrayList<>(List.of(javac.toString(), "-nowarn", "-encoding", "UTF-8", "-d", classes.toString()));
-                compile.addAll(feature > 8 ? List.of("--patch-module", "java.base=" + harness.resolve("tools/nogame")) : List.of("-XDignore.symbol.file"));
+                compile.addAll(feature > 8 ? List.of("--patch-module", "java.base=" + classes + ";" + harness.resolve("tools/nogame")) : List.of("-XDignore.symbol.file"));
                 compile.add(harness.resolve(PATHS.get(1)).toString());
+                if (feature > 8) compile.add(harness.resolve(PATHS.get(2)).toString());
                 said(compile.toArray(String[]::new));
                 Path built = work.resolve("mmt-paths.jar");
                 StartCheck.jarOf(classes, built, null);

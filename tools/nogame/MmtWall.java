@@ -26,7 +26,8 @@ import java.util.concurrent.TimeUnit;
  * - on a desktop of its own that is never shown: a window any code makes there is on no screen.
  * The container reads only what it is given: each --read path (a folder and what is in it, or a file) and each
  * --write path. It may list no folder above those (the drive's root and the folder of user profiles are open to no
- * container), which Java's real-path check needs: sun/nio/fs/MmtListed.java beside this file answers for that. Written in Java and run on a signed Java (22 or later, for its calls into Windows) because Smart App
+ * container), which Java's real-path check and its temporary files need: MmtListed and MmtFileSystem under this folder
+ * answer for those. Written in Java and run on a signed Java (22 or later, for its calls into Windows) because Smart App
  * Control blocks a program compiled on the machine it runs on.
  * Usage: MmtWall --name NAME [--read PATH]... [--write PATH]... --command FILE (the command, one argument a line)
  */
