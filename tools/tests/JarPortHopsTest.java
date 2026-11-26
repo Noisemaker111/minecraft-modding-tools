@@ -126,6 +126,21 @@ final class JarPortHopsTest {
         byte[] handed = files.zip(java.util.zip.Deflater.DEFAULT_COMPRESSION);
         JarPortTest.expect(Arrays.equals(zipped, handed), "a port handing each step's files on writes the jar zipping each step's jar does ("
             + zipped.length + " and " + handed.length + " bytes)");
+
+        // A jar the last step never wrote (its worker stopped with no error recorded) is a failure in the report, never a jar that links.
+        Path report = Files.createTempFile("mmt-unwritten", ".json");
+        JarPort.Trunk unwritten = new JarPort.Trunk();
+        Path jar = Path.of("unwritten.jar");
+        unwritten.nested.put(jar, new ArrayList<>());
+        JarPort.write(new JarPort.Target(List.of("1.0", "2.0"), List.of(), report.getParent(), report.toString()), List.of(jar), unwritten, "neoforge", j -> j);
+        String written = Files.readString(report);
+        Files.delete(report);
+        JarPortTest.expect(written.contains("\"linked\":0") && written.contains("the port wrote no jar"), "a jar with no ported output is reported failed: " + written);
+        unwritten.ported.put(jar, "00");
+        JarPort.write(new JarPort.Target(List.of("1.0", "2.0"), List.of(), report.getParent(), report.toString()), List.of(jar), unwritten, "neoforge", j -> j);
+        written = Files.readString(report);
+        Files.delete(report);
+        JarPortTest.expect(written.contains("\"linked\":1"), "the same jar, written, links: " + written);
         JarPortTest.finish("JarPortHopsTest");
     }
 

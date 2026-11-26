@@ -744,7 +744,8 @@ public final class JarPort {
                         } else {
                             state.unpacked.put(jar, out);
                         }
-                    } catch (IOException | RuntimeException | java.security.NoSuchAlgorithmException failed) {
+                    } catch (Exception | Error failed) {
+                        // An error too (a jar too big for the heap): the jar is reported failed, and this worker goes on to the next.
                         state.errors.put(jar, String.valueOf(failed));
                         state.unpacked.remove(jar);
                         state.ported.remove(jar);
@@ -768,6 +769,8 @@ public final class JarPort {
             row.put("mod", jar.getFileName().toString());
             if (state.errors.containsKey(jar)) {
                 row.put("error", state.errors.get(jar));
+            } else if (!state.ported.containsKey(jar)) {
+                row.put("error", "the port wrote no jar");
             } else try {
                 // Every step's results: a reference one step could not link stays as it was, in that step's names, and breaks there.
                 Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), skipped = new TreeSet<>(), refused = new TreeSet<>(), data = new TreeSet<>();
