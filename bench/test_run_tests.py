@@ -42,6 +42,15 @@ check(picked == ["python"], f"docs alone run the python checks only: {picked}")
 picked, _ = run_tests.affected(["tools/agent/Console.java"], names)
 check("console-accessor" in picked and "package" in picked, f"a source a check compiles itself runs that check, and the jar's: {picked}")
 
+for runner in run_tests.RUNNER:
+    picked, suites = run_tests.affected([runner], names)
+    check(picked == names and suites is None, f"a change to how checks are picked or run ({runner}) runs every check: {picked}")
+
+picked, _ = run_tests.affected(["bench/pipez/experiment.json"], names)
+check({"checkout-data", "package"} <= set(picked) and ("launcher" in picked) == ("launcher" in names), f"an experiment's change runs the checks that read the experiments: {picked}")
+picked, _ = run_tests.affected(["coverage/perf-runs.json"], names)
+check("checkout-data" in picked, f"so does a change to the kept runs: {picked}")
+
 # A base the checkout does not have (a shallow clone, a typo) is no list of changes: every check runs.
 check(run_tests.changed_files("0" * 40) is None, "a base that is not here gives no list, so every check runs")
 
@@ -65,6 +74,12 @@ with tempfile.TemporaryDirectory() as folder:
     run_tests.ROOT = repo
     try:
         check(run_tests.changed_files(base) == ["c.md", "tools/B.java"], f"the files changed since the base, committed and new: {run_tests.changed_files(base)}")
+        # A move names both paths: a check that still reads the old one runs, and finds it gone.
+        moved = git("rev-parse", "HEAD")
+        (repo / "bench").mkdir()
+        git("mv", "tools/B.java", "bench/B.java")
+        git("commit", "-qm", "move")
+        check(run_tests.changed_files(moved) == ["bench/B.java", "c.md", "tools/B.java"], f"a moved file is changed at both paths: {run_tests.changed_files(moved)}")
     finally:
         run_tests.ROOT = root
 

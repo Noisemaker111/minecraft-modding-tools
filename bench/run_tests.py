@@ -267,7 +267,20 @@ READS = {
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
                                 + ["tools/tests/AgentWorldOpenTest.java"] + ASM_JARS,
 }
-# Files no packaged jar carries and no jar check reads: the docs, the bench scripts and cloud-run (the python check runs those), CI,
+# Files outside the jar that a check using the jar reads too: the performance experiments (each folder of bench/ holding an
+# experiment*.json, with the gates and worlds it names) and the kept runs.
+def experiment_files():
+    folders = {f.rsplit("/", 1)[0] + "/" for f in git_files() if f.startswith("bench/") and f.count("/") == 2 and f.rsplit("/", 1)[1].startswith("experiment")}
+    return [f for f in git_files() if f.startswith(tuple(folders))]
+
+
+ALSO_READS = {
+    "checkout-data": lambda: experiment_files() + ["coverage/perf-runs.json"],
+    "launcher": experiment_files,
+}
+# What decides which checks run and how: a change to these runs every check.
+RUNNER = ("bench/run_tests.py", "bench/port_tools.py", ".github/workflows/portable.yml")
+# Files no packaged jar carries and no jar check reads but those in ALSO_READS: the docs, the bench scripts and cloud-run (the python check runs those), CI,
 # the desktop app and the generated site.
 NOT_IN_JAR = ("docs/", "bench/", ".github/", ".claude/", "app/", "tools/cloud-run", "coverage/roadmap", "coverage/ledger.json", "coverage/measures.json",
               "coverage/perf-runs.json", "ROADMAP.md")
@@ -283,7 +296,7 @@ def changed_files(base=None):
     base = base or subprocess.run(["git", "merge-base", "HEAD", "origin/main"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     if not base or subprocess.run(["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"], cwd=ROOT, capture_output=True).returncode:
         return None
-    listed = subprocess.run(["git", "diff", "--name-only", base], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    listed = subprocess.run(["git", "diff", "--no-renames", "--name-only", base], cwd=ROOT, capture_output=True, text=True).stdout.split()
     new = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True).stdout.split()
     return sorted(set(listed) | set(new))
 
@@ -294,14 +307,19 @@ def in_jar(path):
 
 def affected(changed, names):
     """The checks of names that changed files can affect, and what self-test runs: None for every suite, else a list."""
+    if set(changed) & set(RUNNER):
+        return list(names), None
     reads = {n: set(r() if callable(r) else r) for n, r in READS.items()}
-    picked = [n for n in names if n == "python" or n in reads and reads[n] & set(changed)]
+    also = {n: set(r()) for n, r in ALSO_READS.items()}
+    picked = [n for n in names if n == "python" or n in reads and reads[n] & set(changed) or n in also and also[n] & set(changed)]
+    if any(CHECKS[n][0] for n in picked) and "package" in names and "package" not in picked:
+        picked.append("package")
     porter = {f for f in port_tools.sources() if f.startswith(port_tools.PORT)} | set(jar_port_tests())
     jar = [f for f in changed if in_jar(f)]
     if any(f not in porter for f in jar):
         return picked + [n for n in names if n not in READS and n not in picked and n != "python"], None
     if jar:
-        return picked + [n for n in ("package", "self-test") if n in names], ["port"]
+        return picked + [n for n in ("package", "self-test") if n in names and n not in picked], ["port"]
     return picked, None
 
 
