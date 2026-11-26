@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import subprocess
-import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -305,11 +304,9 @@ def game_says(loader, frm, to, report):
     if settings.VERIFY or not set(asked) <= set(said["answered"]):
         out = report.with_name("game.json")
         log = report.with_name("game-classes.log")
-        subprocess.run([java(), f"-Xmx{settings.HEAP}g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
-                        "--report", str(report), "--out", str(out), "--loader", loader], check=True, stdout=subprocess.DEVNULL)
-        own = Path(classes.split(os.pathsep)[0]).resolve()
-        names = sorted({m.group(1) for m in map(LOADED.search, log.read_text(encoding="utf-8", errors="replace").splitlines())
-                        if m and Path(urllib.parse.unquote(m.group(2))).resolve() == own})
+        exposure([java(), f"-Xmx{settings.HEAP}g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
+                  "--report", str(report), "--out", str(out), "--loader", loader])
+        names = own_classes(log, classes)
         fresh = json.loads(out.read_text(encoding="utf-8"))
         target = folder / (classes_key(classes, names) + ".json")
         if target != known:
@@ -324,6 +321,22 @@ def game_says(loader, frm, to, report):
             part.write_text(text, encoding="utf-8")
             os.replace(part, path)  # a later answer only adds rows; each row is the same in every run with this key
     return {m: said["said"][m] for m in asked if m in said["said"]}
+
+
+def exposure(command):
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+
+
+def own_classes(log, classes):
+    """The porter's classes a JVM's class+load log says it loaded. The log names a folder as a file URL (file:/C:/... on
+    Windows), so it is read back as one. Finding none would keep Exposure's answers under no code at all, to outlive
+    every edit to it, so it stops the run."""
+    own = Path(classes.split(os.pathsep)[0]).resolve()
+    names = sorted({m.group(1) for m in map(LOADED.search, log.read_text(encoding="utf-8", errors="replace").splitlines())
+                    if m and Path(urllib.request.url2pathname(m.group(2))).resolve() == own})
+    if not names:
+        raise SystemExit(f"{log} names none of the classes in {own}: what Exposure said could not be kept under the code that said it")
+    return names
 
 
 WHERE = re.compile(r" \(in [^)]*\)$")
