@@ -116,11 +116,15 @@ final class JarPortHopsTest {
         byte[] zipped = shipped;
         JarEntries.Unpacked files = null;
         for (int i = 0; i + 1 < stops.size(); i++) {
+            // As JarPort's steps run: every step but the last is between, its jar read by the next step only.
+            boolean between = i + 2 < stops.size();
             JarPort hop = new JarPort(snaps.get(stops.get(i)), snaps.get(stops.get(i + 1)), map);
             hop.fixes(book);
+            hop.between = between;
             zipped = hop.port(zipped, "mod.jar", new ArrayList<>());
             JarPort handing = new JarPort(snaps.get(stops.get(i)), snaps.get(stops.get(i + 1)), map);
             handing.fixes(book);
+            handing.between = between;
             files = handing.step(i == 0 ? handing.read(shipped, "mod.jar") : handing.read(files, "mod.jar"), "mod.jar", new ArrayList<>());
         }
         byte[] handed = files.zip(java.util.zip.Deflater.DEFAULT_COMPRESSION);
