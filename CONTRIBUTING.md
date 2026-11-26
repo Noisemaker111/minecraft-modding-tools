@@ -125,8 +125,9 @@ only helps the mod it was made on is a partial result: say so, and say what woul
   "update" section each day is a log nobody can steer by. Its **Carries over** line says what the next mod gets for
   free from your work.
 - Prove it the way a user would see it, at the smallest real scope. `AGENTS.md` has the commands. A port is proven by
-  the PR's Port check on GitHub's runners, which ports only what the change can move against main's table and starts
-  the mods it frees in a real server and client, never by starting Minecraft on the maintainer's PC, which many agents
+  the PR's Port check on GitHub's runners, which ports only what the change can move, with the PR and with its base,
+  and fails when a mod that linked stops; it starts no game and no PR waits on one (starting freed mods held pull
+  requests for 26 minutes and more a push), and Minecraft is never started on the maintainer's PC, which many agents
   share; locally you edit, compile and run the offline checks, and `exposure.py jars` compares with main's row. A change that can't be run in the
   game says so plainly instead of claiming it works.
 - Keep tests few and meaningful: each proves something users depend on and fails on a wrong answer.
