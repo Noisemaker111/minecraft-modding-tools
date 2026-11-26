@@ -346,7 +346,7 @@ final class Overrides {
             Map<String, Integer> dropped = new HashMap<>();
             Map<String, List<String>> by = new HashMap<>(); // dropped method -> the subclasses that dropped it
             int had = 0;
-            for (GameDiff.Cls sub : port.links.declaring(port.b, n.name + n.desc)) {
+            for (GameDiff.Cls sub : port.links.declaring(port.b, n.name + n.desc, k)) {
                 GameDiff.Meth own = sub.methods.get(n.name + n.desc);
                 GameDiff.Cls old = port.a.classes.get(port.inverse.getOrDefault(sub.name, sub.name));
                 if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || sub.name.equals(k) || old == null || !Linking.subtype(port.b, sub.name, k)

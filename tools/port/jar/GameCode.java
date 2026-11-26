@@ -45,16 +45,12 @@ final class GameCode {
     static final Map<String, Object[]> READ = new java.util.concurrent.ConcurrentHashMap<>();
 
     static Object[] read(String version) throws Exception {
-        String json = GameDiff.versionJson(version);
-        Path jar = GameDiff.verified(GameDiff.download(json, "client"), "client-" + version + ".jar");
-        String[] mappings = GameDiff.download(json, "client_mappings");
-        VersionMap.Proguard pg = mappings == null ? null
-            : VersionMap.Proguard.parse(Files.readString(GameDiff.verified(mappings, "client-" + version + ".txt"), StandardCharsets.UTF_8));
+        GameDiff.Client client = GameDiff.client(version);
         Map<String, byte[]> all = new HashMap<>();
-        for (byte[] c : GameDiff.classes(jar, null)) {
+        for (byte[] c : client.classes()) {
             all.put(new ClassReader(c).getClassName(), c);
         }
-        return new Object[] { all, pg };
+        return new Object[] { all, client.names() };
     }
 
     /** A box's primitive and the call that unboxes it. */
@@ -166,6 +162,21 @@ final class GameCode {
     GameDiff.RawCls raw(String jarName) {
         return parsed.computeIfAbsent(jarName, n -> Optional.ofNullable(bytes.apply(n)).map(GameDiff::parse)).orElse(null);
     }
+
+    /**
+     * A class's declarations (its supertypes and what it declares), read without its code unless raw read it already:
+     * finding where a member is declared asks them of every class the game's code names, and reading each one's code for
+     * it was a fifth of a small mod's port.
+     */
+    GameDiff.RawCls declared(String jarName) {
+        Optional<GameDiff.RawCls> whole = parsed.get(jarName);
+        if (whole != null) {
+            return whole.orElse(null);
+        }
+        return declared.computeIfAbsent(jarName, n -> Optional.ofNullable(bytes.apply(n)).map(b -> GameDiff.parse(b, false))).orElse(null);
+    }
+
+    final Map<String, Optional<GameDiff.RawCls>> declared = new HashMap<>();
 
     /**
      * Every method of a class (Mojang names), synthetic ones too (a lambda's lambda$name$N), as name+desc -> its code as
@@ -559,7 +570,7 @@ final class GameCode {
         Set<String> seen = new HashSet<>();
         while (!queue.isEmpty()) {
             String c = queue.poll();
-            GameDiff.RawCls rc = seen.add(c) ? raw(c) : null;
+            GameDiff.RawCls rc = seen.add(c) ? declared(c) : null;
             if (rc == null) {
                 continue;
             }
@@ -677,48 +688,7 @@ final class GameCode {
         if (all == null) {
             return null;
         }
-        if (callers == null) {
-            synchronized (CALLERS) {
-                callers = CALLERS.get(all);
-            }
-        }
-        if (callers == null) {
-            Map<String, Set<String>> index = new HashMap<>();
-            for (var e : all.entrySet()) {
-                String jarOwner = e.getKey();
-                String self = names.cls(jarOwner);
-                new ClassReader(e.getValue()).accept(new ClassVisitor(Opcodes.ASM9) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
-                        String me = self + "." + names.method(jarOwner, n, d) + names.desc(d);
-                        return new MethodVisitor(Opcodes.ASM9) {
-                            void add(String o, String mn, String md) {
-                                String callee = names.cls(declarer(o, mn, md, false)) + "." + names.method(declarer(o, mn, md, false), mn, md) + names.desc(md);
-                                index.computeIfAbsent(callee, k -> new HashSet<>()).add(me);
-                            }
-
-                            @Override
-                            public void visitMethodInsn(int op, String o, String mn, String md, boolean itf) {
-                                add(o, mn, md);
-                            }
-
-                            @Override
-                            public void visitInvokeDynamicInsn(String n2, String d2, Handle bsm, Object... args) {
-                                for (Object arg : args) {
-                                    if (arg instanceof Handle h) {
-                                        add(h.getOwner(), h.getName(), h.getDesc());
-                                    }
-                                }
-                            }
-                        };
-                    }
-                }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-            }
-            callers = index;
-            synchronized (CALLERS) {
-                CALLERS.put(all, index);
-            }
-        }
+        whole();
         return callers.getOrDefault(owner + "." + name + desc, Set.of());
     }
 
@@ -738,46 +708,83 @@ final class GameCode {
         if (all == null) {
             return null;
         }
-        if (made == null) {
-            synchronized (MADE) {
-                made = MADE.get(all);
-            }
-        }
-        if (made == null) {
-            Map<String, List<Made>> index = new HashMap<>();
-            for (var e : all.entrySet()) {
-                String jarOwner = e.getKey();
-                new ClassReader(e.getValue()).accept(new ClassVisitor(Opcodes.ASM9) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
-                        String in = names.cls(jarOwner) + "." + names.method(jarOwner, n, d) + names.desc(d);
-                        return new MethodVisitor(Opcodes.ASM9) {
-                            @Override
-                            public void visitInvokeDynamicInsn(String sam, String d2, Handle bsm, Object... args) {
-                                if (!bsm.getOwner().equals("java/lang/invoke/LambdaMetafactory") || args.length < 2
-                                    || !(args[0] instanceof Type erased) || !(args[1] instanceof Handle h)) {
-                                    return;
-                                }
-                                String iface = Type.getReturnType(d2).getInternalName();
-                                String key = names.cls(iface) + "." + names.method(declarer(iface, sam, erased.getDescriptor(), false), sam, erased.getDescriptor())
-                                    + names.desc(erased.getDescriptor());
-                                String o = declarer(h.getOwner(), h.getName(), h.getDesc(), false);
-                                index.computeIfAbsent(key, k -> new ArrayList<>()).add(new Made(names.cls(o), names.method(o, h.getName(), h.getDesc()),
-                                    names.desc(h.getDesc()), h.getTag(), Type.getArgumentTypes(d2).length, in));
-                            }
-                        };
-                    }
-                }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-            }
-            made = index;
-            synchronized (MADE) {
-                MADE.put(all, index);
-            }
-        }
+        whole();
         return made.getOrDefault(owner + "." + name + desc, List.of());
     }
 
     static final Map<Map<String, byte[]>, Map<String, List<Made>>> MADE = new IdentityHashMap<>();
+
+    /**
+     * Reads the whole release's code once for both of what is asked of all of it, the callers of each method and what
+     * makes each lambda: a port that follows a value through the game asks both, and each read every class for itself.
+     */
+    void whole() {
+        if (callers == null || made == null) {
+            synchronized (CALLERS) {
+                callers = CALLERS.get(all);
+            }
+            synchronized (MADE) {
+                made = MADE.get(all);
+            }
+        }
+        if (callers != null && made != null) {
+            return;
+        }
+        Map<String, Set<String>> calling = new HashMap<>();
+        Map<String, List<Made>> making = new HashMap<>();
+        Map<String, String> called = new HashMap<>(); // a call as written -> the method it calls: the game writes each many times
+        for (var e : all.entrySet()) {
+            String jarOwner = e.getKey();
+            String self = names.cls(jarOwner);
+            new ClassReader(e.getValue()).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String n, String d, String signature, String[] exceptions) {
+                    String me = self + "." + names.method(jarOwner, n, d) + names.desc(d);
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        void add(String o, String mn, String md) {
+                            String callee = called.computeIfAbsent(o + "." + mn + md, k -> {
+                                String declares = declarer(o, mn, md, false);
+                                return names.cls(declares) + "." + names.method(declares, mn, md) + names.desc(md);
+                            });
+                            calling.computeIfAbsent(callee, k -> new HashSet<>()).add(me);
+                        }
+
+                        @Override
+                        public void visitMethodInsn(int op, String o, String mn, String md, boolean itf) {
+                            add(o, mn, md);
+                        }
+
+                        @Override
+                        public void visitInvokeDynamicInsn(String sam, String d2, Handle bsm, Object... args) {
+                            for (Object arg : args) {
+                                if (arg instanceof Handle h) {
+                                    add(h.getOwner(), h.getName(), h.getDesc());
+                                }
+                            }
+                            if (!bsm.getOwner().equals("java/lang/invoke/LambdaMetafactory") || args.length < 2
+                                || !(args[0] instanceof Type erased) || !(args[1] instanceof Handle h)) {
+                                return;
+                            }
+                            String iface = Type.getReturnType(d2).getInternalName();
+                            String key = names.cls(iface) + "." + names.method(declarer(iface, sam, erased.getDescriptor(), false), sam, erased.getDescriptor())
+                                + names.desc(erased.getDescriptor());
+                            String o = declarer(h.getOwner(), h.getName(), h.getDesc(), false);
+                            making.computeIfAbsent(key, k -> new ArrayList<>()).add(new Made(names.cls(o), names.method(o, h.getName(), h.getDesc()),
+                                names.desc(h.getDesc()), h.getTag(), Type.getArgumentTypes(d2).length, me));
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        }
+        callers = calling;
+        made = making;
+        synchronized (CALLERS) {
+            CALLERS.put(all, calling);
+        }
+        synchronized (MADE) {
+            MADE.put(all, making);
+        }
+    }
 
     /**
      * What a game method's new code has where its old code had an injection point. game says what the game did:

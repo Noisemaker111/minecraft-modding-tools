@@ -27,15 +27,15 @@ final class PortVerifier {
      * and a stand-in is written for the class (1.20's GuiGraphics on 1.19.4, which the route moves to the PoseStack it
      * holds): the stand-in is the class for that mod, kept only when the port then leaves fewer references unlinked.
      */
-    byte[] fitting(byte[] jar, String name, List<Map<String, Object>> results) throws IOException {
+    JarEntries.Unpacked fitting(JarEntries.Unpacked jar, String name, List<Map<String, Object>> results) throws IOException {
         Set<String> dropped = new TreeSet<>(), answered = new TreeSet<>(), tried = new TreeSet<>();
-        byte[] kept = null;
+        JarEntries.Unpacked kept = null;
         List<Map<String, Object>> keptResults = null;
         Set<String> keptDropped = null, keptAnswered = null;
         for (int round = 0; ; round++) {
             int before = results.size();
             unfit.clear();
-            byte[] out = without(dropped, () -> port.port(jar, name, results, null));
+            JarEntries.Unpacked out = without(dropped, () -> port.port(jar, name, results, null));
             List<Map<String, Object>> made = new ArrayList<>(results.subList(before, results.size()));
             if (kept != null && unlinked(made) >= unlinked(keptResults)) {
                 // The stand-in answered no more than the route did: the port with the route stands.
@@ -110,11 +110,11 @@ final class PortVerifier {
     }
 
     interface Porting {
-        byte[] run() throws IOException;
+        JarEntries.Unpacked run() throws IOException;
     }
 
     /** Runs a port with the routes of the removed classes dropped left out (a stand-in for one standing in instead). */
-    byte[] without(Set<String> dropped, Porting body) throws IOException {
+    JarEntries.Unpacked without(Set<String> dropped, Porting body) throws IOException {
         if (dropped.isEmpty()) {
             return body.run();
         }
