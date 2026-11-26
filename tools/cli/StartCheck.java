@@ -204,10 +204,10 @@ final class StartCheck {
             return false;
         };
         Launch last = rounds(owner, pack, side, first, install, (instance, asked) -> serverCommand(owner, context, pack, install, agent, instance, asked), holding, unnamed);
-        boolean reached = last != null && last.stop() != null && reached(side, last.stop());
+        boolean reached = started(owner, side, last);
         if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
         boolean data = reached && DATA_READ.matcher(last.log()).find();
-        side.checks.put("dependencies", dependencies(last));
+        side.checks.put("dependencies", dependencies(owner, last));
         side.checks.put("mixins", mixins(last));
         side.checks.put("start code", reached ? "the game's Bootstrap and the mods' own start code ran, as the dedicated server's main runs them"
             : "not checked: no run reached the game's server thread");
@@ -226,8 +226,10 @@ final class StartCheck {
         for (PackCheck.Mod mod : mods) present.add(mod.file());
         Map<String, Object> stop = run.stop();
         Map<String, String> refused = refusedByMixin(owner, run, present);
+        boolean reached = stop != null && reached(side, stop);
         side.runs.add(Json.map("round", round, "jars", mods.size(), "seconds", run.seconds(), "log", run.logFile().toString(),
             "ended", stop == null ? "by itself" : stop.get("reason"), "at", stop == null ? null : stop.get("seconds"), "failed", new ArrayList<>(refused.keySet())));
+        if (reached && refusedInLog(owner, run)) Json.object(side.runs.get(side.runs.size() - 1)).put("loaderRefused", true);
         side.byMixin.addAll(refused.keySet());
         if (!refused.isEmpty()) return refused;
         if (run.timedOut()) {
@@ -235,8 +237,8 @@ final class StartCheck {
             side.tool = true;
             return null;
         }
-        if (stop != null && reached(side, stop)) return null;
-        if (stop != null) {
+        if (started(owner, side, run)) return null;
+        if (stop != null && !reached) {
             side.undecided = "the check ended early (" + stop.get("reason") + ") and named none of the jars; its log: " + run.logFile();
             side.tool = true;
             return null;
@@ -327,7 +329,7 @@ final class StartCheck {
      * bystander of a failure another jar caused, and it passes. Returns the last start that reached the end (else last).
      */
     static Launch again(PackCheck owner, PackCheck.Pack pack, Side side, Path first, Path install, Starter starter, Holding holding, Launch last) throws Exception {
-        if (last == null || last.stop() == null || !reached(side, last.stop())) return last;
+        if (!started(owner, side, last)) return last;
         int run = 0;
         for (String jar : new ArrayList<>(side.unsure)) {
             String why = side.failed.remove(jar);
@@ -339,7 +341,7 @@ final class StartCheck {
             tidy(instance);
             Set<String> present = new LinkedHashSet<>();
             for (PackCheck.Mod mod : mods) present.add(mod.file());
-            boolean starts = launch.stop() != null && reached(side, launch.stop()) && refusedByMixin(owner, launch, present).isEmpty();
+            boolean starts = started(owner, side, launch) && refusedByMixin(owner, launch, present).isEmpty();
             side.runs.add(Json.map("again", jar, "jars", mods.size(), "seconds", launch.seconds(), "log", launch.logFile().toString(),
                 "ended", launch.stop() == null ? "by itself" : launch.stop().get("reason"), "starts", starts));
             if (starts) last = launch;
@@ -352,6 +354,21 @@ final class StartCheck {
     static boolean reached(Side side, Map<String, Object> stop) {
         String reason = String.valueOf(stop.get("reason"));
         return side.name.equals("server") ? reason.equals(SERVER_STOP) : reason.equals(CLIENT_STOP) || reason.equals("the game loaded its window library");
+    }
+
+    /**
+     * Whether the loader's resolver refused jars of a run in its log (pack-loaders.json, refusedInLog). NeoForge's client
+     * logs what its resolver refuses and goes on to its window, where it shows that on an error screen and loads no mod:
+     * a run that got to the window with such a line is a failed start.
+     */
+    static boolean refusedInLog(PackCheck owner, Launch run) {
+        List<Object> said = Json.array(((PackLoaders.Style) owner.loader).spec.getOrDefault("refusedInLog", List.of()));
+        return said.stream().anyMatch(sentence -> run.log().contains(String.valueOf(sentence)));
+    }
+
+    /** Whether a run started: it ended where its side's check ends, and the loader's resolver refused none of its jars on the way. */
+    static boolean started(PackCheck owner, Side side, Launch run) {
+        return run != null && run.stop() != null && reached(side, run.stop()) && !refusedInLog(owner, run);
     }
 
     static final Pattern CONFIG_NAMED = Pattern.compile("([\\w.\\-]+\\.json)");
@@ -389,8 +406,8 @@ final class StartCheck {
     }
 
     /** The loader has resolved the jars once Mixin reads its configs (the agent's first event): it starts nothing it refuses. */
-    static String dependencies(Launch last) {
-        boolean resolved = last != null && !last.events().isEmpty();
+    static String dependencies(PackCheck owner, Launch last) {
+        boolean resolved = last != null && !last.events().isEmpty() && !refusedInLog(owner, last);
         return resolved ? "the loader's own resolver accepted the jars of the last run: their dependencies, game version and Java"
             : "not checked: no run got past the loader";
     }
@@ -426,9 +443,9 @@ final class StartCheck {
         for (PackCheck.Mod mod : pack.mods()) if ("server".equals(mod.side())) side.leftOut.put(mod.file(), "server-only (" + mod.source() + ")");
         Holding holding = () -> pack.mods().stream().filter(m -> !"server".equals(m.side()) && !side.failed.containsKey(m.file())).toList();
         Launch last = rounds(owner, pack, side, first, install, (instance, asked) -> clientCommand(owner, context, pack, install, agent, instance, asked), holding, (run, mods) -> false);
-        boolean reached = last != null && last.stop() != null && reached(side, last.stop());
+        boolean reached = started(owner, side, last);
         if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
-        side.checks.put("dependencies", dependencies(last));
+        side.checks.put("dependencies", dependencies(owner, last));
         side.checks.put("mixins", mixins(last));
         boolean window = reached && String.valueOf(last.stop().get("reason")).equals(CLIENT_STOP);
         side.checks.put("start code", !reached ? "not checked: no run reached the point where the game asks for its window"

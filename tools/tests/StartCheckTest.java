@@ -279,5 +279,46 @@ public final class StartCheckTest {
             named = PackChecks.suspects(unbuilt, List.of(), scan, PackLoaders.find(harness, "neoforge")).stream().map(s -> Json.text(s, "jar", "")).toList();
             expect(named.equals(List.of("broken.jar")), "a jar whose mod class the loader did not find is named by its file: " + named);
         }
+        // NeoForge names a data pack by its mod id, whichever way the jar's metadata writes that id down.
+        String inline = "license = 'x'\nauthors = ['a, b', 'c']\nmods = [\n\t{ modId = 'wrapped_pack', version = '1-v4', displayName = 'Wrapped, a [pack]' }, # one\n]\nmixins = [{ config = 'wrapped.mixins.json' }]\n";
+        String block = "license = 'x'\n[[mods]]\nmodId = 'wrapped_pack'\nversion = '1-v4'\n[[mixins]]\nconfig = 'wrapped.mixins.json'\n";
+        for (String metadata : List.of(inline, block)) {
+            PackMods.Scan wrapped = new PackMods.Scan();
+            PackMods.toml(metadata, "wrapped.jar", false, "neoforge.mods.toml", "1", wrapped);
+            String refusedData = "[main/ERROR] [minecraft/RegistryDataLoader]: Registry loading errors:\n"
+                + "java.lang.IllegalStateException: Failed to parse wrapped:enchantment/a.json from pack mod/wrapped_pack";
+            named = PackChecks.suspects(refusedData, List.of(), wrapped, PackLoaders.find(harness, "neoforge")).stream().map(s -> Json.text(s, "jar", "")).toList();
+            expect(named.equals(List.of("wrapped.jar")), "a data pack NeoForge refuses names its jar, its metadata written " + (metadata == inline ? "as one array" : "in blocks") + ": " + named);
+            expect("1-v4".equals(wrapped.providers.get("wrapped_pack").get(0).version()), "its version is read too: " + wrapped.providers);
+            expect("wrapped.jar".equals(wrapped.mixins.get("wrapped.mixins.json")), "and its mixin config: " + wrapped.mixins);
+        }
+        // NeoForge's client logs what its resolver refuses and still goes on to its window: that run did not start.
+        String sorted = "[main/ERROR] [loading.ModSorter/LOADING]: Missing or unsupported mandatory dependencies:\n"
+            + "\tMod ID: 'lib', Requested by: 'needy', Expected range: '[1.7.7,)', Actual version: '[MISSING]'\n"
+            + "[main/ERROR] [loading.ModSorter/LOADING]: Incompatibilities between mods:\n"
+            + "\tMod 'picky' is incompatible with 'other', versions: '[0,)'; Version found: '1.0.10'\n";
+        PackMods.Scan three = new PackMods.Scan();
+        for (String id : List.of("needy", "picky", "other")) three.providers.computeIfAbsent(id, k -> new ArrayList<>()).add(new PackMods.Provider(id + ".jar", "1.0", false, "neoforge.mods.toml"));
+        named = PackChecks.suspects(sorted, List.of(), three, PackLoaders.find(harness, "neoforge")).stream().map(s -> Json.text(s, "jar", "")).toList();
+        expect(named.equals(List.of("needy.jar", "picky.jar")), "the mod that asks for a missing one and the mod that refuses another are named, the refused one is not: " + named);
+        List<Map<String, Object>> atWindow = List.of(Json.map("event", "stop", "reason", StartCheck.CLIENT_STOP, "seconds", 1.0));
+        StartCheck.Side clientSide = new StartCheck.Side("client");
+        owner.loader = PackLoaders.find(harness, "neoforge");
+        StartCheck.Launch refusedRun = new StartCheck.Launch("[main/INFO]: loading\n" + sorted, atWindow, Path.of("run.log"), 1.0, 0, false);
+        expect(!StartCheck.started(owner, clientSide, refusedRun), "a client that got to its window after its loader refused jars did not start");
+        expect(StartCheck.dependencies(owner, refusedRun).startsWith("not checked"), "and its dependencies are not reported as accepted: " + StartCheck.dependencies(owner, refusedRun));
+        for (String half : sorted.split("(?m)^(?=\\[main/ERROR)")) {
+            StartCheck.Launch halfRun = new StartCheck.Launch(half, atWindow, Path.of("run.log"), 1.0, 0, false);
+            expect(!StartCheck.started(owner, clientSide, halfRun), "either of the resolver's two complaints is a refusal: " + half.lines().findFirst().orElse(""));
+        }
+        StartCheck.Launch cleanRun = new StartCheck.Launch("[main/INFO]: loading\n", atWindow, Path.of("run.log"), 1.0, 0, false);
+        expect(StartCheck.started(owner, clientSide, cleanRun), "a client that got to its window with nothing refused started");
+        expect(!StartCheck.started(owner, clientSide, new StartCheck.Launch("[main/INFO]: loading\n", List.of(), Path.of("run.log"), 1.0, 0, false)), "a run that never got to the window did not start");
+        owner.loader = null;
+
+        String unended = "mods = [\n\t{ modId = 'open'\n";
+        expect(PackMods.blocks(unended).equals(unended), "an array that never ends is left as it was written");
+        String plain = "authors = ['a', 'b']\n[[mods]]\nmodId = 'plain'\nlist = [ { inner = 1 } ]\n";
+        expect(PackMods.blocks(plain).equals(plain), "an array inside a block is not moved out of it");
     }
 }
