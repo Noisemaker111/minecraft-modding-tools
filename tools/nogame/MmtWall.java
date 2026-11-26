@@ -82,6 +82,28 @@ public final class MmtWall {
         StringBuilder commandLine = new StringBuilder();
         for (String argument : Files.readAllLines(commandFile, StandardCharsets.UTF_8)) commandLine.append(commandLine.isEmpty() ? "" : " ").append(quoted(argument));
 
+        // One launcher at a time from here to the made process: two that set a command up in one container at the same
+        // instant, with none running in it yet, are both refused by Windows ("file not found"; 4 of 30 pairs, measured).
+        // A launcher that dies holding its turn hands it on.
+        MemorySegment turn = (MemorySegment) windows("kernel32", "CreateMutexW", POINTER, POINTER, INT, POINTER).invoke(MemorySegment.NULL, 0, wide("Local\\mmt-wall-" + name));
+        must(turn.address() != 0, "no turn to start the command in");
+        int taken = (int) windows("kernel32", "WaitForSingleObject", INT, POINTER, INT).invoke(turn, -1);
+        // 0: its turn. 0x80: its turn, left by a launcher that died.
+        must(taken == 0 || taken == 0x80, "no turn to start the command in");
+        MemorySegment handle;
+        try {
+            handle = started(name, read, write, commandLine.toString());
+        } finally {
+            int released = (int) windows("kernel32", "ReleaseMutex", INT, POINTER).invoke(turn);
+        }
+        int waited = (int) windows("kernel32", "WaitForSingleObject", INT, POINTER, INT).invoke(handle, -1);
+        MemorySegment code = ARENA.allocate(INT);
+        must(waited == 0 && (int) windows("kernel32", "GetExitCodeProcess", INT, POINTER, POINTER).invoke(handle, code) != 0, "the start's end could not be read");
+        return code.get(INT, 0);
+    }
+
+    /** The command, started in the container and tied to this launcher: its process. */
+    static MemorySegment started(String name, List<Path> read, List<Path> write, String commandLine) throws Throwable {
         MemorySegment sidAt = ARENA.allocate(POINTER);
         int made = (int) windows("userenv", "CreateAppContainerProfile", INT, POINTER, POINTER, POINTER, POINTER, INT, POINTER)
             .invoke(wide(name), wide(name), wide("mmt start-check: a mod start that can reach no network"), MemorySegment.NULL, 0, sidAt);
@@ -146,17 +168,14 @@ public final class MmtWall {
         MethodHandle create = LINKER.downcallHandle(SymbolLookup.libraryLookup("kernel32", ARENA).find("CreateProcessW").orElseThrow(),
             FunctionDescriptor.of(INT, POINTER, POINTER, POINTER, POINTER, INT, INT, POINTER, POINTER, POINTER, POINTER), Linker.Option.captureCallState("GetLastError"));
         MemorySegment state = ARENA.allocate(Linker.Option.captureStateLayout());
-        int started = (int) create.invoke(state, MemorySegment.NULL, wide(commandLine.toString()), MemorySegment.NULL, MemorySegment.NULL, 1, flags, MemorySegment.NULL, MemorySegment.NULL, startup, process);
+        int started = (int) create.invoke(state, MemorySegment.NULL, wide(commandLine), MemorySegment.NULL, MemorySegment.NULL, 1, flags, MemorySegment.NULL, MemorySegment.NULL, startup, process);
         int error = (int) Linker.Option.captureStateLayout().varHandle(java.lang.foreign.MemoryLayout.PathElement.groupElement("GetLastError")).get(state, 0L);
         must(started != 0, "Windows did not start the command in its container (error " + error + "): " + commandLine);
         MemorySegment handle = process.get(POINTER, 0);
         must((int) windows("kernel32", "AssignProcessToJobObject", INT, POINTER, POINTER).invoke(job, handle) != 0, "the start could not be tied to this launcher");
         int resumed = (int) windows("kernel32", "ResumeThread", INT, POINTER).invoke(process.get(POINTER, 8));
         must(resumed != -1, "the start could not be let run");
-        int waited = (int) windows("kernel32", "WaitForSingleObject", INT, POINTER, INT).invoke(handle, -1);
-        MemorySegment code = ARENA.allocate(INT);
-        must(waited == 0 && (int) windows("kernel32", "GetExitCodeProcess", INT, POINTER, POINTER).invoke(handle, code) != 0, "the start's end could not be read");
-        return code.get(INT, 0);
+        return handle;
     }
 
     /** One argument as Windows' own command-line rules read it back unchanged. */

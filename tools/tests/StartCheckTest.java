@@ -657,6 +657,27 @@ public final class StartCheckTest {
                 expect(walled.log().lines().anyMatch("temporary file: worked"::equals), "and still makes a temporary file: " + walled.log());
             }
         }
+        // The two sides of a check start at the same instant. Windows refused both of two commands set up in one
+        // container at once with none running in it yet (4 of 30 pairs, measured), so the launchers take turns.
+        String runtime = Path.of(System.getProperty("java.home"), "bin", Runtimes.WINDOWS ? "java.exe" : "java").toString();
+        PackCheck.Pack empty = new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), List.of(scratch), scratch, false, "x");
+        for (int pair = 1; pair <= 16; pair++) {
+            java.util.concurrent.CyclicBarrier together = new java.util.concurrent.CyclicBarrier(2);
+            List<java.util.concurrent.Future<StartCheck.Launch>> sides = new ArrayList<>();
+            java.util.concurrent.ExecutorService beside = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                for (String side : List.of("server", "client")) {
+                    Path instance = StartCheck.instance(owner, empty, List.of(), "pair-" + pair + "-" + side, side, null, null);
+                    sides.add(beside.submit(() -> {
+                        together.await();
+                        return StartCheck.launch(owner, List.of(runtime, "-version"), instance, "pair-" + side);
+                    }));
+                }
+                for (var side : sides) expect(side.get().log().contains("version"), "two starts made at the same instant both run (pair " + pair + "): " + side.get().log());
+            } finally {
+                beside.shutdownNow();
+            }
+        }
         if (Runtimes.WINDOWS) {
             // A window any code makes behind the wall is on the wall's own desktop, which no screen shows.
             Path instance = StartCheck.instance(owner, new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), List.of(scratch), scratch, false, "x"), List.of(), "window-1", "client", null, null);
