@@ -262,7 +262,7 @@ final class StartCheck {
             }
         }
         if (!blamed.isEmpty()) return blamed;
-        side.undecided = "the start failed and named none of the jars: " + failure;
+        side.undecided = "the start failed and named none of the jars: " + (failure == null ? "the loader's resolver refused jars; its log: " + run.logFile() : failure);
         return null;
     }
 
