@@ -26,6 +26,8 @@ final class PackMods {
         /** Mod id to the jars that provide it (bundled copies included). */
         final Map<String, List<Provider>> providers = new TreeMap<>();
         final List<Dependency> dependencies = new ArrayList<>();
+        /** What a mod requires on the client only (a mods.toml dependency with side CLIENT): no server asks for it. */
+        final List<Dependency> clientDependencies = new ArrayList<>();
         /** Jar to the metadata files of other loaders it carries, when it has none of the pack's loader. */
         final Map<String, List<String>> foreign = new TreeMap<>();
         /** Jars with no loader metadata at all. */
@@ -206,18 +208,71 @@ final class PackMods {
             name.startsWith("META-INF/services/net.neoforged");
     }
 
+    static final Pattern INLINE_TABLES = Pattern.compile("(?m)^[ \\t]*([\\w.\\-]+)[ \\t]*=[ \\t]*(?=\\[\\s*\\{)");
+    static final Pattern HEADER = Pattern.compile("(?m)^[ \\t]*\\[");
+
+    /**
+     * The text with each top-level array of inline tables (`mods = [ { modId = 'a', version = '1' } ]`, which is how
+     * Modrinth writes the metadata of a data pack it wraps as a mod) written as the [[mods]] blocks the line reader
+     * knows. The blocks go at the end, where no later key joins them. An array it cannot read to its end is left as it is.
+     */
+    static String blocks(String text) {
+        Matcher header = HEADER.matcher(text);
+        int top = header.find() ? header.start() : text.length();
+        StringBuilder kept = new StringBuilder(), blocks = new StringBuilder();
+        Matcher array = INLINE_TABLES.matcher(text);
+        int from = 0;
+        while (array.find(from) && array.start() < top) {
+            StringBuilder written = new StringBuilder();
+            int end = tables(text, array.end(), array.group(1), written);
+            if (end < 0) break;
+            blocks.append(written);
+            kept.append(text, from, array.start());
+            from = end;
+        }
+        return blocks.isEmpty() ? text : kept.append(text.substring(from)).append('\n').append(blocks).toString();
+    }
+
+    /** Writes the inline tables of the array that opens at open as [[name]] blocks, a key a line. Returns the index after the array's end, -1 when it has none. */
+    static int tables(String text, int open, String name, StringBuilder blocks) {
+        int depth = 0, item = -1;
+        for (int i = open + 1; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '"' || c == '\'') {
+                // A quoted value: its commas and brackets are text. Only a double-quoted one has escapes.
+                for (i++; i < text.length() && text.charAt(i) != c; i++) if (c == '"' && text.charAt(i) == '\\') i++;
+                continue;
+            }
+            if (c == '#' && depth == 0) {
+                i = text.indexOf('\n', i) < 0 ? text.length() : text.indexOf('\n', i);
+                continue;
+            }
+            boolean ends = depth == 1 && (c == ',' || c == '}');
+            if (c == '{' && depth == 0) {
+                blocks.append("[[").append(name).append("]]\n");
+                item = i + 1;
+            }
+            if (ends && !text.substring(item, i).isBlank()) blocks.append(text.substring(item, i).strip()).append('\n');
+            if (ends) item = i + 1;
+            if (c == ']' && depth == 0) return i + 1;
+            if (c == '{' || c == '[') depth++;
+            if (c == '}' || c == ']') depth--;
+        }
+        return -1;
+    }
+
     /** mods.toml and neoforge.mods.toml, line by line: [[mods]], [[dependencies.X]] and [[mixins]]. */
     static void toml(String text, String owner, boolean bundled, String format, String jarVersion, Scan scan) {
         String section = "", modId = null, dependency = null, range = "", type = "", side = "";
         boolean mandatory = false;
-        List<String> lines = new ArrayList<>(text.lines().toList());
+        List<String> lines = new ArrayList<>(blocks(text).lines().toList());
         lines.add("[[end]]");
         for (String raw : lines) {
             String line = raw.strip();
             if (line.startsWith("[")) {
                 if (dependency != null) {
                     boolean server = !side.equalsIgnoreCase("CLIENT");
-                    if (server && (mandatory || type.equalsIgnoreCase("required"))) scan.dependencies.add(
+                    if (mandatory || type.equalsIgnoreCase("required")) (server ? scan.dependencies : scan.clientDependencies).add(
                         new Dependency(owner, dependency, List.of(range), format, "required")
                     );
                     if (server && type.equalsIgnoreCase("incompatible")) scan.dependencies.add(

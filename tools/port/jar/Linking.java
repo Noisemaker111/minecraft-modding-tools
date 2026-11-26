@@ -75,7 +75,7 @@ final class Linking {
                 return standin.equals(port.classMap.get(k)) ? "" : standin;
             }
             Map<String, Integer> votes = new TreeMap<>();
-            for (GameDiff.Cls x : port.a.classes.values()) {
+            for (GameDiff.Cls x : port.a.classes.under(k)) {
                 GameDiff.Cls now = k.equals(x.sup) ? port.b.classes.get(port.cls(x.name)) : null;
                 if (now != null && now.sup != null) {
                     votes.merge(now.sup, 1, Integer::sum);
@@ -596,15 +596,40 @@ final class Linking {
      * one over every class did. Searching every class at each unlinked call was a third of the port's time (JFR, 150 mods).
      */
     List<GameDiff.Cls> declaring(GameDiff.Snap release, String nameDesc) {
-        return declaringBy.computeIfAbsent(release, r -> {
-            Map<String, List<GameDiff.Cls>> index = new HashMap<>();
-            for (GameDiff.Cls c : r.classes.values()) {
-                for (String m : c.methods.keySet()) {
-                    index.computeIfAbsent(m, k -> new ArrayList<>()).add(c);
-                }
+        return declaringBy.computeIfAbsent(release, r -> declaringIn(r.classes.values())).getOrDefault(nameDesc, List.of());
+    }
+
+    /**
+     * Those of them that can be under (it, or a class that extends it): the release's own classes alone where under is one
+     * of them (GameDiff.Classes.under), so asking which game classes override a game method reads no library. Listing
+     * every library's classes read 27,000 of them for a mod that names a few dozen.
+     */
+    List<GameDiff.Cls> declaring(GameDiff.Snap release, String nameDesc, String under) {
+        if (!release.classes.own(under)) {
+            return declaring(release, nameDesc);
+        }
+        return declaringOwnBy.computeIfAbsent(release, r -> declaringIn(r.classes.own())).getOrDefault(nameDesc, List.of());
+    }
+
+    /** Those of them whose names start with packages: the release's own classes alone where no library has a class there. */
+    List<GameDiff.Cls> declaringIn(GameDiff.Snap release, String nameDesc, String packages) {
+        if (libraryIn.computeIfAbsent(release, r -> new HashMap<>()).computeIfAbsent(packages, release.classes::libraryIn)) {
+            return declaring(release, nameDesc);
+        }
+        return declaringOwnBy.computeIfAbsent(release, r -> declaringIn(r.classes.own())).getOrDefault(nameDesc, List.of());
+    }
+
+    final Map<GameDiff.Snap, Map<String, List<GameDiff.Cls>>> declaringOwnBy = new IdentityHashMap<>();
+    final Map<GameDiff.Snap, Map<String, Boolean>> libraryIn = new IdentityHashMap<>();
+
+    static Map<String, List<GameDiff.Cls>> declaringIn(Collection<GameDiff.Cls> classes) {
+        Map<String, List<GameDiff.Cls>> index = new HashMap<>();
+        for (GameDiff.Cls c : classes) {
+            for (String m : c.methods.keySet()) {
+                index.computeIfAbsent(m, k -> new ArrayList<>()).add(c);
             }
-            return index;
-        }).getOrDefault(nameDesc, List.of());
+        }
+        return index;
     }
 
     static final Set<String> OBJECT = Set.of("equals(Ljava/lang/Object;)Z", "hashCode()I", "toString()Ljava/lang/String;");

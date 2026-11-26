@@ -6,7 +6,7 @@ name: Port check
 # makes, and, when the porter, its rules or the change index changed, which every port reads, a sample per loader (the
 # fewest ports that would have caught every time a sweep of main found mods that stopped linking: portcheck.sample),
 # never every port; its output says which and why. One job per port, side by side: it ports and links those mods (jars
-# --mods) with the pull request and with its base commit (jars --at HEAD^1, beside it), and fails when a mod that links
+# --mods) with the pull request and with its base commit (jars --at HEAD^1, after it), and fails when a mod that links
 # on the base stops linking with the pull request (gate --base; main's saved table is remade only by hand or at a
 # release, so it is not what main does after a later merge), and names the mods that newly link. It starts no game:
 # starting the freed mods on a real server and client here took 26 minutes and more for one port (39 mods, 2026-11-25)
@@ -91,18 +91,19 @@ jobs:
           path: |
             ~/.mmt/exposure/registries
             ~/.mmt/exposure/ports
-            ~/.mmt/exposure/game
             ~/.mmt/exposure/maps
           key: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:${{ matrix.to }}-"
           restore-keys: "exposure-kept-${{ matrix.loader }}:${{ matrix.from }}:"
       # A restored cache entry is one this job uses: keyed_at removes keys no run used for a day, judged by each one's
-      # "used" file, which the restore brings back with the saving run's time. Two runs side by side (the pull request's
+      # "used" file, which the restore brings back with the saving run's time. Two runs (the pull request's
       # port and the base's) otherwise remove the entry the other is starting to use.
       - name: Mark the restored cache entries used
         shell: bash
         run: if [ -d ~/.mmt/exposure ]; then find ~/.mmt/exposure -mindepth 3 -maxdepth 3 -name used -exec touch {} +; fi
-      # The pull request's port and the base's (when not kept) side by side, each with half the memory: the gate compares
-      # them, so a mod main itself stopped linking since its saved table fails no pull request.
+      # The pull request's port, then the base's (when not kept): the gate compares them, so a mod main itself stopped
+      # linking since its saved table fails no pull request. One after the other: each port keeps all 4 processors busy,
+      # so side by side saved no time, and a NeoForge 1.21.1 port's JVM alone is 6.9 GB (6 GB heap and the rest), so two
+      # filled the 16 GB runner until it stopped answering (47 minutes, "lost communication").
       - name: Port and link against the base's port
         shell: bash
         env:
@@ -110,13 +111,10 @@ jobs:
           MMT_HEAP_GB: '6'
         run: |
           mkdir -p summary base
-          base=
-          if [ ! -f base/port.json ]; then
-            python bench/exposure.py jars --at HEAD^1 --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} --out base/port.json > base.txt 2>&1 &
-            base=$!
-          fi
           python bench/exposure.py jars --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} --out summary/port.json > jars.txt
-          if [ -n "$base" ] && ! wait "$base"; then tail -n 30 base.txt; echo "the base's port failed"; exit 1; fi
+          if [ ! -f base/port.json ] && ! python bench/exposure.py jars --at HEAD^1 --loader "$LOADER" --from "$FROM" --to "$TO" ${MODS:+--mods "$MODS"} --out base/port.json > base.txt 2>&1; then
+            tail -n 30 base.txt; echo "the base's port failed"; exit 1
+          fi
           python bench/exposure.py gate summary/port.json --base base/port.json --base-name "$BASE_NAME" --freed freed.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/cache/save@v4
         if: ${{ !cancelled() && steps.kept-base.outputs.cache-hit != 'true' && hashFiles('base/port.json') != '' }}

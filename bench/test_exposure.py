@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -268,6 +269,21 @@ with tempfile.TemporaryDirectory() as tmp:
     check([j.name for j in chosen] == ["ipn--ktmod.jar"] and list(ready) == ["libipn.jar"] and list(to_port) == ["lang-all.jar"],
           f"a mod is started with the libraries it needs, each library's own found through it: {chosen} {ready} {to_port}")
     check(left == {"lone--lone.jar": ["nowhere"]}, f"a mod whose need nothing answers is named with what it needs: {left}")
+    # A version its author took down from Modrinth lists nothing; any other answer of Modrinth's is still an error.
+    def answers(code):
+        def api(path, params=None):
+            raise urllib.error.HTTPError("https://api.modrinth.com/v2/" + path, code, "answer", None, None)
+        return api
+    asked = {}
+    for code in (404, 500):
+        portboard.modrinth.api = answers(code)
+        try:
+            asked[code] = portboard.dependencies.required_projects(f"taken-down-{code}")
+        except urllib.error.HTTPError as answer:
+            asked[code] = answer.code
+    portboard.modrinth.api = lambda path, params=None: {"dependencies": [{"dependency_type": "required", "project_id": "P-lib"}, {"dependency_type": "optional", "project_id": "P-no"}]}  # noqa: E731
+    asked["there"] = portboard.dependencies.required_projects("still-there")
+    check(asked == {404: [], 500: 500, "there": ["P-lib"]}, f"a version taken down from Modrinth lists no libraries, one that is there lists its required ones, and another error is not swallowed: {asked}")
     # A Fabric mod's Modrinth version lists Fabric API, which the pack already runs as its platform: a second copy as a
     # library stops Fabric ("Mod id fabric-api is in 2 jars"), so only its other library is added.
     api = Path(tmp) / "fabric-api.jar"
@@ -556,8 +572,10 @@ check(kept["mods"] == 0 and kept["verdicts"] == {} and kept["client"]["verdicts"
 # A game proof starts the client beside the server, and no server when every mod to start is client-only by its own
 # metadata: fabric 1.18.1 -> 1.18.2 spent 147 s starting a server with neither of its two client-only mods on it. Run
 # through load with the game's starts stood in for; a client start that fails still fails the gate.
-def proof(mods, client_ok, server_waits_for_client):
+def proof(mods, client_ok, server_waits_for_client, refused=None):
+    """refused: what start-check (stood in for) fails before any start, {side: {jar: why}}."""
     S, G = portboard.settings, portboard.gameload
+    refused, asked = refused or {}, []
     stubs = [(portboard.porter, "mojang_names"), (portboard.porter, "jar_port"), (portboard.porter, "fabric_api"), (portboard.dependencies, "choose"),
              (portboard.javalevels, "platform_ids"), (portboard.javalevels, "newer_java"), (G, "pack_check")]
     kept = [(m, n, getattr(m, n)) for m, n in stubs]
@@ -598,12 +616,14 @@ def proof(mods, client_ok, server_waits_for_client):
         portboard.javalevels.platform_ids, portboard.javalevels.newer_java, G.pack_check = (lambda loader, to: []), (lambda *a: {}), start
         sys.stdout = io.StringIO()
         try:
-            summary = G.load("fabric", "9.1", "9.2", False, sorted(mods))
+            summary = G.load("fabric", "9.1", "9.2", False, sorted(mods), check=lambda pack, to, loader, jars: asked.append(sorted(jars)) or {
+                "seconds": 1.0, "receipt": None, "sides": {side: {"failed": dict(refused.get(side, {}))} for side in ("server", "client")}})
         finally:
             sys.stdout = sys.__stdout__
             S.ROOT, S.PINS, S.HOME = real
             for m, n, f in kept:
                 setattr(m, n, f)
+    check(asked == [sorted(f"{s}--{s}.jar" for s in mods)], f"start-check is asked once, for the mods and not the platform: {asked}")
     return summary, starts
 
 
@@ -616,6 +636,13 @@ check(starts[0] == "client" and "server" not in starts and not portboard.portche
 summary, starts = proof({"csl": "client", "chunky": "*"}, True, True)
 check(sorted(set(starts)) == ["client", "server"] and summary["verdicts"]["chunky--chunky.jar"] == "loaded" and portboard.portcheck.load_gate(summary)[1]
       and summary["time"]["starts"] >= 0, f"with a mod a server runs, the server and the client start side by side: {starts} {summary['verdicts']}")
+# A mod start-check fails is not started on that side, and fails the proof with start-check's reason; the other side still starts it.
+for side, other in (("server", "client"), ("client", "server")):
+    summary, starts = proof({"chunky": "*"}, True, False, {side: {"chunky--chunky.jar": "Mixin refuses its mixin"}})
+    said = {"server": summary["verdicts"], "client": summary["client"]["verdicts"]}
+    check(starts == [other] and said[side]["chunky--chunky.jar"].startswith("failed: Mixin refuses its mixin (decided by start-check") and said[other]["chunky--chunky.jar"] == "loaded"
+          and list(summary["startCheck"]["decided"][side]) == ["chunky--chunky.jar"] and not portboard.portcheck.load_gate(summary)[1],
+          f"a mod start-check fails on the {side} is not started there and fails the proof: {starts} {said}")
 
 # Two game proofs of an update compare by each mod's verdict kind on both sides, over the mods both started.
 main_run = {"loader": "neoforge", "from": "1.21.1", "to": "1.21.2", "mods": 3,
@@ -650,7 +677,8 @@ rows = [
     {"mod": "e.jar", "unlinked": []},
 ]
 said = {"call: g.C.only()V": {"game": "replaced"}, "call: g.W.gone()V": {"game": "redesigned"}}
-order = portboard.board.nearest(rows, {"e.jar": ["data id gone: minecraft:thing x (in data/e.json)"]}, said)
+rows = [{**r, "game": said} for r in rows]
+order = portboard.board.nearest(rows, {"e.jar": ["data id gone: minecraft:thing x (in data/e.json)"]})
 check([t["mod"] for t in order] == ["c.jar", "e.jar", "w.jar", "b.jar", "a.jar"],
       f"mods come in the order they finish, the ones the game answers first among equals: {[t['mod'] for t in order]}")
 check(order[0]["alsoFrees"] == ["d.jar"] and [t["modsDone"] for t in order] == [2, 3, 4, 5, 6] and [t["fixes"] for t in order] == [1, 2, 3, 5, 7],
@@ -658,7 +686,7 @@ check(order[0]["alsoFrees"] == ["d.jar"] and [t["modsDone"] for t in order] == [
 check([m["member"] for m in order[4]["members"]] == ["call: g.A.x()V", "call: g.A.y()V"] and order[0]["members"][0]["game"] == "replaced",
       "a turn lists only what earlier turns left, each reference once with what the game did about it")
 longer = {"mod": "b.jar", "unlinked": [f"b.jar: call: g.B.m{i}()V" for i in range(5)]}
-check([t["mod"] for t in portboard.board.nearest([rows[0], longer], None, {})] == ["a.jar", "b.jar"], "a mod with more left than another comes after it")
+check([t["mod"] for t in portboard.board.nearest([rows[0], longer], None)] == ["a.jar", "b.jar"], "a mod with more left than another comes after it")
 
 # The same list by type of break: a way to handle a type finishes every mod only that type holds back.
 kinds = [
@@ -669,16 +697,41 @@ kinds = [
     {"mod": "e.jar", "unlinked": []},
 ]
 verdicts = {"call: g.X.one()V": {"game": "linked"}, "call: g.Y.two()V": {"game": "linked"}, "call: g.Z.three()V": {"game": "linked"}, "field: g.F.gone": {"game": "split"}}
-table = portboard.board.by_type(kinds, None, verdicts)
+table = portboard.board.by_type([{**r, "game": verdicts} for r in kinds], None)
 check([(t["type"], t["finishes"], t["mods"], t["references"]) for t in table] == [("call, game: linked", 2, 3, 3), ("field, game: split", 1, 2, 1)],
       f"a type counts the mods it alone holds back, the mods that have it and its references: {table}")
 check(table[0]["examples"][0] == "call: g.X.one()V", "a type's first example is its most-used reference")
 verdicts["call: g.Y.two()V"] = {"game": "redesigned"}
-check(next(t for t in portboard.board.by_type(kinds, None, verdicts) if t["type"] == "call, game: linked")["finishes"] == 1,
+check(next(t for t in portboard.board.by_type([{**r, "game": verdicts} for r in kinds], None) if t["type"] == "call, game: linked")["finishes"] == 1,
       "a mod held by two types is finished by neither alone")
 verdicts["call: g.Z.three()V"] = {"game": "linked", "part": "library"}
-check([t["type"] for t in portboard.board.by_type(kinds, None, verdicts) if t["examples"] == ["call: g.Z.three()V"]] == ["call (library), game: linked"],
+check([t["type"] for t in portboard.board.by_type([{**r, "game": verdicts} for r in kinds], None) if t["examples"] == ["call: g.Z.three()V"]] == ["call (library), game: linked"],
       "a reference into a library the release ships is its own type, apart from the game's")
+
+# Each mod's types come from its own port's answers. A port of several steps answers a reference at the step it broke,
+# so two mods can name one injection point and break on it at different steps, one where the call is there too few
+# times for its ordinal and one where it is gone: folded into one answer per reference, one mod took the other's type,
+# and a --type run or a Port check named for a type skipped it.
+with tempfile.TemporaryDirectory() as tmp:
+    point = "mixin injection point gone: g.C.call()V in g.D.run()V"
+    report = Path(tmp) / "report.json"
+    report.write_text(json.dumps({"linked": 0, "unlinkedByMods": [{"member": point, "mods": 2}], "mods": [
+        {"mod": "a.jar", "unlinked": [f"a.jar: {point} (in a.Mixin)"], "game": {point: {"game": "fewer", "part": "game"}}, "ported": "1"},
+        {"mod": "b.jar", "unlinked": [f"b.jar: {point}"], "game": {point: {"game": "dropped", "part": "game"}}, "ported": "2"}]}), encoding="utf-8")
+    saved = portboard.porter.port_key, portboard.mainrecord.main_row
+    portboard.porter.port_key, portboard.mainrecord.main_row = (lambda *a, **k: "key"), (lambda *a, **k: None)
+    try:
+        summary = portboard.board.summarize("fabric", "1.0", "1.2", [], {}, json.loads(report.read_text(encoding="utf-8")), report, Path(tmp) / "work",
+                                            None, False, None, True, portboard.board.timer({}), {})
+    finally:
+        portboard.porter.port_key, portboard.mainrecord.main_row = saved
+    fewer, dropped = "mixin injection point gone, game: fewer", "mixin injection point gone, game: dropped"
+    check(summary["heldBy"] == {"a.jar": [fewer], "b.jar": [dropped]} and [summary["verdicts"][m]["types"] for m in ("a.jar", "b.jar")] == [[fewer], [dropped]],
+          f"each mod is held by the type its own port answered, not another mod's: {summary['heldBy']}")
+    check(sorted((t["type"], t["mods"]) for t in summary["types"]) == [(dropped, 1), (fewer, 1)], f"and counted under it: {summary['types']}")
+    check([(t["mod"], [m["game"] for m in t["members"]]) for t in summary["nearest"]] == [("a.jar", ["fewer"])],
+          f"the to-do list shows a reference with the answer of the mod that adds it: {summary['nearest']}")
+    check(summary["held"]["b.jar"] == {dropped: [point]}, f"and each mod's references by its own types: {summary['held']}")
 
 # Jumps: the ports people ask for, from each family's most-used release to the next family's and to the newest.
 with tempfile.TemporaryDirectory() as tmp:

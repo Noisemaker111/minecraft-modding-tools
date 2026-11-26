@@ -288,6 +288,33 @@ public final class PackMetadataTests extends PackCheckFixtures {
             )
         );
         expect(throwsMessage(() -> check(harness, scratch).read(bad)).contains("downloads only from"), "an .mrpack download from another host is refused");
+        // An .mrpack's own folder for one side: its settings and jars are that side's, and replace the ones every side gets there only.
+        Path forServer = jar(scratch.resolve("only-server.jar"), Map.of("fabric.mod.json", "{\"id\":\"only\",\"version\":\"1-server\"}"));
+        Path forClient = jar(scratch.resolve("only-client.jar"), Map.of("fabric.mod.json", "{\"id\":\"only\",\"version\":\"1-client\"}"));
+        Path sidedPack = scratch.resolve("sided.mrpack");
+        zip(sidedPack, Map.of("modrinth.index.json", index, "overrides/config/a.toml", "a=1", "server-overrides/config/b.toml", "b=1", "client-overrides/config/c.toml", "c=1",
+            "server-overrides/mods/only.jar", forServer, "client-overrides/mods/only.jar", forClient, "client-overrides/mods/hud.jar", forClient));
+        PackCheck.Pack sided = check(harness, scratch).read(sidedPack);
+        for (String side : List.of("client", "server")) {
+            String other = side.equals("client") ? "server" : "client";
+            List<String> folders = sided.layers(side).stream().map(layer -> layer.getFileName().toString()).toList();
+            expect(folders.equals(List.of("overrides", side + "-overrides")), "a " + side + " gets the folder every side gets and its own, not the " + other + "'s: " + folders);
+            PackCheck.Mod only = PackCheck.forSide(sided.mods(), side).stream().filter(mod -> mod.file().equals("only.jar")).findFirst().orElseThrow();
+            expect(only.jar().getParent().getParent().getFileName().toString().equals(side + "-overrides") && only.side().equals(side),
+                "of two jars with one name, a " + side + " holds its own folder's: " + only);
+            expect(PackCheck.forSide(sided.mods(), side).stream().filter(mod -> mod.file().equals("only.jar")).count() == 1, "and holds it once");
+        }
+        PackCheck.ServerMods onServer = PackCheck.serverMods(sided.mods(), new PackMods.Scan(), Set.of(), Set.of());
+        expect(onServer.kept().contains("only.jar") && !onServer.kept().contains("hud.jar"), "a jar of the client's own folder is no part of a server: " + onServer.kept());
+        // A folder of jars with no mods/ inside is a pack too, as the help says; a folder with neither is still refused.
+        Path loose = Files.createDirectories(scratch.resolve("loose jars"));
+        jar(loose.resolve("alone.jar"), Map.of("fabric.mod.json", "{\"id\":\"alone\",\"version\":\"1\"}"));
+        PackCheck.Pack fromLoose = check(harness, scratch, "--minecraft", "1.21.1", "--loader", "fabric-0.16.7").read(loose);
+        expect(fromLoose.mods().stream().map(PackCheck.Mod::file).toList().equals(List.of("alone.jar")) && fromLoose.modsFolder().equals(fromLoose.overrides()),
+            "a folder that holds the jars themselves is read as a pack: " + fromLoose);
+        Path nothing = Files.createDirectories(scratch.resolve("no jars"));
+        Files.writeString(nothing.resolve("notes.txt"), "x");
+        expect(!throwsMessage(() -> check(harness, scratch, "--minecraft", "1.21.1", "--loader", "fabric-0.16.7").read(nothing)).isEmpty(), "a folder with no mods/ and no jar is not a pack");
         // Windows users keep packs under folders with spaces and brackets ("Sodium Plus 2.2.11.mrpack" in the sweep): reading one
         // and writing its fixed copy (whose own name has spaces) work there, and a server-only repair marks the file in the copy.
         Path spaced = Files.createDirectories(scratch.resolve("My Packs (test) & more")).resolve("Small Pack 1.0.mrpack");
@@ -354,14 +381,20 @@ public final class PackMetadataTests extends PackCheckFixtures {
         expect(overridden.loader().equals("quilt") && overridden.loaderVersion().equals("0.29.1"), "--loader names a loader and its version: " + overridden);
 
         // A jar one start showed to be client-only is left out of the next run's starts from the beginning.
-        check(harness, scratch).drop("traverse-forge-7.0.12.jar", "traverse");
-        PackCheck next = check(harness, scratch);
+        check(harness, scratch).drop(fromBare, "sodium.jar", "sodium");
+        PackCheck next = check(harness, scratch, "--minecraft", "1.21.1");
         expect(next.dropped.isEmpty(), "nothing is dropped before the remembered list is read");
-        next.readDropped();
+        next.readDropped(fromBare);
         expect(
-            next.dropped.equals(Set.of("traverse-forge-7.0.12.jar")) && Json.read(next.clientOnlyFile()).get("traverse-forge-7.0.12.jar").toString().contains("traverse"),
+            next.dropped.equals(Set.of("sodium.jar")) && Json.read(next.clientOnlyFile()).get("sodium.jar").toString().contains("sodium"),
             "a client-only jar is remembered with its mod id for the next run: " + next.dropped
         );
+        // What was remembered is that jar, not its name: the same name with other content (the mod ported to another
+        // release) is a jar no start has judged. A game proof kept "client-only" for a port that runs on a server.
+        Files.copy(lithium, bareMods.resolve("sodium.jar"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        PackCheck other = check(harness, scratch, "--minecraft", "1.21.1");
+        other.readDropped(other.read(bare));
+        expect(other.dropped.isEmpty(), "a jar with a remembered name and other content is not left out: " + other.dropped);
     }
 
     // ------------------------------------------------------------------ Fabric and Quilt metadata

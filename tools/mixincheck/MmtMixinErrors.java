@@ -15,16 +15,28 @@ import java.util.*;
  */
 public final class MmtMixinErrors implements IMixinErrorHandler {
     @Override public ErrorAction onPrepareError(IMixinConfig config, Throwable th, IMixinInfo mixin, ErrorAction action) {
-        report("prepare", null, config, th, mixin, action); return ErrorAction.WARN;
+        report("prepare", null, config, th, mixin, action);
+        return answer(action);
     }
     @Override public ErrorAction onApplyError(String target, Throwable th, IMixinInfo mixin, ErrorAction action) {
-        report("apply", target, mixin == null ? null : mixin.getConfig(), th, mixin, action); return ErrorAction.WARN;
+        report("apply", target, mixin == null ? null : mixin.getConfig(), th, mixin, action);
+        return answer(action);
+    }
+    /**
+     * mixin-check lists every error of a source checkout's mixins, so it lets Mixin go on past each. start-check answers
+     * what the game does (mmt.mixincheck.asTheGame): Mixin's own action stands, and the class fails to load as in the game.
+     * Going on left later classes in a state no game reaches: a mixin that applies alone failed after two others had.
+     */
+    static ErrorAction answer(ErrorAction action) {
+        return Boolean.getBoolean("mmt.mixincheck.asTheGame") ? action : ErrorAction.WARN;
     }
     static synchronized void report(String phase, String target, IMixinConfig config, Throwable th, IMixinInfo mixin, ErrorAction action) {
         StringBuilder line = new StringBuilder("{\"event\":\"error\"");
         add(line, "phase", phase); add(line, "target", target); add(line, "mixin", mixin == null ? null : mixin.getClassName());
         add(line, "config", config == null ? null : config.getName()); add(line, "configRequired", config != null && config.isRequired());
         add(line, "action", action == null ? null : action.name()); add(line, "exception", th.getClass().getName()); add(line, "message", messages(th));
+        // Mixin's own verdict: ERROR is what stops the game (a required config's mixin); MmtMixinCheck reads the count.
+        if (action == ErrorAction.ERROR) System.setProperty("mmt.mixincheck.stopping", String.valueOf(Integer.getInteger("mmt.mixincheck.stopping", 0) + 1));
         // An injector's own counts: what it expected, needed and actually did, from Mixin's injection object.
         try {
             Object context = th.getClass().getMethod("getContext").invoke(th);

@@ -60,10 +60,11 @@ final class MovedCalls {
 
     /** {owner, name} (new names) of the one method old's body called and nothing else, when it takes and gives the same and the new release has it. */
     String[] forwardedTo(GameDiff.Meth old, String newDesc) {
-        if (old.refs.length != 1 || old.refs[0].kind() != 'm') {
+        GameDiff.Ref[] made = old.references();
+        if (made.length != 1 || made[0].kind() != 'm') {
             return null;
         }
-        GameDiff.Ref r = old.refs[0];
+        GameDiff.Ref r = made[0];
         if (r.owner().equals(old.owner.name) && r.name().equals(old.name) || !newDesc.equals(sites.port.desc(r.desc()))) {
             return null;
         }
@@ -85,7 +86,7 @@ final class MovedCalls {
             String[] parts = sites.port.cls(declOwner).split("/");
             String project = parts.length > 2 ? parts[0] + "/" + parts[1] + "/" : "";
             String found = null;
-            for (GameDiff.Cls c : sites.port.links.declaring(sites.port.b, name + newDesc)) {
+            for (GameDiff.Cls c : sites.port.links.declaringIn(sites.port.b, name + newDesc, project)) {
                 GameDiff.Meth m = c.methods.get(name + newDesc);
                 if (!m.isStatic() || (m.flags & Opcodes.ACC_PUBLIC) == 0 || !c.name.startsWith(project)) {
                     continue;

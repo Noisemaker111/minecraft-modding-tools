@@ -60,6 +60,7 @@ public final class JarPort {
     final GameDiff.Snap a, b;
     String loader; // "neoforge" or "fabric": the loader ported for, which a rule may name
     final Exposure.Route route;
+    final Exposure.Unlinked unlinkedGame; // what the map's hop found about each member of a it has no link for
     final String to, loaderTo;
     final Map<String, String> classMap = new HashMap<>();
     final Map<String, String> inverse = new HashMap<>();
@@ -131,15 +132,19 @@ public final class JarPort {
         // what changed inside a library both releases list is checked. A class gone from a library the new release still
         // lists is gone at run time (1.20.5's DataFixerUpper dropped DataResult.PartialResult).
         Set<String> listed = new HashSet<>();
-        for (GameDiff.Cls c : b.classes.values()) {
-            if (c.library && c.artifact != null) {
-                listed.add(c.artifact);
+        b.classes.libraries((name, artifact) -> {
+            if (artifact != null) {
+                listed.add(artifact);
             }
-        }
-        for (GameDiff.Cls c : a.classes.values()) {
-            if (c.library && !b.classes.containsKey(c.name) && !listed.contains(c.artifact)) {
-                b.classes.put(c.name, c);
+        });
+        List<String> carried = new ArrayList<>();
+        a.classes.libraries((name, artifact) -> {
+            if (!b.classes.containsKey(name) && !listed.contains(artifact)) {
+                carried.add(name);
             }
+        });
+        for (String name : carried) {
+            b.classes.carry(name, a.classes);
         }
         classMap.putAll(route.classes);
         for (var e : route.classRewrites.entrySet()) {
@@ -150,6 +155,7 @@ public final class JarPort {
             inverse.putIfAbsent(e.getValue(), e.getKey());
         }
         Map<String, Object> raw = Json.read(map);
+        unlinkedGame = Exposure.Unlinked.of(raw);
         for (Object o : Json.array(raw.getOrDefault("rewrites", List.of()))) {
             var w = Json.object(o);
             String key = Exposure.Route.internal(Json.text(w, "owner", "")) + "." + Json.text(w, "from", "") + Json.text(w, "desc", "");
@@ -341,15 +347,17 @@ public final class JarPort {
     final Map<String, Chain> chains = new HashMap<>(); // owner.name+desc, or owner.name for a field
 
     /**
-     * What a port holds whatever its workers, measured on Fabric 1.20.1 -> 26.3's 147 mods (554 MB of jars): one small mod
-     * peaked at 1.4 GB after collections (the step's releases, the next one read ahead, their code), and the 147 mods at
-     * 3.3 to 3.7 GB with 4 workers (each jar is kept between steps, uncompressed).
+     * What a port holds whatever its workers. The releases: one small mod ported Fabric 1.20.1 -> 26.3 peaked at 1.4 GB
+     * after collections (the step's releases, the next one read ahead, their code; 0.8 GB live for 1.20.1 -> 1.19.4).
+     * The jars: each is kept between steps as its files, uncompressed (Fabric 1.20.1's 150 mods: 540 MB of jars, 834 MB
+     * of files), and written as its last step ends. Measured live (2026-11-25, 1.20.1 -> 1.19.4): 2.6 GB with 1 worker.
      */
     static final long RELEASES_HEAP = 1536L << 20;
-    static final long JAR_HEAP = 4;
+    static final long JAR_HEAP = 2;
     /**
-     * Room per worker for the mod it is porting: live heap grew only about 50 MB a worker (3.7 GB with 4, 4.4 GB with 16),
-     * but 4 workers left 1.3 GB spent 77 s in collections and 8 workers left 3.3 GB spent 29 s, as long as 4 with 6 GB to spare.
+     * Room per worker for the mod it is porting: live heap grew about 300 MB a worker on Fabric 1.20.1 -> 1.19.4 (2.6 GB
+     * with 1, 3.5 GB with 4, the four biggest jars at once), and 4 workers left 1.3 GB spent 77 s in collections and 8
+     * workers left 3.3 GB spent 29 s, as long as 4 with 6 GB to spare.
      */
     static final long PORT_WORKER = 400L << 20;
 
@@ -437,10 +445,20 @@ public final class JarPort {
         for (Path jar : jars) {
             (targets.size() > 1 && !sameChoices(jar, targets, loader) ? apart : shared).add(jar);
         }
+        // Each ported jar is written as its last step ends, not held until every jar is ported.
+        Map<Target, Boolean> folders = new HashMap<>();
+        for (Target t : targets) {
+            boolean folder = jars.size() > 1 || Files.isDirectory(t.out());
+            if (folder) {
+                Files.createDirectories(t.out());
+            }
+            folders.put(t, folder);
+        }
+        java.util.function.BiFunction<Target, Path, Path> dest = (t, jar) -> folders.get(t) ? t.out().resolve(jar.getFileName().toString()) : t.out();
         Map<Target, Trunk> own = new HashMap<>();
         if (!apart.isEmpty()) {
             for (Target t : targets) {
-                portTrunk(List.of(t), apart, loader, runtime, book, originalsDir, dataFrom, own::put);
+                portTrunk(List.of(t), apart, loader, runtime, book, originalsDir, dataFrom, dest, own::put);
             }
         }
         java.util.function.BiConsumer<Target, Trunk> written = (t, state) -> {
@@ -448,7 +466,7 @@ public final class JarPort {
                 state.add(own.get(t));
             }
             try {
-                write(t, jars, state, loader);
+                write(t, jars, state, loader, jar -> dest.apply(t, jar));
             } catch (IOException failed) {
                 throw new java.io.UncheckedIOException(failed);
             }
@@ -456,7 +474,7 @@ public final class JarPort {
         if (shared.isEmpty()) {
             targets.forEach(t -> written.accept(t, new Trunk()));
         } else {
-            portTrunk(targets, shared, loader, runtime, book, originalsDir, dataFrom, written);
+            portTrunk(targets, shared, loader, runtime, book, originalsDir, dataFrom, dest, written);
         }
     }
 
@@ -500,7 +518,7 @@ public final class JarPort {
 
     /** Ports jars along the plan's trunk and hands each target's result to branched as its last step ends. */
     static void portTrunk(List<Target> targets, List<Path> jars, String loader, boolean runtime, String book, Path originalsDir, String dataFrom,
-                          java.util.function.BiConsumer<Target, Trunk> branched) throws Exception {
+                          java.util.function.BiFunction<Target, Path, Path> dest, java.util.function.BiConsumer<Target, Trunk> branched) throws Exception {
         Target longest = targets.stream().max(Comparator.comparingInt((Target t) -> t.stops().size())).orElseThrow();
         List<String> trunk = longest.stops().subList(0, longest.stops().size() - 1);
         List<String> trunkMaps = longest.maps().subList(0, longest.maps().size() - 1);
@@ -537,18 +555,18 @@ public final class JarPort {
         }
         Reads reader = new Reads(reads, loader);
         Trunk state = new Trunk();
-        GameDiff.Snap was = Exposure.snap(trunk.get(0), loader);
+        GameDiff.Snap was = Exposure.snap(trunk.get(0), loader, false);
         for (int p = 0; p < trunk.size(); p++) {
             for (Target t : branches.getOrDefault(p, List.of())) {
                 Trunk mine = state.copy();
                 GameDiff.Snap now = reader.next();
-                step(was, now, t.maps().get(p), trunk.get(0), dataFrom, trunk.get(p), t.to(), t.to(), true, p == 0, mine, order, workers, loader, runtime, book, originalsDir);
+                step(was, now, t.maps().get(p), trunk.get(0), dataFrom, trunk.get(p), t.to(), t.to(), jar -> dest.apply(t, jar), p == 0, mine, order, workers, loader, runtime, book, originalsDir);
                 branched.accept(t, mine);
                 done(t.to(), reader);
             }
             if (p + 1 < trunk.size()) {
                 GameDiff.Snap now = reader.next();
-                step(was, now, trunkMaps.get(p), trunk.get(0), dataFrom, trunk.get(p), trunk.get(p + 1), longest.to(), false, p == 0, state, order, workers, loader, runtime, book, originalsDir);
+                step(was, now, trunkMaps.get(p), trunk.get(0), dataFrom, trunk.get(p), trunk.get(p + 1), longest.to(), null, p == 0, state, order, workers, loader, runtime, book, originalsDir);
                 done(trunk.get(p), reader);
                 was = now;
             }
@@ -556,9 +574,10 @@ public final class JarPort {
         reader.shutdown();
     }
 
-    /** Every jar's port so far: its bytes after the last step, each step's results, and the step it failed at. */
+    /** Every jar's port so far: its files after a step before the last, the hash of what the last wrote, each step's results, and the step it failed at. */
     static final class Trunk {
-        final Map<Path, byte[]> bytes = new java.util.concurrent.ConcurrentHashMap<>();
+        final Map<Path, JarEntries.Unpacked> unpacked = new java.util.concurrent.ConcurrentHashMap<>();
+        final Map<Path, String> ported = new java.util.concurrent.ConcurrentHashMap<>();
         final Map<Path, Map<String, Set<String>>> originals = new java.util.concurrent.ConcurrentHashMap<>();
         final Map<Path, List<Map<String, Object>>> nested = new java.util.concurrent.ConcurrentHashMap<>();
         final Map<Path, String> errors = new java.util.concurrent.ConcurrentHashMap<>();
@@ -568,17 +587,19 @@ public final class JarPort {
 
         /** Another port's jars, of other names, joined to these. */
         void add(Trunk other) {
-            bytes.putAll(other.bytes);
+            unpacked.putAll(other.unpacked);
+            ported.putAll(other.ported);
             originals.putAll(other.originals);
             nested.putAll(other.nested);
             errors.putAll(other.errors);
         }
 
-        /** A copy a branch ports on: the bytes are never written in place, but each step adds to and edits its last results. */
+        /** A copy a branch ports on: the files are never written in place, but each step adds to and edits its last results. */
         Trunk copy() {
             Trunk c = new Trunk();
             c.decided = decided;
-            c.bytes.putAll(bytes);
+            c.unpacked.putAll(unpacked);
+            c.ported.putAll(ported);
             c.originals.putAll(originals);
             c.errors.putAll(errors);
             for (var e : nested.entrySet()) {
@@ -629,7 +650,7 @@ public final class JarPort {
 
         void ahead() {
             String version = upcoming.peekFirst();
-            coming = version == null ? null : thread.submit(() -> Exposure.snap(version, loader));
+            coming = version == null ? null : thread.submit(() -> Exposure.snap(version, loader, false));
         }
 
         GameDiff.Snap next() throws Exception {
@@ -669,9 +690,11 @@ public final class JarPort {
         }
     }
 
-    /** Every jar of state through one step from was to now; last: the step into the release a target asked for. */
-    static void step(GameDiff.Snap was, GameDiff.Snap now, String map, String origin, String dataOrigin, String from, String to, String portTo, boolean last, boolean first, Trunk state,
-                     List<Path> order, int workers, String loader, boolean runtime, String book, Path originalsDir) throws Exception {
+    /** Every jar of state through one step from was to now; dest: where each jar goes when this is the step into the release a target asked for (else null). */
+    static void step(GameDiff.Snap was, GameDiff.Snap now, String map, String origin, String dataOrigin, String from, String to, String portTo,
+                     java.util.function.Function<Path, Path> dest, boolean first, Trunk state, List<Path> order, int workers, String loader, boolean runtime, String book,
+                     Path originalsDir) throws Exception {
+        boolean last = dest != null;
         // What making the porters adds to the new release (the step's stand-ins, libraries carried from the old one) is
         // taken out again after the step, so the next step reads the release as it was read.
         Set<String> read = new HashSet<>(now.classes.keySet());
@@ -708,15 +731,32 @@ public final class JarPort {
                     }
                     String name = jar.getFileName().toString();
                     try {
-                        byte[] in = first ? Files.readAllBytes(jar) : state.bytes.get(jar);
-                        if (first && !state.originals.containsKey(jar)) {
-                            state.originals.put(jar, port.loaderNames.originals(in, name));
+                        JarEntries.Unpacked in;
+                        if (first) {
+                            byte[] shipped = Files.readAllBytes(jar);
+                            if (!state.originals.containsKey(jar)) {
+                                state.originals.put(jar, port.loaderNames.originals(shipped, name));
+                            }
+                            in = port.read(shipped, name);
+                        } else {
+                            in = port.read(state.unpacked.get(jar), name);
                         }
                         List<Map<String, Object>> results = state.nested.computeIfAbsent(jar, k -> new ArrayList<>());
-                        state.bytes.put(jar, port.port(in, name, results, state.originals.get(jar), last));
-                    } catch (IOException | RuntimeException failed) {
+                        JarEntries.Unpacked out = port.step(in, name, results);
+                        if (last) {
+                            state.unpacked.remove(jar);
+                            byte[] ported = port.port(out, results, state.originals.get(jar));
+                            Files.write(dest.apply(jar), ported);
+                            // What the port wrote, as a hash: a mod whose ported jar is the same as before needs no new proof in game.
+                            state.ported.put(jar, HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(ported), 0, 8));
+                        } else {
+                            state.unpacked.put(jar, out);
+                        }
+                    } catch (Exception | Error failed) {
+                        // An error too (a jar too big for the heap): the jar is reported failed, and this worker goes on to the next.
                         state.errors.put(jar, String.valueOf(failed));
-                        state.bytes.remove(jar);
+                        state.unpacked.remove(jar);
+                        state.ported.remove(jar);
                     }
                 }
             }));
@@ -725,15 +765,39 @@ public final class JarPort {
             t.join();
         }
         now.classes.keySet().retainAll(read);
+        // What the game's own code did about each reference this step could not link, from the releases as the step read them.
+        Map<String, Map<String, Object>> said = new HashMap<>();
+        for (Path jar : order) {
+            answer(was, now, porters.get(0).unlinkedGame, state.nested.getOrDefault(jar, List.of()), said);
+        }
+    }
+
+    /**
+     * Adds to each result of a step from a to b what the game's own code did about each reference it could not link
+     * (Exposure.says), as "game": {reference without where it is: answer}. A result of a step before has its answers.
+     * said: the answers of this step so far, as many mods ask about one reference.
+     */
+    static void answer(GameDiff.Snap a, GameDiff.Snap b, Exposure.Unlinked hop, List<Map<String, Object>> results, Map<String, Map<String, Object>> said) {
+        for (Map<String, Object> result : results) {
+            if (result.containsKey("game")) {
+                continue;
+            }
+            Map<String, Object> game = new TreeMap<>();
+            for (Object u : Json.array(result.get("unlinked"))) {
+                String member = u.toString().replaceAll(" \\(in [^)]*\\)$", "");
+                if (!said.containsKey(member)) {
+                    said.put(member, Exposure.says(a, b, hop, member));
+                }
+                if (said.get(member) != null) {
+                    game.put(member, said.get(member));
+                }
+            }
+            result.put("game", game);
+        }
     }
 
     /** A target's ported jars and its report: each jar's references that did not link, at every step. */
-    static void write(Target t, List<Path> jars, Trunk state, String loader) throws IOException {
-        Path target = t.out();
-        boolean folder = jars.size() > 1 || Files.isDirectory(target);
-        if (folder) {
-            Files.createDirectories(target);
-        }
+    static void write(Target t, List<Path> jars, Trunk state, String loader, java.util.function.Function<Path, Path> dest) throws IOException {
         List<Object> rows = new ArrayList<>();
         int linked = 0;
         Map<String, Set<String>> byMods = new HashMap<>();
@@ -742,15 +806,18 @@ public final class JarPort {
             row.put("mod", jar.getFileName().toString());
             if (state.errors.containsKey(jar)) {
                 row.put("error", state.errors.get(jar));
+            } else if (!state.ported.containsKey(jar)) {
+                row.put("error", "the port wrote no jar");
             } else try {
-                byte[] ported = state.bytes.get(jar);
-                Path dest = folder ? target.resolve(jar.getFileName().toString()) : target;
-                Files.write(dest, ported);
                 // Every step's results: a reference one step could not link stays as it was, in that step's names, and breaks there.
                 Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), skipped = new TreeSet<>(), refused = new TreeSet<>(), data = new TreeSet<>();
                 boolean judged = false;
                 Map<String, Integer> changed = new TreeMap<>();
+                Map<String, Object> game = new TreeMap<>();
                 for (Map<String, Object> n : state.nested.getOrDefault(jar, List.of())) {
+                    for (var e : Json.object(n.get("game")).entrySet()) {
+                        game.putIfAbsent(e.getKey(), e.getValue());
+                    }
                     for (Object u : Json.array(n.get("unlinked"))) {
                         if (unlinked.add(n.get("jar") + ": " + u)) {
                             byMods.computeIfAbsent(u.toString().replaceAll(" \\(in [^)]*\\)$", ""), k -> new TreeSet<>()).add(jar.getFileName().toString());
@@ -775,20 +842,21 @@ public final class JarPort {
                         changed.merge(e.getKey(), ((Number) e.getValue()).intValue(), Integer::sum);
                     }
                 }
-                row.put("out", dest.toString());
-                // What the port wrote, as a hash: a mod whose ported jar is the same as before needs no new proof in game.
-                row.put("ported", HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(ported), 0, 8));
+                row.put("out", dest.apply(jar).toString());
+                row.put("ported", state.ported.get(jar));
                 row.put("changed", changed);
                 row.put("unlinked", new ArrayList<>(unlinked));
                 row.put("silent", new ArrayList<>(silent));
                 row.put("skipped", new ArrayList<>(skipped));
                 row.put("refused", new ArrayList<>(refused));
+                // What the game's own code did about each reference that does not link (Exposure.says), at the step it broke.
+                row.put("game", game);
                 if (judged) {
                     // What the mod's data names that the release lacks: the server stops on it, which linking cannot show.
                     row.put("data", new ArrayList<>(data));
                 }
                 linked += unlinked.isEmpty() ? 1 : 0;
-            } catch (IOException | RuntimeException | java.security.NoSuchAlgorithmException failed) {
+            } catch (RuntimeException failed) {
                 row.put("error", String.valueOf(failed));
             }
             rows.add(row);
@@ -815,17 +883,36 @@ public final class JarPort {
 
     /** A whole jar, nested mods included; each jar's result is added to results. */
     byte[] port(byte[] jar, String name, List<Map<String, Object>> results) throws IOException {
-        return port(jar, name, results, loaderNames.originals(jar, name), true);
+        Map<String, Set<String>> originals = loaderNames.originals(jar, name);
+        return port(step(read(jar, name), name, results), results, originals);
     }
 
-    /** One step of a port; last: the step into the release asked for, the only one a Fabric jar is handed back from. */
-    byte[] port(byte[] jar, String name, List<Map<String, Object>> results, Map<String, Set<String>> originals, boolean last) throws IOException {
-        boolean fabric = loader.equals("fabric");
-        if (fabric && compareVersions(a.version, UNOBFUSCATED) < 0 && LoaderNames.intermediary(jar)) {
+    /** A jar as this step reads it: in Mojang's names where Fabric's intermediary names it (LoaderNames.intermediary). */
+    JarEntries.Unpacked read(byte[] jar, String name) throws IOException {
+        if (loader.equals("fabric") && compareVersions(a.version, UNOBFUSCATED) < 0 && LoaderNames.intermediary(jar)) {
             jar = loaderNames.fabricIn().jar(jar, new ModNames.Counts());
         }
-        byte[] out = verifier.fitting(jar, name, results);
-        if (last && fabric && compareVersions(b.version, UNOBFUSCATED) < 0 && !results.isEmpty()) {
+        return JarEntries.Unpacked.of(jar, name);
+    }
+
+    /** The step before's port of a jar as this step reads it. */
+    JarEntries.Unpacked read(JarEntries.Unpacked jar, String name) throws IOException {
+        if (loader.equals("fabric") && compareVersions(a.version, UNOBFUSCATED) < 0 && LoaderNames.intermediary(jar.files())) {
+            return read(jar.zip(Deflater.NO_COMPRESSION), name);
+        }
+        return jar;
+    }
+
+    /** One step of a port, the jar as the step read it; the next step reads what it gives. */
+    JarEntries.Unpacked step(JarEntries.Unpacked jar, String name, List<Map<String, Object>> results) throws IOException {
+        return verifier.fitting(jar, name, results);
+    }
+
+    /** The jar the last step of a port gives (step), the only one a Fabric jar is handed back from. */
+    byte[] port(JarEntries.Unpacked ported, List<Map<String, Object>> results, Map<String, Set<String>> originals) throws IOException {
+        byte[] out = ported.zip(between ? Deflater.NO_COMPRESSION : Deflater.DEFAULT_COMPRESSION);
+        boolean fabric = loader.equals("fabric");
+        if (fabric && compareVersions(b.version, UNOBFUSCATED) < 0 && !results.isEmpty()) {
             // Fabric runs the jar in intermediary: a method whose name the hand-back cannot give is never called.
             @SuppressWarnings("unchecked") List<Object> unlinked = (List<Object>) results.get(results.size() - 1).get("unlinked");
             ModNames.Back back = loaderNames.handBack();
@@ -844,7 +931,7 @@ public final class JarPort {
                 return handed;
             }
         }
-        if (last && fabric && runtimeNames && compareVersions(b.version, UNOBFUSCATED) < 0) {
+        if (fabric && runtimeNames && compareVersions(b.version, UNOBFUSCATED) < 0) {
             out = loaderNames.fabricOut().jar(out, originals);
         }
         return out;
@@ -854,9 +941,10 @@ public final class JarPort {
     static final String UNOBFUSCATED = "26.1";
 
     boolean runtimeNames; // hand a Fabric jar back in the names Fabric runs, not Mojang's
-    // A step before the last of a port: its jar is only read back by the next step, so it is written without compressing
-    // (compressing every step's jars was a quarter of a long port), and only the last step's jar is the port. Nested jars
-    // stay compressed: a later step may keep one as it is (a module the newer platform provides), bytes and all.
+    // A step before the last of a port: only the next step reads its jar, so JarPort's steps hand it on as its files
+    // (JarEntries.Unpacked) and a jar zipped from it is not compressed (compressing every step's jars was a quarter of a
+    // long port); only the last step's jar is the port. Nested jars stay compressed: a later step may keep one as it is
+    // (a module the newer platform provides), bytes and all.
     boolean between;
 
     static final Pattern MOJANG_NAMED = Pattern.compile("net/minecraft/(?!class_\\d)[a-z]");
@@ -866,8 +954,13 @@ public final class JarPort {
      * applies an access transformer to the game for every mod, so a nested helper may rely on its parent's.
      */
     byte[] port(byte[] jar, String name, List<Map<String, Object>> results, Set<String> grants) throws IOException {
-        Map<String, Long> times = new HashMap<>();
-        Map<String, byte[]> entries = JarEntries.entries(jar, name, times);
+        return port(JarEntries.Unpacked.of(jar, name), name, results, grants).zip(between && grants == null ? Deflater.NO_COMPRESSION : Deflater.DEFAULT_COMPRESSION);
+    }
+
+    /** The port of a jar as its files (JarEntries.Unpacked), which it leaves as they are. */
+    JarEntries.Unpacked port(JarEntries.Unpacked jar, String name, List<Map<String, Object>> results, Set<String> grants) throws IOException {
+        Map<String, Long> times = new HashMap<>(jar.times());
+        Map<String, byte[]> entries = new LinkedHashMap<>(jar.files());
         String renamed = null;
         if (loader.equals("neoforge")) {
             String wanted = modMetadata.metadataFile(), other = wanted.equals(ModMetadata.NEW_TOML) ? ModMetadata.OLD_TOML : ModMetadata.NEW_TOML;
@@ -1054,76 +1147,64 @@ public final class JarPort {
                 mod.unlinked.add("stand-in types not carried: the jar's metadata cannot be read (" + unreadable.getMessage() + ")");
             }
         }
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        try (ZipOutputStream out = new ZipOutputStream(buffer)) {
-            if (between && outermost) {
-                out.setLevel(Deflater.NO_COMPRESSION);
+        Map<String, byte[]> written = new LinkedHashMap<>();
+        for (var e : entries.entrySet()) {
+            String n = e.getKey();
+            byte[] data = e.getValue();
+            if (n.matches("META-INF/[^/]+\\.(SF|RSA|DSA|EC)")) {
+                continue;
             }
-            Set<String> folders = new HashSet<>();
-            for (var e : entries.entrySet()) {
-                String n = e.getKey();
-                byte[] data = e.getValue();
-                if (n.matches("META-INF/[^/]+\\.(SF|RSA|DSA|EC)")) {
+            if (n.equals("META-INF/MANIFEST.MF")) {
+                data = JarEntries.unsigned(data);
+            } else if (n.equals(ModMetadata.NEW_TOML) || n.equals(ModMetadata.OLD_TOML)) {
+                data = modMetadata.metadata(mod, new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
+            } else if (n.equals("fabric.mod.json")) {
+                data = OlderJava.runsOn(modMetadata.fabricMetadata(data, widener, platformNested), mod.lowered);
+            } else if (n.equals("pack.mcmeta")) {
+                data = modMetadata.packMetadata(mod, data);
+            } else if (n.equals(widener)) {
+                String text = accessFiles.accessWidener(mod, new String(data, StandardCharsets.UTF_8));
+                if (!mod.grants.isEmpty()) {
+                    text += (text.endsWith("\n") ? "" : "\n") + "# Opened by mmt port: closed in " + to + ", used by this mod\n" + accessFiles.widenerLines(mod.grants);
+                    mod.change("members opened through the mod's access widener");
+                }
+                data = text.getBytes(StandardCharsets.UTF_8);
+            } else if (nested.contains(n) || n.startsWith("META-INF/jarjar/") && n.endsWith(".jar")) {
+                String nestedId = platformItself ? modMetadata.platformModule(data) : platformNested.get(n);
+                if (platformItself && nestedId != null) {
+                    mod.skipped.add(n + ": the platform's own module, in the platform itself: the release's own build runs instead");
+                } else if (nestedId != null) {
+                    // The platform's own module (a Fabric API module a mod nests) is the old release's build of it. Fabric
+                    // Loader runs the newest copy of a mod id, which on a port back is this one, made for the newer game
+                    // (Mod Menu's fabric-screen-api-v1 from 1.20.1 failed its mixins in a 1.19.4 client). Left out, the
+                    // mod depends on the id instead (fabricMetadata), which the release's own platform provides.
+                    mod.skipped.add(n + ": the platform's own module, left out: the release's own " + nestedId + " runs instead");
                     continue;
+                } else {
+                    data = portedNested.get(n);
                 }
-                if (n.equals("META-INF/MANIFEST.MF")) {
-                    data = JarEntries.unsigned(data);
-                } else if (n.equals(ModMetadata.NEW_TOML) || n.equals(ModMetadata.OLD_TOML)) {
-                    data = modMetadata.metadata(mod, new String(data, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
-                } else if (n.equals("fabric.mod.json")) {
-                    data = OlderJava.runsOn(modMetadata.fabricMetadata(data, widener, platformNested), mod.lowered);
-                } else if (n.equals("pack.mcmeta")) {
-                    data = modMetadata.packMetadata(mod, data);
-                } else if (n.equals(widener)) {
-                    String text = accessFiles.accessWidener(mod, new String(data, StandardCharsets.UTF_8));
-                    if (!mod.grants.isEmpty()) {
-                        text += (text.endsWith("\n") ? "" : "\n") + "# Opened by mmt port: closed in " + to + ", used by this mod\n" + accessFiles.widenerLines(mod.grants);
-                        mod.change("members opened through the mod's access widener");
-                    }
-                    data = text.getBytes(StandardCharsets.UTF_8);
-                } else if (nested.contains(n) || n.startsWith("META-INF/jarjar/") && n.endsWith(".jar")) {
-                    String nestedId = platformItself ? modMetadata.platformModule(data) : platformNested.get(n);
-                    if (platformItself && nestedId != null) {
-                        mod.skipped.add(n + ": the platform's own module, in the platform itself: the release's own build runs instead");
-                    } else if (nestedId != null) {
-                        // The platform's own module (a Fabric API module a mod nests) is the old release's build of it. Fabric
-                        // Loader runs the newest copy of a mod id, which on a port back is this one, made for the newer game
-                        // (Mod Menu's fabric-screen-api-v1 from 1.20.1 failed its mixins in a 1.19.4 client). Left out, the
-                        // mod depends on the id instead (fabricMetadata), which the release's own platform provides.
-                        mod.skipped.add(n + ": the platform's own module, left out: the release's own " + nestedId + " runs instead");
-                        continue;
-                    } else {
-                        data = portedNested.get(n);
-                    }
-                } else if (rewritten.containsKey(n)) {
-                    data = rewritten.get(n);
-                } else if (atFiles.contains(n)) {
-                    String text = accessFiles.accessTransformer(mod, new String(data, StandardCharsets.UTF_8));
-                    if (fmj == null && n.equals(atFiles.get(0)) && !mod.grants.isEmpty()) {
-                        text += (text.isEmpty() || text.endsWith("\n") ? "" : "\n") + "# Opened by mmt port: closed in " + to + ", used by this mod\n" + String.join("\n", mod.grants) + "\n";
-                        mod.change("members opened through the mod's access transformer");
-                    }
-                    data = text.getBytes(StandardCharsets.UTF_8);
+            } else if (rewritten.containsKey(n)) {
+                data = rewritten.get(n);
+            } else if (atFiles.contains(n)) {
+                String text = accessFiles.accessTransformer(mod, new String(data, StandardCharsets.UTF_8));
+                if (fmj == null && n.equals(atFiles.get(0)) && !mod.grants.isEmpty()) {
+                    text += (text.isEmpty() || text.endsWith("\n") ? "" : "\n") + "# Opened by mmt port: closed in " + to + ", used by this mod\n" + String.join("\n", mod.grants) + "\n";
+                    mod.change("members opened through the mod's access transformer");
                 }
-                if (mod.lowered > 0 && n.endsWith(".json") && !n.equals("fabric.mod.json")) {
-                    data = OlderJava.mixinLevel(data, mod.lowered);
-                }
-                JarEntries.folders(out, folders, n, times);
-                ZipEntry entry = new ZipEntry(n);
-                entry.setTime(times.getOrDefault(n, 0L));
-                out.putNextEntry(entry);
-                out.write(data);
-                out.closeEntry();
+                data = text.getBytes(StandardCharsets.UTF_8);
             }
-            if (typesPath != null) {
-                // Written after the loop: the types are on the new release already, so this step does not port them again.
-                JarEntries.folders(out, folders, typesPath, times);
-                ZipEntry entry = new ZipEntry(typesPath);
-                entry.setTime(0L);
-                out.putNextEntry(entry);
-                out.write(standIn.typesJar());
-                out.closeEntry();
+            if (mod.lowered > 0 && n.endsWith(".json") && !n.equals("fabric.mod.json")) {
+                data = OlderJava.mixinLevel(data, mod.lowered);
             }
+            written.put(n, data);
+        }
+        if (typesPath != null) {
+            // Written after the loop: the types are on the new release already, so this step does not port them again.
+            if (written.containsKey(typesPath)) {
+                throw new ZipException("duplicate entry: " + typesPath);
+            }
+            written.put(typesPath, standIn.typesJar());
+            times.put(typesPath, 0L);
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("jar", name);
@@ -1136,7 +1217,11 @@ public final class JarPort {
             result.put("data", new ArrayList<>(mod.data));
         }
         results.add(result);
-        return buffer.toByteArray();
+        if (outermost) {
+            // Read only while its jar is ported: held after, it is a jar's classes more than the worker's next jar needs.
+            tree = new Carried(Map.of());
+        }
+        return JarEntries.Unpacked.written(written, times);
     }
 
     /** The data pass (DataIds) on a jar's own entries; whether it judged the ids against the release ported to. */

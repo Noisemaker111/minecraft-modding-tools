@@ -10,6 +10,7 @@
     python bench/exposure.py fetch --loader neoforge|fabric --version 1.21.1 [--repin]
     python bench/exposure.py pin [--loader neoforge|fabric] [--version 1.21.1] [--repin]
     python bench/exposure.py load --loader neoforge --from 1.21.1 --to 1.21.2 [--mods SLUG,...] [--save] [--out FILE]
+    python bench/exposure.py start-check --loader neoforge --from 1.21.1 --to 1.21.2 [--mods SLUG,...] [--against LOAD.json] [--out FILE]
     python bench/exposure.py load-plan neoforge:1.21.1:1.21.2,fabric:1.21.1
     python bench/exposure.py steps [--from 1.14.4] [--to 26.3]
 
@@ -54,6 +55,12 @@ client: the title screen, a world, the inventory and every creative tab), since 
 failed start drops the mod its log names and starts again. It reports each mod's server and client verdicts side by
 side, and any mod that loaded on the server and failed in the client.
 
+start-check is the answer with no game: the same ported jars, in the same pack load would start, go through mmt
+start-check (the loader's own launch in one cold JVM a side, ended where the game would open its world or window), and
+each mod ends failed (with the loader's, Mixin's or the game's own reason), a clash (its mixins apply without the other
+mods and not beside them), passed (with the checks that ran: never "loaded") or left out. load runs it first and starts only what it passed. --against prints how its verdicts agree with
+a saved game proof's (a load receipt): the mods the game loaded and it failed, and the ones the game failed and it passed.
+
 jars also runs the JVM's verifier (the JDK's copy of HotSpot's) over every ported class against the new release, as the
 game would when it loads the class: a value of a type the instruction using it does not accept, or a method declared
 twice, is a VerifyError or ClassFormatError in game though every reference links, and the mod does not link. A class
@@ -91,7 +98,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import port_tools  # noqa: E402
-from portboard import board, cachekeys, gameload, gamereleases, gamesteps, mainrecord, modrinth, portcheck, settings  # noqa: E402
+from portboard import board, cachekeys, gameload, gamereleases, gamesteps, mainrecord, modrinth, portcheck, settings, startcheck  # noqa: E402
 
 
 def tree_at(ref):
@@ -136,19 +143,22 @@ def main():
     f.add_argument("--loader", required=True, choices=sorted(settings.FIRST))
     f.add_argument("--version", required=True)
     f.add_argument("--repin", action="store_true", help="list the most-downloaded mods again instead of the pinned ones")
-    for name in ("jars", "load"):
+    for name in ("jars", "load", "start-check"):
         j = sub.add_parser(name)
         j.add_argument("--loader", required=True, choices=sorted(settings.FIRST))
         j.add_argument("--from", dest="frm", required=True)
         j.add_argument("--to", required=True, help="the release to port to" + (" (jars: several, comma-separated, ported in one go)" if name == "jars" else ""))
-        j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
+        if name != "start-check":
+            j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
         j.add_argument("--out", type=Path, help="write the summary to this file (a folder that is there, or jars with several --to: LOADER-FROM-TO.json each in it)")
         if name == "jars":
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")
             j.add_argument("--type", dest="kind", help="port only the mods the last whole run held back with this type of break (or part of its text)")
             j.add_argument("--mods", help="port only these mods (Modrinth slugs, comma-separated)")
-        if name == "load":
+        if name in ("load", "start-check"):
             j.add_argument("--mods", help="only these mods (Modrinth slugs, comma-separated), with the libraries they need")
+        if name == "start-check":
+            j.add_argument("--against", type=Path, help="a game proof of the same update (a load receipt): print how the verdicts agree")
     cp = sub.add_parser("check-plan", help="what a pull request's port check runs, as JSON {jobs, why} (port-check.yml's matrix)")
     cp.add_argument("--changed", type=Path, required=True, help="a file listing the files the pull request changed, one a line")
     cp.add_argument("--body", type=Path, help="a file with the pull request's description")
@@ -220,6 +230,10 @@ def main():
         print(json.dumps([f"{lo}:{x}:{','.join(tos)}" for lo in loaders for _, x, tos in board.plan(lo, only)]))
     elif a.command == "load":
         gameload.load(a.loader, a.frm, a.to, a.save, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out)
+    elif a.command == "start-check":
+        summary = gameload.load(a.loader, a.frm, a.to, False, [m.strip() for m in a.mods.split(",") if m.strip()] if a.mods else None, a.out, game=False)
+        if a.against:
+            print("\n".join(startcheck.agreement_lines(startcheck.agreement_of(json.loads(a.against.read_text(encoding="utf-8")), summary))))
     elif a.command == "load-plan":
         print(json.dumps(gameload.load_plan(a.updates, [m.strip() for m in a.mods.split(",") if m.strip()])))
     elif a.command == "all":

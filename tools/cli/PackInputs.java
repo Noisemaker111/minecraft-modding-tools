@@ -223,12 +223,18 @@ final class PackInputs {
                 Json.map("name", "fetch", "seconds", (System.nanoTime() - start) / 1e9, "files", mods.size(), "downloaded", downloaded[0], "notMods", others)
             );
             List<Path> layers = new ArrayList<>();
-            for (String layer : List.of("overrides", "server-overrides")) if (Files.isDirectory(directory.resolve(layer))) {
+            // A jar of a side's own folder is that side's, whatever its metadata says; the folder every side gets comes first.
+            List<PackCheck.Mod> ofOneSide = new ArrayList<>();
+            for (String layer : List.of("overrides", "server-overrides", "client-overrides")) if (Files.isDirectory(directory.resolve(layer))) {
                 layers.add(directory.resolve(layer));
-                mods.addAll(PackCheck.local(directory.resolve(layer).resolve("mods")));
+                for (PackCheck.Mod mod : PackCheck.local(directory.resolve(layer).resolve("mods"))) {
+                    if (layer.equals("overrides")) mods.add(mod);
+                    else ofOneSide.add(new PackCheck.Mod(mod.file(), mod.jar(), layer.substring(0, layer.indexOf('-')), layer));
+                }
             }
-            if (layers.isEmpty()) layers.add(directory.resolve("overrides"));
-            mods = check.modrinthSides(mods);
+            if (layers.isEmpty() || !layers.get(0).endsWith("overrides")) layers.add(0, directory.resolve("overrides"));
+            mods = new ArrayList<>(check.modrinthSides(mods));
+            mods.addAll(ofOneSide);
             String[] loader = loader(check, loaderId, loaderVersion);
             String[] chosen = overridden(check, minecraft, loader[0], loader[1]);
             return new PackCheck.Pack(
@@ -418,7 +424,10 @@ final class PackInputs {
         }
     }
 
-    /** Any folder with mods/: the loader is read from the jars when they all agree, the game version from --minecraft or the jars' own ranges. */
+    /**
+     * Any folder with mods/, or a folder of jars itself: the loader is read from the jars when they all agree, the game
+     * version from --minecraft or the jars' own ranges.
+     */
     static final class ModsFolder implements Input {
 
         public String id() {
@@ -426,15 +435,25 @@ final class PackInputs {
         }
 
         public String describe() {
-            return "any folder with mods/ (the loader and game version come from --loader/--minecraft or from the jars)";
+            return "any folder with mods/, or with the jars themselves (the loader and game version come from --loader/--minecraft or from the jars)";
         }
 
-        public boolean accepts(Path directory) {
-            return Files.isDirectory(directory.resolve("mods"));
+        public boolean accepts(Path directory) throws IOException {
+            return Files.isDirectory(mods(directory)) && (Files.isDirectory(directory.resolve("mods")) || !PackCheck.local(directory).isEmpty());
+        }
+
+        /** Where a folder's jars are: its mods/, or the folder itself when it has none and holds jars. */
+        static Path mods(Path directory) {
+            Path inside = directory.resolve("mods");
+            try {
+                return Files.isDirectory(inside) || PackCheck.local(directory).isEmpty() ? inside : directory;
+            } catch (IOException unread) {
+                return inside;
+            }
         }
 
         public PackCheck.Pack read(PackCheck check, Path input, Path directory) throws Exception {
-            List<PackCheck.Mod> mods = PackCheck.local(directory.resolve("mods"));
+            List<PackCheck.Mod> mods = PackCheck.local(mods(directory));
             String[] chosen = overridden(check, "", "", "");
             Map<String, Object> evidence = new LinkedHashMap<>();
             if (chosen[1].isEmpty()) chosen[1] = inferLoader(check, mods, evidence);

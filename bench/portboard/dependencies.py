@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -174,9 +175,15 @@ def version_info(version_id):
 
 
 def required_projects(version_id):
-    """The Modrinth projects a version lists as required: what its author says players must install with it."""
-    return [d["project_id"] for d in version_info(version_id).get("dependencies") or []
-            if d.get("dependency_type") == "required" and d.get("project_id")]
+    """The Modrinth projects a version lists as required: what its author says players must install with it. A version
+    its author has since taken down (Modrinth answers 404 for it) lists nothing: its jar is still the pinned one."""
+    try:
+        info = version_info(version_id)
+    except urllib.error.HTTPError as answer:
+        if answer.code != 404:
+            raise
+        return []
+    return [d["project_id"] for d in info.get("dependencies") or [] if d.get("dependency_type") == "required" and d.get("project_id")]
 
 
 def library(project, loader, version):

@@ -69,6 +69,7 @@ Every feature in the app is backed by the `mmt` command line (in `mmt-portable.z
 mmt port --jar my-mod-1.21.1.jar --to 1.21.2          # port a compiled .jar (Fabric or NeoForge)
 mmt port --root my-mod --from 1.21.5 --to 1.21.6 --fix # port a source folder (undo with --undo)
 mmt convert --root my-mod --to neoforge                # switch Fabric <-> NeoForge (source)
+mmt start-check --pack mods-folder --minecraft 1.21.2 --loader fabric  # will these jars start? no world or window opened
 mmt pack-check --pack my-pack.mrpack --fix             # check and repair a modpack
 mmt ui-check --root my-mod                             # test a mod in a hidden, muted client
 mmt perf                                               # which mod and feature is slow in a running game
