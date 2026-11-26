@@ -30,8 +30,11 @@ public final class StartCheckTest {
             System.out.println(count + " start-check checks passed: the agent ends a start before its server thread works and before its window, "
                 + "a failed start is not a pass, and each failure is traced to the jar it names");
         } finally {
+            // A file a failed start still holds open is left behind: clearing up must not hide why the test failed.
             try (var paths = Files.walk(scratch)) {
                 for (Path p : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+            } catch (java.io.IOException held) {
+                System.out.println("scratch left in place: " + held);
             }
         }
     }
@@ -574,6 +577,27 @@ public final class StartCheckTest {
         "    }",
         "}");
 
+    /** A program that takes the wall launchers' turn (their named mutex, args[0]) and hands it on when a line is read. */
+    static final String HOLD = String.join("\n",
+        "import java.lang.foreign.*;",
+        "import java.lang.invoke.MethodHandle;",
+        "import java.nio.charset.StandardCharsets;",
+        "public class Hold {",
+        "    static MethodHandle call(String name, FunctionDescriptor shape) {",
+        "        return Linker.nativeLinker().downcallHandle(SymbolLookup.libraryLookup(\"kernel32\", Arena.global()).find(name).orElseThrow(), shape);",
+        "    }",
+        "    public static void main(String[] args) throws Throwable {",
+        "        AddressLayout P = ValueLayout.ADDRESS;",
+        "        ValueLayout.OfInt I = ValueLayout.JAVA_INT;",
+        "        MemorySegment turn = (MemorySegment) call(\"CreateMutexW\", FunctionDescriptor.of(P, P, I, P)).invoke(MemorySegment.NULL, 0, Arena.global().allocateFrom(args[0], StandardCharsets.UTF_16LE));",
+        "        int taken = (int) call(\"WaitForSingleObject\", FunctionDescriptor.of(I, P, I)).invoke(turn, -1);",
+        "        System.out.println(\"held \" + taken);",
+        "        System.out.flush();",
+        "        System.in.read();",
+        "        call(\"ReleaseMutex\", FunctionDescriptor.of(I, P)).invoke(turn);",
+        "    }",
+        "}");
+
     /** A program that makes a window and says which desktop it is on, by Windows' own calls. */
     static final String WINDOW = String.join("\n",
         "import java.lang.foreign.*;",
@@ -658,10 +682,13 @@ public final class StartCheckTest {
             }
         }
         // The two sides of a check start at the same instant. Windows refused both of two commands set up in one
-        // container at once with none running in it yet (4 of 30 pairs, measured), so the launchers take turns.
+        // container at once with none running in it yet (4 of 30 pairs, measured), so the launchers take turns: two
+        // made at one instant both run, and (below) a launch waits while another holds the turn.
         String runtime = Path.of(System.getProperty("java.home"), "bin", Runtimes.WINDOWS ? "java.exe" : "java").toString();
         PackCheck.Pack empty = new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), List.of(scratch), scratch, false, "x");
-        for (int pair = 1; pair <= 16; pair++) {
+        long slowest = 0;
+        for (int pair = 1; pair <= 2; pair++) {
+            long began = System.nanoTime();
             java.util.concurrent.CyclicBarrier together = new java.util.concurrent.CyclicBarrier(2);
             List<java.util.concurrent.Future<StartCheck.Launch>> sides = new ArrayList<>();
             java.util.concurrent.ExecutorService beside = java.util.concurrent.Executors.newFixedThreadPool(2);
@@ -677,11 +704,43 @@ public final class StartCheckTest {
             } finally {
                 beside.shutdownNow();
             }
+            slowest = Math.max(slowest, (System.nanoTime() - began) / 1_000_000);
         }
         if (Runtimes.WINDOWS) {
+            Runtimes.Jdk modern = StartWall.modern(harness);
+            Path holder = Files.createDirectories(scratch.resolve("hold"));
+            Path holdSource = Files.writeString(holder.resolve("Hold.java"), HOLD);
+            Process builtHold = new ProcessBuilder(modern.home().resolve("bin/javac.exe").toString(), "-nowarn", "-d", holder.toString(), holdSource.toString()).redirectErrorStream(true).start();
+            String compiled = new String(builtHold.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            expect(builtHold.waitFor() == 0, "the turn holder compiles: " + compiled);
+            Process hold = new ProcessBuilder(modern.java().toString(), "--enable-native-access=ALL-UNNAMED", "-cp", holder.toString(), "Hold", "Local\\mmt-wall-" + StartWall.CONTAINER)
+                .redirectErrorStream(true).start();
+            java.util.concurrent.ExecutorService waiting = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                java.io.BufferedReader holding = new java.io.BufferedReader(new java.io.InputStreamReader(hold.getInputStream(), StandardCharsets.UTF_8));
+                String held = holding.readLine();
+                expect("held 0".equals(held), "the test holds the launchers' turn: " + held);
+                Path instance = StartCheck.instance(owner, empty, List.of(), "held-server", "server", null, null);
+                var blocked = waiting.submit(() -> StartCheck.launch(owner, List.of(runtime, "-version"), instance, "held"));
+                // Five times the slowest pair above: a launch that took no turn has long ended by then.
+                boolean ended;
+                try {
+                    blocked.get(5 * slowest, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    ended = true;
+                } catch (java.util.concurrent.TimeoutException waits) {
+                    ended = false;
+                }
+                expect(!ended, "a launch waits while another launcher holds the turn (" + 5 * slowest + " ms)");
+                hold.getOutputStream().write('\n');
+                hold.getOutputStream().flush();
+                expect(blocked.get().log().contains("version"), "and runs once the turn is handed on: " + blocked.get().log());
+                expect(hold.waitFor(30, java.util.concurrent.TimeUnit.SECONDS), "the turn holder ends");
+            } finally {
+                waiting.shutdownNow();
+                hold.destroyForcibly();
+            }
             // A window any code makes behind the wall is on the wall's own desktop, which no screen shows.
             Path instance = StartCheck.instance(owner, new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), List.of(scratch), scratch, false, "x"), List.of(), "window-1", "client", null, null);
-            Runtimes.Jdk modern = StartWall.modern(harness);
             Path source = Files.writeString(Files.createDirectories(scratch.resolve("window")).resolve("Window.java"), WINDOW);
             Process built = new ProcessBuilder(modern.home().resolve("bin/javac.exe").toString(), "-nowarn", "-d", instance.toString(), source.toString()).redirectErrorStream(true).start();
             String said = new String(built.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
