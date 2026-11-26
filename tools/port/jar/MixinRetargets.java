@@ -40,9 +40,14 @@ final class MixinRetargets {
     /**
      * A handler re-declared with its target's new parameters (desc, new names) and the original body moved to name$mmt:
      * each of the first captured parameters of the original comes from the new parameter from[i], or is a default
-     * where the body never reads it.
+     * where the body never reads it. With selfFrom at 0 or more the body is static and takes, in place of its own
+     * object, the new parameter selfFrom converted by selfVia, of type selfType (StoodInMixins).
      */
-    record Adapter(String desc, int[] from, int captured, String[][] via) {}
+    record Adapter(String desc, int[] from, int captured, String[][] via, int selfFrom, String[] selfVia, String selfType) {
+        Adapter(String desc, int[] from, int captured, String[][] via) {
+            this(desc, from, captured, via, -1, null, null);
+        }
+    }
 
     /** In a Bridge's from: the old parameter is read from the object itself (this, then via's steps), not a new parameter. */
     static final int THIS = -3;

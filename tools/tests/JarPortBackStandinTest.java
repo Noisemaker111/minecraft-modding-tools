@@ -32,6 +32,9 @@ final class JarPortBackStandinTest {
             public Pose pose() {
                 return pose;
             }
+            private void secret(int c) {
+                pose.log.append("secret" + c + ";");
+            }
             public void fill(int color) {
                 pose.log.append("fill" + color + ";");
             }
@@ -104,6 +107,9 @@ final class JarPortBackStandinTest {
             public Pose pose() {
                 return pose;
             }
+            private void secret(int c) {
+                pose.log.append("secret" + c + ";");
+            }
             public void fill(int color) {
                 Comp.fill(pose, color);
             }
@@ -153,29 +159,7 @@ final class JarPortBackStandinTest {
             JarPortTest.expect(folders.getResource("n6/") != null, "the ported jar lists the mod's package as a folder");
         }
 
-        Map<String, byte[]> classes = new HashMap<>(older);
-        for (var e : ported.entrySet()) {
-            if (e.getKey().endsWith(".class")) {
-                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
-            }
-            if (e.getKey().endsWith(".jar")) {
-                for (var inner : JarPortTest.entries(e.getValue()).entrySet()) {
-                    if (inner.getKey().endsWith(".class")) {
-                        classes.put(inner.getKey().substring(0, inner.getKey().length() - 6), inner.getValue());
-                    }
-                }
-            }
-        }
-        ClassLoader loader = new ClassLoader(null) {
-            @Override
-            protected Class<?> findClass(String name) throws ClassNotFoundException {
-                byte[] bytes = classes.get(name.replace('.', '/'));
-                if (bytes == null) {
-                    return Class.forName(name, false, ClassLoader.getPlatformClassLoader());
-                }
-                return defineClass(name, bytes, 0, bytes.length);
-            }
-        };
+        ClassLoader loader = load(older, ported);
         String trace;
         try {
             Class<?> mine = loader.loadClass("n6.Mine"), widget = loader.loadClass("net.minecraft.g5.Widget"), pose = loader.loadClass("net.minecraft.g5.Pose");
@@ -252,9 +236,320 @@ final class JarPortBackStandinTest {
         port.port(JarPortTest.jar(withAccessor), "gfx-accessor.jar", accessorRuns);
         List<String> accessorUnlinked = Json.array(accessorRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(accessorUnlinked.isEmpty(), "an accessor into a class only a stand-in has reads the stand-in's own field, and links: " + accessorUnlinked);
+        // A mod calls a member the newer game keeps private, as JEI calls 1.20's GuiGraphics.renderTooltipInternal through
+        // its access widener: moved to the stand-in, the call is one the JVM allows.
+        org.objectweb.asm.ClassWriter cw = JarPortRetypeTest.writer("n6/Caller", "java/lang/Object");
+        org.objectweb.asm.MethodVisitor call = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_STATIC, "call", "(Lnet/minecraft/g5/Pose;)V", null, null);
+        call.visitCode();
+        call.visitTypeInsn(org.objectweb.asm.Opcodes.NEW, "net/minecraft/g5/Gfx");
+        call.visitInsn(org.objectweb.asm.Opcodes.DUP);
+        call.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        call.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESPECIAL, "net/minecraft/g5/Gfx", "<init>", "(Lnet/minecraft/g5/Pose;)V", false);
+        call.visitIntInsn(org.objectweb.asm.Opcodes.BIPUSH, 7);
+        call.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "net/minecraft/g5/Gfx", "secret", "(I)V", false);
+        call.visitInsn(org.objectweb.asm.Opcodes.RETURN);
+        call.visitMaxs(0, 0);
+        call.visitEnd();
+        cw.visitEnd();
+        Map<String, byte[]> withCaller = new HashMap<>(files);
+        withCaller.put("n6/Caller.class", cw.toByteArray());
+        Map<String, byte[]> callerPorted = JarPortTest.entries(port.port(JarPortTest.jar(withCaller), "gfx-caller.jar", new ArrayList<>()));
+        String called;
+        try {
+            ClassLoader callerLoader = load(older, callerPorted);
+            Class<?> pose = callerLoader.loadClass("net.minecraft.g5.Pose");
+            Object p = pose.getConstructor().newInstance();
+            callerLoader.loadClass("n6.Caller").getMethod("call", pose).invoke(null, p);
+            called = String.valueOf(pose.getField("log").get(p));
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            called = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+        JarPortTest.expect(called.equals("secret7;"), "a call into a member the newer game keeps private runs on the stand-in: " + called);
         valueClass(scratch);
         reference(scratch);
+        movedMixin(scratch);
+        storedLocal(scratch);
         JarPortTest.finish("JarPortBackStandinTest");
+    }
+
+    /** The older game's classes and a ported jar's, nested jars too, in one loader with nothing else on it. */
+    static ClassLoader load(Map<String, byte[]> older, Map<String, byte[]> ported) throws java.io.IOException {
+        Map<String, byte[]> classes = new HashMap<>(older);
+        for (var e : ported.entrySet()) {
+            if (e.getKey().endsWith(".class")) {
+                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+            }
+            if (e.getKey().endsWith(".jar")) {
+                for (var inner : JarPortTest.entries(e.getValue()).entrySet()) {
+                    if (inner.getKey().endsWith(".class")) {
+                        classes.put(inner.getKey().substring(0, inner.getKey().length() - 6), inner.getValue());
+                    }
+                }
+            }
+        }
+        return new ClassLoader(null) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                byte[] bytes = classes.get(name.replace('.', '/'));
+                if (bytes == null) {
+                    return Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                }
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        };
+    }
+
+    /**
+     * A mixin into the class only a stand-in has, on a method whose work the older game does in a method of its own (1.20's
+     * GuiGraphics.renderTooltip(Font, ItemStack, ...), which 1.19.4 draws in Screen.renderTooltip(PoseStack, ItemStack, ...)
+     * with the screen's font): the stand-in's answer hands the work to that method, and the mixin moves there. Its handler
+     * takes that method's parameters; the font is the screen's own, and where the handler used its object as the stood-in
+     * class it gets one made from the Pose. A handler that uses its object otherwise (a shadow of the stood-in class) stays
+     * reported, and so does a mixin on a method whose answer does its work in a static helper (Comp.fill).
+     */
+    static void movedMixin(Path scratch) throws Exception {
+        Path dir = Files.createDirectories(scratch.resolve("moved-mixin"));
+        String font = "package net.minecraft.g5;\npublic class Font {\n}\n";
+        Map<String, byte[]> newer = JarPortBackTest.compile(dir.resolve("newer"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Font.java", font,
+            "net/minecraft/g5/Gfx.java", NEWER_GFX.replace("public void fill(int color) {", "public void tip(Font f, int x) {\n        pose.log.append(\"tip\" + x + \";\");\n    }\n    public void fill(int color) {"),
+            "net/minecraft/g5/Screen.java", "package net.minecraft.g5;\npublic class Screen {\n    public Font font;\n}\n"), null);
+        Map<String, byte[]> older = JarPortBackTest.compile(dir.resolve("older"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Font.java", font,
+            "net/minecraft/g5/Comp.java", OLDER_COMP,
+            "net/minecraft/g5/Screen.java", "package net.minecraft.g5;\npublic class Screen {\n    public Font font;\n    public void tip(Pose pose, int x) {\n        pose.log.append(\"tip\" + x + \";\");\n    }\n}\n"), null);
+        Map<String, byte[]> mod = JarPortBackTest.compile(dir.resolve("mod"), Map.of("n9/Hook.java", """
+            package n9;
+            import net.minecraft.g5.Font;
+            import net.minecraft.g5.Gfx;
+            public class Hook {
+                public static void seen(Gfx g, Font f, int x) {
+                    g.fill(x);
+                }
+            }
+            """), dir.resolve("newer/classes"));
+        GameDiff.Snap a = GameDiff.read("2.0", new ArrayList<>(newer.values()), null, null);
+        GameDiff.Snap b = GameDiff.read("1.0", new ArrayList<>(older.values()), null, null);
+        b.loaderVersion = "1.0.1";
+        Path map = dir.resolve("route.json");
+        Files.writeString(map, "{\"classes\": [{\"from\": \"net.minecraft.g5.Gfx\", \"to\": \"net.minecraft.g5.Comp\"}]}");
+        JarPort port = new JarPort(a, b, map);
+        port.oldCode = new GameCode(newer::get, null, newer);
+        port.newCode = new GameCode(older::get, null, older);
+        Path standin = dir.resolve("standins/2.0-1.0/net/minecraft/g5/Gfx.java");
+        Files.createDirectories(standin.getParent());
+        Files.writeString(standin, STANDIN.replace("import net.minecraft.g5.Pose;", "import net.minecraft.g5.Pose;\nimport net.minecraft.g5.Font;\nimport net.minecraft.g5.Screen;").replace("public void fill(int color) {", """
+            public void tip(Font font, int x) {
+                    Tips tips = new Tips();
+                    tips.font = font;
+                    tips.tip(pose, x);
+                }
+                static final class Tips extends Screen {
+                }
+                public void fill(int color) {"""));
+        port.standIn.standins(List.of(dir.resolve("standins/2.0-1.0")));
+        Map<String, byte[]> files = new HashMap<>();
+        mod.forEach((name, bytes) -> files.put(name + ".class", bytes));
+        files.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n9\"\n".getBytes(StandardCharsets.UTF_8));
+        files.put("n9/TipMixin.class", tipMixin("n9/TipMixin", "tip(Lnet/minecraft/g5/Font;I)V", "(Lnet/minecraft/g5/Font;I" + JarPortPointTest.CI + ")V", false));
+        files.put("n9/ShadowMixin.class", tipMixin("n9/ShadowMixin", "tip(Lnet/minecraft/g5/Font;I)V", "(Lnet/minecraft/g5/Font;I" + JarPortPointTest.CI + ")V", true));
+        files.put("n9/FillMixin.class", tipMixin("n9/FillMixin", "fill(I)V", "(I" + JarPortPointTest.CI + ")V", false));
+        files.put("n9.mixins.json", "{\"package\": \"n9\", \"mixins\": [\"TipMixin\", \"ShadowMixin\", \"FillMixin\"]}".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> runs = new ArrayList<>();
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "moved-mixin.jar", runs));
+        List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).sorted().toList();
+        JarPortTest.expect(unlinked.equals(List.of("mixin target class gone: net.minecraft.g5.Gfx, only a stand-in has it (in n9.FillMixin)",
+                "mixin target class gone: net.minecraft.g5.Gfx, only a stand-in has it (in n9.ShadowMixin)")),
+            "the mixin whose handler uses its object only as the stood-in class moves; one with a shadow, and one on a method a static helper does, stay reported: " + unlinked);
+        Map<String, String> strings = JarPortFixesTest.strings(ported.get("n9/TipMixin.class")), code = code(ported.get("n9/TipMixin.class"));
+        String handler = code.getOrDefault("on(Lnet/minecraft/g5/Pose;I" + JarPortPointTest.CI + ")V", "");
+        boolean body = code.keySet().stream().anyMatch(k -> k.matches("on\\$mmt\\(Lmmt/standin/[\\w/]*net/minecraft/g5/Gfx;Lnet/minecraft/g5/Font;I.*") && code.get(k).startsWith("static"));
+        JarPortTest.expect(strings.getOrDefault("on(Lnet/minecraft/g5/Pose;I" + JarPortPointTest.CI + ")V", "").contains("Lnet/minecraft/g5/Screen;tip(Lnet/minecraft/g5/Pose;I)V")
+                && code.get("@Mixin").equals("net/minecraft/g5/Screen") && handler.matches(".*Gfx\\.from .*net/minecraft/g5/Screen\\.font .*") && body,
+            "it targets Screen.tip(Pose, int): the handler takes the Pose, hands its body a Gfx made from it and the screen's font: " + code);
+    }
+
+    /**
+     * A @ModifyVariable at a local's STORE in a method whose drawing object the update changed (1.20's Gui.renderPlayerHealth
+     * (GuiGraphics), 1.19.4's (PoseStack)): it follows where the older method stores the same locals in the same order,
+     * whatever its drawing calls now are (paint), and stays reported where it stores another local first (shade).
+     */
+    static void storedLocal(Path scratch) throws Exception {
+        Path dir = Files.createDirectories(scratch.resolve("stored-local"));
+        Map<String, byte[]> newer = JarPortBackTest.compile(dir.resolve("newer"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Gfx.java", NEWER_GFX,
+            "net/minecraft/g5/Panel.java", """
+                package net.minecraft.g5;
+                public class Panel {
+                    public void paint(Gfx g, int x) {
+                        int w = x * 2;
+                        int h = w + 1;
+                        g.fill(h);
+                    }
+                    public void shade(Gfx g, int x) {
+                        int w = x * 2;
+                        int h = w + 1;
+                        g.fill(h);
+                    }
+                }
+                """), null);
+        Map<String, byte[]> older = JarPortBackTest.compile(dir.resolve("older"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Comp.java", OLDER_COMP,
+            "net/minecraft/g5/Panel.java", """
+                package net.minecraft.g5;
+                public class Panel {
+                    public void paint(Pose p, int x) {
+                        int w = x * 2;
+                        int h = w + 1;
+                        Comp.fill(p, h);
+                    }
+                    public void shade(Pose p, int x) {
+                        int extra = 1;
+                        int w = x * 2;
+                        int h = w + extra;
+                        Comp.fill(p, h);
+                    }
+                }
+                """), null);
+        GameDiff.Snap a = GameDiff.read("2.0", new ArrayList<>(newer.values()), null, null);
+        GameDiff.Snap b = GameDiff.read("1.0", new ArrayList<>(older.values()), null, null);
+        b.loaderVersion = "1.0.1";
+        Path map = dir.resolve("route.json");
+        Files.writeString(map, """
+            {"classes": [{"from": "net.minecraft.g5.Gfx", "to": "net.minecraft.g5.Comp"}],
+             "signatures": [{"owner": "net.minecraft.g5.Panel", "from": "paint", "desc": "(Lnet/minecraft/g5/Gfx;I)V", "to": "paint", "newDesc": "(Lnet/minecraft/g5/Pose;I)V"},
+                            {"owner": "net.minecraft.g5.Panel", "from": "shade", "desc": "(Lnet/minecraft/g5/Gfx;I)V", "to": "shade", "newDesc": "(Lnet/minecraft/g5/Pose;I)V"}]}
+            """);
+        JarPort port = new JarPort(a, b, map);
+        port.oldCode = new GameCode(newer::get, null, newer);
+        port.newCode = new GameCode(older::get, null, older);
+        Map<String, byte[]> files = new HashMap<>();
+        files.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n10\"\n".getBytes(StandardCharsets.UTF_8));
+        for (String method : List.of("paint", "shade")) {
+            String name = "n10/" + Character.toUpperCase(method.charAt(0)) + method.substring(1) + "Mixin";
+            org.objectweb.asm.ClassWriter w = JarPortRetypeTest.writer(name, "java/lang/Object");
+            org.objectweb.asm.AnnotationVisitor target = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+            org.objectweb.asm.AnnotationVisitor value = target.visitArray("value");
+            value.visit(null, org.objectweb.asm.Type.getObjectType("net/minecraft/g5/Panel"));
+            value.visitEnd();
+            target.visitEnd();
+            org.objectweb.asm.MethodVisitor m = w.visitMethod(org.objectweb.asm.Opcodes.ACC_PRIVATE, "taller", "(I)I", null, null);
+            org.objectweb.asm.AnnotationVisitor variable = m.visitAnnotation("Lorg/spongepowered/asm/mixin/injection/ModifyVariable;", false);
+            org.objectweb.asm.AnnotationVisitor methods = variable.visitArray("method");
+            methods.visit(null, method + "(Lnet/minecraft/g5/Gfx;I)V");
+            methods.visitEnd();
+            org.objectweb.asm.AnnotationVisitor at = variable.visitAnnotation("at", MixinRetargets.AT);
+            at.visit("value", "STORE");
+            at.visitEnd();
+            variable.visit("ordinal", 1);
+            variable.visitEnd();
+            m.visitCode();
+            m.visitVarInsn(org.objectweb.asm.Opcodes.ILOAD, 1);
+            m.visitInsn(org.objectweb.asm.Opcodes.ICONST_1);
+            m.visitInsn(org.objectweb.asm.Opcodes.IADD);
+            m.visitInsn(org.objectweb.asm.Opcodes.IRETURN);
+            m.visitMaxs(2, 2);
+            m.visitEnd();
+            w.visitEnd();
+            files.put(name + ".class", w.toByteArray());
+        }
+        files.put("n10.mixins.json", "{\"package\": \"n10\", \"mixins\": [\"PaintMixin\", \"ShadeMixin\"]}".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> runs = new ArrayList<>();
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "stored-local.jar", runs));
+        List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        String paint = JarPortFixesTest.strings(ported.get("n10/PaintMixin.class")).getOrDefault("taller(I)I", "");
+        JarPortTest.expect(unlinked.equals(List.of("mixin target changed signature: net.minecraft.g5.Panel.shade(Lnet/minecraft/g5/Gfx;I)V"))
+                && paint.contains("paint(Lnet/minecraft/g5/Pose;I)V"),
+            "a STORE @ModifyVariable follows where the older method stores its locals alike, and stays reported where it stores another first: " + unlinked + " " + paint);
+    }
+
+    /** Each method's code as the members it names in order ("static" first for a static one), and "@Mixin" the target class. */
+    static Map<String, String> code(byte[] bytes) {
+        Map<String, String> out = new TreeMap<>();
+        out.put("@Mixin", "");
+        new org.objectweb.asm.ClassReader(bytes).accept(new org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+            @Override
+            public org.objectweb.asm.AnnotationVisitor visitAnnotation(String d, boolean visible) {
+                return !d.equals("Lorg/spongepowered/asm/mixin/Mixin;") ? null : new org.objectweb.asm.AnnotationVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                    @Override
+                    public org.objectweb.asm.AnnotationVisitor visitArray(String n) {
+                        return new org.objectweb.asm.AnnotationVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                            @Override
+                            public void visit(String x, Object v) {
+                                out.put("@Mixin", v instanceof org.objectweb.asm.Type t ? t.getInternalName() : String.valueOf(v));
+                            }
+                        };
+                    }
+                };
+            }
+
+            @Override
+            public org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
+                StringBuilder sb = new StringBuilder((access & org.objectweb.asm.Opcodes.ACC_STATIC) != 0 ? "static " : "");
+                return new org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                    @Override
+                    public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                        sb.append(owner).append('.').append(n).append(' ');
+                    }
+
+                    @Override
+                    public void visitFieldInsn(int op, String owner, String n, String d) {
+                        sb.append(owner).append('.').append(n).append(' ');
+                    }
+
+                    @Override
+                    public void visitEnd() {
+                        out.put(name + desc, sb.toString());
+                    }
+                };
+            }
+        }, 0);
+        return out;
+    }
+
+    /**
+     * A mixin into Gfx with an @Inject at HEAD of method, whose handler hands its object as a Gfx, the font and the int to
+     * n9.Hook.seen; with shadow, it first calls a method of its own object (as a @Shadow of the stood-in class would).
+     */
+    static byte[] tipMixin(String name, String method, String desc, boolean shadow) {
+        org.objectweb.asm.ClassWriter w = JarPortRetypeTest.writer(name, "java/lang/Object");
+        org.objectweb.asm.AnnotationVisitor target = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        org.objectweb.asm.AnnotationVisitor value = target.visitArray("value");
+        value.visit(null, org.objectweb.asm.Type.getObjectType("net/minecraft/g5/Gfx"));
+        value.visitEnd();
+        target.visitEnd();
+        org.objectweb.asm.MethodVisitor m = w.visitMethod(org.objectweb.asm.Opcodes.ACC_PRIVATE, "on", desc, null, null);
+        org.objectweb.asm.AnnotationVisitor inject = m.visitAnnotation(JarPortFixesTest.INJECT, false);
+        org.objectweb.asm.AnnotationVisitor methods = inject.visitArray("method");
+        methods.visit(null, method);
+        methods.visitEnd();
+        org.objectweb.asm.AnnotationVisitor ats = inject.visitArray("at");
+        org.objectweb.asm.AnnotationVisitor head = ats.visitAnnotation(null, MixinRetargets.AT);
+        head.visit("value", "HEAD");
+        head.visitEnd();
+        ats.visitEnd();
+        inject.visitEnd();
+        m.visitCode();
+        if (shadow) {
+            m.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+            m.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, name, "pose", "()Lnet/minecraft/g5/Pose;", false);
+            m.visitInsn(org.objectweb.asm.Opcodes.POP);
+        }
+        boolean font = desc.startsWith("(Lnet/minecraft/g5/Font;");
+        m.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        m.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "net/minecraft/g5/Gfx");
+        if (font) {
+            m.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 1);
+        } else {
+            m.visitInsn(org.objectweb.asm.Opcodes.ACONST_NULL);
+        }
+        m.visitVarInsn(org.objectweb.asm.Opcodes.ILOAD, font ? 2 : 1);
+        m.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESTATIC, "n9/Hook", "seen", "(Lnet/minecraft/g5/Gfx;Lnet/minecraft/g5/Font;I)V", false);
+        m.visitInsn(org.objectweb.asm.Opcodes.RETURN);
+        m.visitMaxs(3, 4);
+        m.visitEnd();
+        if (shadow) {
+            org.objectweb.asm.MethodVisitor s = w.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_ABSTRACT, "pose", "()Lnet/minecraft/g5/Pose;", null, null);
+            s.visitEnd();
+        }
+        w.visitEnd();
+        return w.toByteArray();
     }
 
     /**
