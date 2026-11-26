@@ -1063,6 +1063,15 @@ with tempfile.TemporaryDirectory() as tmp:
         except SystemExit as failed:
             caught = "names none of the classes" in str(failed)
         check(caught, "a class-load log that names none of the porter's classes stops the run, not keeps answers under no code")
+        # Answers a run before this fix kept under no class at all (an empty list) are asked again, not read.
+        loads["from"] = classes
+        (classes / "Exposure.class").write_text("named", encoding="utf-8")
+        loaded = next(portboard.settings.HOME.rglob("loaded.txt"))
+        loaded.write_text("", encoding="utf-8")
+        legacy = loaded.with_name(portboard.porter.classes_key(portboard.porter.compile_tools(), []) + ".json")
+        legacy.write_text(json.dumps({"answered": ["mixin injection point gone: a.B.c()V in a.D.e()V"], "said": {"mixin injection point gone: a.B.c()V in a.D.e()V": {"game": "dropped"}}}), encoding="utf-8")
+        runs = len(asked_exposure)
+        check(said() == ["named"] and len(asked_exposure) == runs + 1, f"answers kept under an empty class list are asked again: {said()}, {len(asked_exposure) - runs} runs")
     finally:
         (portboard.settings.HOME, portboard.settings.VERIFY, portboard.porter.exposure, portboard.porter.compile_tools, portboard.porter.route_maps, portboard.porter.stops,
          portboard.cachekeys.platform_key, portboard.porter.java_version) = saved

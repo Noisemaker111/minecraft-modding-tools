@@ -299,7 +299,9 @@ def game_says(loader, frm, to, report):
     folder = cachekeys.keyed_at("game", cachekeys.content_key(*(cachekeys.platform_key(loader, r) for r in routes(loader, frm, to)), java_version())) / f"{loader}-{frm}-{to}"
     folder.mkdir(parents=True, exist_ok=True)
     loaded = folder / "loaded.txt"
-    known = folder / (classes_key(classes, loaded.read_text(encoding="utf-8").split()) + ".json") if loaded.is_file() else None
+    # An empty list is what the Windows misreading of the class-load log wrote: answers kept under no code, asked again.
+    names = loaded.read_text(encoding="utf-8").split() if loaded.is_file() else []
+    known = folder / (classes_key(classes, names) + ".json") if names else None
     said = json.loads(known.read_text(encoding="utf-8")) if known and known.is_file() else {"answered": [], "said": {}}
     if settings.VERIFY or not set(asked) <= set(said["answered"]):
         out = report.with_name("game.json")
