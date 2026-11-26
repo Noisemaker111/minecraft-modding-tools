@@ -650,7 +650,8 @@ rows = [
     {"mod": "e.jar", "unlinked": []},
 ]
 said = {"call: g.C.only()V": {"game": "replaced"}, "call: g.W.gone()V": {"game": "redesigned"}}
-order = portboard.board.nearest(rows, {"e.jar": ["data id gone: minecraft:thing x (in data/e.json)"]}, said)
+rows = [{**r, "game": said} for r in rows]
+order = portboard.board.nearest(rows, {"e.jar": ["data id gone: minecraft:thing x (in data/e.json)"]})
 check([t["mod"] for t in order] == ["c.jar", "e.jar", "w.jar", "b.jar", "a.jar"],
       f"mods come in the order they finish, the ones the game answers first among equals: {[t['mod'] for t in order]}")
 check(order[0]["alsoFrees"] == ["d.jar"] and [t["modsDone"] for t in order] == [2, 3, 4, 5, 6] and [t["fixes"] for t in order] == [1, 2, 3, 5, 7],
@@ -658,7 +659,7 @@ check(order[0]["alsoFrees"] == ["d.jar"] and [t["modsDone"] for t in order] == [
 check([m["member"] for m in order[4]["members"]] == ["call: g.A.x()V", "call: g.A.y()V"] and order[0]["members"][0]["game"] == "replaced",
       "a turn lists only what earlier turns left, each reference once with what the game did about it")
 longer = {"mod": "b.jar", "unlinked": [f"b.jar: call: g.B.m{i}()V" for i in range(5)]}
-check([t["mod"] for t in portboard.board.nearest([rows[0], longer], None, {})] == ["a.jar", "b.jar"], "a mod with more left than another comes after it")
+check([t["mod"] for t in portboard.board.nearest([rows[0], longer], None)] == ["a.jar", "b.jar"], "a mod with more left than another comes after it")
 
 # The same list by type of break: a way to handle a type finishes every mod only that type holds back.
 kinds = [
@@ -669,16 +670,41 @@ kinds = [
     {"mod": "e.jar", "unlinked": []},
 ]
 verdicts = {"call: g.X.one()V": {"game": "linked"}, "call: g.Y.two()V": {"game": "linked"}, "call: g.Z.three()V": {"game": "linked"}, "field: g.F.gone": {"game": "split"}}
-table = portboard.board.by_type(kinds, None, verdicts)
+table = portboard.board.by_type([{**r, "game": verdicts} for r in kinds], None)
 check([(t["type"], t["finishes"], t["mods"], t["references"]) for t in table] == [("call, game: linked", 2, 3, 3), ("field, game: split", 1, 2, 1)],
       f"a type counts the mods it alone holds back, the mods that have it and its references: {table}")
 check(table[0]["examples"][0] == "call: g.X.one()V", "a type's first example is its most-used reference")
 verdicts["call: g.Y.two()V"] = {"game": "redesigned"}
-check(next(t for t in portboard.board.by_type(kinds, None, verdicts) if t["type"] == "call, game: linked")["finishes"] == 1,
+check(next(t for t in portboard.board.by_type([{**r, "game": verdicts} for r in kinds], None) if t["type"] == "call, game: linked")["finishes"] == 1,
       "a mod held by two types is finished by neither alone")
 verdicts["call: g.Z.three()V"] = {"game": "linked", "part": "library"}
-check([t["type"] for t in portboard.board.by_type(kinds, None, verdicts) if t["examples"] == ["call: g.Z.three()V"]] == ["call (library), game: linked"],
+check([t["type"] for t in portboard.board.by_type([{**r, "game": verdicts} for r in kinds], None) if t["examples"] == ["call: g.Z.three()V"]] == ["call (library), game: linked"],
       "a reference into a library the release ships is its own type, apart from the game's")
+
+# Each mod's types come from its own port's answers. A port of several steps answers a reference at the step it broke,
+# so two mods can name one injection point and break on it at different steps, one where the call is there too few
+# times for its ordinal and one where it is gone: folded into one answer per reference, one mod took the other's type,
+# and a --type run or a Port check named for a type skipped it.
+with tempfile.TemporaryDirectory() as tmp:
+    point = "mixin injection point gone: g.C.call()V in g.D.run()V"
+    report = Path(tmp) / "report.json"
+    report.write_text(json.dumps({"linked": 0, "unlinkedByMods": [{"member": point, "mods": 2}], "mods": [
+        {"mod": "a.jar", "unlinked": [f"a.jar: {point} (in a.Mixin)"], "game": {point: {"game": "fewer", "part": "game"}}, "ported": "1"},
+        {"mod": "b.jar", "unlinked": [f"b.jar: {point}"], "game": {point: {"game": "dropped", "part": "game"}}, "ported": "2"}]}), encoding="utf-8")
+    saved = portboard.porter.port_key, portboard.mainrecord.main_row
+    portboard.porter.port_key, portboard.mainrecord.main_row = (lambda *a, **k: "key"), (lambda *a, **k: None)
+    try:
+        summary = portboard.board.summarize("fabric", "1.0", "1.2", [], {}, json.loads(report.read_text(encoding="utf-8")), report, Path(tmp) / "work",
+                                            None, False, None, True, portboard.board.timer({}), {})
+    finally:
+        portboard.porter.port_key, portboard.mainrecord.main_row = saved
+    fewer, dropped = "mixin injection point gone, game: fewer", "mixin injection point gone, game: dropped"
+    check(summary["heldBy"] == {"a.jar": [fewer], "b.jar": [dropped]} and [summary["verdicts"][m]["types"] for m in ("a.jar", "b.jar")] == [[fewer], [dropped]],
+          f"each mod is held by the type its own port answered, not another mod's: {summary['heldBy']}")
+    check(sorted((t["type"], t["mods"]) for t in summary["types"]) == [(dropped, 1), (fewer, 1)], f"and counted under it: {summary['types']}")
+    check([(t["mod"], [m["game"] for m in t["members"]]) for t in summary["nearest"]] == [("a.jar", ["fewer"])],
+          f"the to-do list shows a reference with the answer of the mod that adds it: {summary['nearest']}")
+    check(summary["held"]["b.jar"] == {dropped: [point]}, f"and each mod's references by its own types: {summary['held']}")
 
 # Jumps: the ports people ask for, from each family's most-used release to the next family's and to the newest.
 with tempfile.TemporaryDirectory() as tmp:

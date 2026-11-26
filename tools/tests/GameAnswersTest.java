@@ -62,6 +62,25 @@ final class GameAnswersTest {
         JarPortTest.expect(!said.containsKey(other) && !said.containsKey(own), "a line naming nothing of the old release gets no answer: " + said.keySet());
         JarPortTest.expect(Json.object(before.get("game")).isEmpty(), "a step before's answers are left as they are: " + before.get("game"));
 
+        // The report the scoreboard reads: each mod's row carries its steps' answers, under the references it ranks.
+        Path jar = scratch.resolve("m.jar"), report = scratch.resolve("report-answers.json");
+        for (Map<String, Object> r : List.of(before, result)) {
+            r.put("changed", Map.of());
+            r.put("silent", List.of());
+        }
+        JarPort.Trunk state = new JarPort.Trunk();
+        state.ported.put(jar, "0123abcd");
+        state.nested.put(jar, List.of(before, result));
+        JarPort.write(new JarPort.Target(List.of("1.0", "3.0"), List.of(map.toString()), scratch, report.toString()), List.of(jar), state, "neoforge",
+            j -> scratch.resolve("m-ported.jar"));
+        Map<String, Object> written = Json.read(report);
+        Map<String, Object> row = Json.object(Json.array(written.get("mods")).get(0));
+        Map<String, Object> rowSaid = Json.object(row.get("game"));
+        List<String> ranked = Json.array(written.get("unlinkedByMods")).stream().map(o -> Json.text(Json.object(o), "member", "")).toList();
+        JarPortTest.expect(rowSaid.equals(said), "the mod's row holds the answers its steps gave: " + rowSaid.keySet());
+        JarPortTest.expect(ranked.stream().filter(rowSaid::containsKey).count() == said.size(),
+            "under the very references the report ranks, so the scoreboard finds each one: " + ranked);
+
         if (JarPortTest.failures > 0) {
             System.exit(1);
         }

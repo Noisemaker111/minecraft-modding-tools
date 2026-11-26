@@ -13,17 +13,24 @@ from pathlib import Path
 from portboard import anyversion, cachekeys, gamereleases, javalevels, mainrecord, modrinth, porter, settings
 
 
-def nearest(rows, data, said):
+def answers(row):
+    """What the game's own code did about each reference a mod still needs, as its own port answered it (JarPort.answer):
+    a port of several steps answers a reference at the step it broke, so two mods can get different answers for one."""
+    return row.get("game", {})
+
+
+def nearest(rows, data):
     """The to-do list: the mods in the order they finish when every turn completes the one with the fewest references
     left, each with the references that turn adds and what the game's own code did about them. The references the
     most mods share are the wrong order: a mod held back has 15 at the median, so on NeoForge 1.21.1 -> 1.21.2 the
     100 most shared freed 2 mods, and the first 33 in this order freed 21."""
     todo = {m["mod"]: porter.left(m, data) for m in rows}
     todo = {mod: refs for mod, refs in todo.items() if refs}
+    said = {m["mod"]: answers(m) for m in rows}
     fixed, done, order = set(), 0, []
     while todo:
         # Fewest left first; among those, the ones the game's own code answers.
-        mod = min(todo, key=lambda k: (len(todo[k] - fixed), sum(1 for ref in todo[k] - fixed if said.get(ref, {}).get("game") not in ANSWERED), k))
+        mod = min(todo, key=lambda k: (len(todo[k] - fixed), sum(1 for ref in todo[k] - fixed if said[k].get(ref, {}).get("game") not in ANSWERED), k))
         new = sorted(todo[mod] - fixed)
         fixed.update(new)
         freed = sorted(k for k, refs in todo.items() if refs <= fixed)
@@ -31,7 +38,7 @@ def nearest(rows, data, said):
             del todo[k]
         done += len(freed)
         order.append({"mod": mod, "alsoFrees": [k for k in freed if k != mod], "fixes": len(fixed), "modsDone": done,
-                      "members": [{"member": ref, **said.get(ref, {})} for ref in new]})
+                      "members": [{"member": ref, **said[mod].get(ref, {})} for ref in new]})
     return order
 
 
@@ -47,22 +54,22 @@ def kind_of(member, said):
     return f"{member.split(': ', 1)[0]}{' (library)' if row.get('part') == 'library' else ''}, game: {row.get('game') or 'not read'}"
 
 
-def held_by(row, data, said):
+def held_by(row, data):
     by = {}
     for ref in sorted(porter.left(row, data)):
-        by.setdefault(kind_of(ref, said), []).append(ref)
+        by.setdefault(kind_of(ref, answers(row)), []).append(ref)
     return by
 
 
-def by_type(rows, data, said):
+def by_type(rows, data):
     """Each type of break with the mods that have one, the mods it alone holds back (handled, they are done), and
     its most-used references as examples; the types that finish the most mods first."""
     types = {}
     for m in rows:
         refs = porter.left(m, data)
-        kinds = {kind_of(ref, said) for ref in refs}
+        kinds = {kind_of(ref, answers(m)) for ref in refs}
         for ref in refs:
-            t = types.setdefault(kind_of(ref, said), {"mods": set(), "finishes": 0, "uses": {}})
+            t = types.setdefault(kind_of(ref, answers(m)), {"mods": set(), "finishes": 0, "uses": {}})
             t["mods"].add(m["mod"])
             t["uses"][ref] = t["uses"].get(ref, 0) + 1
         if len(kinds) == 1:
@@ -221,6 +228,7 @@ def summarize(loader, frm, to, mods, unread, report, written, work, partial, sav
     if mods:
         report = javalevels.without_platform_copies(report, javalevels.platform_ids(loader, to), {m.name: m for m in mods})
         written.write_text(json.dumps(report, indent=1), encoding="utf-8")
+    # One answer per reference, for the references the most mods share; each mod's own types read its own answers.
     said = timed("game", porter.game_says, written) if report["unlinkedByMods"] else {}
     rows = [m for m in report["mods"] if "error" not in m]
     # What the port left of each mod's data, judged when both releases' registry reports could be made.
@@ -245,10 +253,10 @@ def summarize(loader, frm, to, mods, unread, report, written, work, partial, sav
         # Where this run's time went: download, names, map and reports ran side by side; port and game after them.
         "seconds": seconds,
     }
-    order = nearest(rows, data, said)
-    summary["types"] = by_type(rows, data, said)
+    order = nearest(rows, data)
+    summary["types"] = by_type(rows, data)
     # Every blocked mod's references by type, so a way to handle several types can be counted by the mods it frees.
-    summary["held"] = {m["mod"]: held_by(m, data, said) for m in rows if porter.left(m, data)}
+    summary["held"] = {m["mod"]: held_by(m, data) for m in rows if porter.left(m, data)}
     # Why each blocked mod's mixin handlers did not follow their targets (JarPort.why), for designing the mixin types.
     summary["refused"] = {m["mod"]: m["refused"] for m in rows if porter.left(m, data) and m.get("refused")}
     summary["nearest"] = [{**turn, "members": turn["members"][:25]} for turn in order[:40]]
@@ -258,8 +266,8 @@ def summarize(loader, frm, to, mods, unread, report, written, work, partial, sav
     summary["links"] = sorted(m["mod"] for m in rows if not porter.left(m, data))
     # What holds back each mod that does not link, by type: kept in main's table, so a check of one type of break ports
     # only the mods main says it holds (check_plan).
-    summary["heldBy"] = {m["mod"]: sorted({kind_of(r, said) for r in porter.left(m, data)}) for m in rows if porter.left(m, data)}
-    summary["verdicts"] = {m["mod"]: {"left": sorted(porter.left(m, data)), "types": sorted({kind_of(r, said) for r in porter.left(m, data)}), "ported": m.get("ported")}
+    summary["heldBy"] = {m["mod"]: sorted({kind_of(r, answers(m)) for r in porter.left(m, data)}) for m in rows if porter.left(m, data)}
+    summary["verdicts"] = {m["mod"]: {"left": sorted(porter.left(m, data)), "types": sorted({kind_of(r, answers(m)) for r in porter.left(m, data)}), "ported": m.get("ported")}
                            for m in rows}
     summary["porter"] = porter.port_key(loader, frm, to) + " " + cachekeys.content_key(*(p.read_bytes() for p in mods))
     if partial:
