@@ -704,7 +704,7 @@ def checked_only(loader, frm, to, scope, asked, checked, links, libraries, left,
                "verdicts": {n: said["server"].get(n, "undecided: " + str(sides.get("server", {}).get("undecided") or checked.get("error"))) for n in asked},
                "client": {"mods": len(asked), "verdicts": {n: said["client"].get(n, "undecided: " + str(sides.get("client", {}).get("undecided") or checked.get("error"))) for n in asked}},
                "libraries": libraries, "notStarted": left, "checks": {side: sides[side]["checks"] for side in sides},
-               "runs": {side: sides[side]["runs"] for side in sides}, "receipt": checked.get("receipt"),
+               "runs": {side: sides[side]["runs"] for side in sides}, "wall": checked.get("wall"), "receipt": checked.get("receipt"),
                "time": {"port": ported_in, "startCheck": checked["seconds"], "all": took}}
     print(f"{'mod':<60} {'server':<12} client")
     for name in asked:
@@ -718,6 +718,8 @@ def checked_only(loader, frm, to, scope, asked, checked, links, libraries, left,
               f"of {', '.join(f'{r['seconds']:.0f} s' for r in runs)}")
         for name, what in sides[side]["checks"].items():
             print(f"  {name}: {what}")
+    if checked.get("wall"):
+        print(f"network and windows: {checked['wall']['says']}")
     print(f"time: port {ported_in:.0f} s; start-check {checked['seconds']:.0f} s; no game was started (receipt {checked.get('receipt')})")
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)

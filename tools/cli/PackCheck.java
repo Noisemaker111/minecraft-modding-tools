@@ -60,6 +60,20 @@ final class PackCheck {
             return layers.get(0);
         }
 
+        /** The folder the pack's own jars are in: mods/ of its first layer, or that folder itself when it is a folder of jars. */
+        Path modsFolder() {
+            return PackInputs.ModsFolder.mods(overrides());
+        }
+
+        /**
+         * The folders laid over a run of one side (server or client), in order: the ones every side gets, then that
+         * side's own. Only an .mrpack has more than one: overrides, server-overrides and client-overrides.
+         */
+        List<Path> layers(String side) {
+            String other = (side.equals("client") ? "server" : "client") + "-overrides";
+            return layers.size() == 1 ? layers : layers.stream().filter(layer -> !layer.getFileName().toString().equals(other)).toList();
+        }
+
         Pack withLoaderVersion(String version) {
             return new Pack(name, this.version, minecraft, loader, version, mods, layers, input, instance, format);
         }
@@ -325,7 +339,7 @@ final class PackCheck {
                 "pack-check cannot start " + loader.id() + "'s client yet: knowledge/pack-loaders.json gives it no installClient arguments."));
             return Json.map("opened", false, "skipped", "no client installer for " + loader.id());
         }
-        List<Mod> mods = pack.mods().stream().filter(m -> !"server".equals(m.side())).toList();
+        List<Mod> mods = forSide(pack.mods(), "client").stream().filter(m -> !"server".equals(m.side())).toList();
         Map<String, Object> client = PackClient.check(this, pack, context, install, mods);
         if (client.get("toolError") != null) {
             findings.add(Json.map("kind", "client-start", "severity", "problem", "summary", String.valueOf(client.get("toolError"))));
@@ -431,6 +445,20 @@ final class PackCheck {
     record ServerMods(Set<String> kept, Map<String, String> leftOut, Map<String, String> required) {}
 
     /**
+     * The pack's jars as one side holds them when two have one file name: that side's own folder replaces the one
+     * every side gets (an .mrpack's server-overrides/mods over overrides/mods), and the other side's replaces nothing.
+     */
+    static List<Mod> forSide(List<Mod> mods, String side) {
+        String other = side.equals("client") ? "server" : "client";
+        Map<String, Mod> byFile = new LinkedHashMap<>();
+        for (Mod mod : mods) {
+            Mod held = byFile.get(mod.file());
+            if (held == null || held.side().equals(other) || mod.side().equals(side)) byFile.put(mod.file(), mod);
+        }
+        return new ArrayList<>(byFile.values());
+    }
+
+    /**
      * Which of the pack's jars a server gets. A jar the pack's lists or its own metadata mark client-side is left out,
      * unless a kept mod requires a mod id only it provides: then it is kept, and its loader decides (Fabric and Quilt
      * keep a client-only jar out of the game and treat a dependency on it as met; Forge runs it, and a start that shows
@@ -440,7 +468,7 @@ final class PackCheck {
     static ServerMods serverMods(List<Mod> mods, PackMods.Scan scan, Set<String> shown, Collection<String> removed) {
         Set<String> jars = new LinkedHashSet<>();
         Map<String, Mod> byFile = new HashMap<>();
-        for (Mod mod : mods) if (mod.file().endsWith(".jar") && !removed.contains(mod.file())) {
+        for (Mod mod : forSide(mods, "server")) if (mod.file().endsWith(".jar") && !removed.contains(mod.file())) {
             jars.add(mod.file());
             byFile.put(mod.file(), mod);
         }
@@ -1491,7 +1519,7 @@ final class PackCheck {
             // The pack's own settings, fresh each run, layer by layer; its world, if any, is not a test world.
             for (String folder : List.of("config", "defaultconfigs", "kubejs", "scripts")) {
                 deleteTree(dir.resolve(folder));
-                for (Path layer : pack.layers()) if (Files.isDirectory(layer.resolve(folder))) copyTree(layer.resolve(folder), dir.resolve(folder));
+                for (Path layer : pack.layers("server")) if (Files.isDirectory(layer.resolve(folder))) copyTree(layer.resolve(folder), dir.resolve(folder));
             }
             deleteTree(dir.resolve("world"));
             deleteTree(dir.resolve("crash-reports"));
@@ -1504,7 +1532,7 @@ final class PackCheck {
             Path mods = instance.resolve("mods");
             deleteTree(mods);
             Files.createDirectories(mods);
-            for (Mod mod : pack.mods()) if (chosen.kept().contains(mod.file())) link(mod.jar(), mods.resolve(mod.file()));
+            for (Mod mod : forSide(pack.mods(), "server")) if (chosen.kept().contains(mod.file())) link(mod.jar(), mods.resolve(mod.file()));
             for (Path jar : change.add()) link(jar, mods.resolve(jar.getFileName().toString()));
             link(probe, mods.resolve("zz-mmt-pack-probe.jar"));
             selection = chosen;
@@ -1652,7 +1680,7 @@ final class PackCheck {
         }
         if (pack.instance()) {
             // The user's instance: add and take out the files, and record them so --undo restores exactly those.
-            Path mods = pack.overrides().resolve("mods"), record = pack.input().resolve(".mmt/pack-fixes.json");
+            Path mods = pack.modsFolder(), record = pack.input().resolve(".mmt/pack-fixes.json");
             var old = Files.isRegularFile(record) ? Json.read(record) : Json.map();
             List<Object> added = new ArrayList<>(Json.array(old.getOrDefault("added", List.of())));
             List<Object> removed = new ArrayList<>(Json.array(old.getOrDefault("removed", List.of())));

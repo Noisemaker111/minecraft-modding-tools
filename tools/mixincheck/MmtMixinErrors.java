@@ -15,10 +15,12 @@ import java.util.*;
  */
 public final class MmtMixinErrors implements IMixinErrorHandler {
     @Override public ErrorAction onPrepareError(IMixinConfig config, Throwable th, IMixinInfo mixin, ErrorAction action) {
-        report("prepare", null, config, th, mixin, action); return answer(action);
+        report("prepare", null, config, th, mixin, action);
+        return answer(action);
     }
     @Override public ErrorAction onApplyError(String target, Throwable th, IMixinInfo mixin, ErrorAction action) {
-        report("apply", target, mixin == null ? null : mixin.getConfig(), th, mixin, action); return answer(action);
+        report("apply", target, mixin == null ? null : mixin.getConfig(), th, mixin, action);
+        return answer(action);
     }
     /**
      * mixin-check lists every error of a source checkout's mixins, so it lets Mixin go on past each. start-check answers

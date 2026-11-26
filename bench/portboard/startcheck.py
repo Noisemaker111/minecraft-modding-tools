@@ -9,7 +9,7 @@ from portboard import settings
 
 def run(pack, to, loader, jars=()):
     """One mmt start-check of a pack folder, both sides: {"sides": {side: {"failed": {jar: why}, "leftOut": {jar: why},
-    "passed": [jar], "undecided": why or None, "checks": {name: what ran}, "runs": [...]}}, "seconds", "receipt"}. jars:
+    "passed": [jar], "undecided": why or None, "checks": {name: what ran}, "runs": [...]}}, "wall": {"up", "says"}, "seconds", "receipt"}. jars:
     the jars the answer is asked for (the mods; the libraries and the platform beside them are only there for them).
     "error" instead of "sides" when mmt printed no answer: the tool's fault, and no jar's."""
     mmt = str(settings.ROOT / ("mmt.cmd" if os.name == "nt" else "mmt"))
@@ -24,6 +24,8 @@ def run(pack, to, loader, jars=()):
         out["error"] = str(answer.get("error") or done.stdout[-400:] or done.stderr[-400:])[:600]
     else:
         out["sides"] = sides
+        # Whether the operating system kept the starts off the network and off the screen, in mmt's words.
+        out["wall"] = answer["result"].get("wall")
     return out
 
 
@@ -36,6 +38,8 @@ def verdicts(side):
     out |= {name: "left out: " + why for name, why in side["leftOut"].items()}
     ran = "; ".join(name for name, what in side["checks"].items() if not what.startswith("not checked"))
     out |= {name: f"passed: {ran} (no world or window was opened)" for name in side["passed"]}
+    out |= {name: "undecided: a start that failed named it next to other jars, and no start of the rest got far enough to start it again: " + why
+            for name, why in side.get("unresolved", {}).items()}
     return out
 
 
@@ -64,12 +68,15 @@ def agreement(receipt, said):
     """How start-check's verdicts ({side: {mod: verdict}}) agree with a game proof's (a load receipt), per side, over the mods both judged:
     {"both", "same", "wronglyFailed": {mod: [game verdict, ours]}, "missed": {...}, "other": {...}}. wronglyFailed is a
     mod the game loaded and start-check failed: a bug of the check or a port that changed since. missed is one the game
-    failed and start-check passed: what no start without a world shows."""
+    failed and start-check passed: what no start without a world shows. A jar the proof never started because
+    start-check had decided it (the receipt's startCheck.decided) is no evidence of the game's: it is counted in
+    "notStarted" and compared with nothing."""
     out = {}
     for side, game in (("server", receipt.get("verdicts", {})), ("client", receipt.get("client", {}).get("verdicts", {}))):
         ours = said.get(side, {})
-        row = {"both": 0, "same": 0, "wronglyFailed": {}, "missed": {}, "other": {}}
-        for name in sorted(set(game) & set(ours)):
+        predicted = set(receipt.get("startCheck", {}).get("decided", {}).get(side, {}))
+        row = {"both": 0, "same": 0, "wronglyFailed": {}, "missed": {}, "other": {}, "notStarted": len(predicted & set(game) & set(ours))}
+        for name in sorted((set(game) & set(ours)) - predicted):
             theirs, mine = game[name].split(":")[0], ours[name].split(":")[0]
             if theirs not in SAME:
                 continue
@@ -91,7 +98,8 @@ def agreement_lines(found):
     lines = []
     for side, row in found.items():
         lines.append(f"{side}: {row['same']}/{row['both']} verdicts the same as the game's; the game loaded and start-check failed: {len(row['wronglyFailed'])}; "
-                     f"the game failed and start-check passed: {len(row['missed'])}; other: {len(row['other'])}")
+                     f"the game failed and start-check passed: {len(row['missed'])}; other: {len(row['other'])}"
+                     + (f"; not compared, the proof did not start them (start-check had decided): {row['notStarted']}" if row.get("notStarted") else ""))
         for kind, title in (("wronglyFailed", "game loaded, start-check failed"), ("missed", "game failed, start-check passed"), ("other", "other")):
             for name, (theirs, mine) in row[kind].items():
                 lines += [f"  {title}: {name}", f"    game: {theirs[:300]}", f"    start-check: {mine[:300]}"]

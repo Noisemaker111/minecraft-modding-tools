@@ -43,6 +43,8 @@ final class StartCheck {
     static final String SERVER_STOP = "the game started its server thread";
     static final String CLIENT_STOP = "the game asked for its window";
     static final String MIXINS_STOP = "the mixins were read";
+    /** What the wall's launcher ends with when it could not start its command walled (tools/nogame/MmtWall.java). */
+    static final int WALL_DOWN = 113;
     /** The game's own line for the data packs it read (recipes since 1.14, advancements beside them). */
     static final Pattern DATA_READ = Pattern.compile("Loaded \\d+ (?:recipes|advancements)");
 
@@ -58,6 +60,8 @@ final class StartCheck {
         final Set<String> byMixin = new LinkedHashSet<>();
         /** The failed jars no one named: only near a failure (atFault). Each is started again with the jars that start. */
         final Set<String> unsure = new LinkedHashSet<>();
+        /** Jars a failed start named next to others that no later start could tell from a bystander: no verdict, with why. */
+        final Map<String, String> unresolved = new TreeMap<>();
         final List<String> passed = new ArrayList<>();
         final List<Object> runs = new ArrayList<>();
         final Map<String, String> checks = new LinkedHashMap<>();
@@ -88,18 +92,30 @@ final class StartCheck {
         return asked;
     }
 
+    /** A jar --jars names that the pack does not hold would get no verdict and no word about it: said before anything starts. */
+    static void askedAreThere(PackCheck owner, PackCheck.Pack pack) {
+        Set<String> missing = asked(owner);
+        for (PackCheck.Mod mod : pack.mods()) missing.remove(mod.file());
+        if (!missing.isEmpty()) throw new IllegalArgumentException(
+            "--jars names " + String.join(", ", missing) + ", not in the pack; its jars: " + String.join(", ", pack.mods().stream().map(PackCheck.Mod::file).sorted().toList()));
+    }
+
     static boolean decided(Side side, String jar) {
         return side.failed.containsKey(jar) || side.clash.containsKey(jar) || side.leftOut.containsKey(jar);
     }
 
     static boolean answered(PackCheck owner, Side side) {
         Set<String> asked = asked(owner);
-        return !asked.isEmpty() && asked.stream().allMatch(jar -> side.failed.containsKey(jar) || side.leftOut.containsKey(jar));
+        // A jar failed only for being named next to others is not decided yet: it is started again once the rest starts.
+        return !asked.isEmpty() && asked.stream().allMatch(jar -> side.failed.containsKey(jar) && !side.unsure.contains(jar) || side.leftOut.containsKey(jar));
     }
 
     static Map<String, Object> run(PackCheck owner, PackCheck.Pack pack, PackLoaders.Context context, Path install, Map<String, Object> result) throws Exception {
         String sides = owner.options.get("side", "both");
         if (!List.of("server", "client", "both").contains(sides)) throw new IllegalArgumentException("--side takes server, client or both; got " + sides);
+        askedAreThere(owner, pack);
+        // Asked before anything starts: where the wall is required and cannot be built, nothing is started.
+        StartWall.Wall wall = StartWall.of(owner.harness, owner.cache);
         Path agent = agent(context);
         List<Side> done = new ArrayList<>();
         ExecutorService beside = Executors.newFixedThreadPool(2);
@@ -118,9 +134,17 @@ final class StartCheck {
         } finally {
             beside.shutdownNow();
         }
+        answer(owner, pack, done, result);
+        result.put("wall", Json.map("up", wall.up(), "says", wall.says()));
+        result.put("details", result.get("details") + "\nNetwork and windows: " + wall.says() + ".");
+        return result;
+    }
+
+    /** The answer from what each side found: a verdict per jar and side, the findings, and ok only when nothing failed and nothing was left unchecked. */
+    static Map<String, Object> answer(PackCheck owner, PackCheck.Pack pack, List<Side> done, Map<String, Object> result) {
         Map<String, Object> mods = new TreeMap<>();
         Map<String, Object> bySide = new LinkedHashMap<>();
-        boolean ok = true;
+        boolean ok = complete(owner);
         for (Side side : done) {
             for (PackCheck.Mod mod : pack.mods()) {
                 String verdict = verdict(side, mod.file());
@@ -134,20 +158,29 @@ final class StartCheck {
                 "suspects", List.of(Json.map("jar", entry.getKey(), "mod", PackCheck.mod(owner.scan, entry.getKey()), "why", List.of(entry.getValue())))));
             if (side.undecided != null) owner.findings.add(Json.map("kind", "start-check", "severity", "problem", "summary",
                 "The " + side.name + " start gave no answer for " + (side.runs.isEmpty() ? "any jar" : "the jars still in it") + ": " + side.undecided));
-            ok &= side.failed.isEmpty() && side.clash.isEmpty() && side.undecided == null;
-            bySide.put(side.name, Json.map("failed", side.failed, "clash", side.clash, "leftOut", side.leftOut, "passed", side.passed, "undecided", side.undecided, "tool", side.tool,
+            ok &= side.failed.isEmpty() && side.clash.isEmpty() && side.undecided == null && side.unresolved.isEmpty();
+            bySide.put(side.name, Json.map("failed", side.failed, "clash", side.clash, "leftOut", side.leftOut, "passed", side.passed, "undecided", side.undecided,
+                "unresolved", side.unresolved, "tool", side.tool,
                 "checks", side.checks, "runs", side.runs));
         }
         result.put("sides", bySide);
         result.put("verdicts", mods);
         result.put("findings", owner.findings);
         result.put("ok", ok);
-        result.put("details", text(done, pack));
+        String missing = complete(owner) ? "" : "\nNot the whole pack: " + owner.unavailable.size() + " file(s) it lists cannot be downloaded any more and were not started: "
+            + String.join("; ", owner.unavailable.stream().map(PackCheck.Unavailable::describe).toList());
+        result.put("details", text(done, pack) + missing);
         return result;
+    }
+
+    /** Whether the pack that was checked is the whole pack: a file its list names and its host no longer serves was never started. */
+    static boolean complete(PackCheck owner) {
+        return owner.unavailable.isEmpty();
     }
 
     /** A jar's verdict on a side, in words that say what was and was not run; null for a jar the side never held. */
     static String verdict(Side side, String jar) {
+        if (side.unresolved.containsKey(jar)) return "undecided: a start that failed named it next to other jars, and no start of the rest got far enough to start it again: " + side.unresolved.get(jar);
         if (side.failed.containsKey(jar)) return "failed: " + side.failed.get(jar);
         if (side.clash.containsKey(jar)) return "clash: its mixins apply with only the jars it requires, and not next to the other jars here: " + side.clash.get(jar);
         if (side.leftOut.containsKey(jar)) return "left out: " + side.leftOut.get(jar);
@@ -175,6 +208,8 @@ final class StartCheck {
                 out.append(entry.getValue().lines().findFirst().orElse("")).append('\n');
             }
             for (var entry : side.leftOut.entrySet()) out.append("  left out  ").append(entry.getKey()).append(": ").append(entry.getValue()).append('\n');
+            for (var entry : side.unresolved.entrySet()) out.append("  no answer  ").append(entry.getKey()).append(": named next to other jars by a start that failed, and not started again: ")
+                .append(entry.getValue().lines().findFirst().orElse("")).append('\n');
             if (side.undecided != null) out.append("  no answer: ").append(side.undecided).append('\n');
             for (var check : side.checks.entrySet()) out.append("  ").append(check.getKey()).append(": ").append(check.getValue()).append('\n');
         }
@@ -187,11 +222,12 @@ final class StartCheck {
         Side side = new Side("server");
         Path first = firstStart(owner, context, pack, install, agent, "server");
         Set<String> clientOnly = new LinkedHashSet<>();
+        List<PackCheck.Mod> ours = PackCheck.forSide(pack.mods(), "server");
         Holding holding = () -> {
-            PackCheck.ServerMods chosen = PackCheck.serverMods(pack.mods(), owner.scan, clientOnly, side.failed.keySet());
+            PackCheck.ServerMods chosen = PackCheck.serverMods(ours, owner.scan, clientOnly, side.failed.keySet());
             side.leftOut.clear();
             side.leftOut.putAll(chosen.leftOut());
-            return pack.mods().stream().filter(m -> chosen.kept().contains(m.file())).toList();
+            return ours.stream().filter(m -> chosen.kept().contains(m.file())).toList();
         };
         // A start that failed and named no jar: the loader's own client-only words name a mod a server cannot run, left out as pack-check leaves it.
         Unnamed unnamed = (run, mods) -> {
@@ -205,7 +241,7 @@ final class StartCheck {
         };
         Launch last = rounds(owner, pack, side, first, install, (instance, asked) -> serverCommand(owner, context, pack, install, agent, instance, asked), holding, unnamed);
         boolean reached = started(owner, side, last);
-        if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
+        if (reached) pass(owner, ours, side);
         boolean data = reached && DATA_READ.matcher(last.log()).find();
         side.checks.put("dependencies", dependencies(owner, last));
         side.checks.put("mixins", mixins(last));
@@ -215,6 +251,22 @@ final class StartCheck {
             : reached ? "not checked: this release reads its data packs only once a world is open (its log names none before the server thread)"
             : "not checked: no run reached the game's server thread");
         return side;
+    }
+
+    /**
+     * A side's start reached its end: every jar it held that no start failed passed the checks that ran, but for a jar
+     * the loader loads no mod from. A jar written for another loader, or with no loader metadata at all, was in the
+     * folder and is no part of what started, so it is left out with that said, never passed.
+     */
+    static void pass(PackCheck owner, List<PackCheck.Mod> mods, Side side) {
+        for (PackCheck.Mod mod : mods) {
+            if (decided(side, mod.file())) continue;
+            List<String> written = owner.scan.foreign.get(mod.file());
+            String loader = owner.loader == null ? "this loader" : owner.loader.id();
+            if (written != null) side.leftOut.put(mod.file(), "not loaded: it is written for another loader (it has " + String.join(", ", written) + "), and " + loader + " loads no mod from it");
+            else if (owner.scan.notMods.contains(mod.file())) side.leftOut.put(mod.file(), "not loaded: it has no loader metadata, so " + loader + " loads no mod from it");
+            else side.passed.add(mod.file());
+        }
     }
 
     /**
@@ -303,12 +355,16 @@ final class StartCheck {
      */
     static Launch rounds(PackCheck owner, PackCheck.Pack pack, Side side, Path first, Path install, Starter starter, Holding holding, Unnamed unnamed) throws Exception {
         Launch last = null;
+        boolean emptied = false;
         // Every round that does not end the side takes at least one jar out, so the rounds end.
         for (int round = 1;; round++) {
             List<PackCheck.Mod> mods = holding.mods();
-            if (mods.isEmpty() && round > 1 || answered(owner, side)) break;
+            // With every jar taken out, the loader alone still starts once when a jar waits to be started again beside what starts.
+            boolean nothingLeft = mods.isEmpty() && round > 1 && (emptied || side.unsure.stream().noneMatch(side.failed::containsKey));
+            if (nothingLeft || answered(owner, side)) break;
+            emptied |= mods.isEmpty();
             String name = side.name + "-" + round;
-            Path instance = instance(owner, pack, mods, name, first, install);
+            Path instance = instance(owner, pack, mods, name, side.name, first, install);
             last = launch(owner, starter.command(instance, side.name), instance, name);
             Map<String, String> blamed = judge(owner, side, last, instance, mods, round);
             tidy(instance);
@@ -332,14 +388,17 @@ final class StartCheck {
      * bystander of a failure another jar caused, and it passes. Returns the last start that reached the end (else last).
      */
     static Launch again(PackCheck owner, PackCheck.Pack pack, Side side, Path first, Path install, Starter starter, Holding holding, Launch last) throws Exception {
-        if (!started(owner, side, last)) return last;
+        if (!started(owner, side, last)) {
+            unresolved(side);
+            return last;
+        }
         int run = 0;
         for (String jar : new ArrayList<>(side.unsure)) {
             String why = side.failed.remove(jar);
             if (why == null) continue;
             List<PackCheck.Mod> mods = holding.mods();
             String name = side.name + "-again-" + ++run;
-            Path instance = instance(owner, pack, mods, name, first, install);
+            Path instance = instance(owner, pack, mods, name, side.name, first, install);
             Launch launch = launch(owner, starter.command(instance, side.name), instance, name);
             tidy(instance);
             Set<String> present = new LinkedHashSet<>();
@@ -351,6 +410,17 @@ final class StartCheck {
             else side.failed.put(jar, why);
         }
         return last;
+    }
+
+    /**
+     * With no start of the rest to start them beside, the jars failed only for being near a failure or named next to
+     * others stay without a verdict: failing them would keep a sound jar from ever being started.
+     */
+    static void unresolved(Side side) {
+        for (String jar : side.unsure) {
+            String why = side.failed.remove(jar);
+            if (why != null) side.unresolved.put(jar, why);
+        }
     }
 
     /** Whether a run ended where its side's check ends: the server thread, or the window (the window library, where its one call could not be replaced). */
@@ -476,11 +546,12 @@ final class StartCheck {
         }
         PackClient.libraries(install, pack.minecraft());
         Path first = firstStart(owner, context, pack, install, agent, "client");
-        for (PackCheck.Mod mod : pack.mods()) if ("server".equals(mod.side())) side.leftOut.put(mod.file(), "server-only (" + mod.source() + ")");
-        Holding holding = () -> pack.mods().stream().filter(m -> !"server".equals(m.side()) && !side.failed.containsKey(m.file())).toList();
+        List<PackCheck.Mod> ours = PackCheck.forSide(pack.mods(), "client");
+        for (PackCheck.Mod mod : ours) if ("server".equals(mod.side())) side.leftOut.put(mod.file(), "server-only (" + mod.source() + ")");
+        Holding holding = () -> ours.stream().filter(m -> !"server".equals(m.side()) && !side.failed.containsKey(m.file())).toList();
         Launch last = rounds(owner, pack, side, first, install, (instance, asked) -> clientCommand(owner, context, pack, install, agent, instance, asked), holding, (run, mods) -> false);
         boolean reached = started(owner, side, last);
-        if (reached) for (PackCheck.Mod mod : pack.mods()) if (!decided(side, mod.file())) side.passed.add(mod.file());
+        if (reached) pass(owner, ours, side);
         side.checks.put("dependencies", dependencies(owner, last));
         side.checks.put("mixins", mixins(last));
         boolean window = reached && String.valueOf(last.stop().get("reason")).equals(CLIENT_STOP);
@@ -534,7 +605,10 @@ final class StartCheck {
         List<String> todo = new ArrayList<>(List.of(jar));
         while (!todo.isEmpty()) {
             String next = todo.remove(todo.size() - 1);
-            for (var d : owner.scan.dependencies) {
+            List<PackMods.Dependency> required = new ArrayList<>(owner.scan.dependencies);
+            // What a mod requires on the client only is part of its start there, and of no server's.
+            if (side.name.equals("client")) required.addAll(owner.scan.clientDependencies);
+            for (var d : required) {
                 if (!d.kind().equals("required") || !PackCheck.top(d.owner()).equals(next)) continue;
                 for (PackMods.Provider p : owner.scan.providers.getOrDefault(d.id(), List.of())) if (wanted.add(PackCheck.top(p.jar()))) todo.add(PackCheck.top(p.jar()));
             }
@@ -556,16 +630,27 @@ final class StartCheck {
             List<PackCheck.Mod> mods = side.failed.containsKey(jar) ? withRequired(owner, pack, side, jar) : null;
             if (mods == null || mods.size() == pack.mods().size()) continue;
             String name = side.name + "-alone-" + ++run;
-            Path instance = instance(owner, pack, mods, name, first, install);
+            Path instance = instance(owner, pack, mods, name, side.name, first, install);
             Launch launch = launch(owner, starter.command(instance, side.name + ",mixins"), instance, name);
             tidy(instance);
             Set<String> present = new LinkedHashSet<>();
             for (PackCheck.Mod mod : mods) present.add(mod.file());
-            boolean applied = launch.stop() != null && MIXINS_STOP.equals(launch.stop().get("reason")) && refusedByMixin(owner, launch, present).isEmpty();
+            boolean applied = mixinsApplied(owner, launch, jar, present);
             side.runs.add(Json.map("alone", jar, "jars", mods.size(), "seconds", launch.seconds(), "log", launch.logFile().toString(),
                 "ended", launch.stop() == null ? "by itself" : launch.stop().get("reason"), "mixinsApply", applied));
             if (applied) side.clash.put(jar, side.failed.remove(jar));
         }
+    }
+
+    /**
+     * Whether a start alone shows a jar's mixins applying: it ended once the mixins were read, Mixin refused none, the
+     * loader's resolver refused no jar (NeoForge's client reads the mixins of what is left and goes on), and Mixin read
+     * a config of this jar: a start the jar was no part of says nothing about its mixins.
+     */
+    static boolean mixinsApplied(PackCheck owner, Launch launch, String jar, Set<String> present) {
+        boolean read = launch.stop() != null && MIXINS_STOP.equals(launch.stop().get("reason"));
+        boolean its = launch.events().stream().anyMatch(event -> "config".equals(event.get("event")) && jar.equals(PackCheck.top(owner.scan.mixins.getOrDefault(Json.text(event, "name", ""), ""))));
+        return read && its && !refusedInLog(owner, launch) && refusedByMixin(owner, launch, present).isEmpty();
     }
 
     static List<String> clientCommand(PackCheck owner, PackLoaders.Context context, PackCheck.Pack pack, Path install, Path agent, Path instance, String asked) throws Exception {
@@ -604,12 +689,12 @@ final class StartCheck {
     }
 
     /** A new folder for one launch, in the run's receipt: the jars linked into mods/, the pack's own settings, and the loader's first-start files. */
-    static Path instance(PackCheck owner, PackCheck.Pack pack, List<PackCheck.Mod> mods, String name, Path first, Path install) throws IOException {
+    static Path instance(PackCheck owner, PackCheck.Pack pack, List<PackCheck.Mod> mods, String name, String side, Path first, Path install) throws IOException {
         Path instance = owner.report.directory.resolve(name);
         PackCheck.deleteTree(instance);
         Files.createDirectories(instance.resolve("mods"));
         for (String folder : List.of("config", "defaultconfigs", "kubejs", "scripts")) {
-            for (Path layer : pack.layers()) if (Files.isDirectory(layer.resolve(folder))) PackCheck.copyTree(layer.resolve(folder), instance.resolve(folder));
+            for (Path layer : pack.layers(side)) if (Files.isDirectory(layer.resolve(folder))) PackCheck.copyTree(layer.resolve(folder), instance.resolve(folder));
         }
         for (PackCheck.Mod mod : mods) PackCheck.link(mod.jar(), instance.resolve("mods").resolve(mod.file()));
         if (first != null) linkTree(first, instance);
@@ -621,7 +706,7 @@ final class StartCheck {
      * events): the jars, the loader's files and the native code a client unpacks are links and copies of what is elsewhere.
      */
     static void tidy(Path instance) {
-        for (String folder : List.of("mods", "libraries", "versions", ".fabric", "natives", "world")) {
+        for (String folder : List.of("mods", "libraries", "versions", ".fabric", "natives", "world", "tmp")) {
             try {
                 PackCheck.deleteTree(instance.resolve(folder));
             } catch (IOException held) {
@@ -644,8 +729,11 @@ final class StartCheck {
     static Launch launch(PackCheck owner, List<String> command, Path instance, String name) throws Exception {
         Path log = owner.report.log(name);
         Path events = instance.resolve("mmt-start-check.jsonl");
-        long wall = System.currentTimeMillis(), began = System.nanoTime();
-        Process process = PackChecks.windowless(new ProcessBuilder(command)).directory(instance.toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        long clock = System.currentTimeMillis(), began = System.nanoTime();
+        StartWall.Wall wall = StartWall.of(owner.harness, owner.cache);
+        ProcessBuilder start = PackChecks.windowless(new ProcessBuilder(StartWall.behind(wall, owner.harness, owner.cache, command, instance)));
+        StartWall.surroundings(wall, start, instance);
+        Process process = start.directory(instance.toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start();
         process.getOutputStream().close();
         long quiet = TimeUnit.SECONDS.toNanos(Integer.parseInt(owner.options.get("timeout", "300")));
         long size = 0, grew = System.nanoTime(), failedAt = 0;
@@ -675,7 +763,10 @@ final class StartCheck {
         if (Files.isRegularFile(events)) for (String line : Files.readAllLines(events, StandardCharsets.UTF_8)) if (line.startsWith("{")) read.add(Json.object(Json.parse(line)));
         // Mods log in the system code page as well as UTF-8; a strict read would fail on the first such byte.
         String text = Files.isRegularFile(log) ? new String(Files.readAllBytes(log), StandardCharsets.UTF_8) : "";
-        return new Launch(text, read, log, seconds, wall, timedOut);
+        // A start whose wall did not go up never ran: that is no verdict about any jar.
+        if (!process.isAlive() && process.exitValue() == WALL_DOWN && text.contains("mmt-wall: ")) throw new IOException(
+            "start-check starts nothing it cannot keep off the network, and the wall did not go up: " + text.strip() + " (log: " + log + ")");
+        return new Launch(text, read, log, seconds, clock, timedOut);
     }
 
     // ------------------------------------------------------------------ what is made once
@@ -720,9 +811,14 @@ final class StartCheck {
 
     /** The agent's jar from its compiled classes. */
     static void agentJar(Path classes, Path jar) throws IOException {
+        jarOf(classes, jar, "MmtNoGame");
+    }
+
+    /** A jar of compiled classes; premain: the agent class its manifest names, or null for a jar that is no agent. */
+    static void jarOf(Path classes, Path jar, String premain) throws IOException {
         java.util.jar.Manifest manifest = new java.util.jar.Manifest();
         manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
-        manifest.getMainAttributes().putValue("Premain-Class", "MmtNoGame");
+        if (premain != null) manifest.getMainAttributes().putValue("Premain-Class", premain);
         try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar), manifest); var walk = Files.walk(classes)) {
             for (Path file : walk.filter(Files::isRegularFile).sorted().toList()) {
                 out.putNextEntry(new java.util.zip.ZipEntry(classes.relativize(file).toString().replace('\\', '/')));

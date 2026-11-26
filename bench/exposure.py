@@ -148,7 +148,8 @@ def main():
         j.add_argument("--loader", required=True, choices=sorted(settings.FIRST))
         j.add_argument("--from", dest="frm", required=True)
         j.add_argument("--to", required=True, help="the release to port to" + (" (jars: several, comma-separated, ported in one go)" if name == "jars" else ""))
-        j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
+        if name != "start-check":
+            j.add_argument("--save", action="store_true", help="keep the summary in bench/exposure/, named for the update and this commit")
         j.add_argument("--out", type=Path, help="write the summary to this file (a folder that is there, or jars with several --to: LOADER-FROM-TO.json each in it)")
         if name == "jars":
             j.add_argument("--verify", action="store_true", help="port and ask everything again, and fail where a cached answer differs")

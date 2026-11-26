@@ -1085,8 +1085,12 @@ public final class Mmt {
             "the same game code), not a fault of its own.\n" +
             "Passed means the checks the output names found no fault. Not covered: anything in a world, client resources (models, textures), and on\n" +
             "NeoForge's client the mods' own start code. Nothing is kept between runs but what the loader's installer and first start write.\n" +
-            "--jars names the jars the answer is asked for (a ported mod beside the libraries it needs): a side ends once each is decided.\n" +
-            "Exit 1 when a jar fails or a side gives no answer.";
+            "--jars names the jars the answer is asked for (a ported mod beside the libraries it needs): a side ends once each is decided;\n" +
+            "a name that is not in the pack is an error. A jar written for another loader, or with no loader metadata, is left out, not passed.\n" +
+            "Every start runs where the operating system gives it no network and no screen. Windows: an AppContainer with no capability on a\n" +
+            "desktop of its own (no administrator rights; it reads Java, the loader and game files under ~/.mmt and its own folder). Linux: a\n" +
+            "network namespace with no interface, where a user may make one. The answer says which, or that this machine has no such wall.\n" +
+            "Exit 1 when a jar fails, a side gives no answer, or the pack lists a file that could not be downloaded.";
             case "pack-check" -> "Check a modpack the way its players run it: mmt pack-check --pack PACK [--world SAVE] [--only ITEM,ITEM] [--focus MODID,MODID] [--fix] [--json]\n" +
             "--pack is a CurseForge export (.zip or folder), a Modrinth .mrpack (or folder), a CurseForge app, Prism/MultiMC or vanilla launcher\n" +
             "instance, or any folder with mods/. --minecraft 1.21.1 and --loader neoforge[-21.1.77] override what the pack says; with no loader\n" +

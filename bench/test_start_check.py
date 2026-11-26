@@ -6,6 +6,7 @@
   passed, so neither kind hides in a total.
 Run: python bench/test_start_check.py"""
 import json
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -68,6 +69,17 @@ check(lines[0].startswith("server: 4/7 verdicts the same") and any("game loaded,
 same = startcheck.agreement(receipt, {"server": {n: ("passed: x" if v.startswith("loaded") else "left out: x" if v.startswith("client-only") else "failed: x")
                                                for n, v in receipt["verdicts"].items()}})
 check(same["server"]["same"] == same["server"]["both"] == 7 and same["client"]["both"] == 0, f"verdicts of the same kinds all agree, and a side with no answer compares nothing: {same}")
+# A jar the proof did not start because start-check had decided it says nothing of the game: it is not counted as agreement.
+predicted = dict(receipt, startCheck={"decided": {"server": {"b.jar": "failed: its mixin fails (decided by start-check)"}, "client": {}}})
+found = startcheck.agreement(predicted, ours)
+check((found["server"]["both"], found["server"]["same"], found["server"]["notStarted"]) == (6, 3, 1) and found["client"]["both"] == 2 and found["client"]["notStarted"] == 0,
+      f"a verdict start-check gave the proof is left out of that side's count, and only of that side's: {found}")
+check(any("not compared" in line and ": 1" in line for line in startcheck.agreement_lines(found)), f"and the lines say how many were not compared: {startcheck.agreement_lines(found)}")
+
+# start-check keeps no game proof, so it offers no --save (it took the option and ignored it).
+refused = subprocess.run([sys.executable, str(Path(__file__).with_name("exposure.py")), "start-check", "--loader", "fabric", "--from", "1.21.1", "--to", "1.21.2", "--save"],
+                         capture_output=True, text=True)
+check(refused.returncode == 2 and "--save" in refused.stderr, f"start-check refuses --save instead of ignoring it: {refused.returncode} {refused.stderr[-200:]}")
 
 # The client proof never starts a jar start-check failed, and says where its verdict came from.
 with tempfile.TemporaryDirectory() as tmp:

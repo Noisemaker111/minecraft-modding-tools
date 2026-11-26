@@ -26,6 +26,8 @@ final class PackMods {
         /** Mod id to the jars that provide it (bundled copies included). */
         final Map<String, List<Provider>> providers = new TreeMap<>();
         final List<Dependency> dependencies = new ArrayList<>();
+        /** What a mod requires on the client only (a mods.toml dependency with side CLIENT): no server asks for it. */
+        final List<Dependency> clientDependencies = new ArrayList<>();
         /** Jar to the metadata files of other loaders it carries, when it has none of the pack's loader. */
         final Map<String, List<String>> foreign = new TreeMap<>();
         /** Jars with no loader metadata at all. */
@@ -270,7 +272,7 @@ final class PackMods {
             if (line.startsWith("[")) {
                 if (dependency != null) {
                     boolean server = !side.equalsIgnoreCase("CLIENT");
-                    if (server && (mandatory || type.equalsIgnoreCase("required"))) scan.dependencies.add(
+                    if (mandatory || type.equalsIgnoreCase("required")) (server ? scan.dependencies : scan.clientDependencies).add(
                         new Dependency(owner, dependency, List.of(range), format, "required")
                     );
                     if (server && type.equalsIgnoreCase("incompatible")) scan.dependencies.add(
