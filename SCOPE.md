@@ -13,6 +13,7 @@ on the way, not a result. This file says which platform has reached what, and ho
 |---|---|---|---|---|---|
 | Build and logic tests (`compile`, `fast`) | Yes | Yes | Yes | Through Fabric | Yes (AgentCraft, all 17 tests) |
 | Game data and mixins, no game (`data-check`, `mixin-check`) | Yes (`data-check`: 26.x) | `mixin-check` | No | No | Not applicable |
+| Will these jars start, no world or window (`start-check`) | Server: dependencies, mixins, start code, data. Client: the same up to the window, no resources | Server: the same. Client: dependencies and mixins; the mods' own start code runs after the window | No | No | Not applicable |
 | Behaviour in a hidden client (`ui-check`, `world-check`) | Yes | Yes | Loads only | No | Not applicable |
 | Dedicated server plus client or test player (`mp-check`, `server-check`) | Partly | Partly | No | No | Yes: real Paper 1.8 and up, with a test player |
 | Port between versions (`port`) | Yes, 1.14.4 to 26.3 | Yes, 1.14.4 to 26.3 | Yes, 1.21.1 to 1.7.10 (1 mod) | No | No: `port` names the edits instead |

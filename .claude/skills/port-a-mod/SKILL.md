@@ -33,7 +33,10 @@ it, in every update. One changed part of the game as a rule comes second, for wh
 - The PR's Port check is the proof: marked ready, it ports what your change can move (the ports a `Port check:
   LOADER:FROM:TO [mods=SLUG,...] [type=TEXT]` line in the description names, the update whose stand-ins changed, or a
   sample when the porter itself changed) and fails if a mod that links on main stops. It starts no game, and a PR never
-  waits on one. By hand, `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2 [-f mods=SLUG,...]`
+  waits on one. Whether a ported mod starts is answered here, with no world or window, in seconds:
+  `python bench/exposure.py start-check --loader neoforge --from 1.21.1 --to 1.21.2 --mods SLUG` gives each mod failed
+  (the loader's, Mixin's or the game's own words), clash, passed (the checks that ran, named) or left out, for the
+  server and the client. By hand, `tools/cloud-run load -f updates=neoforge:1.21.1:1.21.2 [-f mods=SLUG,...]`
   starts a whole update's mods (`python bench/exposure.py load`): the mods `jars` says link, with the libraries they
   require, are ported and started on a real 1.21.2 server and then in a real 1.21.2 client (`mmt pack-check --side
   client`), each mod's two verdicts side by side, in `.runs/cloud/load-RUNID/`, with what moved against the receipt main

@@ -1,0 +1,693 @@
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.*;
+import javax.tools.ToolProvider;
+
+/**
+ * start-check without a game: its agent run for real on a stand-in game (a main that starts a "Server thread", a client
+ * that asks GLFW for a window), and how a run's events and log are turned into the jars at fault.
+ * - The server thread's work never happens and the window is never asked for, whatever the start does first.
+ * - A start that fails by itself leaves no "stop": start-check reads that as a failed start, not as a pass.
+ * - A game class that does not load with its mixins is the fault of the mod its error names, not of the first mod that
+ *   mixes into the class; a loader's "recommends" warning is nobody's fault; a data pack that fails names its jar.
+ * Usage: StartCheckTest <harness root>
+ */
+public final class StartCheckTest {
+
+    static int count;
+
+    public static void main(String[] args) throws Exception {
+        Path harness = Path.of(args[0]), scratch = Files.createTempDirectory("mmt-startcheck");
+        try {
+            Path agent = agent(harness, scratch);
+            server(agent, scratch);
+            client(agent, scratch);
+            blame(harness);
+            otherSide(agent, scratch, harness);
+            retries(harness, scratch);
+            wall(harness, scratch);
+            verdicts(harness, scratch);
+            System.out.println(count + " start-check checks passed: the agent ends a start before its server thread works and before its window, "
+                + "a failed start is not a pass, and each failure is traced to the jar it names");
+        } finally {
+            try (var paths = Files.walk(scratch)) {
+                for (Path p : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(p);
+            }
+        }
+    }
+
+    static void expect(boolean ok, String message) {
+        if (!ok) throw new AssertionError(message);
+        count++;
+    }
+
+    static void compile(Path out, List<Path> classpath, Map<String, String> sources, Path scratch) throws Exception {
+        Path folder = Files.createTempDirectory(scratch, "src");
+        List<String> arguments = new ArrayList<>(List.of("--release", "8", "-Xlint:-options", "-nowarn", "-encoding", "UTF-8", "-d", out.toString()));
+        if (!classpath.isEmpty()) {
+            arguments.add("-cp");
+            arguments.add(String.join(java.io.File.pathSeparator, classpath.stream().map(Path::toString).toList()));
+        }
+        for (var source : sources.entrySet()) {
+            Path file = folder.resolve(source.getKey());
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, source.getValue());
+            arguments.add(file.toString());
+        }
+        expect(ToolProvider.getSystemJavaCompiler().run(null, null, null, arguments.toArray(String[]::new)) == 0, "the stand-in compiles: " + sources.keySet());
+    }
+
+    /** The agent's jar, from the sources mmt ships, for Java 8 and with the manifest mmt gives it. */
+    static Path agent(Path harness, Path scratch) throws Exception {
+        Path stubs = Files.createDirectories(scratch.resolve("stubs")), classes = Files.createDirectories(scratch.resolve("agent"));
+        List<String> first = new ArrayList<>(List.of("--release", "8", "-Xlint:-options", "-nowarn", "-encoding", "UTF-8", "-d", stubs.toString()));
+        for (String name : MixinCheck.STUBS) first.add(harness.resolve(name).toString());
+        expect(ToolProvider.getSystemJavaCompiler().run(null, null, null, first.toArray(String[]::new)) == 0, "Mixin's API stubs compile");
+        List<String> second = new ArrayList<>(List.of("--release", "8", "-Xlint:-options", "-nowarn", "-encoding", "UTF-8", "-cp", stubs.toString(), "-d", classes.toString()));
+        for (String name : StartCheck.AGENT_SOURCES) second.add(harness.resolve(name).toString());
+        expect(ToolProvider.getSystemJavaCompiler().run(null, null, null, second.toArray(String[]::new)) == 0, "the agent compiles for Java 8");
+        Path jar = scratch.resolve("mmt-nogame.jar");
+        StartCheck.agentJar(classes, jar);
+        return jar;
+    }
+
+    /** One stand-in start under the agent: {exit, the events' text, the output}. */
+    static String[] start(Path agent, String side, Path classes, String main, Path folder, String... arguments) throws Exception {
+        Path events = folder.resolve("events.jsonl");
+        Files.deleteIfExists(events);
+        List<String> command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-javaagent:" + agent + "=" + side,
+            "-Dmmt.mixincheck.out=" + events, "-cp", classes.toString(), main, folder.toString()));
+        command.addAll(List.of(arguments));
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        String out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        expect(process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS), "the stand-in start ends: " + out);
+        return new String[] { String.valueOf(process.exitValue()), Files.isRegularFile(events) ? Files.readString(events) : "", out };
+    }
+
+    // ------------------------------------------------------------------ the server
+    static void server(Path agent, Path scratch) throws Exception {
+        Path classes = Files.createDirectories(scratch.resolve("server"));
+        // The server thread's first act differs from release to release: a line on the console, or a class it has not met.
+        compile(classes, List.of(), Map.of(
+            "net/minecraft/server/Main.java",
+            "package net.minecraft.server;\n" +
+            "import java.nio.file.*;\n" +
+            "public class Main {\n" +
+            "  public static void main(String[] a) throws Exception {\n" +
+            "    Files.write(Paths.get(a[0], \"data-read\"), new byte[0]);\n" +
+            "    if (a[1].equals(\"crash\")) throw new IllegalStateException(\"a mod's start code failed\");\n" +
+            "    final String first = a[1];\n" +
+            "    final String folder = a[0];\n" +
+            "    Thread server = new Thread(new Runnable() { public void run() {\n" +
+            "      try {\n" +
+            "        if (first.equals(\"prints\")) System.out.println(\"Starting minecraft server\");\n" +
+            "        if (first.equals(\"loads\")) new World();\n" +
+            "        Files.write(Paths.get(folder, \"world-opened\"), new byte[0]);\n" +
+            "      } catch (Exception e) { throw new RuntimeException(e); }\n" +
+            "    } }, \"Server thread\");\n" +
+            "    server.start();\n" +
+            "    server.join();\n" +
+            "  }\n" +
+            "}\n" +
+            "class World { }\n"
+        ), scratch);
+        for (String first : List.of("prints", "loads")) {
+            Path folder = Files.createTempDirectory(scratch, "run");
+            String[] run = start(agent, "server", classes, "net.minecraft.server.Main", folder, first);
+            expect(run[0].equals("0") && run[1].contains("\"event\":\"stop\"") && run[1].contains("the game started its server thread"),
+                "a start whose server thread first " + first + " ends at that thread, and says so: " + Arrays.toString(run));
+            expect(Files.exists(folder.resolve("data-read")) && !Files.exists(folder.resolve("world-opened")),
+                "the game's main ran and its server thread did no work (" + first + ")");
+            expect(run[1].contains("has no Mixin"), "a launch with no Mixin says no mixins were read: " + run[1]);
+        }
+        // Asked only whether the mixins apply, a start ends once they are read: nothing of the game's own start-up runs.
+        Path asked = Files.createTempDirectory(scratch, "run");
+        String[] mixins = start(agent, "server,mixins", classes, "net.minecraft.server.Main", asked, "prints");
+        expect(mixins[0].equals("0") && mixins[1].contains("the mixins were read") && !Files.exists(asked.resolve("data-read")),
+            "a start asked only for its mixins ends before the game's main runs: " + Arrays.toString(mixins));
+        Path folder = Files.createTempDirectory(scratch, "run");
+        String[] crashed = start(agent, "server", classes, "net.minecraft.server.Main", folder, "crash");
+        expect(!crashed[0].equals("0") && !crashed[1].contains("\"event\":\"stop\"") && crashed[2].contains("a mod's start code failed"),
+            "a start that fails by itself ends with no stop and its own words: " + Arrays.toString(crashed));
+    }
+
+    // ------------------------------------------------------------------ the client
+    /** A stand-in client: a window library (its class's source) and a main that asks it for a window (call, a boolean) and notes what came back. */
+    static Path clientWith(Path scratch, String library, String source, String call, boolean early) throws Exception {
+        Path classes = Files.createTempDirectory(scratch, "client");
+        String type = library.substring(library.lastIndexOf('.') + 1);
+        if (early) {
+            // Something the mixins are read through loads the window library before the game's own code does.
+            compile(classes, List.of(), Map.of("org/spongepowered/asm/mixin/Mixins.java",
+                "package org.spongepowered.asm.mixin;\npublic class Mixins {\n  static { try { Class.forName(\"" + library + "\"); } catch (Exception e) { throw new Error(e); } }\n}\n"), scratch);
+        }
+        compile(classes, List.of(classes), Map.of(
+            library.replace('.', '/') + ".java", "package " + library.substring(0, library.lastIndexOf('.')) + ";\npublic class " + type + " {\n  public static boolean opened;\n  " + source + "}\n",
+            "net/minecraft/client/main/Main.java",
+            "package net.minecraft.client.main;\n" +
+            "import java.nio.file.*;\n" +
+            "public class Main {\n" +
+            "  public static void main(String[] a) throws Exception {\n" +
+            "    Files.write(Paths.get(a[0], \"version\"), " + library + ".version().getBytes());\n" +
+            "    boolean made = " + library + "." + call + ";\n" +
+            "    Files.write(Paths.get(a[0], \"window-\" + made + \"-\" + " + library + ".opened), new byte[0]);\n" +
+            "  }\n" +
+            "}\n"
+        ), scratch);
+        return classes;
+    }
+
+    static void client(Path agent, Path scratch) throws Exception {
+        // A window library's class differs between builds: two-slot constants before the method, the method first or last,
+        // and the library itself between releases (GLFW; SDL since the releases that make their window with it).
+        String glfw = "org.lwjgl.glfw.GLFW", sdl = "org.lwjgl.sdl.SDLInit";
+        String first = "public static final long BIG = 1234567890123L; public static final double RATIO = 2.5;\n" +
+            "  public static String version() { return \"3.3 \" + BIG; }\n  public static boolean glfwInit() { opened = true; return true; }\n";
+        String last = "public static boolean glfwInit() { try { opened = true; return true; } finally { tries++; } }\n  static int tries;\n" +
+            "  public static String version() { return \"3.4\"; }\n";
+        String flags = "public static String version() { return \"3.\"; }\n  public static boolean SDL_Init(int flags) { opened = flags != 0; return true; }\n" +
+            "  public static boolean SDL_InitSubSystem(int flags) { opened = true; return true; }\n";
+        // SDL starts itself when a window is asked for, so a game need not start it first: making the window ends the check too.
+        String makes = "public static String version() { return \"3.\"; }\n" +
+            "  public static long SDL_CreateWindow(CharSequence title, int w, int h, long flags) { opened = true; return 7L; }\n" +
+            "  public static long SDL_CreateWindowWithProperties(int properties) { opened = true; return 7L; }\n";
+        List<Path> clients = List.of(clientWith(scratch, glfw, first, "glfwInit()", false), clientWith(scratch, glfw, last, "glfwInit()", false),
+            clientWith(scratch, glfw, first, "glfwInit()", true), clientWith(scratch, sdl, flags, "SDL_Init(32)", false), clientWith(scratch, sdl, flags, "SDL_InitSubSystem(32)", false),
+            clientWith(scratch, "org.lwjgl.sdl.SDLVideo", makes, "SDL_CreateWindow(\"Minecraft\", 854, 480, 2L) != 0", false),
+            clientWith(scratch, "org.lwjgl.sdl.SDLVideo", makes, "SDL_CreateWindowWithProperties(3) != 0", false));
+        for (Path classes : clients) {
+            Path folder = Files.createTempDirectory(scratch, "run");
+            String[] run = start(agent, "client", classes, "net.minecraft.client.main.Main", folder);
+            expect(run[0].equals("0") && run[1].contains("the game asked for its window"), "a client ends where it asks for its window: " + Arrays.toString(run));
+            expect(Files.readString(folder.resolve("version")).startsWith("3."), "the window library's other methods run as they were");
+            try (var left = Files.list(folder)) {
+                expect(left.noneMatch(p -> p.getFileName().toString().startsWith("window-")), "the window call never returned, and its own code never ran");
+            }
+            // Without the agent the same stand-in opens its window: the check above cannot pass by the stand-in's own fault.
+            Process plain = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-cp", classes.toString(), "net.minecraft.client.main.Main",
+                folder.toString()).redirectErrorStream(true).start();
+            plain.getInputStream().readAllBytes();
+            plain.waitFor();
+            expect(Files.exists(folder.resolve("window-true-true")), "the stand-in asks for a window when nothing ends it");
+        }
+        // A window library the agent does not know starts unseen: where the game binds its graphics library is where the
+        // check ends then. Loading that library is no sign of a window (26.1 on, the game's main loads Vulkan's first).
+        for (String binds : List.of("org.lwjgl.opengl.GL.createCapabilities(true) != null", "org.lwjgl.vulkan.VK10.vkCreateDevice(1L, 2L) == 0")) {
+            Path unknown = Files.createTempDirectory(scratch, "client");
+            compile(unknown, List.of(), Map.of("org/lwjgl/opengl/GL.java", "package org.lwjgl.opengl;\npublic class GL { public static Object createCapabilities(boolean forward) { return \"\"; } }\n",
+                "org/lwjgl/vulkan/VK.java", "package org.lwjgl.vulkan;\npublic class VK { public static String version() { return \"3.\"; } }\n",
+                "org/lwjgl/vulkan/VK10.java", "package org.lwjgl.vulkan;\npublic class VK10 { public static int vkCreateDevice(long physical, long info) { return 0; } }\n"), scratch);
+            compile(unknown, List.of(unknown), Map.of("org/lwjgl/other/Windows.java",
+                "package org.lwjgl.other;\npublic class Windows {\n  public static boolean opened;\n  public static String version() { return org.lwjgl.vulkan.VK.version(); }\n" +
+                "  public static boolean open() { opened = true; return " + binds + "; }\n}\n",
+                "net/minecraft/client/main/Main.java",
+                "package net.minecraft.client.main;\nimport java.nio.file.*;\npublic class Main {\n  public static void main(String[] a) throws Exception {\n" +
+                "    Files.write(Paths.get(a[0], \"version\"), org.lwjgl.other.Windows.version().getBytes());\n" +
+                "    boolean made = org.lwjgl.other.Windows.open();\n    Files.write(Paths.get(a[0], \"window-\" + made), new byte[0]);\n  }\n}\n"), scratch);
+            Path folder = Files.createTempDirectory(scratch, "run");
+            String[] run = start(agent, "client", unknown, "net.minecraft.client.main.Main", folder);
+            expect(run[0].equals("0") && run[1].contains("the game asked for its graphics library") && !run[1].contains("asked for its window"),
+                "a client with a window library nobody knows ends where it binds its graphics library, and says so: " + Arrays.toString(run));
+            expect(Files.exists(folder.resolve("version")), "loading a graphics library alone ends nothing");
+            try (var left = Files.list(folder)) {
+                expect(left.noneMatch(p -> p.getFileName().toString().startsWith("window-")), "nothing after the graphics library was bound ran");
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ the other side's code
+    /** A class of a jar that names a game class this side lacks is no start's to load: what Mixin says of it refuses nobody. */
+    static void otherSide(Path agent, Path scratch, Path harness) throws Exception {
+        Path client = Files.createDirectories(scratch.resolve("side-client")), server = Files.createDirectories(scratch.resolve("side-server"));
+        compile(client, List.of(), Map.of("net/minecraft/client/Screen.java", "package net.minecraft.client;\npublic class Screen { }\n"), scratch);
+        compile(server, List.of(client), Map.of(
+            "net/minecraft/Both.java", "package net.minecraft;\npublic class Both { }\n",
+            "mod/Widget.java", "package mod;\npublic class Widget extends net.minecraft.client.Screen { }\n",
+            "mod/Opens.java", "package mod;\npublic class Opens { Object open() { return new net.minecraft.client.Screen(); } }\n",
+            "mod/Common.java", "package mod;\npublic class Common { net.minecraft.Both both; String path = \"textures/gui.png\"; }\n"), scratch);
+        try (var agentClasses = new java.net.URLClassLoader(new java.net.URL[] {agent.toUri().toURL()}, null);
+            var game = new java.net.URLClassLoader(new java.net.URL[] {server.toUri().toURL()}, null)) {
+            var asked = agentClasses.loadClass("MmtMixinCheck").getDeclaredMethod("otherSide", String.class, ClassLoader.class, Set.class);
+            asked.setAccessible(true);
+            expect("net.minecraft.client.Screen".equals(asked.invoke(null, "mod.Widget", game, Set.of())), "a class that extends a game class this side lacks is the other side's code");
+            expect("net.minecraft.client.Screen".equals(asked.invoke(null, "mod.Opens", game, Set.of())), "so is one that only makes one in a method");
+            expect(asked.invoke(null, "mod.Common", game, Set.of()) == null, "a class that names only game classes this side has is this side's: " + asked.invoke(null, "mod.Common", game, Set.of()));
+            expect(asked.invoke(null, "mod.Widget", game, Set.of("net.minecraft.client.Screen")) == null, "a game class that is a mixin target itself is judged on its own, not here");
+            expect(asked.invoke(null, "net.minecraft.Both", game, Set.of()) == null && asked.invoke(null, "mod.Gone", game, Set.of()) == null, "the game's own classes and a class that is not there are not asked");
+            // A class built on one that is not here does not link; with Mixin's own error under it, Mixin refused it.
+            Path mixin = Files.createDirectories(scratch.resolve("side-mixin"));
+            compile(mixin, List.of(), Map.of("org/spongepowered/asm/mixin/throwables/MixinError.java",
+                "package org.spongepowered.asm.mixin.throwables;\npublic class MixinError extends Error { public MixinError(String m) { super(m); } }\n"), scratch);
+            var unlinked = agentClasses.loadClass("MmtMixinCheck").getDeclaredMethod("unlinked", Throwable.class);
+            unlinked.setAccessible(true);
+            Throwable missing = new NoClassDefFoundError("other/mod/Config").initCause(new ClassNotFoundException("other.mod.Config"));
+            expect(Boolean.TRUE.equals(unlinked.invoke(null, missing)), "a class built on one that is not in the pack does not link: no refusal of Mixin's");
+            try (var mixinClasses = new java.net.URLClassLoader(new java.net.URL[] {mixin.toUri().toURL()}, null)) {
+                Throwable refusedBelow = (Throwable) mixinClasses.loadClass("org.spongepowered.asm.mixin.throwables.MixinError").getConstructor(String.class).newInstance("apply failed");
+                expect(Boolean.FALSE.equals(unlinked.invoke(null, new NoClassDefFoundError("mod/Widget").initCause(refusedBelow))), "one that does not link because Mixin refused the class under it is Mixin's refusal");
+            }
+            expect(Boolean.FALSE.equals(unlinked.invoke(null, new IllegalStateException("verify"))), "any other failure is the one the game meets");
+        }
+        PackCheck owner = new PackCheck(harness, null, null);
+        owner.scan.mixins.put("gui.mixins.json", "gui.jar");
+        String refused = "An unexpected critical error was encountered\n  caused by MixinPreProcessorException: Attach error for gui.mixins.json:WidgetMixin from mod gui during activity";
+        for (String other : Arrays.asList("net.minecraft.client.Screen", null)) {
+            var events = List.of(
+                Json.map("event", "error", "phase", "apply", "target", "mod.Widget", "mixin", "gui.WidgetMixin", "config", "gui.mixins.json", "action", "ERROR", "message", refused),
+                Json.map("event", "target", "target", "mod.Widget", "config", "gui.mixins.json", "loaded", false, "exception", "org.spongepowered.asm.mixin.transformer.throwables.MixinTransformerError", "message", refused, "otherSide", other));
+            var blamed = StartCheck.refusedByMixin(owner, launch(events), Set.of("gui.jar"));
+            expect(blamed.isEmpty() == (other != null), "Mixin's refusal in " + (other == null ? "this side's code refuses the jar" : "the other side's code refuses nobody") + ": " + blamed);
+            // What Mixin logged of that class is no part of what this side's game says; the rest of the log is.
+            String log = String.join("\n",
+                "[12:00:01] [main/INFO]: Loading 3 mods",
+                "[12:00:02] [main/FATAL] [mixin/]: Mixin apply for mod gui failed gui.mixins.json:WidgetMixin from mod gui -> mod.Widget: InvalidMixinException",
+                "org.spongepowered.asm.mixin.transformer.throwables.InvalidMixinException: Unexpected",
+                "\tat org.spongepowered.asm.mixin.transformer.MixinApplicatorStandard.apply(MixinApplicatorStandard.java:1)",
+                "[12:00:03] [main/WARN]: something else",
+                "java.lang.IllegalStateException: of (Lmod/Widget;)V",
+                "[12:00:04] [main/FATAL]: File broken.jar is not a valid mod file");
+            String ours = StartCheck.ofThisSide(new StartCheck.Launch(log, events, Path.of("run.log"), 1.0, 0, false));
+            List<String> expected = other == null ? log.lines().toList() : List.of("[12:00:01] [main/INFO]: Loading 3 mods", "[12:00:04] [main/FATAL]: File broken.jar is not a valid mod file");
+            expect(ours.lines().toList().equals(expected), "the log read for the game's own words " + (other == null ? "is the whole log" : "leaves out the records that name the other side's class") + ": " + ours);
+        }
+        var unlinkedTarget = List.of(Json.map("event", "target", "target", "mod.Config", "config", "gui.mixins.json", "loaded", false, "exception", "java.lang.NoClassDefFoundError",
+            "message", "other/mod/Config in gui.mixins.json", "stops", false));
+        expect(StartCheck.refusedByMixin(owner, launch(unlinkedTarget), Set.of("gui.jar")).isEmpty(), "a target the check says no start stops on refuses nobody");
+    }
+
+    // ------------------------------------------------------------------ whose fault
+    static StartCheck.Launch launch(List<Map<String, Object>> events) {
+        return new StartCheck.Launch("", events, Path.of("run.log"), 1.0, 0, false);
+    }
+
+    static void blame(Path harness) throws Exception {
+        PackCheck owner = new PackCheck(harness, null, null);
+        owner.scan.mixins.put("lib.mixins.json", "lib.jar");
+        owner.scan.mixins.put("bad.mixins.json", "bad.jar");
+        owner.scan.mixins.put("inner.mixins.json", "outer.jar!META-INF/jars/inner.jar");
+        owner.scan.providers.computeIfAbsent("named", k -> new ArrayList<>()).add(new PackMods.Provider("named.jar", "1.0", false, "fabric.mod.json"));
+        Set<String> present = new LinkedHashSet<>(List.of("lib.jar", "bad.jar", "outer.jar", "named.jar"));
+        String refused = "Mixin transformation of net.minecraft.class_3218 failed\n  caused by InjectionError: Critical injection failure: Callback method x in bad.mixins.json:ServerLevelMixin from mod bad failed injection check";
+        // Several mods mix into one class; the class is listed under the first config that targets it.
+        var blamed = StartCheck.refusedByMixin(owner, launch(List.of(
+            Json.map("event", "target", "target", "net.minecraft.class_3218", "config", "lib.mixins.json", "loaded", false, "exception", "java.lang.RuntimeException", "message", refused))), present);
+        expect(blamed.keySet().equals(Set.of("bad.jar")) && blamed.get("bad.jar").contains("failed injection check"), "the mod the error names is at fault, not the first to target the class: " + blamed);
+        blamed = StartCheck.refusedByMixin(owner, launch(List.of(
+            Json.map("event", "target", "target", "a.B", "config", "lib.mixins.json", "loaded", false, "exception", "java.lang.VerifyError", "message", "Bad type on operand stack from mod named"))), present);
+        expect(blamed.keySet().equals(Set.of("named.jar")), "an error that names only a mod id blames the jar that provides it: " + blamed);
+        blamed = StartCheck.refusedByMixin(owner, launch(List.of(
+            Json.map("event", "error", "phase", "apply", "config", "inner.mixins.json", "mixin", "a.M", "target", "a.B", "action", "ERROR", "message", "@Shadow field x was not located"))), present);
+        expect(blamed.keySet().equals(Set.of("outer.jar")) && blamed.get("outer.jar").contains("@Shadow field x was not located"), "a nested jar's mixin fails the jar that ships it: " + blamed);
+        blamed = StartCheck.refusedByMixin(owner, launch(List.of(
+            Json.map("event", "error", "phase", "apply", "config", "bad.mixins.json", "mixin", "a.M", "action", "WARN", "message", "an optional mixin did not apply"),
+            Json.map("event", "target", "target", "net.minecraft.client.X", "config", "bad.mixins.json", "loaded", false, "exception", "java.lang.ClassNotFoundException", "message", "net.minecraft.client.X"))), present);
+        expect(blamed.isEmpty(), "a mixin Mixin only warns about, and a class this side does not have, fail nobody: " + blamed);
+        blamed = StartCheck.refusedByMixin(owner, launch(List.of(
+            Json.map("event", "target", "target", "a.B", "config", "bad.mixins.json", "loaded", false, "exception", "java.lang.RuntimeException", "message", refused))), Set.of("lib.jar"));
+        expect(blamed.isEmpty(), "a jar that is not in the run is not blamed for it: " + blamed);
+
+        // A jar the game names is at fault and one only near the failure is not; with nobody named, the jars near it are, unsure.
+        Map<String, Object> namedOne = Json.map("jar", "bad.jar", "why", List.of("the loader names it: Failed to parse bad:worldgen/x.json from pack bad"));
+        Map<String, Object> nearOne = Json.map("jar", "lib.jar", "why", List.of("a mixin handler of this mod is in the stack"));
+        Map<String, Object> both = Json.map("jar", "named.jar", "why", List.of("its code (a.B) is in the stack: at a.B.c", "the loader names it: Mod named requires x"));
+        Set<String> unsure = new LinkedHashSet<>();
+        var fault = StartCheck.atFault(List.of(nearOne, namedOne), present, unsure);
+        expect(fault.keySet().equals(Set.of("bad.jar")) && unsure.isEmpty(), "with a jar named, one only near the failure is a bystander, and the one named is not started again: " + fault + " " + unsure);
+        fault = StartCheck.atFault(List.of(nearOne, namedOne, both), present, unsure);
+        expect(fault.keySet().equals(Set.of("bad.jar", "named.jar")) && unsure.equals(Set.of("bad.jar", "named.jar")), "two jars one start names are both failed, and each is started again: one may be where the other's fault surfaced: " + fault + " " + unsure);
+        unsure.clear();
+        fault = StartCheck.atFault(List.of(nearOne), present, unsure);
+        expect(fault.keySet().equals(Set.of("lib.jar")) && unsure.equals(Set.of("lib.jar")), "with nobody named, the jar near the failure is failed and marked to be started again: " + fault + " " + unsure);
+        fault = StartCheck.atFault(List.of(namedOne), Set.of("lib.jar"), unsure);
+        expect(fault.isEmpty(), "a jar that is not in the run is not at fault for it: " + fault);
+
+        // What the loader says of a start that failed: a recommendation is no fault, a data pack that fails is its jar's.
+        PackLoaders.Loader fabric = PackLoaders.find(harness, "fabric");
+        PackMods.Scan scan = new PackMods.Scan();
+        for (String id : List.of("polite", "broken", "datamod")) scan.providers.computeIfAbsent(id, k -> new ArrayList<>()).add(new PackMods.Provider(id + ".jar", "1.0", false, "fabric.mod.json"));
+        String log = String.join("\n",
+            "[main/WARN]: Warnings were found!",
+            "\t - Mod 'Polite' (polite) 1.0 recommends any version of modmenu, which is missing!",
+            "[main/ERROR]: Incompatible mods found!",
+            "net.fabricmc.loader.impl.FormattedException: Some of your mods are incompatible with the game or each other!",
+            "\t - Mod 'Broken' (broken) 2.0 requires version 1.7 or later of mod 'Lib' (lib), but only the wrong version is present: 1.3!");
+        List<String> named = PackChecks.suspects(log, List.of(), scan, fabric).stream().map(s -> Json.text(s, "jar", "")).toList();
+        expect(named.equals(List.of("broken.jar")), "the mod the loader refuses is named, the one it only advises is not: " + named);
+        String data = String.join("\n",
+            "[main/ERROR]: Registry loading errors:",
+            "java.lang.IllegalStateException: Failed to parse datamod:worldgen/biome/placeholder.json from pack datamod",
+            "[main/WARN]: Failed to load datapacks, can't proceed with server load. You can either fix your datapacks or reset to vanilla with --safeMode");
+        named = PackChecks.suspects(data, List.of(), scan, fabric).stream().map(s -> Json.text(s, "jar", "")).toList();
+        expect(named.equals(List.of("datamod.jar")), "a data pack the release refuses names the jar it is in: " + named);
+        // NeoForge names a jar whose mod class it did not find by its file, in a folder of the run.
+        for (String folder : List.of("C:\\packs\\server-1\\mods\\", "/home/packs/server-1/mods/")) {
+            String unbuilt = "[main/FATAL] [ne.ne.fm.ModLoader/LOADING]: File " + folder + "broken.jar constructed 0 mods: [], but had 1 mods specified: [broken]\n"
+                + "[main/FATAL] [ne.ne.fm.ModLoader/CORE]: Failed to initialize mod containers";
+            named = PackChecks.suspects(unbuilt, List.of(), scan, PackLoaders.find(harness, "neoforge")).stream().map(s -> Json.text(s, "jar", "")).toList();
+            expect(named.equals(List.of("broken.jar")), "a jar whose mod class the loader did not find is named by its file: " + named);
+        }
+        // NeoForge names a data pack by its mod id, whichever way the jar's metadata writes that id down.
+        String inline = "license = 'x'\nauthors = ['a, b', 'c']\nmods = [\n\t{ modId = 'wrapped_pack', version = '1-v4', displayName = 'Wrapped, a [pack]' }, # one\n]\nmixins = [{ config = 'wrapped.mixins.json' }]\n";
+        String block = "license = 'x'\n[[mods]]\nmodId = 'wrapped_pack'\nversion = '1-v4'\n[[mixins]]\nconfig = 'wrapped.mixins.json'\n";
+        for (String metadata : List.of(inline, block)) {
+            PackMods.Scan wrapped = new PackMods.Scan();
+            PackMods.toml(metadata, "wrapped.jar", false, "neoforge.mods.toml", "1", wrapped);
+            String refusedData = "[main/ERROR] [minecraft/RegistryDataLoader]: Registry loading errors:\n"
+                + "java.lang.IllegalStateException: Failed to parse wrapped:enchantment/a.json from pack mod/wrapped_pack";
+            named = PackChecks.suspects(refusedData, List.of(), wrapped, PackLoaders.find(harness, "neoforge")).stream().map(s -> Json.text(s, "jar", "")).toList();
+            expect(named.equals(List.of("wrapped.jar")), "a data pack NeoForge refuses names its jar, its metadata written " + (metadata == inline ? "as one array" : "in blocks") + ": " + named);
+            expect("1-v4".equals(wrapped.providers.get("wrapped_pack").get(0).version()), "its version is read too: " + wrapped.providers);
+            expect("wrapped.jar".equals(wrapped.mixins.get("wrapped.mixins.json")), "and its mixin config: " + wrapped.mixins);
+        }
+        // NeoForge's client logs what its resolver refuses and still goes on to its window: that run did not start.
+        String sorted = "[main/ERROR] [loading.ModSorter/LOADING]: Missing or unsupported mandatory dependencies:\n"
+            + "\tMod ID: 'lib', Requested by: 'needy', Expected range: '[1.7.7,)', Actual version: '[MISSING]'\n"
+            + "[main/ERROR] [loading.ModSorter/LOADING]: Incompatibilities between mods:\n"
+            + "\tMod 'picky' is incompatible with 'other', versions: '[0,)'; Version found: '1.0.10'\n";
+        PackMods.Scan three = new PackMods.Scan();
+        for (String id : List.of("needy", "picky", "other")) three.providers.computeIfAbsent(id, k -> new ArrayList<>()).add(new PackMods.Provider(id + ".jar", "1.0", false, "neoforge.mods.toml"));
+        named = PackChecks.suspects(sorted, List.of(), three, PackLoaders.find(harness, "neoforge")).stream().map(s -> Json.text(s, "jar", "")).toList();
+        expect(named.equals(List.of("needy.jar", "picky.jar")), "the mod that asks for a missing one and the mod that refuses another are named, the refused one is not: " + named);
+        List<Map<String, Object>> atWindow = List.of(Json.map("event", "stop", "reason", StartCheck.CLIENT_STOP, "seconds", 1.0));
+        StartCheck.Side clientSide = new StartCheck.Side("client");
+        owner.loader = PackLoaders.find(harness, "neoforge");
+        StartCheck.Launch refusedRun = new StartCheck.Launch("[main/INFO]: loading\n" + sorted, atWindow, Path.of("run.log"), 1.0, 0, false);
+        expect(!StartCheck.started(owner, clientSide, refusedRun), "a client that got to its window after its loader refused jars did not start");
+        expect(StartCheck.dependencies(owner, refusedRun).startsWith("not checked"), "and its dependencies are not reported as accepted: " + StartCheck.dependencies(owner, refusedRun));
+        for (String half : sorted.split("(?m)^(?=\\[main/ERROR)")) {
+            StartCheck.Launch halfRun = new StartCheck.Launch(half, atWindow, Path.of("run.log"), 1.0, 0, false);
+            expect(!StartCheck.started(owner, clientSide, halfRun), "either of the resolver's two complaints is a refusal: " + half.lines().findFirst().orElse(""));
+        }
+        StartCheck.Launch cleanRun = new StartCheck.Launch("[main/INFO]: loading\n", atWindow, Path.of("run.log"), 1.0, 0, false);
+        expect(StartCheck.started(owner, clientSide, cleanRun), "a client that got to its window with nothing refused started");
+        expect(!StartCheck.started(owner, clientSide, new StartCheck.Launch("[main/INFO]: loading\n", List.of(), Path.of("run.log"), 1.0, 0, false)), "a run that never got to the window did not start");
+        owner.loader = null;
+
+        String unended = "mods = [\n\t{ modId = 'open'\n";
+        expect(PackMods.blocks(unended).equals(unended), "an array that never ends is left as it was written");
+        String plain = "authors = ['a', 'b']\n[[mods]]\nmodId = 'plain'\nlist = [ { inner = 1 } ]\n";
+        expect(PackMods.blocks(plain).equals(plain), "an array inside a block is not moved out of it");
+    }
+
+    // ------------------------------------------------------------------ jars a failed start names together
+    /** A stand-in loader: with first.jar in mods/ it refuses every jar of the two it holds, in Fabric's words; else it starts (or, asked to never start, fails naming nobody). */
+    static final String LOADER = String.join("\n",
+        "import java.io.File;",
+        "import java.io.FileWriter;",
+        "public class Loader {",
+        "    public static void main(String[] args) throws Exception {",
+        "        boolean first = new File(\"mods/first.jar\").isFile(), second = new File(\"mods/second.jar\").isFile();",
+        "        if (first) {",
+        "            System.out.println(\"[main/ERROR]: Incompatible mods found!\");",
+        "            System.out.println(\"net.fabricmc.loader.impl.FormattedException: Some of your mods are incompatible with the game or each other!\");",
+        "            System.out.println(\"\\t - Mod 'First' (first) 1.0 requires version 2 or later of mod 'Lib' (lib), but only the wrong version is present: 1!\");",
+        "            if (second) System.out.println(\"\\t - Mod 'Second' (second) 1.0 requires version 2 or later of mod 'Lib' (lib), but only the wrong version is present: 1!\");",
+        "            System.exit(1);",
+        "        }",
+        "        if (args[0].equals(\"never\") && !second) {",
+        "            System.out.println(\"[main/ERROR]: the loader itself broke\");",
+        "            System.exit(1);",
+        "        }",
+        "        try (FileWriter out = new FileWriter(\"mmt-start-check.jsonl\")) {",
+        "            out.write(\"{\\\"event\\\":\\\"stop\\\",\\\"reason\\\":\\\"\" + args[1] + \"\\\",\\\"seconds\\\":1.0}\\n\");",
+        "        }",
+        "    }",
+        "}");
+
+    static StartCheck.Side rounds(Path harness, Path scratch, Path classes, String mode, String... options) throws Exception {
+        Path folder = Files.createTempDirectory(scratch, "pack"), jars = Files.createDirectories(folder.resolve("mods"));
+        List<PackCheck.Mod> mods = new ArrayList<>();
+        PackCheck owner = PackCheckFixtures.check(harness, Files.createTempDirectory(scratch, "receipt"), options);
+        owner.loader = PackLoaders.find(harness, "fabric");
+        for (String id : List.of("first", "second")) {
+            Path jar = PackCheckFixtures.jar(jars.resolve(id + ".jar"), Map.of("fabric.mod.json", "{\"id\":\"" + id + "\",\"version\":\"1.0\"}"));
+            mods.add(new PackCheck.Mod(id + ".jar", jar, "unknown", "folder"));
+            owner.scan.providers.computeIfAbsent(id, k -> new ArrayList<>()).add(new PackMods.Provider(id + ".jar", "1.0", false, "fabric.mod.json"));
+        }
+        PackCheck.Pack pack = new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", mods, List.of(folder), folder, false, "x");
+        StartCheck.Side side = new StartCheck.Side("server");
+        // The stand-in's class goes into each start's own folder: behind the wall a start reads little else.
+        StartCheck.Starter starter = (instance, asked) -> {
+            Files.copy(classes.resolve("Loader.class"), instance.resolve("Loader.class"));
+            return List.of(Path.of(System.getProperty("java.home"), "bin", Runtimes.WINDOWS ? "java.exe" : "java").toString(), "-cp", instance.toString(), "Loader", mode, StartCheck.SERVER_STOP);
+        };
+        StartCheck.rounds(owner, pack, side, null, null, starter, () -> mods.stream().filter(m -> !side.failed.containsKey(m.file())).toList(), (run, held) -> false);
+        return side;
+    }
+
+    static void retries(Path harness, Path scratch) throws Exception {
+        Path classes = Files.createDirectories(scratch.resolve("loader"));
+        compile(classes, List.of(), Map.of("Loader.java", LOADER), scratch);
+        // The start names both jars and only one is at fault. With both out nothing is left to start, and the loader alone still is: each is started again beside it.
+        StartCheck.Side side = rounds(harness, scratch, classes, "starts");
+        expect(side.failed.keySet().equals(Set.of("first.jar")) && side.unresolved.isEmpty(),
+            "of two jars one failed start names, the one that starts when started again is not failed, with no other jar in the pack: " + side.failed.keySet() + " " + side.unresolved.keySet());
+        expect(side.failed.get("first.jar").contains("requires version 2"), "and the one that fails again keeps the loader's words: " + side.failed);
+        // Asked about the bystander alone (--jars): the side does not end on its first, provisional failure.
+        side = rounds(harness, scratch, classes, "starts", "--jars", "second.jar");
+        expect(!side.failed.containsKey("second.jar"), "a jar asked for by name is started again too before it is called failed: " + side.failed.keySet());
+        // No start of the rest: neither jar was ever started without the other, so neither has a verdict.
+        side = rounds(harness, scratch, classes, "never");
+        expect(side.failed.isEmpty() && side.unresolved.keySet().equals(Set.of("first.jar", "second.jar")),
+            "with no start to start them again beside, jars named together are not failed: " + side.failed.keySet() + " " + side.unresolved.keySet());
+        expect(StartCheck.verdict(side, "second.jar").startsWith("undecided: "), "and their verdict says so: " + StartCheck.verdict(side, "second.jar"));
+        StartCheck.Side one = new StartCheck.Side("server");
+        one.failed.put("second.jar", "named");
+        PackCheck asking = PackCheckFixtures.check(harness, scratch, "--jars", "second.jar");
+        expect(StartCheck.answered(asking, one), "a jar a start names alone is decided");
+        one.unsure.add("second.jar");
+        expect(!StartCheck.answered(asking, one), "and one named next to others is not, until it is started again");
+    }
+
+    // ------------------------------------------------------------------ what a pass, a clash and a whole answer are
+    static void verdicts(Path harness, Path scratch) throws Exception {
+        // A jar the loader loads no mod from was in the folder and no part of the start: it never passes.
+        Path folder = Files.createTempDirectory(scratch, "mixed"), jars = Files.createDirectories(folder.resolve("mods"));
+        PackCheckFixtures.jar(jars.resolve("ours.jar"), Map.of("fabric.mod.json", "{\"id\":\"ours\",\"version\":\"1\"}"));
+        PackCheckFixtures.jar(jars.resolve("refused.jar"), Map.of("fabric.mod.json", "{\"id\":\"refused\",\"version\":\"1\"}"));
+        PackCheckFixtures.jar(jars.resolve("theirs.jar"), Map.of("META-INF/mods.toml", PackCheckFixtures.toml("theirs", "1", "")));
+        PackCheckFixtures.jar(jars.resolve("library.jar"), Map.of("com/example/Library.class", "x"));
+        PackCheck owner = PackCheckFixtures.check(harness, scratch, "--minecraft", "1.21.1", "--loader", "fabric-0.16.7");
+        PackCheck.Pack pack = owner.read(folder);
+        owner.loader = PackLoaders.find(harness, "fabric");
+        owner.scan = PackMods.scan(pack.mods(), owner.loader.metadata("1.21.1"));
+        StartCheck.Side side = new StartCheck.Side("server");
+        side.failed.put("refused.jar", "the loader refused it");
+        side.checks.put("mixins", "applied");
+        StartCheck.pass(owner, pack.mods(), side);
+        expect(side.passed.equals(List.of("ours.jar")), "only a jar the loader loads a mod from passes: " + side.passed);
+        expect(StartCheck.verdict(side, "theirs.jar").startsWith("left out: not loaded: it is written for another loader (it has META-INF/mods.toml), and fabric loads no mod from it"), "a jar written for another loader is left out, with that said: " + StartCheck.verdict(side, "theirs.jar"));
+        expect(StartCheck.verdict(side, "library.jar").startsWith("left out: not loaded: it has no loader metadata"), "and so is a jar with no loader metadata: " + StartCheck.verdict(side, "library.jar"));
+        expect(StartCheck.verdict(side, "refused.jar").startsWith("failed: "), "a jar a start failed stays failed: " + StartCheck.verdict(side, "refused.jar"));
+
+        // --jars naming a jar the pack does not hold is an error, not a silent answer about nothing.
+        String none = PackCheckFixtures.throwsMessage(() -> StartCheck.askedAreThere(PackCheckFixtures.check(harness, scratch, "--jars", "ours.jar,typo.jar"), pack));
+        expect(none.contains("typo.jar") && !none.startsWith("--jars names ours.jar"), "a jar asked for that is not in the pack is named: " + none);
+        expect(PackCheckFixtures.throwsMessage(() -> StartCheck.askedAreThere(PackCheckFixtures.check(harness, scratch, "--jars", "ours.jar, theirs.jar"), pack)).isEmpty(), "jars that are there are accepted");
+
+        // The whole answer: a pack one of whose listed files could not be downloaded was not all started.
+        StartCheck.Side clean = new StartCheck.Side("server");
+        clean.passed.add("ours.jar");
+        Map<String, Object> whole = StartCheck.answer(owner, pack, List.of(clean), new LinkedHashMap<>());
+        expect(Boolean.TRUE.equals(whole.get("ok")), "a pack whose every jar passed is ok");
+        owner.unavailable(11, 22, "gone.jar", "CurseForge does not serve its download");
+        Map<String, Object> partial = StartCheck.answer(owner, pack, List.of(clean), new LinkedHashMap<>());
+        expect(Boolean.FALSE.equals(partial.get("ok")) && String.valueOf(partial.get("details")).contains("gone.jar"), "a pack with a file that could not be downloaded is not ok, and the answer names it: " + partial.get("details"));
+        StartCheck.Side open = new StartCheck.Side("server");
+        open.unresolved.put("ours.jar", "named next to another");
+        expect(Boolean.FALSE.equals(StartCheck.answer(PackCheckFixtures.check(harness, scratch), pack, List.of(open), new LinkedHashMap<>()).get("ok")), "a jar with no verdict is not ok either");
+
+        // A start alone shows a clash only when the jar took part in it and nothing refused it.
+        PackCheck neo = PackCheckFixtures.check(harness, scratch);
+        neo.loader = PackLoaders.find(harness, "neoforge");
+        neo.scan.mixins.put("bad.mixins.json", "bad.jar");
+        Map<String, Object> config = Json.map("event", "config", "name", "bad.mixins.json"), read = Json.map("event", "stop", "reason", StartCheck.MIXINS_STOP, "seconds", 1.0);
+        Set<String> present = Set.of("bad.jar");
+        expect(StartCheck.mixinsApplied(neo, launch(List.of(config, read)), "bad.jar", present), "a jar whose mixins Mixin read and refused none of is shown to apply alone");
+        expect(!StartCheck.mixinsApplied(neo, launch(List.of(read)), "bad.jar", present), "a start that read no mixin config of the jar says nothing about it");
+        expect(!StartCheck.mixinsApplied(neo, launch(List.of(Json.map("event", "config", "name", "other.mixins.json"), read)), "bad.jar", present), "another jar's config is not its own");
+        StartCheck.Launch rejected = new StartCheck.Launch("[main/ERROR] [loading.ModSorter/LOADING]: Missing or unsupported mandatory dependencies:\n\tMod ID: 'lib', Requested by: 'bad'\n",
+            List.of(config, read), Path.of("run.log"), 1.0, 0, false);
+        expect(!StartCheck.mixinsApplied(neo, rejected, "bad.jar", present), "a start alone the loader's resolver refused shows no clash");
+        Map<String, Object> refusal = Json.map("event", "error", "phase", "apply", "config", "bad.mixins.json", "mixin", "a.M", "target", "a.B", "action", "ERROR", "message", "@Shadow field x was not located");
+        expect(!StartCheck.mixinsApplied(neo, launch(List.of(config, refusal, read)), "bad.jar", present), "and neither does one where Mixin refuses it again");
+
+        // What a mod requires on the client only is started with it there, and on no server.
+        PackMods.Scan sided = new PackMods.Scan();
+        PackMods.toml(PackCheckFixtures.toml("gui", "1", "[[dependencies.gui]]\nmodId=\"screens\"\nmandatory=true\nversionRange=\"[1,)\"\nside=\"CLIENT\"\n"
+            + "[[dependencies.gui]]\nmodId=\"core\"\ntype=\"required\"\nversionRange=\"[1,)\"\nside=\"BOTH\"\n"), "gui.jar", false, "neoforge.mods.toml", "1", sided);
+        expect(sided.clientDependencies.stream().map(PackMods.Dependency::id).toList().equals(List.of("screens")) && sided.dependencies.stream().map(PackMods.Dependency::id).toList().equals(List.of("core")),
+            "a dependency for the client only is kept apart from the ones every side has: " + sided.clientDependencies + " " + sided.dependencies);
+        for (String id : List.of("screens", "core", "extra")) sided.providers.computeIfAbsent(id, k -> new ArrayList<>()).add(new PackMods.Provider(id + ".jar", "1", false, "neoforge.mods.toml"));
+        neo.scan = sided;
+        List<PackCheck.Mod> four = new ArrayList<>();
+        for (String file : List.of("gui.jar", "screens.jar", "core.jar", "extra.jar")) four.add(new PackCheck.Mod(file, folder.resolve(file), "unknown", "folder"));
+        PackCheck.Pack fourPack = pack.withMods(four);
+        expect(StartCheck.withRequired(neo, fourPack, new StartCheck.Side("client"), "gui.jar").stream().map(PackCheck.Mod::file).toList().equals(List.of("gui.jar", "screens.jar", "core.jar")),
+            "a client start alone holds what the jar requires on the client: " + StartCheck.withRequired(neo, fourPack, new StartCheck.Side("client"), "gui.jar"));
+        expect(StartCheck.withRequired(neo, fourPack, new StartCheck.Side("server"), "gui.jar").stream().map(PackCheck.Mod::file).toList().equals(List.of("gui.jar", "core.jar")),
+            "and a server start alone does not: " + StartCheck.withRequired(neo, fourPack, new StartCheck.Side("server"), "gui.jar"));
+
+        // Each side's run gets the settings every side gets and its own, never the other side's.
+        Path layered = Files.createTempDirectory(scratch, "layered");
+        List<Path> layers = new ArrayList<>();
+        for (String layer : List.of("overrides", "server-overrides", "client-overrides")) {
+            Files.writeString(Files.createDirectories(layered.resolve(layer).resolve("config")).resolve(layer + ".toml"), "x=1");
+            layers.add(layered.resolve(layer));
+        }
+        PackCheck.Pack sidedPack = new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), layers, layered, false, "modrinth-mrpack");
+        PackCheck receipts = PackCheckFixtures.check(harness, Files.createTempDirectory(scratch, "sides"));
+        for (String name : List.of("client", "server")) {
+            Path instance = StartCheck.instance(receipts, sidedPack, List.of(), name + "-1", name, null, null);
+            String other = name.equals("client") ? "server" : "client";
+            Set<String> got = new TreeSet<>();
+            try (var list = Files.list(instance.resolve("config"))) {
+                for (Path file : list.toList()) got.add(file.getFileName().toString());
+            }
+            expect(got.equals(Set.of("overrides.toml", name + "-overrides.toml")), "a " + name + " start gets no setting of the " + other + "'s own folder: " + got);
+        }
+    }
+
+    // ------------------------------------------------------------------ the wall
+    /** What a mod's start code could try: each way Java opens a connection, to a listener of this test on this machine. */
+    static final String REACH = String.join("\n",
+        "import java.net.*;",
+        "import java.nio.ByteBuffer;",
+        "import java.nio.channels.*;",
+        "import java.util.concurrent.TimeUnit;",
+        "public class Reach {",
+        "    interface Way { void go() throws Exception; }",
+        "    static void attempt(String name, Way way) {",
+        "        try { way.go(); System.out.println(name + \": worked\"); } catch (Throwable refused) { System.out.println(name + \": \" + refused); }",
+        "    }",
+        "    public static void main(String[] args) throws Exception {",
+        "        final InetSocketAddress tcp = new InetSocketAddress(\"127.0.0.1\", Integer.parseInt(args[0])), udp = new InetSocketAddress(\"127.0.0.1\", Integer.parseInt(args[1]));",
+        "        attempt(\"Socket\", () -> { try (Socket s = new Socket(Proxy.NO_PROXY)) { s.connect(tcp, 2000); s.getOutputStream().write('S'); } });",
+        "        attempt(\"SocketChannel\", () -> { try (SocketChannel c = SocketChannel.open()) { c.socket().connect(tcp, 2000); c.write(ByteBuffer.wrap(new byte[] { 'C' })); } });",
+        "        attempt(\"AsynchronousSocketChannel\", () -> { try (AsynchronousSocketChannel c = AsynchronousSocketChannel.open()) {",
+        "            c.connect(tcp).get(2, TimeUnit.SECONDS); c.write(ByteBuffer.wrap(new byte[] { 'A' })).get(2, TimeUnit.SECONDS); } });",
+        "        attempt(\"DatagramSocket\", () -> { try (DatagramSocket d = new DatagramSocket()) { d.send(new DatagramPacket(new byte[] { 'U' }, 1, udp)); } });",
+        "        attempt(\"real path\", () -> java.nio.file.Paths.get(System.getProperty(\"java.home\"), \"bin\").toRealPath());",
+        "        attempt(\"temporary file\", () -> java.io.File.createTempFile(\"level\", \".dat\", new java.io.File(\".\").getAbsoluteFile()).delete());",
+        "        attempt(\"DatagramChannel\", () -> { try (DatagramChannel d = DatagramChannel.open()) { d.send(ByteBuffer.wrap(new byte[] { 'D' }), udp); } });",
+        "        try (java.io.FileWriter out = new java.io.FileWriter(\"mmt-start-check.jsonl\")) { out.write(\"{\\\"event\\\":\\\"stop\\\",\\\"reason\\\":\\\"done\\\",\\\"seconds\\\":1.0}\\n\"); }",
+        "    }",
+        "}");
+
+    /** A program that makes a window and says which desktop it is on, by Windows' own calls. */
+    static final String WINDOW = String.join("\n",
+        "import java.lang.foreign.*;",
+        "import java.lang.invoke.MethodHandle;",
+        "import java.nio.charset.StandardCharsets;",
+        "public class Window {",
+        "    static MethodHandle call(String library, String name, FunctionDescriptor shape) {",
+        "        return Linker.nativeLinker().downcallHandle(SymbolLookup.libraryLookup(library, Arena.global()).find(name).orElseThrow(), shape);",
+        "    }",
+        "    public static void main(String[] args) throws Throwable {",
+        "        AddressLayout P = ValueLayout.ADDRESS;",
+        "        ValueLayout.OfInt I = ValueLayout.JAVA_INT;",
+        "        Arena arena = Arena.global();",
+        "        int thread = (int) call(\"kernel32\", \"GetCurrentThreadId\", FunctionDescriptor.of(I)).invoke();",
+        "        MemorySegment desktop = (MemorySegment) call(\"user32\", \"GetThreadDesktop\", FunctionDescriptor.of(P, I)).invoke(thread);",
+        "        MemorySegment name = arena.allocate(512), needed = arena.allocate(I);",
+        "        call(\"user32\", \"GetUserObjectInformationW\", FunctionDescriptor.of(I, P, I, P, I, P)).invoke(desktop, 2, name, 512, needed);",
+        "        MemorySegment window = (MemorySegment) call(\"user32\", \"CreateWindowExW\", FunctionDescriptor.of(P, I, P, P, I, I, I, I, I, P, P, P, P))",
+        "            .invoke(0, arena.allocateFrom(\"STATIC\", StandardCharsets.UTF_16LE), arena.allocateFrom(\"a window of a mod\", StandardCharsets.UTF_16LE), 0x10000000, 10, 10, 200, 100,",
+        "                MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL);",
+        "        System.out.println(\"window \" + (window.address() != 0 ? \"made\" : \"refused\") + \" on desktop \" + name.getString(0, StandardCharsets.UTF_16LE));",
+        "    }",
+        "}");
+
+    static void wall(Path harness, Path scratch) throws Exception {
+        PackCheck owner = PackCheckFixtures.check(harness, Files.createTempDirectory(scratch, "walled"));
+        owner.loader = PackLoaders.find(harness, "fabric");
+        StartWall.Wall wall = StartWall.of(owner.harness, owner.cache);
+        expect(!Runtimes.WINDOWS || wall.up(), "on Windows the wall is always up: " + wall.says());
+        expect(wall.up() || wall.says().startsWith("NOT walled off"), "a machine that cannot put the wall up says so in the answer: " + wall.says());
+        StringBuffer arrived = new StringBuffer();
+        try (java.net.ServerSocket tcp = new java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress());
+            java.net.DatagramSocket udp = new java.net.DatagramSocket(0, java.net.InetAddress.getLoopbackAddress())) {
+            Thread accepts = new Thread(() -> {
+                try {
+                    for (;;) try (java.net.Socket one = tcp.accept()) {
+                        arrived.append("tcp ");
+                    }
+                } catch (java.io.IOException closed) {
+                    // The test is over.
+                }
+            });
+            Thread receives = new Thread(() -> {
+                try {
+                    for (;;) {
+                        udp.receive(new java.net.DatagramPacket(new byte[8], 8));
+                        arrived.append("udp ");
+                    }
+                } catch (java.io.IOException closed) {
+                    // The test is over.
+                }
+            });
+            for (Thread thread : List.of(accepts, receives)) {
+                thread.setDaemon(true);
+                thread.start();
+            }
+            Path classes = Files.createDirectories(scratch.resolve("reach"));
+            compile(classes, List.of(), Map.of("Reach.java", REACH), scratch);
+            String java = Path.of(System.getProperty("java.home"), "bin", Runtimes.WINDOWS ? "java.exe" : "java").toString();
+            // Not behind the wall, the same program gets through: the listener is there to be reached.
+            Path open = Files.createDirectories(scratch.resolve("open"));
+            Process plain = new ProcessBuilder(java, "-cp", classes.toString(), "Reach", String.valueOf(tcp.getLocalPort()), String.valueOf(udp.getLocalPort())).directory(open.toFile()).redirectErrorStream(true).start();
+            String plainly = new String(plain.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            plain.waitFor();
+            Thread.sleep(300);
+            expect(arrived.toString().contains("tcp") && arrived.toString().contains("udp"), "with no wall the start code reaches the listener: " + plainly + arrived);
+            if (wall.up()) {
+                arrived.setLength(0);
+                Path instance = StartCheck.instance(owner, new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), List.of(scratch), scratch, false, "x"), List.of(), "walled-1", "server", null, null);
+                Files.copy(classes.resolve("Reach.class"), instance.resolve("Reach.class"));
+                for (String inner : List.of("Reach$Way.class")) Files.copy(classes.resolve(inner), instance.resolve(inner));
+                StartCheck.Launch walled = StartCheck.launch(owner, List.of(java, "-cp", instance.toString(), "Reach", String.valueOf(tcp.getLocalPort()), String.valueOf(udp.getLocalPort())), instance, "walled");
+                Thread.sleep(300);
+                expect(walled.stop() != null, "the start behind the wall ran to its end: " + walled.log());
+                expect(arrived.length() == 0, "behind the wall no connection a start opens arrives, by a socket, a channel or a datagram: " + arrived + "\n" + walled.log());
+                expect(walled.log().lines().noneMatch(line -> List.of("Socket: worked", "SocketChannel: worked", "AsynchronousSocketChannel: worked").contains(line)),
+                    "and each connection is refused to the code that opened it: " + walled.log());
+                // A container may list neither the drive's root nor the folder of user profiles, and every loader asks Java for its jars' real paths.
+                expect(walled.log().lines().anyMatch("real path: worked"::equals), "behind the wall Java still tells a file's real path: " + walled.log());
+                // Nor may it read the drive's root, which Java asks how long a name may be: the game saves its level through such a file.
+                expect(walled.log().lines().anyMatch("temporary file: worked"::equals), "and still makes a temporary file: " + walled.log());
+            }
+        }
+        // The two sides of a check start at the same instant. Windows refused both of two commands set up in one
+        // container at once with none running in it yet (4 of 30 pairs, measured), so the launchers take turns.
+        String runtime = Path.of(System.getProperty("java.home"), "bin", Runtimes.WINDOWS ? "java.exe" : "java").toString();
+        PackCheck.Pack empty = new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), List.of(scratch), scratch, false, "x");
+        for (int pair = 1; pair <= 16; pair++) {
+            java.util.concurrent.CyclicBarrier together = new java.util.concurrent.CyclicBarrier(2);
+            List<java.util.concurrent.Future<StartCheck.Launch>> sides = new ArrayList<>();
+            java.util.concurrent.ExecutorService beside = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                for (String side : List.of("server", "client")) {
+                    Path instance = StartCheck.instance(owner, empty, List.of(), "pair-" + pair + "-" + side, side, null, null);
+                    sides.add(beside.submit(() -> {
+                        together.await();
+                        return StartCheck.launch(owner, List.of(runtime, "-version"), instance, "pair-" + side);
+                    }));
+                }
+                for (var side : sides) expect(side.get().log().contains("version"), "two starts made at the same instant both run (pair " + pair + "): " + side.get().log());
+            } finally {
+                beside.shutdownNow();
+            }
+        }
+        if (Runtimes.WINDOWS) {
+            // A window any code makes behind the wall is on the wall's own desktop, which no screen shows.
+            Path instance = StartCheck.instance(owner, new PackCheck.Pack("p", "", "1.21.1", "fabric", "0.16.7", List.of(), List.of(scratch), scratch, false, "x"), List.of(), "window-1", "client", null, null);
+            Runtimes.Jdk modern = StartWall.modern(harness);
+            Path source = Files.writeString(Files.createDirectories(scratch.resolve("window")).resolve("Window.java"), WINDOW);
+            Process built = new ProcessBuilder(modern.home().resolve("bin/javac.exe").toString(), "-nowarn", "-d", instance.toString(), source.toString()).redirectErrorStream(true).start();
+            String said = new String(built.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            expect(built.waitFor() == 0, "the window program compiles: " + said);
+            StartCheck.Launch shown = StartCheck.launch(owner, List.of(modern.java().toString(), "--enable-native-access=ALL-UNNAMED", "-cp", instance.toString(), "Window"), instance, "window");
+            expect(shown.log().contains("window made on desktop mmt-wall-"), "a window made behind the wall is on the wall's own desktop: " + shown.log());
+        }
+    }
+}

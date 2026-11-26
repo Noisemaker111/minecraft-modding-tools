@@ -12,6 +12,25 @@ registry, not the core (`tools/cli/PackCheck.java`); `mmt pack-check --list` pri
 | Repair | `knowledge/pack-fixes.json` (`match`, `action`, `check`, `evidence`, `test`), only after a real run proved it; new matchers/actions in `PackRepairs.java` | its own `test`, run by `self-test` |
 | Game version whose API moved | a layer `tools/packcheck/game/VERSION/MmtPackGame.java`, listed in `Installation.RESOURCES` | `probe-compile` |
 
+`start-check` (`tools/cli/StartCheck.java`) reads and installs a pack the same way and decides with no world or window
+whether its jars start: the loader's own launch in one cold JVM a side, under the agent `tools/nogame/MmtNoGame.java`. A
+loader takes part through four more keys of its entry in `knowledge/pack-loaders.json`: `firstStart` (the files its
+first start writes into a new folder, made once per installed loader and linked into each run), `startsModsBeforeWindow`
+(true when its client runs the mods' start code before the game asks for a window), `ownWindow` (the setting that
+turns off a window the loader opens itself) and `refusedInLog` (what its resolver logs when it refuses jars and its
+client still goes on to the window to show them). Its tests: `StartCheckTest` and `bench/test_start_check.py`.
+
+Every start-check start runs behind a wall the operating system puts up (`tools/cli/StartWall.java`), because JVM
+proxy settings stop only the classes that read them. On Windows that is an AppContainer with no capability on a desktop
+of its own, started by `tools/nogame/MmtWall.java` on a Java 22 or later; the container reads the Java it runs on, the
+`loaders`, `minecraft`, `assets` and `agents` folders of the cache and the start's own folder, and nothing else. Two
+things about Windows shaped it: Smart App Control blocks a program compiled on the machine, so the launcher is Java,
+not a small `.exe`; and no container may read `C:\` or `C:\Users`, which Java's `Path.toRealPath` (every loader) and
+`File.createTempFile` (the game's level save, JNA) need, so those two lookups are answered by `MmtListed` and
+`MmtFileSystem` under `tools/nogame`, put into `java.base` for walled starts only (`MmtPathPatch`). A grant on
+a folder walks everything under it, so only folders a start is made from are ever granted. On Linux the wall is a
+network namespace with no interface (`unshare`) where a user may make one; elsewhere the answer says there is none.
+
 The probe (`tools/packcheck/MmtPackProbe.java`) is loader-neutral, written in Mojang names, and reaches the
 loader only by reflection; keep loader code out of it and its game layers.
 

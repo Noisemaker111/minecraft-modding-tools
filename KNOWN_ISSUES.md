@@ -15,6 +15,16 @@ minutes; delete it when the cause is gone.
   or is killed (`Run.Owned`); a hidden game left with no requests quits after 15 minutes. `game-stop` when done.
   There is no cap on local games; full sweeps (all packs, the whole port corpus) go to `tools/cloud-run`.
 
+## A program built on this PC is "blocked by an Application Control policy"
+- Cause: Smart App Control is on and blocks unsigned programs compiled here, some of the time (one of about twelve on 2026-11-25).
+- Fix: don't build an `.exe` for mmt to run. Start-check's wall launcher is Java run on a signed JDK for this reason.
+
+## A start-check start cannot read a file under `~/.mmt`
+- Cause: its wall (a Windows AppContainer) reads only the Java it runs on, the cache's `loaders`, `minecraft`,
+  `assets` and `agents` folders and the start's own folder (`StartWall.READ`).
+- Fix: put what a start reads in one of those, or add its cache folder to `StartWall.READ`. Never grant a folder
+  above them: a grant walks every file below it.
+
 ## A hidden game keeps running after the command that started it
 - Cause: by design `ui-check`/`world-check` leave the game up for `reload` and `eval`. A failed, interrupted or
   SIGTERM'd start now takes its game down (`Run.Owned`), but a hard kill of mmt alone runs no cleanup.

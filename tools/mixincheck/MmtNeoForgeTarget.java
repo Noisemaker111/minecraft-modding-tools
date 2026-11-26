@@ -52,32 +52,20 @@ public final class MmtNeoForgeTarget implements ClassFileTransformer {
         }
     }
 
-    /** Rewrites the class file: optionally DEDICATED_SERVER -> CLIENT in the constant pool, and runService's code to nop...return. */
-    static byte[] patch(byte[] bytes, boolean client) throws IOException {
-        DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream(bytes.length + 16);
-        DataOutputStream out = new DataOutputStream(buffer);
-        out.writeInt(in.readInt());
-        out.writeShort(in.readUnsignedShort());
-        out.writeShort(in.readUnsignedShort());
-        int count = in.readUnsignedShort();
-        out.writeShort(count);
+    /**
+     * Copies a class file's constants (count: the pool's own count, already copied or changed by the caller), the text
+     * constant from written as to (null: none changed). Returns each text constant as it was, by its index.
+     */
+    static String[] constants(DataInputStream in, DataOutputStream out, int count, String from, String to) throws IOException {
         String[] utf8 = new String[count];
-        boolean renamed = false;
         for (int i = 1; i < count; i++) {
             int tag = in.readUnsignedByte();
             out.writeByte(tag);
             switch (tag) {
-                case 1: {
-                    String text = in.readUTF();
-                    utf8[i] = text;
-                    if (client && text.equals("DEDICATED_SERVER")) {
-                        text = "CLIENT";
-                        renamed = true;
-                    }
-                    out.writeUTF(text);
+                case 1:
+                    utf8[i] = in.readUTF();
+                    out.writeUTF(utf8[i].equals(from) ? to : utf8[i]);
                     break;
-                }
                 case 7:
                 case 8:
                 case 16:
@@ -108,6 +96,21 @@ public final class MmtNeoForgeTarget implements ClassFileTransformer {
                     throw new IOException("unknown constant tag " + tag);
             }
         }
+        return utf8;
+    }
+
+    /** Rewrites the class file: optionally DEDICATED_SERVER -> CLIENT in the constant pool, and runService's code to nop...return. */
+    static byte[] patch(byte[] bytes, boolean client) throws IOException {
+        DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(bytes.length + 16);
+        DataOutputStream out = new DataOutputStream(buffer);
+        out.writeInt(in.readInt());
+        out.writeShort(in.readUnsignedShort());
+        out.writeShort(in.readUnsignedShort());
+        int count = in.readUnsignedShort();
+        out.writeShort(count);
+        String[] utf8 = constants(in, out, count, client ? "DEDICATED_SERVER" : null, "CLIENT");
+        boolean renamed = java.util.Arrays.asList(utf8).contains("DEDICATED_SERVER");
         if (client && !renamed) throw new IOException("no DEDICATED_SERVER constant to change");
         out.writeShort(in.readUnsignedShort());
         out.writeShort(in.readUnsignedShort());
