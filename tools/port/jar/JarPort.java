@@ -59,6 +59,7 @@ public final class JarPort {
     final GameDiff.Snap a, b;
     String loader; // "neoforge" or "fabric": the loader ported for, which a rule may name
     final Exposure.Route route;
+    final Exposure.Unlinked unlinkedGame; // what the map's hop found about each member of a it has no link for
     final String to, loaderTo;
     final Map<String, String> classMap = new HashMap<>();
     final Map<String, String> inverse = new HashMap<>();
@@ -152,6 +153,7 @@ public final class JarPort {
             inverse.putIfAbsent(e.getValue(), e.getKey());
         }
         Map<String, Object> raw = Json.read(map);
+        unlinkedGame = Exposure.Unlinked.of(raw);
         for (Object o : Json.array(raw.getOrDefault("rewrites", List.of()))) {
             var w = Json.object(o);
             String key = Exposure.Route.internal(Json.text(w, "owner", "")) + "." + Json.text(w, "from", "") + Json.text(w, "desc", "");
@@ -761,6 +763,35 @@ public final class JarPort {
             t.join();
         }
         now.classes.keySet().retainAll(read);
+        // What the game's own code did about each reference this step could not link, from the releases as the step read them.
+        Map<String, Map<String, Object>> said = new HashMap<>();
+        for (Path jar : order) {
+            answer(was, now, porters.get(0).unlinkedGame, state.nested.getOrDefault(jar, List.of()), said);
+        }
+    }
+
+    /**
+     * Adds to each result of a step from a to b what the game's own code did about each reference it could not link
+     * (Exposure.says), as "game": {reference without where it is: answer}. A result of a step before has its answers.
+     * said: the answers of this step so far, as many mods ask about one reference.
+     */
+    static void answer(GameDiff.Snap a, GameDiff.Snap b, Exposure.Unlinked hop, List<Map<String, Object>> results, Map<String, Map<String, Object>> said) {
+        for (Map<String, Object> result : results) {
+            if (result.containsKey("game")) {
+                continue;
+            }
+            Map<String, Object> game = new TreeMap<>();
+            for (Object u : Json.array(result.get("unlinked"))) {
+                String member = u.toString().replaceAll(" \\(in [^)]*\\)$", "");
+                if (!said.containsKey(member)) {
+                    said.put(member, Exposure.says(a, b, hop, member));
+                }
+                if (said.get(member) != null) {
+                    game.put(member, said.get(member));
+                }
+            }
+            result.put("game", game);
+        }
     }
 
     /** A target's ported jars and its report: each jar's references that did not link, at every step. */
@@ -780,7 +811,11 @@ public final class JarPort {
                 Set<String> unlinked = new TreeSet<>(), silent = new TreeSet<>(), skipped = new TreeSet<>(), refused = new TreeSet<>(), data = new TreeSet<>();
                 boolean judged = false;
                 Map<String, Integer> changed = new TreeMap<>();
+                Map<String, Object> game = new TreeMap<>();
                 for (Map<String, Object> n : state.nested.getOrDefault(jar, List.of())) {
+                    for (var e : Json.object(n.get("game")).entrySet()) {
+                        game.putIfAbsent(e.getKey(), e.getValue());
+                    }
                     for (Object u : Json.array(n.get("unlinked"))) {
                         if (unlinked.add(n.get("jar") + ": " + u)) {
                             byMods.computeIfAbsent(u.toString().replaceAll(" \\(in [^)]*\\)$", ""), k -> new TreeSet<>()).add(jar.getFileName().toString());
@@ -812,6 +847,8 @@ public final class JarPort {
                 row.put("silent", new ArrayList<>(silent));
                 row.put("skipped", new ArrayList<>(skipped));
                 row.put("refused", new ArrayList<>(refused));
+                // What the game's own code did about each reference that does not link (Exposure.says), at the step it broke.
+                row.put("game", game);
                 if (judged) {
                     // What the mod's data names that the release lacks: the server stops on it, which linking cannot show.
                     row.put("data", new ArrayList<>(data));

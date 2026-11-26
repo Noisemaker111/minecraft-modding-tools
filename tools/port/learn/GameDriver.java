@@ -25,6 +25,13 @@ final class GameDriver implements MapChain.Loader {
     /** The chain's first release: each member's {owner, name, desc} by id, and each class's id by name. */
     final Map<String, String[]> firstMembers = new HashMap<>();
     final Map<String, String> firstClasses = new HashMap<>();
+    final Map<String, String> firstClassNames = new HashMap<>(); // id -> name
+    /**
+     * What the game's own code did about each member of the chain's first release that some hop has no link for
+     * (HopChains.evidence, HopRewrites.portable), keyed as that release names it: a port reads it to answer each
+     * reference it cannot link (Exposure.says) without linking the releases again.
+     */
+    final Map<String, String> evidence = new TreeMap<>();
 
     /**
      * The member l replaces as the chain's first release names it, where that release had it under another name or
@@ -58,6 +65,42 @@ final class GameDriver implements MapChain.Loader {
             }
         }
         return y.find() ? null : was;
+    }
+
+    /**
+     * A key of HopChains.evidence (dotted owner, name, descriptor) of release s as the chain's first release names it;
+     * null for a game member that release did not have.
+     */
+    String firstKey(GameDiff.Snap s, String key) {
+        GameDiff.Cls c = s.classes.get(key.replace('.', '/'));
+        if (c != null) {
+            String was = firstClassNames.get(c.id);
+            return was == null ? null : was.replace('/', '.');
+        }
+        int paren = key.indexOf('(');
+        int dot = paren < 0 ? key.lastIndexOf('.') : key.lastIndexOf('.', paren);
+        GameDiff.Cls owner = dot < 0 ? null : s.classes.get(key.substring(0, dot).replace('.', '/'));
+        if (owner == null) {
+            // A library's: libraries are not renamed between releases.
+            return s.libraries.containsKey(key.replace('.', '/')) || dot > 0 && s.libraries.containsKey(key.substring(0, dot).replace('.', '/')) ? key : null;
+        }
+        String rest = key.substring(dot + 1);
+        GameDiff.Meth m = paren < 0 ? null : owner.methods.get(rest);
+        GameDiff.Fld f = paren < 0 ? owner.fields.get(rest) : null;
+        String[] was = m != null ? firstMembers.get(m.id) : f != null ? firstMembers.get(f.id) : null;
+        return was == null ? null : was[0].replace('/', '.') + "." + was[1] + (m != null ? was[2] : "");
+    }
+
+    /** One line of the map's "evidence" list; a member the game never used is its key alone. */
+    static String evidenceJson(String key, HopChains.Evidence e, boolean portable) {
+        StringBuilder j = new StringBuilder("{ \"key\": ").append(VersionMap.Diff.q(key));
+        if (e.sites() > 0) {
+            j.append(", \"sites\": ").append(e.sites()).append(", \"kept\": ").append(e.kept()).append(", \"aligned\": ").append(e.aligned());
+            j.append(", \"best\": ").append(e.best() == null ? "null" : VersionMap.Diff.q(e.best())).append(", \"votes\": ").append(e.votes());
+            j.append(", \"template\": ").append(e.template() == null ? "null" : VersionMap.Diff.q(e.template()));
+            j.append(", \"templateVotes\": ").append(e.templateVotes()).append(", \"templateSites\": ").append(e.templateSites());
+        }
+        return j.append(portable ? ", \"portable\": true }" : " }").toString();
     }
 
     boolean sameClass(GameHop h, String inFirst, String now) {
@@ -260,6 +303,7 @@ final class GameDriver implements MapChain.Loader {
             for (GameDiff.Cls c : s.classes.values()) {
                 fresh(c);
                 firstClasses.put(c.name, c.id);
+                firstClassNames.put(c.id, c.name);
                 for (GameDiff.Meth m : c.methods.values()) {
                     firstMembers.put(m.id, new String[] { c.name, m.name, m.desc });
                 }
@@ -329,7 +373,16 @@ final class GameDriver implements MapChain.Loader {
                     ", \"newDesc\": " + VersionMap.Diff.q(c.to().desc) + " }"
                 );
             }
-            for (HopChains.Chain c : h.hopChains.chains()) {
+            Map<String, HopChains.Evidence> seen = h.hopChains.evidence();
+            Set<String> portable = h.hopRewrites.portable();
+            for (var e : seen.entrySet()) {
+                String first = firstKey(prev, e.getKey());
+                if (first != null) {
+                    // A member is unlinked at one hop of a chain: it is not in the releases after it.
+                    evidence.putIfAbsent(first, evidenceJson(first, e.getValue(), portable.contains(e.getKey())));
+                }
+            }
+            for (HopChains.Chain c : h.hopChains.chains(seen)) {
                 chains.add(
                     "{ \"step\": " + VersionMap.Diff.q(prev.version + " -> " + s.version) +
                     ", \"owner\": " + VersionMap.Diff.q(c.owner()) +
@@ -477,6 +530,12 @@ final class GameDriver implements MapChain.Loader {
             head.append(i == 0 ? "\n    " : ",\n    ").append(retypedLines.get(i));
         }
         head.append(retyped.isEmpty() ? "],\n" : "\n  ],\n");
+        head.append("  \"evidence\": [");
+        int line = 0;
+        for (String e : evidence.values()) {
+            head.append(line++ == 0 ? "\n    " : ",\n    ").append(e);
+        }
+        head.append(evidence.isEmpty() ? "],\n" : "\n  ],\n");
         if (loader != null) {
             String source = "fabric".equals(loader) ? Exposure.FabricApi.MAVEN : GameDiff.NEOFORGE;
             head.append("  \"loader\": { \"name\": ").append(VersionMap.Diff.q(loader)).append(", \"source\": ").append(VersionMap.Diff.q(source)).append(", \"versions\": {");

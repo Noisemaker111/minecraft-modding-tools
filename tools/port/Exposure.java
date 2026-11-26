@@ -7,13 +7,13 @@ import java.util.zip.*;
 /**
  * Exposure - what the game's own code did about each game part a ported mod still references and the new release lacks.
  *
- * JarPort's report ranks the references that do not link by the mods they hold back. For each, GameDiff reads both
- * releases and says what the game's own code shows: "replaced" (its uses line up with what the new release uses
- * instead), "template" or "split" (a member read became a chain), "linked" (the map follows it to a new signature),
- * "redesigned" (every use was rewritten beyond lining up) or "unused" (the game never used it). The first kinds are
- * the ones a porter can learn from the game; that is what makes the list a to-do list.
+ * A port's report lists the references that do not link. For each, says() reads what the game's own code shows, from
+ * the two releases the port's step holds and what the route map's hop found (GameDriver's "evidence"): "replaced"
+ * (its uses line up with what the new release uses instead), "template" or "split" (a member read became a chain),
+ * "linked" (the map follows it to a new signature), "redesigned" (every use was rewritten beyond lining up) or "unused"
+ * (the game never used it). The first kinds are the ones a porter can learn from the game; that is what makes the list
+ * a to-do list. JarPort writes each answer beside the reference in its report.
  *
- *   java Exposure --from 1.21.1 --to 1.21.2 [--loader neoforge] --report jarport.json --out evidence.json
  *   java Exposure --fabric-api 1.16,1.16.5      the Fabric API jar of each release (FabricApi)
  *
  * Also the shared lookups of the port: one release's snapshot with its loader, where a member is declared, and the
@@ -22,89 +22,84 @@ import java.util.zip.*;
 public final class Exposure {
 
     public static void main(String[] args) throws Exception {
-        String from = null, to = null, out = null, loader = null, report = null, fabricApis = null;
+        String fabricApis = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--from" -> from = args[++i];
-                case "--to" -> to = args[++i];
-                case "--out" -> out = args[++i];
-                case "--loader" -> loader = args[++i];
-                case "--report" -> report = args[++i];
                 case "--cache" -> VersionMap.cache = Path.of(args[++i]).toAbsolutePath();
                 case "--fabric-api" -> fabricApis = args[++i];
                 default -> throw new IllegalArgumentException("unknown argument " + args[i]);
             }
         }
-        if (fabricApis != null) {
-            // The Fabric API jar of each release, one "VERSION<tab>PATH" line each (no path: none), for the bench's packs.
-            for (String v : fabricApis.split(",")) {
-                Path api;
-                try {
-                    api = FabricApi.of(v);
-                } catch (Exception failed) {
-                    System.err.println("no Fabric API answer for Minecraft " + v + ": " + failed);
-                    System.exit(1);
-                    return;
-                }
-                System.out.println(v + "\t" + (api == null ? "" : api.toAbsolutePath()));
-            }
-            return;
-        }
-        if (from == null || to == null || out == null || report == null) {
-            System.err.println("usage: Exposure --from V --to V [--loader neoforge] --report jarport.json --out evidence.json");
+        if (fabricApis == null) {
+            System.err.println("usage: Exposure --fabric-api V[,V...]");
             System.exit(2);
         }
-        // The two releases side by side, as a port reads its own (JarPort.Reads): one after the other, the second waited on the first.
-        String newer = to, on = loader;
-        java.util.concurrent.FutureTask<GameDiff.Snap> ahead = new java.util.concurrent.FutureTask<>(() -> snap(newer, on));
-        Thread.ofPlatform().daemon().start(ahead);
-        GameDiff.Snap a = snap(from, loader);
-        GameDiff.Snap b;
-        try {
-            b = ahead.get();
-        } catch (java.util.concurrent.ExecutionException failed) {
-            throw failed.getCause() instanceof Exception e ? e : failed;
+        // The Fabric API jar of each release, one "VERSION<tab>PATH" line each (no path: none), for the bench's packs.
+        for (String v : fabricApis.split(",")) {
+            Path api;
+            try {
+                api = FabricApi.of(v);
+            } catch (Exception failed) {
+                System.err.println("no Fabric API answer for Minecraft " + v + ": " + failed);
+                System.exit(1);
+                return;
+            }
+            System.out.println(v + "\t" + (api == null ? "" : api.toAbsolutePath()));
         }
-        GameHop hop = new GameHop(a, b);
-        hop.run();
-        Map<String, HopChains.Evidence> evidence = hop.hopChains.evidence();
-        Set<String> portable = hop.hopRewrites.portable();
-        Map<String, Object> said = new LinkedHashMap<>();
-        for (Object o : Json.array(Json.read(Path.of(report)).get("unlinkedByMods"))) {
-            String member = Json.text(Json.object(o), "member", "");
-            if (member.startsWith(POINT_GONE)) {
-                String[] read = pointSays(a, b, member.substring(POINT_GONE.length()).replaceAll(" \\(in [^)]*\\)$", ""));
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("game", read[0]);
-                row.put("gameDetail", read[1]);
-                row.put("portable", false);
-                row.put("part", read[2]);
-                said.put(member, row);
-                continue;
+    }
+
+    /**
+     * What a route map's hop found about each member of its old release it has no link for (GameDriver's "evidence"
+     * list, keyed as key() keys them), and the removed methods whose bodies could go with a mod (HopRewrites.portable).
+     */
+    record Unlinked(Map<String, HopChains.Evidence> evidence, Set<String> portable) {
+
+        static Unlinked of(Map<String, Object> map) {
+            Map<String, HopChains.Evidence> evidence = new HashMap<>();
+            Set<String> portable = new HashSet<>();
+            for (Object o : Json.array(map.getOrDefault("evidence", List.of()))) {
+                Map<String, Object> e = Json.object(o);
+                String key = Json.text(e, "key", "");
+                evidence.put(key, new HopChains.Evidence(count(e, "sites"), count(e, "kept"), count(e, "aligned"), (String) e.get("best"), count(e, "votes"),
+                    (String) e.get("template"), count(e, "templateVotes"), count(e, "templateSites")));
+                if (Boolean.TRUE.equals(e.get("portable"))) {
+                    portable.add(key);
+                }
             }
-            String key = key(a, member);
-            String[] added = key == null && member.startsWith("abstract method not written: ") ? added(a, b, member) : null;
-            if (added != null) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("game", added[0]);
-                row.put("gameDetail", added[1]);
-                row.put("portable", false);
-                row.put("part", part(b, added[2]));
-                said.put(member, row);
-            }
-            if (key == null) {
-                continue;
-            }
-            String[] game = gameSays(evidence.get(key));
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("game", game[0]);
-            row.put("gameDetail", game[1]);
-            row.put("portable", portable.contains(key));
-            row.put("part", part(a, key));
-            said.put(member, row);
+            return new Unlinked(evidence, portable);
         }
-        Files.writeString(Path.of(out), Json.write(said), StandardCharsets.UTF_8);
-        System.out.printf("%s -> %s: what the game's own code did, for %d references%n", from, to, said.size());
+
+        static int count(Map<String, Object> e, String name) {
+            return e.get(name) instanceof Number n ? n.intValue() : 0;
+        }
+    }
+
+    /**
+     * What the game's own code did about one reference a port could not link from a to b (a line of its report, without
+     * where it is): {game, gameDetail, portable, part}, or null for a line that names nothing of a the game can be asked
+     * about (a member of another mod, a mod's own problem).
+     */
+    static Map<String, Object> says(GameDiff.Snap a, GameDiff.Snap b, Unlinked hop, String member) {
+        if (member.startsWith(POINT_GONE)) {
+            String[] read = pointSays(a, b, member.substring(POINT_GONE.length()).replaceAll(" \\(in [^)]*\\)$", ""));
+            return row(read[0], read[1], false, read[2]);
+        }
+        String key = key(a, member);
+        if (key == null) {
+            String[] added = member.startsWith("abstract method not written: ") ? added(a, b, member) : null;
+            return added == null ? null : row(added[0], added[1], false, part(b, added[2]));
+        }
+        String[] game = gameSays(hop.evidence().get(key));
+        return row(game[0], game[1], hop.portable().contains(key), part(a, key));
+    }
+
+    static Map<String, Object> row(String game, String detail, boolean portable, String part) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("game", game);
+        row.put("gameDetail", detail);
+        row.put("portable", portable);
+        row.put("part", part);
+        return row;
     }
 
     static final String POINT_GONE = "mixin injection point gone: ";
@@ -1114,7 +1109,8 @@ public final class Exposure {
         }
         int had = 0;
         Map<String, Integer> dropped = new HashMap<>();
-        for (GameDiff.Cls c : b.classes.values()) {
+        // Only a class that can extend k: the release's own ones under its own k, with no library read.
+        for (GameDiff.Cls c : b.classes.under(k)) {
             GameDiff.Meth w = c.methods.get(name + desc);
             GameDiff.Cls old = a.classes.get(c.name);
             if (w == null || (w.flags & 0x0400) != 0 || c.name.equals(k) || old == null || !Linking.subtype(b, c.name, k)) {
