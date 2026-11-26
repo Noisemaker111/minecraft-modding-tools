@@ -272,7 +272,9 @@ final class StartCheck {
      * The jars a failed start's suspects put at fault, with why. A jar the loader or the game names in its own words is
      * at fault, and with one named, a jar only near the failure is a bystander: a data pack the release refuses failed
      * with another mod's mixin handler in its stack, and that mod loads. With nobody named, the jars near the failure are
-     * failed and noted in unsure: each is started again once the rest starts.
+     * failed. Jars failed only for being near, and jars one start names together, are noted in unsure: each is started
+     * again once the rest starts. Several named at once may be one fault and the mods it surfaced in: the loader names the
+     * mod whose class was the first to load when another mod's mixin could not be prepared.
      */
     static Map<String, String> atFault(List<Map<String, Object>> suspects, Set<String> present, Set<String> unsure) {
         Map<String, String> named = new LinkedHashMap<>(), near = new LinkedHashMap<>();
@@ -283,9 +285,9 @@ final class StartCheck {
             boolean onlyNear = why.stream().allMatch(w -> NEAR.stream().anyMatch(w::startsWith));
             (onlyNear ? near : named).putIfAbsent(jar, String.join("; ", why));
         }
-        if (!named.isEmpty()) return named;
-        unsure.addAll(near.keySet());
-        return near;
+        Map<String, String> fault = named.isEmpty() ? near : named;
+        if (named.isEmpty() || named.size() > 1) unsure.addAll(fault.keySet());
+        return fault;
     }
 
     /** What a side does with a start that failed and named no jar (run, the jars it held): true to go on to another round. */

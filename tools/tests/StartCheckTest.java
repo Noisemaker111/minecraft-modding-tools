@@ -280,8 +280,11 @@ public final class StartCheckTest {
         Map<String, Object> nearOne = Json.map("jar", "lib.jar", "why", List.of("a mixin handler of this mod is in the stack"));
         Map<String, Object> both = Json.map("jar", "named.jar", "why", List.of("its code (a.B) is in the stack: at a.B.c", "the loader names it: Mod named requires x"));
         Set<String> unsure = new LinkedHashSet<>();
-        var fault = StartCheck.atFault(List.of(nearOne, namedOne, both), present, unsure);
-        expect(fault.keySet().equals(Set.of("bad.jar", "named.jar")) && unsure.isEmpty(), "with a jar named, one only near the failure is a bystander: " + fault + " " + unsure);
+        var fault = StartCheck.atFault(List.of(nearOne, namedOne), present, unsure);
+        expect(fault.keySet().equals(Set.of("bad.jar")) && unsure.isEmpty(), "with a jar named, one only near the failure is a bystander, and the one named is not started again: " + fault + " " + unsure);
+        fault = StartCheck.atFault(List.of(nearOne, namedOne, both), present, unsure);
+        expect(fault.keySet().equals(Set.of("bad.jar", "named.jar")) && unsure.equals(Set.of("bad.jar", "named.jar")), "two jars one start names are both failed, and each is started again: one may be where the other's fault surfaced: " + fault + " " + unsure);
+        unsure.clear();
         fault = StartCheck.atFault(List.of(nearOne), present, unsure);
         expect(fault.keySet().equals(Set.of("lib.jar")) && unsure.equals(Set.of("lib.jar")), "with nobody named, the jar near the failure is failed and marked to be started again: " + fault + " " + unsure);
         fault = StartCheck.atFault(List.of(namedOne), Set.of("lib.jar"), unsure);
