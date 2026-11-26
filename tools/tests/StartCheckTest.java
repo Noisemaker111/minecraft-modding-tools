@@ -23,6 +23,7 @@ public final class StartCheckTest {
             server(agent, scratch);
             client(agent, scratch);
             blame(harness);
+            otherSide(agent, scratch, harness);
             System.out.println(count + " start-check checks passed: the agent ends a start before its server thread works and before its window, "
                 + "a failed start is not a pass, and each failure is traced to the jar it names");
         } finally {
@@ -208,6 +209,38 @@ public final class StartCheckTest {
             try (var left = Files.list(folder)) {
                 expect(left.noneMatch(p -> p.getFileName().toString().startsWith("window-")), "nothing after the graphics library was bound ran");
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ the other side's code
+    /** A class of a jar that names a game class this side lacks is no start's to load: what Mixin says of it refuses nobody. */
+    static void otherSide(Path agent, Path scratch, Path harness) throws Exception {
+        Path client = Files.createDirectories(scratch.resolve("side-client")), server = Files.createDirectories(scratch.resolve("side-server"));
+        compile(client, List.of(), Map.of("net/minecraft/client/Screen.java", "package net.minecraft.client;\npublic class Screen { }\n"), scratch);
+        compile(server, List.of(client), Map.of(
+            "net/minecraft/Both.java", "package net.minecraft;\npublic class Both { }\n",
+            "mod/Widget.java", "package mod;\npublic class Widget extends net.minecraft.client.Screen { }\n",
+            "mod/Opens.java", "package mod;\npublic class Opens { Object open() { return new net.minecraft.client.Screen(); } }\n",
+            "mod/Common.java", "package mod;\npublic class Common { net.minecraft.Both both; String path = \"textures/gui.png\"; }\n"), scratch);
+        try (var agentClasses = new java.net.URLClassLoader(new java.net.URL[] {agent.toUri().toURL()}, null);
+            var game = new java.net.URLClassLoader(new java.net.URL[] {server.toUri().toURL()}, null)) {
+            var asked = agentClasses.loadClass("MmtMixinCheck").getDeclaredMethod("otherSide", String.class, ClassLoader.class, Set.class);
+            asked.setAccessible(true);
+            expect("net.minecraft.client.Screen".equals(asked.invoke(null, "mod.Widget", game, Set.of())), "a class that extends a game class this side lacks is the other side's code");
+            expect("net.minecraft.client.Screen".equals(asked.invoke(null, "mod.Opens", game, Set.of())), "so is one that only makes one in a method");
+            expect(asked.invoke(null, "mod.Common", game, Set.of()) == null, "a class that names only game classes this side has is this side's: " + asked.invoke(null, "mod.Common", game, Set.of()));
+            expect(asked.invoke(null, "mod.Widget", game, Set.of("net.minecraft.client.Screen")) == null, "a game class that is a mixin target itself is judged on its own, not here");
+            expect(asked.invoke(null, "net.minecraft.Both", game, Set.of()) == null && asked.invoke(null, "mod.Gone", game, Set.of()) == null, "the game's own classes and a class that is not there are not asked");
+        }
+        PackCheck owner = new PackCheck(harness, null, null);
+        owner.scan.mixins.put("gui.mixins.json", "gui.jar");
+        String refused = "An unexpected critical error was encountered\n  caused by MixinPreProcessorException: Attach error for gui.mixins.json:WidgetMixin from mod gui during activity";
+        for (String other : Arrays.asList("net.minecraft.client.Screen", null)) {
+            var events = List.of(
+                Json.map("event", "error", "phase", "apply", "target", "mod.Widget", "mixin", "gui.WidgetMixin", "config", "gui.mixins.json", "action", "ERROR", "message", refused),
+                Json.map("event", "target", "target", "mod.Widget", "config", "gui.mixins.json", "loaded", false, "exception", "org.spongepowered.asm.mixin.transformer.throwables.MixinTransformerError", "message", refused, "otherSide", other));
+            var blamed = StartCheck.refusedByMixin(owner, launch(events), Set.of("gui.jar"));
+            expect(blamed.isEmpty() == (other != null), "Mixin's refusal in " + (other == null ? "this side's code refuses the jar" : "the other side's code refuses nobody") + ": " + blamed);
         }
     }
 

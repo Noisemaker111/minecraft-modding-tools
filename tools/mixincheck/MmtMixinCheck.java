@@ -185,17 +185,22 @@ public final class MmtMixinCheck {
             ) targets.put(target.replace('/', '.'), name);
         }
         int unloadable = 0;
+        boolean asTheGame = Boolean.getBoolean("mmt.mixincheck.asTheGame");
         for (Map.Entry<String, String> target : targets.entrySet()) {
-            String error = null, exception = null;
+            String error = null, exception = null, otherSide = null;
+            int stopping = Integer.getInteger(STOPPING, 0);
             try {
                 Class.forName(target.getKey(), false, game);
             } catch (Throwable failure) {
                 Throwable cause = unwrap(failure);
                 error = messages(cause);
                 exception = cause.getClass().getName();
-                // A target this side of the game does not have is never loaded by it either; any other failure is the
-                // one the game meets when it loads the class.
-                if (!(cause instanceof ClassNotFoundException)) unloadable++;
+                boolean absent = cause instanceof ClassNotFoundException;
+                if (asTheGame && !absent) otherSide = otherSide(target.getKey(), game, targets.keySet());
+                // A target this side of the game does not have is never loaded by it either, nor is the other side's
+                // code in a jar; any other failure is the one the game meets when it loads the class.
+                if (otherSide != null) System.setProperty(STOPPING, String.valueOf(stopping));
+                else if (!absent) unloadable++;
             }
             emit(
                 "target",
@@ -208,11 +213,13 @@ public final class MmtMixinCheck {
                 "message",
                 error,
                 "exception",
-                exception
+                exception,
+                "otherSide",
+                otherSide
             );
             // Answering as the game (start-check), the first class that fails is where the game stops: what Mixin does
             // to the classes after it is no part of any start.
-            if (unloadable > 0 && Boolean.getBoolean("mmt.mixincheck.asTheGame")) break;
+            if (unloadable > 0 && asTheGame) break;
         }
         // Every mixin of the mod's configs, and whether Mixin finished applying it: Mixin records that
         // on the mixin's own ClassInfo once it has merged it into a target.
@@ -264,6 +271,42 @@ public final class MmtMixinCheck {
         }
         emit("done", "seconds", seconds(start), "targets", targets.size());
         return Integer.getInteger(STOPPING, 0) + unloadable;
+    }
+
+    static final java.util.regex.Pattern GAME_CLASS = java.util.regex.Pattern.compile("(?:net/minecraft|com/mojang)/[\\w/$]+");
+
+    /**
+     * The game class that makes a class of a jar the other side's code: one it names that this side of the game does
+     * not have (a client screen in a mod's jar, on a server). No start of this side loads such a class, so what Mixin
+     * does to it is not this side's verdict. Null when it names none, and for the game's own classes. Asked only of a
+     * target that did not load; a game class that is a mixin target itself is judged on its own, not loaded here.
+     */
+    static String otherSide(String target, ClassLoader game, Set<String> targets) {
+        String self = target.replace('.', '/');
+        if (GAME_CLASS.matcher(self).matches()) return null;
+        String[] constants;
+        try (InputStream stream = game.getResourceAsStream(self + ".class")) {
+            if (stream == null) return null;
+            DataInputStream in = new DataInputStream(stream);
+            in.skipBytes(8);
+            constants = MmtNeoForgeTarget.constants(in, new DataOutputStream(new ByteArrayOutputStream()), in.readUnsignedShort(), null, null);
+        } catch (IOException unread) {
+            return null;
+        }
+        Set<String> named = new TreeSet<String>();
+        for (String constant : constants) {
+            java.util.regex.Matcher name = GAME_CLASS.matcher(constant == null ? "" : constant);
+            while (name.find()) named.add(name.group().replace('/', '.'));
+        }
+        named.removeAll(targets);
+        for (String name : named) {
+            try {
+                Class.forName(name, false, game);
+            } catch (Throwable absent) {
+                return name;
+            }
+        }
+        return null;
     }
 
     /** The system property MmtMixinErrors counts in: Mixin loads that class with its own loader, which may not see this one. */

@@ -378,13 +378,17 @@ final class StartCheck {
      * The jars Mixin refused in a run. An error Mixin reports names the config of the mixin at fault. A game class that
      * does not load with its mixins is the fault of the mixin its error names (its config, else "from mod ID"): several
      * mods mix into one class, so the class's own configs say nothing. One whose error names none is left to the caller.
+     * A class of a jar that is the other side's code (the agent's otherSide: a client screen, on a server) is loaded by
+     * no start of this side: what Mixin says of it refuses nobody here.
      */
     static Map<String, String> refusedByMixin(PackCheck owner, Launch run, Set<String> present) {
         Map<String, String> refused = new LinkedHashMap<>();
+        Set<String> otherSide = new LinkedHashSet<>();
+        for (var event : run.events()) if ("target".equals(event.get("event")) && event.get("otherSide") != null) otherSide.add(Json.text(event, "target", ""));
         for (var event : run.events()) {
             boolean error = "error".equals(event.get("event")) && "ERROR".equals(event.get("action"));
             boolean unloadable = "target".equals(event.get("event")) && Boolean.FALSE.equals(event.get("loaded")) && !"java.lang.ClassNotFoundException".equals(event.get("exception"));
-            if (!error && !unloadable) continue;
+            if (!error && !unloadable || otherSide.contains(Json.text(event, "target", "").replace('/', '.'))) continue;
             String message = Json.text(event, "message", "");
             Set<String> jars = new LinkedHashSet<>();
             if (error) jars.add(PackCheck.top(owner.scan.mixins.getOrDefault(Json.text(event, "config", ""), "")));
