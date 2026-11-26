@@ -1332,7 +1332,16 @@ public final class VersionMap {
             if (s == null) {
                 return "null";
             }
-            return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+            StringBuilder out = new StringBuilder("\"");
+            for (char c : s.toCharArray()) {
+                // A control character is written escaped: a game string constant with a newline in it is a map line JSON readers refuse.
+                if (c < 0x20) {
+                    out.append(String.format("\\u%04x", (int) c));
+                } else {
+                    out.append(c == '\\' || c == '"' ? "\\" + c : String.valueOf(c));
+                }
+            }
+            return out.append('"').toString();
         }
 
         static String dots(String s) {

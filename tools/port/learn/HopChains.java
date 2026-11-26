@@ -83,8 +83,8 @@ final class HopChains {
         return out;
     }
 
-    List<Chain> chains() {
-        Map<String, Evidence> ev = evidence();
+    /** ev: this hop's evidence(), which also notes the references each template stands for. */
+    List<Chain> chains(Map<String, Evidence> ev) {
         List<Chain> out = new ArrayList<>();
         for (var e : ev.entrySet()) {
             Evidence x = e.getValue();
@@ -268,6 +268,25 @@ final class HopChains {
             out.put(e.getKey(), new Evidence(n[0], n[1], n[2], best, top, template, tTop, tAll));
         }
         Evidence none = new Evidence(0, 0, 0, null, 0, null, 0, 0);
+        for (GameDiff.Cls c : hop.a.libraries.values()) {
+            GameDiff.Cls now = hop.b.libraries.get(c.name);
+            if (now == null && hop.b.classes.containsKey(c.name)) {
+                continue; // a library class the game took in
+            }
+            if (now == null) {
+                out.putIfAbsent(c.name.replace('/', '.'), none);
+            }
+            for (GameDiff.Meth m : c.methods.values()) {
+                if (now == null || !now.methods.containsKey(m.name + m.desc)) {
+                    out.putIfAbsent(c.name.replace('/', '.') + "." + m.name + m.desc, none);
+                }
+            }
+            for (GameDiff.Fld f : c.fields.values()) {
+                if (now == null || !now.fields.containsKey(f.name)) {
+                    out.putIfAbsent(c.name.replace('/', '.') + "." + f.name, none);
+                }
+            }
+        }
         for (GameDiff.Cls c : hop.a.classes.values()) {
             if (!hop.cAB.containsKey(c)) {
                 out.putIfAbsent(c.name.replace('/', '.'), none);
@@ -286,10 +305,17 @@ final class HopChains {
         return out;
     }
 
-    /** The Exposure key of what a reference names, when that is a class, method or field of a with no link to b. */
+    /**
+     * The Exposure key of what a reference names, when that is a class, method or field of a with no link to b, or of
+     * one of the libraries a runs with that b's libraries lack. The hop links the game's classes only; a library is
+     * not renamed between releases, so its members are the same where their names are.
+     */
     String unlinkedKey(GameDiff.Ref r) {
         if (r.kind() == 'k') {
             return null;
+        }
+        if (!hop.a.classes.containsKey(r.owner()) && hop.a.libraries.containsKey(r.owner())) {
+            return unlinkedLibraryKey(r);
         }
         if (r.kind() == 'c') {
             GameDiff.Cls c = hop.a.classes.get(r.owner());
@@ -309,5 +335,25 @@ final class HopChains {
             return hop.mAB.containsKey(m) ? null : m.owner.name.replace('/', '.') + "." + m.name + m.desc;
         }
         return f == null || hop.fAB.containsKey(f) ? null : f.owner.name.replace('/', '.') + "." + f.name;
+    }
+
+    String unlinkedLibraryKey(GameDiff.Ref r) {
+        if (r.kind() == 'c') {
+            return hop.b.libraries.containsKey(r.owner()) || hop.b.classes.containsKey(r.owner()) ? null : r.owner().replace('/', '.');
+        }
+        GameDiff.Meth m = r.kind() == 'm' ? hop.a.libraryMethod(r.owner(), r.name(), r.desc()) : null;
+        GameDiff.Fld f = null;
+        for (GameDiff.Cls c = hop.a.libraries.get(r.owner()); r.kind() == 'f' && c != null && f == null; c = c.sup == null ? null : hop.a.libraries.get(c.sup)) {
+            f = c.fields.get(r.name());
+        }
+        if (m != null) {
+            GameDiff.Cls now = hop.b.libraries.get(m.owner.name);
+            return now != null && now.methods.containsKey(m.name + m.desc) ? null : m.owner.name.replace('/', '.') + "." + m.name + m.desc;
+        }
+        if (f != null) {
+            GameDiff.Cls now = hop.b.libraries.get(f.owner.name);
+            return now != null && now.fields.containsKey(f.name) ? null : f.owner.name.replace('/', '.') + "." + f.name;
+        }
+        return null;
     }
 }
