@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import subprocess
-import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -315,9 +314,12 @@ def game_says(loader, frm, to, report):
     if settings.VERIFY or not set(asked) <= set(said["answered"]):
         out = report.with_name("game.json")
         log = report.with_name("game-classes.log")
-        subprocess.run([java(), f"-Xmx{settings.HEAP}g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
-                        "--report", str(report), "--out", str(out), "--loader", loader], check=True, stdout=subprocess.DEVNULL)
+        exposure([java(), f"-Xmx{settings.HEAP}g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
+                  "--report", str(report), "--out", str(out), "--loader", loader])
         names = loaded_from(log.read_text(encoding="utf-8", errors="replace"), classes.split(os.pathsep)[0])
+        if not names:
+            # Kept under no class, the answers would outlive every edit to Exposure, as they did on Windows.
+            raise SystemExit(f"{log} names none of the classes in {classes.split(os.pathsep)[0]}: what Exposure said could not be kept under the code that said it")
         fresh = json.loads(out.read_text(encoding="utf-8"))
         target = folder / (classes_key(classes, names) + ".json")
         if target != known:
@@ -332,6 +334,10 @@ def game_says(loader, frm, to, report):
             part.write_text(text, encoding="utf-8")
             os.replace(part, path)  # a later answer only adds rows; each row is the same in every run with this key
     return {m: said["said"][m] for m in asked if m in said["said"]}
+
+
+def exposure(command):
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
 
 WHERE = re.compile(r" \(in [^)]*\)$")
