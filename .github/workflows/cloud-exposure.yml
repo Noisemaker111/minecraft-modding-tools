@@ -77,7 +77,6 @@ jobs:
           path: |
             ~/.mmt/exposure/registries
             ~/.mmt/exposure/ports
-            ~/.mmt/exposure/game
             ~/.mmt/exposure/maps
           key: ${{ steps.release.outputs.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
@@ -105,7 +104,6 @@ jobs:
           path: |
             ~/.mmt/exposure/registries
             ~/.mmt/exposure/ports
-            ~/.mmt/exposure/game
             ~/.mmt/exposure/maps
           key: ${{ steps.release.outputs.job }}-${{ github.run_id }}-${{ github.run_attempt }}
       # overwrite: a re-run of a failed job replaces the part its first attempt left.

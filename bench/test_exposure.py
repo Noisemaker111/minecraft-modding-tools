@@ -56,23 +56,6 @@ def plan(only):
         sys.argv, sys.stdout = argv, sys.__stdout__
 
 
-# Exposure's answers are kept under the classes it loaded, read from the JVM's class-load log, which names their folder as
-# a file: URL (file:/C:/Users/... on Windows). Read as a plain path, a Windows folder matched no line: no class was in the
-# key, and an edit to Exposure left its old answers in place.
-with tempfile.TemporaryDirectory() as tmp:
-    own, other = Path(tmp) / "port classes" / "classes", Path(tmp) / "other" / "classes"
-    for folder in (own, other):
-        folder.mkdir(parents=True)
-
-    def source(folder):
-        return "file:/" + folder.resolve().as_posix().lstrip("/").replace(" ", "%20") + "/"
-
-    log = "\n".join([f"[0.2s][info][class,load] Exposure source: {source(own)}", f"[0.3s][info][class,load] GameHop$1 source: {source(own)}",
-                     f"[0.3s][info][class,load] Elsewhere source: {source(other)}", "[0.3s][info][class,load] Exposure$$Lambda/0x01 source: Exposure",
-                     "[0.1s][info][class,load] java.lang.Object source: jrt:/java.base", f"[0.4s][info][class,load] Exposure source: {source(own)}"])
-    check(portboard.porter.loaded_from(log, own) == ["Exposure", "GameHop$1"], f"the classes loaded from the porter's folder: {portboard.porter.loaded_from(log, own)}")
-    check(portboard.porter.loaded_from(log, other) == ["Elsewhere"], f"and from another folder, its own: {portboard.porter.loaded_from(log, other)}")
-
 newest = portboard.gamereleases.updates("fabric")[-1]
 check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1]}"], "--only LOADER:FROM:TO picks that update")
 check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")

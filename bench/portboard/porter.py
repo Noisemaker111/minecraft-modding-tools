@@ -6,8 +6,6 @@ import os
 import re
 import shutil
 import subprocess
-import urllib.parse
-import urllib.request
 import uuid
 from pathlib import Path
 import port_tools  # noqa: E402
@@ -280,58 +278,16 @@ def jarport(command):
     return subprocess.run(command, stdout=subprocess.DEVNULL).returncode
 
 
-def classes_key(classpath, names):
-    """The bytes of the named classes of the porter's classpath (its first entry), hashed with the ASM it runs with."""
-    folder = Path(classpath.split(os.pathsep)[0])
-    return cachekeys.content_key(*sorted(names), *((folder / (n.replace(".", "/") + ".class")).read_bytes() if (folder / (n.replace(".", "/") + ".class")).is_file() else b"gone" for n in sorted(names)),
-                       *(a.read_bytes() for a in settings.ASM))
-
-
-LOADED = re.compile(r"\[class,load\] (\S+) source: file:(.*)$")
-
-
-def loaded_from(log, folder):
-    """The classes a JVM's class-load log (-Xlog:class+load) says it loaded from one folder of its classpath. The log
-    names a folder as a file: URL (file:/C:/Users/..., file:/home/...); read as a plain path, a Windows one matched
-    nothing, so on Windows no class was part of the key and an edit to Exposure left its old answers in place."""
-    own = Path(folder).resolve()
-    return sorted({m.group(1) for m in map(LOADED.search, log.splitlines()) if m and Path(urllib.request.url2pathname(m.group(2))).resolve() == own})
-
-
-def game_says(loader, frm, to, report):
-    """What the game's own code did about each reference JarPort's report ranks (tools/port/Exposure.java). Exposure answers each
-    reference on its own, from the two releases alone, and runs only some of the porter's classes (not JarPort's port), so
-    every answer is kept in ~/.mmt/exposure/game/ under the bytes of the classes it loaded the last time and the loaders'
-    release lists: an edit to the port leaves it, and it runs again only for a reference it never answered. A class it
-    starts to load is loaded from code that changed, so its key changes with it."""
-    classes = compile_tools()
-    asked = [r["member"] for r in json.loads(report.read_text(encoding="utf-8"))["unlinkedByMods"]]
-    # The loader releases of each step: a port that stops on the way reads no map of the whole jump, and none is built for it.
-    folder = cachekeys.keyed_at("game", cachekeys.content_key(*(cachekeys.platform_key(loader, r) for r in routes(loader, frm, to)), java_version())) / f"{loader}-{frm}-{to}"
-    folder.mkdir(parents=True, exist_ok=True)
-    loaded = folder / "classes.txt"  # not loaded.txt, which runs on Windows wrote empty (loaded_from): its answers are not read
-    known = folder / (classes_key(classes, loaded.read_text(encoding="utf-8").split()) + ".json") if loaded.is_file() else None
-    said = json.loads(known.read_text(encoding="utf-8")) if known and known.is_file() else {"answered": [], "said": {}}
-    if settings.VERIFY or not set(asked) <= set(said["answered"]):
-        out = report.with_name("game.json")
-        log = report.with_name("game-classes.log")
-        subprocess.run([java(), f"-Xmx{settings.HEAP}g", f"-Xlog:class+load=info:file={log}", "-cp", str(classes), "Exposure", "--from", frm, "--to", to,
-                        "--report", str(report), "--out", str(out), "--loader", loader], check=True, stdout=subprocess.DEVNULL)
-        names = loaded_from(log.read_text(encoding="utf-8", errors="replace"), classes.split(os.pathsep)[0])
-        fresh = json.loads(out.read_text(encoding="utf-8"))
-        target = folder / (classes_key(classes, names) + ".json")
-        if target != known:
-            said = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {"answered": [], "said": {}}
-        wrong = [m for m in asked if m in said["answered"] and said["said"].get(m) != fresh.get(m)]
-        if wrong:
-            raise SystemExit(f"Exposure's cached answer for {wrong[0]} ({loader} {frm} -> {to}) differs from asking again ({len(wrong)} references)")
-        # A reference Exposure cannot place in the old release gets no row; it is still answered.
-        said = {"answered": sorted(set(said["answered"]) | set(asked)), "said": {**said["said"], **fresh}}
-        for path, text in ((target, json.dumps(said)), (loaded, "\n".join(names))):
-            part = cachekeys.part_of(path)
-            part.write_text(text, encoding="utf-8")
-            os.replace(part, path)  # a later answer only adds rows; each row is the same in every run with this key
-    return {m: said["said"][m] for m in asked if m in said["said"]}
+def game_says(report):
+    """What the game's own code did about each reference a port's report ranks (tools/port/Exposure.java says): JarPort
+    answers each one at the step it broke, from the releases and the route map that step read, and writes the answers in
+    each mod's row, so they come with the port, kept or made."""
+    data = json.loads(report.read_text(encoding="utf-8"))
+    said = {}
+    for m in data["mods"]:
+        for member, row in m.get("game", {}).items():
+            said.setdefault(member, row)
+    return {r["member"]: said[r["member"]] for r in data["unlinkedByMods"] if r["member"] in said}
 
 
 WHERE = re.compile(r" \(in [^)]*\)$")

@@ -221,7 +221,7 @@ def summarize(loader, frm, to, mods, unread, report, written, work, partial, sav
     if mods:
         report = javalevels.without_platform_copies(report, javalevels.platform_ids(loader, to), {m.name: m for m in mods})
         written.write_text(json.dumps(report, indent=1), encoding="utf-8")
-    said = timed("game", porter.game_says, loader, frm, to, written) if report["unlinkedByMods"] else {}
+    said = timed("game", porter.game_says, written) if report["unlinkedByMods"] else {}
     rows = [m for m in report["mods"] if "error" not in m]
     # What the port left of each mod's data, judged when both releases' registry reports could be made.
     data = {m["mod"]: [u.split(": ", 1)[1] for u in m["data"]] for m in rows} if all("data" in m for m in rows) else None
