@@ -258,6 +258,50 @@ final class JarEntries {
      * package's folder (ClassLoader.getResources("a/b/"), as org.reflections' forPackage does for YUNG's API's
      * registrations), which a jar without the folder's entry does not have: nothing is found, and nothing registered.
      */
+    /**
+     * A jar as its files, in order, and the times of its files and folders: what a port hands from one step (or one try)
+     * to the next, which reads it as it would read the jar zipped. Zipping a whole jar to read it straight back was the
+     * port's largest use of memory (a big mod's jar held as the step's input, the try kept and the zip being written,
+     * beside the same files unpacked) and work; a port never writes into a file's bytes, so the steps share them.
+     */
+    record Unpacked(Map<String, byte[]> files, Map<String, Long> times) {
+        static Unpacked of(byte[] jar, String name) throws IOException {
+            Map<String, Long> times = new HashMap<>();
+            return new Unpacked(entries(jar, name, times), times);
+        }
+
+        /** Files written with these times, keeping only the times of what the jar holds: a folder all of whose files went keeps none. */
+        static Unpacked written(Map<String, byte[]> files, Map<String, Long> times) {
+            Map<String, Long> held = new HashMap<>();
+            for (String file : files.keySet()) {
+                for (int slash = file.indexOf('/'); slash >= 0; slash = file.indexOf('/', slash + 1)) {
+                    String folder = file.substring(0, slash + 1);
+                    held.put(folder, times.getOrDefault(folder, 0L));
+                }
+                held.put(file, times.getOrDefault(file, 0L));
+            }
+            return new Unpacked(files, held);
+        }
+
+        /** The jar: each file after the folders it is in, which take their times from times, as do the files. */
+        byte[] zip(int level) throws IOException {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            try (ZipOutputStream out = new ZipOutputStream(buffer)) {
+                out.setLevel(level);
+                Set<String> folders = new HashSet<>();
+                for (var e : files.entrySet()) {
+                    folders(out, folders, e.getKey(), times);
+                    ZipEntry entry = new ZipEntry(e.getKey());
+                    entry.setTime(times.getOrDefault(e.getKey(), 0L));
+                    out.putNextEntry(entry);
+                    out.write(e.getValue());
+                    out.closeEntry();
+                }
+            }
+            return buffer.toByteArray();
+        }
+    }
+
     static void folders(ZipOutputStream out, Set<String> written, String file, Map<String, Long> times) throws IOException {
         for (int slash = file.indexOf('/'); slash >= 0; slash = file.indexOf('/', slash + 1)) {
             String folder = file.substring(0, slash + 1);

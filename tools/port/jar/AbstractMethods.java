@@ -163,7 +163,7 @@ final class AbstractMethods {
         List<String> parents = port.overrides.gameParents(mod, rc).stream().filter(p -> Linking.subtype(port.b, p, k.name)).toList();
         Map<String, Integer> count = new HashMap<>();
         Map<String, String> source = new HashMap<>();
-        for (GameDiff.Cls w : port.links.declaring(port.b, n.name + n.desc)) {
+        for (GameDiff.Cls w : port.links.declaring(port.b, n.name + n.desc, k.name)) {
             GameDiff.Meth own = w.methods.get(n.name + n.desc);
             if (own == null || (own.flags & Opcodes.ACC_ABSTRACT) != 0 || w.name.equals(k.name) || w.loader || !Linking.subtype(port.b, w.name, k.name)) {
                 continue;
@@ -210,7 +210,7 @@ final class AbstractMethods {
      */
     String tookWork(String k, GameDiff.Meth n) {
         return tookWork.computeIfAbsent(k + "." + n.name + n.desc, key -> {
-            for (GameDiff.Cls c : port.b.classes.values()) {
+            for (GameDiff.Cls c : port.b.coded()) {
                 for (GameDiff.Meth d : c.methods.values()) {
                     boolean calls = false;
                     Set<String> now = new HashSet<>();
@@ -224,7 +224,7 @@ final class AbstractMethods {
                     if (was == null) {
                         continue;
                     }
-                    for (GameDiff.Ref r : was.refs) {
+                    for (GameDiff.Ref r : was.references()) {
                         if (r.kind() == 'm' && !r.name().startsWith("<")) {
                             String[] to = port.route.method(r.owner(), r.name(), r.desc());
                             if (!now.contains(to[1] + to[2])) {

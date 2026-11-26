@@ -57,6 +57,23 @@ def plan(only):
         sys.argv, sys.stdout = argv, sys.__stdout__
 
 
+# Exposure's answers are kept under the classes it loaded, read from the JVM's class-load log, which names their folder as
+# a file: URL (file:/C:/Users/... on Windows). Read as a plain path, a Windows folder matched no line: no class was in the
+# key, and an edit to Exposure left its old answers in place.
+with tempfile.TemporaryDirectory() as tmp:
+    own, other = Path(tmp) / "port classes" / "classes", Path(tmp) / "other" / "classes"
+    for folder in (own, other):
+        folder.mkdir(parents=True)
+
+    def source(folder):
+        return "file:/" + folder.resolve().as_posix().lstrip("/").replace(" ", "%20") + "/"
+
+    log = "\n".join([f"[0.2s][info][class,load] Exposure source: {source(own)}", f"[0.3s][info][class,load] GameHop$1 source: {source(own)}",
+                     f"[0.3s][info][class,load] Elsewhere source: {source(other)}", "[0.3s][info][class,load] Exposure$$Lambda/0x01 source: Exposure",
+                     "[0.1s][info][class,load] java.lang.Object source: jrt:/java.base", f"[0.4s][info][class,load] Exposure source: {source(own)}"])
+    check(portboard.porter.loaded_from(log, own) == ["Exposure", "GameHop$1"], f"the classes loaded from the porter's folder: {portboard.porter.loaded_from(log, own)}")
+    check(portboard.porter.loaded_from(log, other) == ["Elsewhere"], f"and from another folder, its own: {portboard.porter.loaded_from(log, other)}")
+
 newest = portboard.gamereleases.updates("fabric")[-1]
 check(plan(f"fabric:{newest[0]}:{newest[1]}") == [f"fabric:{newest[0]}:{newest[1]}"], "--only LOADER:FROM:TO picks that update")
 check(f"fabric:{newest[0]}:{newest[1]}" in plan(f"fabric:{newest[0]}"), "--only LOADER:FROM picks the updates from it")
@@ -1041,6 +1058,69 @@ with tempfile.TemporaryDirectory() as tmp:
     check(caught, "--verify fails on a mod whose kept port differs from porting it again")
     (portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.jarport, portboard.porter.route_maps, portboard.porter.jar_tools, portboard.porter.compile_tools, portboard.porter.tools_classes_key, portboard.cachekeys.platform_key, portboard.porter.java_version, portboard.settings.VERIFY, portboard.porter.stops,
      portboard.porter.registry_reports) = saved
+
+# What the game's code says about a reference is kept under the bytes of the porter's classes Exposure loaded: an edit to
+# one of them asks again, mid-run, and an edit to a class it never loaded does not. On Windows the JVM's log names the
+# folder file:/C:/..., which was read as no folder, and every answer outlived every edit to Exposure.
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    saved = (portboard.settings.HOME, portboard.settings.VERIFY, portboard.porter.exposure, portboard.porter.compile_tools, portboard.porter.route_maps, portboard.porter.stops,
+             portboard.cachekeys.platform_key, portboard.porter.java_version)
+    portboard.settings.HOME, portboard.settings.VERIFY = root / "home", False
+    classes = root / "classes"
+    classes.mkdir()
+    (classes / "Exposure.class").write_text("dropped", encoding="utf-8")
+    (classes / "Unused.class").write_text("one", encoding="utf-8")
+    report = root / "work" / "report.json"
+    report.parent.mkdir()
+    report.write_text(json.dumps({"unlinkedByMods": [{"member": "mixin injection point gone: a.B.c()V in a.D.e()V", "mods": 1}]}), encoding="utf-8")
+    asked_exposure = []
+    loads = {"from": classes}
+
+    def fake_exposure(command):
+        asked_exposure.append(command)
+        log = Path(next(c for c in command if c.startswith("-Xlog:")).split("file=", 1)[1])
+        # As the JVM writes it: file:/C:/... on Windows, file:/home/... elsewhere.
+        log.write_text(f"[0.01s][info][class,load] java.lang.Object source: shared objects file\n"
+                       f"[0.04s][info][class,load] Exposure source: file:{loads['from'].resolve().as_uri()[len('file://'):]}/\n", encoding="utf-8")
+        member = json.loads(report.read_text(encoding="utf-8"))["unlinkedByMods"][0]["member"]
+        Path(command[command.index("--out") + 1]).write_text(json.dumps({member: {"game": (classes / "Exposure.class").read_text(encoding="utf-8")}}), encoding="utf-8")
+
+    portboard.porter.exposure, portboard.porter.compile_tools = fake_exposure, (lambda: str(classes) + os.pathsep + str(root / "asm.jar"))
+    portboard.porter.route_maps, portboard.porter.stops = (lambda updates, *a: [report for _ in updates]), (lambda loader, frm, to: [frm, to])
+    portboard.cachekeys.platform_key, portboard.porter.java_version = (lambda loader, r: b"platform"), (lambda: "java 25")
+
+    def said():
+        return [v["game"] for v in portboard.porter.game_says("neoforge", "1.0", "1.1", report).values()]
+
+    try:
+        check(said() == ["dropped"] and said() == ["dropped"] and len(asked_exposure) == 1, f"a reference answered once is not asked again: {len(asked_exposure)} runs")
+        (classes / "Unused.class").write_text("two", encoding="utf-8")
+        check(said() == ["dropped"] and len(asked_exposure) == 1, f"an edit to a class Exposure never loaded keeps its answers: {len(asked_exposure)} runs")
+        (classes / "Exposure.class").write_text("named", encoding="utf-8")
+        check(said() == ["named"] and len(asked_exposure) == 2, f"an edit to a class Exposure loaded asks again and answers as the edited code does: {len(asked_exposure)} runs")
+        (classes / "Exposure.class").write_text("helper", encoding="utf-8")
+        loads["from"] = root / "elsewhere"
+        try:
+            said()
+            caught = False
+        except SystemExit as failed:
+            caught = "names none of the classes" in str(failed)
+        check(caught, "a class-load log that names none of the porter's classes stops the run, not keeps answers under no code")
+        # Answers a run before this fix kept under no class at all (an empty list) are asked again, not read.
+        loads["from"] = classes
+        (classes / "Exposure.class").write_text("named", encoding="utf-8")
+        kept = next(portboard.settings.HOME.rglob("classes.txt"))
+        kept.unlink()
+        loaded = kept.with_name("loaded.txt")
+        loaded.write_text("", encoding="utf-8")
+        legacy = loaded.with_name(portboard.porter.classes_key(portboard.porter.compile_tools(), []) + ".json")
+        legacy.write_text(json.dumps({"answered": ["mixin injection point gone: a.B.c()V in a.D.e()V"], "said": {"mixin injection point gone: a.B.c()V in a.D.e()V": {"game": "dropped"}}}), encoding="utf-8")
+        runs = len(asked_exposure)
+        check(said() == ["named"] and len(asked_exposure) == runs + 1, f"answers kept under an empty class list are asked again: {said()}, {len(asked_exposure) - runs} runs")
+    finally:
+        (portboard.settings.HOME, portboard.settings.VERIFY, portboard.porter.exposure, portboard.porter.compile_tools, portboard.porter.route_maps, portboard.porter.stops,
+         portboard.cachekeys.platform_key, portboard.porter.java_version) = saved
 
 before = {"verdicts": {"a": {"left": ["x"]}, "b": {"left": [], "ported": "1"}, "c": {"left": ["x"]}, "d": {"left": [], "ported": "1"}, "e": {"left": []}}}
 after = {"verdicts": {"a": {"left": []}, "b": {"left": ["y"]}, "c": {"left": ["y"]}, "d": {"left": [], "ported": "2"}, "e": {"left": []}, "f": {"left": []}}}
