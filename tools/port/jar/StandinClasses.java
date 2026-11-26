@@ -41,6 +41,7 @@ final class StandinClasses {
      */
     void standins(List<Path> dirs) throws IOException {
         Map<String, byte[]> compiled = compileStandins(dirs, port.b);
+        compiled.replaceAll((name, bytes) -> openWidened(bytes, port.a.classes.get(name.substring(STANDIN.length()))));
         standins.putAll(compiled);
         for (var e : compiled.entrySet()) {
             GameDiff.Cls c = standinCls(e.getValue());
@@ -501,6 +502,32 @@ final class StandinClasses {
                 out.closeEntry();
             }
         }
+    }
+
+    /**
+     * A stand-in with every member its old class declares opened: mods widen the game's closed members (JEI calls 1.20's
+     * private GuiGraphics.renderTooltipInternal through its access widener), and a call moved to the stand-in finds it
+     * still private there, which the JVM refuses. The stand-in mirrors the old class's access, so it is opened here, once.
+     */
+    static byte[] openWidened(byte[] bytes, GameDiff.Cls old) {
+        if (old == null) {
+            return bytes;
+        }
+        ClassWriter w = new ClassWriter(0);
+        new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9, w) {
+            @Override
+            public FieldVisitor visitField(int access, String name, String desc, String sig, Object value) {
+                return super.visitField(old.fields.containsKey(name) ? open(access) : access, name, desc, sig, value);
+            }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                // Not a constructor: a holder of static methods keeps its own closed, which says it answers members only.
+                boolean widenable = !name.equals("<init>") && old.methods.containsKey(name + desc.replace("L" + STANDIN, "L"));
+                return super.visitMethod(widenable ? open(access) : access, name, desc, sig, ex);
+            }
+        }, 0);
+        return w.toByteArray();
     }
 
     static int open(int flags) {

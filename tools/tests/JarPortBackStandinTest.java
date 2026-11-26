@@ -32,6 +32,9 @@ final class JarPortBackStandinTest {
             public Pose pose() {
                 return pose;
             }
+            private void secret(int c) {
+                pose.log.append("secret" + c + ";");
+            }
             public void fill(int color) {
                 pose.log.append("fill" + color + ";");
             }
@@ -104,6 +107,9 @@ final class JarPortBackStandinTest {
             public Pose pose() {
                 return pose;
             }
+            private void secret(int c) {
+                pose.log.append("secret" + c + ";");
+            }
             public void fill(int color) {
                 Comp.fill(pose, color);
             }
@@ -153,29 +159,7 @@ final class JarPortBackStandinTest {
             JarPortTest.expect(folders.getResource("n6/") != null, "the ported jar lists the mod's package as a folder");
         }
 
-        Map<String, byte[]> classes = new HashMap<>(older);
-        for (var e : ported.entrySet()) {
-            if (e.getKey().endsWith(".class")) {
-                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
-            }
-            if (e.getKey().endsWith(".jar")) {
-                for (var inner : JarPortTest.entries(e.getValue()).entrySet()) {
-                    if (inner.getKey().endsWith(".class")) {
-                        classes.put(inner.getKey().substring(0, inner.getKey().length() - 6), inner.getValue());
-                    }
-                }
-            }
-        }
-        ClassLoader loader = new ClassLoader(null) {
-            @Override
-            protected Class<?> findClass(String name) throws ClassNotFoundException {
-                byte[] bytes = classes.get(name.replace('.', '/'));
-                if (bytes == null) {
-                    return Class.forName(name, false, ClassLoader.getPlatformClassLoader());
-                }
-                return defineClass(name, bytes, 0, bytes.length);
-            }
-        };
+        ClassLoader loader = load(older, ported);
         String trace;
         try {
             Class<?> mine = loader.loadClass("n6.Mine"), widget = loader.loadClass("net.minecraft.g5.Widget"), pose = loader.loadClass("net.minecraft.g5.Pose");
@@ -252,11 +236,67 @@ final class JarPortBackStandinTest {
         port.port(JarPortTest.jar(withAccessor), "gfx-accessor.jar", accessorRuns);
         List<String> accessorUnlinked = Json.array(accessorRuns.get(0).get("unlinked")).stream().map(String::valueOf).toList();
         JarPortTest.expect(accessorUnlinked.isEmpty(), "an accessor into a class only a stand-in has reads the stand-in's own field, and links: " + accessorUnlinked);
+        // A mod calls a member the newer game keeps private, as JEI calls 1.20's GuiGraphics.renderTooltipInternal through
+        // its access widener: moved to the stand-in, the call is one the JVM allows.
+        org.objectweb.asm.ClassWriter cw = JarPortRetypeTest.writer("n6/Caller", "java/lang/Object");
+        org.objectweb.asm.MethodVisitor call = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_STATIC, "call", "(Lnet/minecraft/g5/Pose;)V", null, null);
+        call.visitCode();
+        call.visitTypeInsn(org.objectweb.asm.Opcodes.NEW, "net/minecraft/g5/Gfx");
+        call.visitInsn(org.objectweb.asm.Opcodes.DUP);
+        call.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        call.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESPECIAL, "net/minecraft/g5/Gfx", "<init>", "(Lnet/minecraft/g5/Pose;)V", false);
+        call.visitIntInsn(org.objectweb.asm.Opcodes.BIPUSH, 7);
+        call.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "net/minecraft/g5/Gfx", "secret", "(I)V", false);
+        call.visitInsn(org.objectweb.asm.Opcodes.RETURN);
+        call.visitMaxs(0, 0);
+        call.visitEnd();
+        cw.visitEnd();
+        Map<String, byte[]> withCaller = new HashMap<>(files);
+        withCaller.put("n6/Caller.class", cw.toByteArray());
+        Map<String, byte[]> callerPorted = JarPortTest.entries(port.port(JarPortTest.jar(withCaller), "gfx-caller.jar", new ArrayList<>()));
+        String called;
+        try {
+            ClassLoader callerLoader = load(older, callerPorted);
+            Class<?> pose = callerLoader.loadClass("net.minecraft.g5.Pose");
+            Object p = pose.getConstructor().newInstance();
+            callerLoader.loadClass("n6.Caller").getMethod("call", pose).invoke(null, p);
+            called = String.valueOf(pose.getField("log").get(p));
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            called = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+        JarPortTest.expect(called.equals("secret7;"), "a call into a member the newer game keeps private runs on the stand-in: " + called);
         valueClass(scratch);
         reference(scratch);
         movedMixin(scratch);
         storedLocal(scratch);
         JarPortTest.finish("JarPortBackStandinTest");
+    }
+
+    /** The older game's classes and a ported jar's, nested jars too, in one loader with nothing else on it. */
+    static ClassLoader load(Map<String, byte[]> older, Map<String, byte[]> ported) throws java.io.IOException {
+        Map<String, byte[]> classes = new HashMap<>(older);
+        for (var e : ported.entrySet()) {
+            if (e.getKey().endsWith(".class")) {
+                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+            }
+            if (e.getKey().endsWith(".jar")) {
+                for (var inner : JarPortTest.entries(e.getValue()).entrySet()) {
+                    if (inner.getKey().endsWith(".class")) {
+                        classes.put(inner.getKey().substring(0, inner.getKey().length() - 6), inner.getValue());
+                    }
+                }
+            }
+        }
+        return new ClassLoader(null) {
+            @Override
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                byte[] bytes = classes.get(name.replace('.', '/'));
+                if (bytes == null) {
+                    return Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                }
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+        };
     }
 
     /**
