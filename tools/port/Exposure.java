@@ -558,7 +558,7 @@ public final class Exposure {
                 }
             }
             accepting.sort(Comparator.comparing(FabricApi::apiNumber, Versions::compare).reversed());
-            Set<String> gameClasses = compare(version, "26.1") < 0 ? Intermediary.of(version).classes.keySet() : null;
+            Set<String> gameClasses = compare(version, "26.1") < 0 ? VersionMap.Tiny.classes(version) : null;
             for (String build : accepting) {
                 Path jar = jarOf(build);
                 if (jar != null && (gameClasses == null || missingGameClass(Files.readAllBytes(jar), gameClasses) == null)) {

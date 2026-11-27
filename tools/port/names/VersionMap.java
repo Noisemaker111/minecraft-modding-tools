@@ -691,6 +691,22 @@ public final class VersionMap {
             memberRows.add(new Row(method, obfOwner, obfName, obfDesc, interName));
         }
 
+        /** A release's intermediary class names (slash form), read from Fabric's intermediary jar alone: a few MB, where Table.mojmap holds hundreds. */
+        static Set<String> classes(String version) throws IOException, InterruptedException {
+            Path inter = fetch(
+                "https://maven.fabricmc.net/net/fabricmc/intermediary/" + version + "/intermediary-" + version + "-v2.jar",
+                "intermediary-" + version + "-v2.jar"
+            );
+            Set<String> names = new HashSet<>();
+            for (String line : zipEntry(inter, "mappings/mappings.tiny").split("\r?\n")) {
+                if (line.startsWith("c\t")) {
+                    String[] p = line.split("\t", -1);
+                    names.add(p[2].isEmpty() ? p[1] : p[2]);
+                }
+            }
+            return names;
+        }
+
         static Tiny parse(String text) {
             Tiny t = new Tiny();
             String owner0 = null;
