@@ -8,7 +8,11 @@ package mmt.standin.com.mojang.blaze3d.vertex;
  * own overrides of them only write faster), and build() ends the last vertex and returns the mesh, or null when no
  * vertex was added; buildOrThrow() throws "BufferBuilder was empty" instead. 1.20.6's BufferBuilder.end() returns the
  * batch as a RenderedBuffer (which 1.21's MeshData replaced: BufferUploader.drawWithShader takes one in each release),
- * endOrDiscardIfEmpty() null when it has no vertex.
+ * endOrDiscardIfEmpty() null when it has no vertex. 1.21 makes a builder on a ByteBufferBuilder, the memory it writes
+ * to, begun with the mode and format (BufferBuilder(ByteBufferBuilder, Mode, VertexFormat)); 1.20.6's BufferBuilder is
+ * its own memory (the game's MultiBufferSource holds BufferBuilders where 1.21's holds ByteBufferBuilders), begun with
+ * begin(mode, format), so the builder on one is that one, begun, with any batch it left open ended and released as
+ * 1.21 drops it.
  *
  * Agrees with NeoForge's 1.20.6 -> 1.21 primer (https://github.com/neoforged/.github/blob/main/primers/1.21/index.md, CC BY 4.0):
  * "The `MeshData` provided, which contains the vertex and index buffer along with the draw state, can be built via
@@ -17,6 +21,15 @@ package mmt.standin.com.mojang.blaze3d.vertex;
 public final class BufferBuilder {
 
     private BufferBuilder() {}
+
+    public static com.mojang.blaze3d.vertex.BufferBuilder init(com.mojang.blaze3d.vertex.BufferBuilder memory, com.mojang.blaze3d.vertex.VertexFormat.Mode mode, com.mojang.blaze3d.vertex.VertexFormat format) {
+        VertexConsumer.forget(memory);
+        if (memory.building()) {
+            memory.end().release();
+        }
+        memory.begin(mode, format);
+        return memory;
+    }
 
     public static com.mojang.blaze3d.vertex.BufferBuilder.RenderedBuffer buildOrThrow(com.mojang.blaze3d.vertex.BufferBuilder self) {
         com.mojang.blaze3d.vertex.BufferBuilder.RenderedBuffer mesh = build(self);
