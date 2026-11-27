@@ -127,6 +127,21 @@ final class JarPortSuperTest {
             "m7.mixins.json", "{\"package\": \"m7\", \"mixins\": [\"BubbleMixin\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "bubble.jar", bubbles);
         JarPortTest.expect(unlinked(bubbles).equals(List.of("mixin target changed signature: s7.Bubble.<init>(I)V")),
             "a handler taking the old arguments of a constructor that now takes more is reported: " + unlinked(bubbles));
+        // Named by its old descriptor where the new constructor takes the old arguments and one more: it follows there.
+        ClassWriter grown = JarPortRetypeTest.writer("m7/GrownMixin", "java/lang/Object");
+        AnnotationVisitor gt = grown.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        AnnotationVisitor gv = gt.visitArray("value");
+        gv.visit(null, Type.getObjectType("s7/Bubble"));
+        gv.visitEnd();
+        gt.visitEnd();
+        JarPortFixesTest.handler(grown, JarPortFixesTest.INJECT, "onGrown", "(" + ci + ")V", "<init>(I)V", "TAIL", null, null);
+        grown.visitEnd();
+        List<Map<String, Object>> grownRuns = new ArrayList<>();
+        Map<String, byte[]> grownPorted = JarPortTest.entries(port.port(JarPortTest.jar(Map.of("m7/GrownMixin.class", grown.toByteArray(), "m7.mixins.json",
+            "{\"package\": \"m7\", \"mixins\": [\"GrownMixin\"], \"injectors\": {\"defaultRequire\": 1}}".getBytes(java.nio.charset.StandardCharsets.UTF_8))), "grown.jar", grownRuns));
+        String onGrown = JarPortFixesTest.strings(grownPorted.get("m7/GrownMixin.class")).getOrDefault("onGrown(" + ci + ")V", "");
+        JarPortTest.expect(unlinked(grownRuns).isEmpty() && onGrown.contains("<init>(IZ)V"),
+            "an injector naming a constructor by its old descriptor follows the one constructor that takes those arguments and one more: " + unlinked(grownRuns) + " " + onGrown);
         // Named by its old descriptor: Mixin only finds no place, a break where a place is required.
         for (int require : new int[] { 1, 0 }) {
             ClassWriter n = JarPortRetypeTest.writer("m7/NamedMixin", "java/lang/Object");
