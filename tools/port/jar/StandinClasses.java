@@ -178,7 +178,8 @@ final class StandinClasses {
      * least one). A holder on a type the game's classes did not move to answers no reference to the class itself.
      * Its init methods (the old constructors) return that type instead: where no game class was the old one, a holder
      * whose constructors make the new type says the class became it (1.20.1's ClientboundCustomPayloadPacket, a final
-     * class 1.20.2 replaced with the one in network.protocol.common).
+     * class 1.20.2 replaced with the one in network.protocol.common); and so does the game's own methods taking the new
+     * type where they took the old class.
      */
     String becameType(String old, byte[] bytes) {
         ClassModel cm = ClassFile.of().parse(bytes);
@@ -232,6 +233,26 @@ final class StandinClasses {
                 return null;
             }
             moved = true;
+        }
+        if (!moved) {
+            // No game class was the old one: the game's own methods that kept their name and took the old class take
+            // the new type now (1.20.1's DispenseItemBehavior.dispense(BlockSource, ...), on 1.20.2's dispenser.BlockSource).
+            String was = "L" + old + ";", now = "L" + type + ";";
+            for (GameDiff.Cls c : port.a.classes.own()) {
+                GameDiff.Cls kept = c.library ? null : port.b.classes.get(c.name);
+                if (kept == null) {
+                    continue;
+                }
+                for (GameDiff.Meth m : c.methods.values()) {
+                    if (m.desc.contains(was) && kept.methods.containsKey(m.name + port.desc(m.desc.replace(was, now)))) {
+                        moved = true;
+                        break;
+                    }
+                }
+                if (moved) {
+                    break;
+                }
+            }
         }
         return moved ? type : null;
     }
