@@ -53,7 +53,7 @@ final class SuperCalls {
         for (GameDiff.RawCls own = sites.mod.classes.get(owner); own != null && own.sup != null; own = sites.mod.classes.get(own.sup)) {
             String now = sites.port.links.successor(own.sup);
             if (now != null) {
-                if (decl.owner().equals(own.sup) && now.startsWith(StandinClasses.STANDIN) && sites.port.b.method(now, name, sites.port.desc(desc)) != null) {
+                if (decl.owner().equals(own.sup) && now.startsWith(StandinClasses.STANDIN) && inherits(now, name, sites.port.desc(desc))) {
                     return true; // the old class's stand-in, which the class extends now, has it: the call stays on the class
                 }
                 if (!decl.owner().equals(own.sup) || sites.port.b.method(now, name, sites.port.desc(desc)) != null
@@ -61,6 +61,16 @@ final class SuperCalls {
                     return false; // still there, or reached through the interface the class implements now
                 }
                 sites.mod.unlinked.add("inherited from a removed superclass: " + Exposure.dotted(own.sup) + "." + name + desc + " (in " + Exposure.dotted(sites.mod.self) + ")");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the stand-in has the method, declared or from the new release's class it extends (a kept class's stand-in). */
+    private boolean inherits(String standin, String name, String desc) {
+        for (GameDiff.Cls c = sites.port.b.classes.get(standin); c != null; c = c.sup == null ? null : sites.port.b.classes.get(c.sup)) {
+            if (c.methods.containsKey(name + desc)) {
                 return true;
             }
         }

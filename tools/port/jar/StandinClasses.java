@@ -176,6 +176,9 @@ final class StandinClasses {
      * a mod can call, no public instance method) whose every public static method but isInstance takes that type first,
      * and every game class that was the old class in the old release and is still there is that type in the new one (at
      * least one). A holder on a type the game's classes did not move to answers no reference to the class itself.
+     * Its init methods (the old constructors) return that type instead: where no game class was the old one, a holder
+     * whose constructors make the new type says the class became it (1.20.1's ClientboundCustomPayloadPacket, a final
+     * class 1.20.2 replaced with the one in network.protocol.common).
      */
     String becameType(String old, byte[] bytes) {
         ClassModel cm = ClassFile.of().parse(bytes);
@@ -183,6 +186,7 @@ final class StandinClasses {
             return null;
         }
         String type = null;
+        boolean makes = false;
         for (MethodModel mm : cm.methods()) {
             int flags = mm.flags().flagsMask();
             String n = mm.methodName().stringValue();
@@ -201,6 +205,15 @@ final class StandinClasses {
             if (n.equals("isInstance")) {
                 continue;
             }
+            Type ret = Type.getReturnType(mm.methodType().stringValue());
+            if (n.equals("init") && ret.getSort() == Type.OBJECT) {
+                if (type != null && !type.equals(ret.getInternalName())) {
+                    return null;
+                }
+                type = ret.getInternalName();
+                makes = true;
+                continue;
+            }
             Type[] params = Type.getArgumentTypes(mm.methodType().stringValue());
             if (params.length == 0 || params[0].getSort() != Type.OBJECT || type != null && !type.equals(params[0].getInternalName())) {
                 return null;
@@ -210,7 +223,7 @@ final class StandinClasses {
         if (type == null || type.startsWith(STANDIN) || !port.b.classes.containsKey(type)) {
             return null;
         }
-        boolean moved = false;
+        boolean moved = makes;
         for (GameDiff.Cls c : port.a.classes.own()) {
             if (c.library || c.name.equals(old) || !port.b.classes.containsKey(c.name) || !Linking.isA(port.a, c.name, old)) {
                 continue;
