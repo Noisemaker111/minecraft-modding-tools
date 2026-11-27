@@ -504,7 +504,7 @@ final class StandinClasses {
                     boolean takesOuter = ic.methods.values().stream().anyMatch(m -> m.name.equals("<init>") && m.desc.startsWith("(L" + outer + ";"));
                     int innerFlags = ic.flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED | Opcodes.ACC_FINAL | Opcodes.ACC_INTERFACE
                         | Opcodes.ACC_ABSTRACT | Opcodes.ACC_ENUM | Opcodes.ACC_ANNOTATION);
-                    w.visitInnerClass(n, outer, n.substring(n.lastIndexOf('$') + 1), innerFlags | (takesOuter && (ic.flags & Opcodes.ACC_INTERFACE) == 0 ? 0 : Opcodes.ACC_STATIC));
+                    w.visitInnerClass(n, outer, n.substring(n.lastIndexOf('$') + 1), open(innerFlags) | (takesOuter && (ic.flags & Opcodes.ACC_INTERFACE) == 0 ? 0 : Opcodes.ACC_STATIC));
                 }
                 for (GameDiff.Fld f : c.fields.values()) {
                     w.visitField(open(f.flags), f.name, f.desc, null, null).visitEnd();
