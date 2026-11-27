@@ -12,7 +12,10 @@ import java.util.stream.Stream;
  * count ("count is negative: " + count); lines() (Java 11) the lines "separated by line terminators" (\n, \r, \r\n), a
  * last empty line left out, as BufferedReader.readLine splits them; formatted(args) (Java 15) String.format(this, args);
  * indent(n) (Java 12) each line given n more spaces or (n < 0) up to -n fewer leading white space characters, every line
- * ending in \n.
+ * ending in \n. splitWithDelimiters(regex, limit) (Java 21) the parts split(regex, limit) gives with each delimiter that
+ * split them between them: "the array contains ... alternating substrings and matching delimiters", a zero-width match
+ * at the start splitting off no empty leading part, at most limit parts when limit is positive (the last holding the
+ * rest), and trailing empty strings (parts or delimiters) dropped when limit is zero.
  */
 public final class String {
 
@@ -110,5 +113,31 @@ public final class String {
             out.append('\n');
         });
         return out.toString();
+    }
+
+    public static java.lang.String[] splitWithDelimiters(java.lang.String self, java.lang.String regex, int limit) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(regex).matcher(self);
+        java.util.List<java.lang.String> out = new java.util.ArrayList<>();
+        int from = 0, parts = 0;
+        while ((limit <= 0 || parts < limit - 1) && m.find()) {
+            if (m.end() == 0) {
+                continue; // a zero-width match at the start splits off no empty leading part
+            }
+            out.add(self.substring(from, m.start()));
+            out.add(m.group());
+            from = m.end();
+            parts++;
+        }
+        if (parts == 0) {
+            return new java.lang.String[] { self };
+        }
+        out.add(self.substring(from));
+        int size = out.size();
+        if (limit == 0) {
+            while (size > 0 && out.get(size - 1).isEmpty()) {
+                size--;
+            }
+        }
+        return out.subList(0, size).toArray(new java.lang.String[0]);
     }
 }

@@ -11,8 +11,11 @@ import java.util.*;
  * getFirst, String.isBlank, Optional.isEmpty, Stream.toList, String::isBlank as a method reference, a constructor Java 8
  * lacks, and whole classes it lacks: HexFormat, and java.net.http against a real local server), while ByteBuffer.flip()
  * is called as Java 8 declares it. The ported classes then run here and give exactly what the original classes give, and
- * no class names a JDK member Java 8 lacks. A class calling StackWalker, which Java 8 has no answer for, is reported, the
- * metadata asks for Java 8, and a port to a release whose Java reads the classes leaves them as they are.
+ * no class names a JDK member Java 8 lacks. So do what a mod reaches past plain calls: its records read by reflection
+ * (the port keeps their components), a stack walked, a Cleaner, a constant (Redirect.DISCARD), a proxy's default method,
+ * array patterns, Java 21's virtual threads and sequenced maps. A class asking StackWalker for its caller's class, which
+ * Java 8 has no answer for, is reported, the metadata asks for Java 8, and a port to a release whose Java reads the classes
+ * leaves them as they are.
  */
 final class JarPortJavaTest {
 
@@ -123,6 +126,123 @@ final class JarPortJavaTest {
                 } catch (Exception e) {
                     out.append(e);
                 }
+                try {
+                    out.append('\\n').append(newer());
+                } catch (Throwable e) {
+                    out.append(e);
+                }
+                return out.toString();
+            }
+
+            // What mods built for a newer Java reach that Java 8 lacks past plain calls: a record read by reflection, a stack
+            // walked, a cleaner, a constant, a proxy's default method, an array pattern, and Java 19 to 21's threads and
+            // sequenced maps (which releases on Java 17 lack too).
+            public record Box<T>(List<T> items, int count) {}
+            static final StringBuffer INITS = new StringBuffer();
+            // Asking a record about itself runs none of its code: a serializer scans a class before the registry it fills is up.
+            record Lazy(int a) {
+                static {
+                    INITS.append("Lazy ran;");
+                }
+            }
+            static final class Outer<T> {
+                final class In {}
+            }
+            record Nest(Outer<String>.In in) {}
+
+            interface Named {
+                String name();
+
+                default String hello(String to) {
+                    return "hello " + to + " from " + name();
+                }
+            }
+
+            static String frames(int n) {
+                return StackWalker.getInstance().walk(s -> s.limit(n).map(f -> f.getClassName() + "." + f.getMethodName()).toList()).toString();
+            }
+
+            public static String reflected() {
+                return frames(3);
+            }
+
+            static String shape(Object o) {
+                return switch (o) {
+                    case double[] d -> "doubles " + d.length;
+                    case int[] i -> "ints " + i.length;
+                    case String s -> "string";
+                    default -> "other";
+                };
+            }
+
+            static String newer() throws Throwable {
+                StringBuilder out = new StringBuilder();
+                out.append(frames(2)).append(' ').append(Mod.class.getMethod("reflected").invoke(null)).append('\\n');
+                for (Object o : new Object[] { new double[2], new int[3], "s", 1 }) {
+                    out.append(shape(o)).append(';');
+                }
+                out.append('\\n').append(Point.class.isRecord()).append(' ').append(Mod.class.isRecord()).append(' ').append(Mod.class.getRecordComponents())
+                    .append(' ').append(Empty.class.getRecordComponents().length).append(' ');
+                Box<String> box = new Box<>(List.of("x"), 1);
+                for (var c : Box.class.getRecordComponents()) {
+                    out.append(c).append('=').append(c.getAccessor().invoke(box)).append(' ').append(c.getType().getSimpleName()).append(' ')
+                        .append(c.getGenericType()).append(' ').append(c.getGenericSignature()).append(' ').append(c.getDeclaringRecord() == Box.class).append(';');
+                }
+                java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+                java.lang.ref.Cleaner cleaner = java.lang.ref.Cleaner.create();
+                java.lang.ref.Cleaner.Cleanable cleanable = cleaner.register(new Object(), runs::incrementAndGet);
+                cleanable.clean();
+                cleanable.clean();
+                java.util.concurrent.CountDownLatch gone = new java.util.concurrent.CountDownLatch(1);
+                cleaner.register(new Object(), gone::countDown);
+                for (int i = 0; i < 200 && gone.getCount() > 0; i++) {
+                    System.gc();
+                    gone.await(50, java.util.concurrent.TimeUnit.MILLISECONDS);
+                }
+                out.append('\\n').append(runs.get()).append(' ').append(gone.getCount()).append(' ');
+                ProcessBuilder.Redirect discard = ProcessBuilder.Redirect.DISCARD;
+                out.append(discard.type()).append(' ').append(discard == ProcessBuilder.Redirect.DISCARD).append(' ').append(discard.file().getName()).append(' ')
+                    .append(int.class.descriptorString()).append(' ').append(String[][].class.descriptorString()).append(' ').append(void.class.descriptorString()).append(' ');
+                Named proxy = (Named) java.lang.reflect.Proxy.newProxyInstance(Mod.class.getClassLoader(), new Class<?>[] { Named.class },
+                    (self, method, args) -> method.isDefault() ? java.lang.reflect.InvocationHandler.invokeDefault(self, method, args) : "proxy");
+                out.append(proxy.hello("you")).append('\\n');
+                Thread unstarted = Thread.ofVirtual().name("w-", 4).unstarted(() -> {});
+                out.append(unstarted.getName()).append(' ').append(unstarted.isDaemon()).append(' ');
+                StringBuffer ran = new StringBuffer();
+                Thread.startVirtualThread(() -> ran.append("started")).join();
+                try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                    out.append(pool.submit(() -> "pooled").get()).append(' ');
+                }
+                Thread.sleep(java.time.Duration.ofMillis(1));
+                out.append(ran).append(' ').append(Thread.currentThread().threadId() == Thread.currentThread().getId()).append(' ')
+                    .append(Arrays.toString("a,b;c".splitWithDelimiters("[,;]", 0))).append(' ');
+                LinkedHashMap<String, Integer> linked = new LinkedHashMap<>();
+                linked.put("one", 1);
+                linked.put("two", 2);
+                linked.put("three", 3);
+                SequencedMap<String, Integer> seq = linked;
+                out.append(seq.firstEntry()).append(' ').append(seq.lastEntry()).append(' ').append(seq.pollFirstEntry()).append(' ').append(seq.sequencedKeySet())
+                    .append(' ').append(linked).append(' ');
+                java.lang.invoke.MethodHandles.Lookup lookup = java.lang.invoke.MethodHandles.privateLookupIn(Mod.class, java.lang.invoke.MethodHandles.lookup());
+                out.append(lookup.findClass("d8.Mod$Box").getSimpleName()).append(' ').append((Object) java.lang.invoke.MethodHandles.zero(int.class).invoke());
+                // An unordered map or set is no sequenced one, an ordered one is, on the release's Java as on Java 21.
+                out.append('\\n');
+                for (Object o : new Object[] { new HashMap<>(), new LinkedHashMap<>(), new TreeMap<>(), new ArrayList<>(), new HashSet<>(), new LinkedHashSet<>(),
+                    new TreeSet<>(), new ArrayDeque<>(), new java.util.concurrent.ConcurrentSkipListMap<>(), "s" }) {
+                    out.append(o instanceof SequencedMap).append(o instanceof SequencedCollection).append(o instanceof SequencedSet).append(';');
+                }
+                out.append(' ').append(Lazy.class.isRecord()).append(Lazy.class.getRecordComponents().length).append('[').append(INITS).append("] ")
+                    .append(Nest.class.getRecordComponents()[0].getGenericSignature()).append(' ');
+                // A thread that fails to start leaves nothing for close() to wait on.
+                Thread started = new Thread(() -> {});
+                started.start();
+                started.join();
+                try (var pool = java.util.concurrent.Executors.newThreadPerTaskExecutor(r -> started)) {
+                    pool.execute(() -> {});
+                } catch (RuntimeException e) {
+                    out.append(e.getClass().getSimpleName());
+                }
+                out.append(" closed");
                 return out.toString();
             }
 
@@ -246,6 +366,23 @@ final class JarPortJavaTest {
             public static Object caller() {
                 return StackWalker.getInstance().getCallerClass();
             }
+
+            // On Java 8 SequencedMap is named Map, so these two would be one method the JVM refuses, and the case on
+            // SequencedMap one a test of Map would get wrong: both are reported, never written wrong.
+            static String write(java.util.Map<?, ?> m) {
+                return "map";
+            }
+
+            static String write(java.util.SequencedMap<?, ?> m) {
+                return "sequenced";
+            }
+
+            static String kind(Object o) {
+                return switch (o) {
+                    case java.util.SequencedMap<?, ?> s -> "sequenced";
+                    default -> "other";
+                };
+            }
         }
         """;
 
@@ -297,8 +434,12 @@ final class JarPortJavaTest {
             }
         });
         JarPortTest.expect(!majors.isEmpty() && majors.values().stream().allMatch(m -> m == 52), "every class of the port is written for Java 8: " + majors);
-        JarPortTest.expect(unlinked.equals(List.of("not in Java 8: class java.lang.StackWalker (in d8.Walker)")),
-            "the one JDK class Java 8 has no answer for is reported, nothing else: " + unlinked);
+        JarPortTest.expect(unlinked.equals(List.of(
+                "not in Java 8: a pattern switch case on java.util.SequencedMap (in d8.Walker)",
+                "not in Java 8: java.lang.StackWalker.getCallerClass()Ljava/lang/Class; (in d8.Walker)",
+                "not in Java 8: two methods write that are one once Java 8's types name their parameters, (Ljava/util/Map;)Ljava/lang/String; (in d8.Walker)")),
+            "what Java 8 has no faithful answer for is reported, nothing else: the caller's class (its stack traces do not hold it), a case on "
+                + "SequencedMap (a test of Map would let a HashMap in), and overloads for Map and SequencedMap (one method there): " + unlinked);
         JarPortTest.expect(ported.keySet().stream().anyMatch(n -> n.matches("mmt/standin/m[0-9a-f]+/java/util/List\\.class")),
             "the JDK stand-ins the mod calls are carried in it, under a package of its own: " + ported.keySet());
 
@@ -383,6 +524,11 @@ final class JarPortJavaTest {
         JarPortTest.expect(before.contains("6800e90079002100 h\u00e9y!"), "the run covers FileWriter and FileReader of a charset through append and read(CharBuffer): " + before);
         JarPortTest.expect(before.contains("Point[x=1, y=2, z=3.5, name=a, data=[I@] true false true") && before.contains("red;r;tone green;g;tone blue;other"),
             "the run covers records and pattern switches: " + before);
+        JarPortTest.expect(before.contains("[d8.Mod.frames, d8.Mod.newer] [d8.Mod.frames, d8.Mod.reflected, d8.Mod.newer]\ndoubles 2;ints 3;string;other;\ntrue false null 0 ")
+                && before.contains("java.util.List items=[x] List java.util.List<T> Ljava/util/List<TT;>; true;int count=1 int int null true;\n1 0 WRITE true ")
+                && before.contains(" I [[Ljava/lang/String; V hello you from proxy\nw-4 true pooled started true [a, ,, b, ;, c] one=1 three=3 one=1 [two, three] {two=2, three=3} Box 0"),
+            "the run covers a stack walked past reflection, array patterns, records read by reflection, a cleaner run by hand and by the collector, a"
+                + " constant, a proxy's default method, virtual threads and sequenced maps: " + before);
         JarPortTest.expect(before.contains("01ab Index out of range: 3") && before.contains("200 GET 1  /echo yes|200 POST 2 sent|404 nope|302 /echo"),
             "the run covers a JDK class Java 8 lacks (HexFormat, java.net.http) and a constructor it lacks: " + before);
 

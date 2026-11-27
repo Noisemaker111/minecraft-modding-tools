@@ -11,5 +11,6 @@
  "measures": [
   "port.jar-links.any-version",
   "port.jar-links.every-update"
- ]
+ ],
+ "result": "What lowering leaves is the type 'not in Java N' (the old 'built for a newer Java' went with #213). Counted locally on the pinned mods, every class lowered (Downgrade's measure, which matched the real port mod for mod): NeoForge 1.21.1 -> 1.20.4 (Java 17) 11 -> 1 mod held, Fabric 1.20.1 -> 1.16.5 (Java 8) 18 -> 10, 1.17.1 (Java 16) 0. Handled by type: JDK interfaces a newer Java inserted (SequencedMap, SequencedCollection, SequencedSet) named as the interface above them; Java 19-21 threads, executors, splitWithDelimiters and Java 9 lookups as stand-ins that defer to the JDK's own member where the running Java has it; array patterns in switches; records lowered for Java 8 keep their component names, which Class.isRecord/getRecordComponents and a RecordComponent stand-in read; a static JDK field a stand-in method answers (Redirect.DISCARD); StackWalker (frame names; the caller's class stays a break), Cleaner, InvocationHandler.invokeDefault, Class.descriptorString. Left, each named per member: VarHandle (c2me, cobblemon, jei, modern-ui), modules (cobblemon, jei, lambdynamiclights; creativecore's in Forge EventBus classes Fabric may load), WebSocket (controlify, fancymenu), hidden classes (lambdynamiclights), Deflater/Inflater on ByteBuffers (krypton), Desktop.browseFileDirectory (kubejs on Fabric), HttpClient.close() on Java 17 (entitytexturefeatures: a stand-in compiled for Java 8 cannot name java.net.http)."
 }

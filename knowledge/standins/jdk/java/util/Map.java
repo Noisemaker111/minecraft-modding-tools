@@ -10,6 +10,12 @@ import java.util.Objects;
  * null keys and values ... NullPointerException"; "reject duplicate keys at creation time ... IllegalArgumentException";
  * "the iteration order of mappings is unspecified"), Map.entry ("an unmodifiable Map.Entry containing the given key and
  * value", neither null) and Java 10's Map.copyOf (an unmodifiable map of the given one's entries, none null).
+ *
+ * Java 21's SequencedMap methods, for a map a class names as Map because the release's Java lacks SequencedMap (Downgrade's
+ * inserted): sequencedKeySet(), sequencedValues() and sequencedEntrySet() are, as SequencedMap's default methods are
+ * specified, views of keySet(), values() and entrySet() in the map's encounter order; firstEntry() and lastEntry() "the
+ * first [last] key-value mapping ... or null if this map is empty", as an unmodifiable copy, and pollFirstEntry() and
+ * pollLastEntry() remove it and return the same copy. A NavigableMap answers them itself, as it does on Java 21.
  */
 public final class Map {
 
@@ -80,6 +86,67 @@ public final class Map {
             copy.put(Objects.requireNonNull(e.getKey()), Objects.requireNonNull(e.getValue()));
         }
         return (java.util.Map<K, V>) Collections.unmodifiableMap(copy);
+    }
+
+    public static <K> java.util.Set<K> sequencedKeySet(java.util.Map<K, ?> self) {
+        return self.keySet();
+    }
+
+    public static <V> java.util.Collection<V> sequencedValues(java.util.Map<?, V> self) {
+        return self.values();
+    }
+
+    public static <K, V> java.util.Set<java.util.Map.Entry<K, V>> sequencedEntrySet(java.util.Map<K, V> self) {
+        return self.entrySet();
+    }
+
+    public static <K, V> java.util.Map.Entry<K, V> firstEntry(java.util.Map<K, V> self) {
+        if (self instanceof java.util.NavigableMap) {
+            return ((java.util.NavigableMap<K, V>) self).firstEntry();
+        }
+        java.util.Iterator<java.util.Map.Entry<K, V>> it = self.entrySet().iterator();
+        return it.hasNext() ? new AbstractMap.SimpleImmutableEntry<>(it.next()) : null;
+    }
+
+    public static <K, V> java.util.Map.Entry<K, V> lastEntry(java.util.Map<K, V> self) {
+        if (self instanceof java.util.NavigableMap) {
+            return ((java.util.NavigableMap<K, V>) self).lastEntry();
+        }
+        java.util.Map.Entry<K, V> last = null;
+        for (java.util.Map.Entry<K, V> e : self.entrySet()) {
+            last = e;
+        }
+        return last == null ? null : new AbstractMap.SimpleImmutableEntry<>(last);
+    }
+
+    public static <K, V> java.util.Map.Entry<K, V> pollFirstEntry(java.util.Map<K, V> self) {
+        if (self instanceof java.util.NavigableMap) {
+            return ((java.util.NavigableMap<K, V>) self).pollFirstEntry();
+        }
+        java.util.Iterator<java.util.Map.Entry<K, V>> it = self.entrySet().iterator();
+        if (!it.hasNext()) {
+            return null;
+        }
+        java.util.Map.Entry<K, V> first = new AbstractMap.SimpleImmutableEntry<>(it.next());
+        it.remove();
+        return first;
+    }
+
+    public static <K, V> java.util.Map.Entry<K, V> pollLastEntry(java.util.Map<K, V> self) {
+        if (self instanceof java.util.NavigableMap) {
+            return ((java.util.NavigableMap<K, V>) self).pollLastEntry();
+        }
+        java.util.Iterator<java.util.Map.Entry<K, V>> it = self.entrySet().iterator();
+        if (!it.hasNext()) {
+            return null;
+        }
+        java.util.Map.Entry<K, V> last = it.next();
+        while (it.hasNext()) {
+            last = it.next();
+        }
+        java.util.Map.Entry<K, V> copy = new AbstractMap.SimpleImmutableEntry<>(last);
+        it.remove();
+        return copy;
     }
 
     @SuppressWarnings("unchecked")
