@@ -67,7 +67,16 @@ public final class Executors {
                 }
                 running.add(t);
             }
-            t.start();
+            try {
+                t.start();
+            } catch (RuntimeException | Error failedToStart) {
+                // A thread that never ran never leaves running by itself: close() would wait for it forever.
+                synchronized (this) {
+                    running.remove(t);
+                    notifyAll();
+                }
+                throw failedToStart;
+            }
         }
 
         @Override

@@ -51,23 +51,34 @@ public final class Class {
         return "L" + self.getName().replace('.', '/') + ";";
     }
 
-    /** The field Downgrade.RECORD_COMPONENTS names, on a class lowered from a record: its component names, ';' between. */
+    /** The fields Downgrade.RECORD_COMPONENTS and RECORD_COMPONENT name on a class lowered from a record. */
     static final java.lang.String COMPONENTS = "mmt$recordComponents";
+    static final java.lang.String COMPONENT = "mmt$recordComponent$";
 
-    static java.lang.String components(java.lang.Class<?> self) {
+    /**
+     * A lowered record's component names in order, read from its fields' names (never their values, which would run the
+     * class's static initializer, as the JDK's isRecord does not); null for any other class.
+     */
+    static java.lang.String[] components(java.lang.Class<?> self) {
         if (self.isArray() || self.isPrimitive() || self.isInterface()) {
             return null;
         }
-        try {
-            java.lang.reflect.Field f = self.getDeclaredField(COMPONENTS);
-            if (!java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.getType() != java.lang.String.class) {
-                return null;
+        boolean record = false;
+        java.util.TreeMap<java.lang.Integer, java.lang.String> names = new java.util.TreeMap<>();
+        for (java.lang.reflect.Field f : self.getDeclaredFields()) {
+            if (!java.lang.reflect.Modifier.isStatic(f.getModifiers()) || !f.isSynthetic()) {
+                continue;
             }
-            f.setAccessible(true);
-            return (java.lang.String) f.get(null);
-        } catch (NoSuchFieldException | IllegalAccessException notRecord) {
-            return null;
+            java.lang.String n = f.getName();
+            if (n.equals(COMPONENTS)) {
+                record = true;
+            } else if (n.startsWith(COMPONENT)) {
+                java.lang.String rest = n.substring(COMPONENT.length());
+                int dollar = rest.indexOf('$');
+                names.put(java.lang.Integer.parseInt(rest.substring(0, dollar)), rest.substring(dollar + 1));
+            }
         }
+        return record ? names.values().toArray(new java.lang.String[0]) : null;
     }
 
     public static boolean isRecord(java.lang.Class<?> self) {
@@ -75,14 +86,10 @@ public final class Class {
     }
 
     public static mmt.standin.java.lang.reflect.RecordComponent[] getRecordComponents(java.lang.Class<?> self) {
-        java.lang.String names = components(self);
-        if (names == null) {
+        java.lang.String[] each = components(self);
+        if (each == null) {
             return null;
         }
-        if (names.isEmpty()) {
-            return new mmt.standin.java.lang.reflect.RecordComponent[0];
-        }
-        java.lang.String[] each = names.split(";");
         mmt.standin.java.lang.reflect.RecordComponent[] out = new mmt.standin.java.lang.reflect.RecordComponent[each.length];
         for (int i = 0; i < each.length; i++) {
             try {

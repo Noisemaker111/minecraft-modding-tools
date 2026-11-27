@@ -33,8 +33,14 @@ import org.objectweb.asm.commons.ClassRemapper;
  */
 final class Downgrade {
 
-    /** The field a record lowered below Java 16 keeps its component names in; knowledge/standins/jdk/java/lang/Class.java reads it. */
+    /**
+     * A record lowered below Java 16 is marked by a field of this name, and each component by a field named RECORD_COMPONENT
+     * + its index + "$" + its name: knowledge/standins/jdk/java/lang/Class.java reads the names from the fields' names, so
+     * asking whether a class is a record never runs its static initializer (reading a field's value would, and the JDK's
+     * isRecord does not).
+     */
     static final String RECORD_COMPONENTS = "mmt$recordComponents";
+    static final String RECORD_COMPONENT = "mmt$recordComponent$";
 
     final int target; // the release's Java (8, 16, 17, 21 ...)
     final int major; // its class-file version (52 for Java 8)
@@ -81,6 +87,15 @@ final class Downgrade {
                     nestReach(bytes, from.name, infos, widen);
                 }
             }
+        }
+        jarParents.clear();
+        for (byte[] bytes : classes.values()) {
+            ClassReader r = new ClassReader(bytes);
+            List<String> parents = new ArrayList<>(List.of(r.getInterfaces()));
+            if (r.getSuperName() != null) {
+                parents.add(r.getSuperName());
+            }
+            jarParents.put(r.getClassName(), parents);
         }
         Set<String> used = new TreeSet<>();
         Map<String, String> lacked = standins.classesLacked(declared, home);
@@ -192,7 +207,7 @@ final class Downgrade {
         ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         Lowering lowering = new Lowering(w, info, widen, home, used, breaks, changed);
         Set<String> named = new TreeSet<>();
-        new ClassReader(bytes).accept(new ClassRemapper(lowering, new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
+        new ClassReader(bytes).accept(new InsertedChecks(new ClassRemapper(lowering, new org.objectweb.asm.commons.Remapper(Opcodes.ASM9) {
             @Override
             public String map(String name) {
                 String to = types.get(name);
@@ -211,7 +226,7 @@ final class Downgrade {
                 }
                 return to;
             }
-        }), 0);
+        }), info, breaks, changed), 0);
         for (String n : named) {
             used.add(Standins.PREFIX + n);
         }
@@ -252,6 +267,136 @@ final class Downgrade {
             }
         }
         return null;
+    }
+
+    /** Each class of the jar being lowered -> its superclass and interfaces, as the jar declares them. */
+    final Map<String, List<String>> jarParents = new HashMap<>();
+    final Map<String, List<String>> below = new ConcurrentHashMap<>();
+
+    /** A JDK interface the release's Java lacks that inserted() names as one it has: the class names the older one. */
+    boolean isInserted(String name) {
+        return jdk(name) && declared.cls(name) == null && inserted(name) != null;
+    }
+
+    /**
+     * The classes the release's Java and the jar have that are an inserted interface on the newer Java, the top-most only:
+     * for SequencedMap on Java 17, LinkedHashMap and SortedMap. A value is one of the newer interface exactly when it is one
+     * of these, so "x instanceof SequencedMap" becomes a test against each, never the widened "x instanceof Map", which a
+     * HashMap passes. The JDK's are the public classes of the interface's package and those under it.
+     */
+    List<String> below(String name) {
+        return below.computeIfAbsent(name, n -> {
+            Api now = Api.of(Runtime.version().feature());
+            String pkg = n.substring(0, n.lastIndexOf('/') + 1);
+            Set<String> found = new TreeSet<>();
+            for (String c : declared.entries.keySet()) {
+                Api.Cls cls = c.startsWith(pkg) && !c.equals(n) ? now.cls(c) : null;
+                if (cls != null && cls.pub() && now.above(c).stream().anyMatch(a -> a.name().equals(n))) {
+                    found.add(c);
+                }
+            }
+            for (String c : jarParents.keySet()) {
+                if (inJarBelow(c, n, new HashSet<>())) {
+                    found.add(c);
+                }
+            }
+            List<String> top = new ArrayList<>();
+            for (String c : found) {
+                boolean under = false;
+                for (String other : found) {
+                    if (!other.equals(c) && isBelow(c, other)) {
+                        under = true;
+                        break;
+                    }
+                }
+                if (!under) {
+                    top.add(c);
+                }
+            }
+            return top;
+        });
+    }
+
+    /** Whether one of the jar's classes is below name through its own declarations (and the newer JDK's above them). */
+    boolean inJarBelow(String c, String name, Set<String> seen) {
+        List<String> parents = jarParents.get(c);
+        if (parents == null || !seen.add(c)) {
+            return false;
+        }
+        for (String p : parents) {
+            if (p.equals(name) || inJarBelow(p, name, seen)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    boolean isBelow(String c, String other) {
+        if (jarParents.containsKey(c)) {
+            return inJarBelow(c, other, new HashSet<>()) || jarParents.get(c).stream().anyMatch(p -> jdk(p) && isBelow(p, other));
+        }
+        return Api.of(Runtime.version().feature()).above(c).stream().anyMatch(a -> a.name().equals(other));
+    }
+
+    /**
+     * Before a class's names are remapped (inserted interfaces become the one above them): "instanceof" an inserted
+     * interface is tested against each class below it (below), and a pattern switch case on one, which a test of the
+     * widened type would get wrong, is a break.
+     */
+    final class InsertedChecks extends ClassVisitor {
+        final Info info;
+        final Set<String> breaks;
+        final Map<String, Integer> changed;
+
+        InsertedChecks(ClassVisitor next, Info info, Set<String> breaks, Map<String, Integer> changed) {
+            super(Opcodes.ASM9, next);
+            this.info = info;
+            this.breaks = breaks;
+            this.changed = changed;
+        }
+
+        @Override
+        public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+            return new MethodVisitor(Opcodes.ASM9, super.visitMethod(access, name, desc, sig, ex)) {
+                @Override
+                public void visitTypeInsn(int op, String type) {
+                    if (op != Opcodes.INSTANCEOF || !isInserted(type)) {
+                        super.visitTypeInsn(op, type);
+                        return;
+                    }
+                    changed.merge("instanceof a JDK interface Java " + target + " lacks tested against the classes below it", 1, Integer::sum);
+                    List<String> each = below(type);
+                    if (each.isEmpty()) {
+                        super.visitInsn(Opcodes.POP);
+                        super.visitInsn(Opcodes.ICONST_0);
+                        return;
+                    }
+                    // No branches (so no stack map frames to write): [x] -> [r, x], each further class or'd into r, then [r].
+                    super.visitInsn(Opcodes.DUP);
+                    super.visitTypeInsn(Opcodes.INSTANCEOF, each.get(0));
+                    super.visitInsn(Opcodes.SWAP);
+                    for (String c : each.subList(1, each.size())) {
+                        super.visitInsn(Opcodes.DUP_X1);
+                        super.visitTypeInsn(Opcodes.INSTANCEOF, c);
+                        super.visitInsn(Opcodes.IOR);
+                        super.visitInsn(Opcodes.SWAP);
+                    }
+                    super.visitInsn(Opcodes.POP);
+                }
+
+                @Override
+                public void visitInvokeDynamicInsn(String n, String d, Handle bsm, Object... args) {
+                    if (bsm.getOwner().equals("java/lang/runtime/SwitchBootstraps")) {
+                        for (Object a : args) {
+                            if (a instanceof Type t && t.getSort() == Type.OBJECT && isInserted(t.getInternalName())) {
+                                breaks.add("not in Java " + target + ": a pattern switch case on " + dotted(t.getInternalName()) + " (in " + dotted(info.name) + ")");
+                            }
+                        }
+                    }
+                    super.visitInvokeDynamicInsn(n, d, bsm, args);
+                }
+            };
+        }
     }
 
     static String dotted(String internal) {
@@ -381,9 +526,17 @@ final class Downgrade {
             return super.visitField(opened(access, name + ":" + desc), name, desc, sig, value);
         }
 
+        final Set<String> methods = new HashSet<>();
+
         @Override
         public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
             needDesc(desc);
+            if (!methods.add(name + desc)) {
+                // Overloads for an interface and one a newer Java inserted below it (write(Map), write(SequencedMap)) are one
+                // method once the newer is named as the older; the JVM refuses a class declaring a method twice.
+                lacks("two methods " + name + " that are one once Java " + target + "'s types name their parameters, " + desc);
+                return null;
+            }
             return new Code(super.visitMethod(opened(access, name + desc), name, desc, sig, ex));
         }
 
@@ -392,8 +545,11 @@ final class Downgrade {
             if (components != null) {
                 // A record on a Java without records is a plain class; what reflection asks of it as a record
                 // (Class.isRecord, getRecordComponents: config and network serializers) the stand-ins read from here.
-                cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC, RECORD_COMPONENTS, "Ljava/lang/String;", null,
-                    String.join(";", components)).visitEnd();
+                int marker = Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC;
+                cv.visitField(marker, RECORD_COMPONENTS, "I", null, null).visitEnd();
+                for (int i = 0; i < components.size(); i++) {
+                    cv.visitField(marker, RECORD_COMPONENT + i + "$" + components.get(i), "I", null, null).visitEnd();
+                }
                 change("record components kept for reflection (Java 16 records)");
             }
             for (int i = 0; i < helpers.size(); i++) {
@@ -951,7 +1107,7 @@ final class Downgrade {
      */
     static final class Api {
 
-        record Cls(String name, boolean itf, String sup, String[] ifaces, Map<String, Integer> methods, Set<String> fields) {}
+        record Cls(String name, boolean itf, boolean pub, String sup, String[] ifaces, Map<String, Integer> methods, Set<String> fields) {}
 
         static final Map<Integer, Api> APIS = new ConcurrentHashMap<>();
         static final Path CT_SYM = Path.of(System.getProperty("java.home"), "lib", "ct.sym");
@@ -1039,7 +1195,7 @@ final class Downgrade {
                     return null;
                 }
             }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-            return new Cls(name, (r.getAccess() & Opcodes.ACC_INTERFACE) != 0, r.getSuperName(), r.getInterfaces(), methods, fields);
+            return new Cls(name, (r.getAccess() & Opcodes.ACC_INTERFACE) != 0, (r.getAccess() & Opcodes.ACC_PUBLIC) != 0, r.getSuperName(), r.getInterfaces(), methods, fields);
         }
 
         /** The classes a reference on owner is looked up in, as the JVM resolves it: the class, its superclasses, its interfaces. */

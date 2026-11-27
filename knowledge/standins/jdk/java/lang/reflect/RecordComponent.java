@@ -90,10 +90,15 @@ public final class RecordComponent {
         } else {
             out.append('L').append(raw.getName().replace('.', '/'));
         }
-        out.append('<');
-        for (java.lang.reflect.Type a : p.getActualTypeArguments()) {
-            out.append(signature(a));
+        // A class nested in a generic one has no arguments of its own (Outer<String>.Inner): no "<>", which no signature has.
+        java.lang.reflect.Type[] args = p.getActualTypeArguments();
+        if (args.length > 0) {
+            out.append('<');
+            for (java.lang.reflect.Type a : args) {
+                out.append(signature(a));
+            }
+            out.append('>');
         }
-        return out.append(">;").toString();
+        return out.append(';').toString();
     }
 }

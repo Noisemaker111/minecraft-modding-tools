@@ -138,6 +138,17 @@ final class JarPortJavaTest {
             // walked, a cleaner, a constant, a proxy's default method, an array pattern, and Java 19 to 21's threads and
             // sequenced maps (which releases on Java 17 lack too).
             public record Box<T>(List<T> items, int count) {}
+            static final StringBuffer INITS = new StringBuffer();
+            // Asking a record about itself runs none of its code: a serializer scans a class before the registry it fills is up.
+            record Lazy(int a) {
+                static {
+                    INITS.append("Lazy ran;");
+                }
+            }
+            static final class Outer<T> {
+                final class In {}
+            }
+            record Nest(Outer<String>.In in) {}
 
             interface Named {
                 String name();
@@ -214,6 +225,24 @@ final class JarPortJavaTest {
                     .append(' ').append(linked).append(' ');
                 java.lang.invoke.MethodHandles.Lookup lookup = java.lang.invoke.MethodHandles.privateLookupIn(Mod.class, java.lang.invoke.MethodHandles.lookup());
                 out.append(lookup.findClass("d8.Mod$Box").getSimpleName()).append(' ').append((Object) java.lang.invoke.MethodHandles.zero(int.class).invoke());
+                // An unordered map or set is no sequenced one, an ordered one is, on the release's Java as on Java 21.
+                out.append('\\n');
+                for (Object o : new Object[] { new HashMap<>(), new LinkedHashMap<>(), new TreeMap<>(), new ArrayList<>(), new HashSet<>(), new LinkedHashSet<>(),
+                    new TreeSet<>(), new ArrayDeque<>(), new java.util.concurrent.ConcurrentSkipListMap<>(), "s" }) {
+                    out.append(o instanceof SequencedMap).append(o instanceof SequencedCollection).append(o instanceof SequencedSet).append(';');
+                }
+                out.append(' ').append(Lazy.class.isRecord()).append(Lazy.class.getRecordComponents().length).append('[').append(INITS).append("] ")
+                    .append(Nest.class.getRecordComponents()[0].getGenericSignature()).append(' ');
+                // A thread that fails to start leaves nothing for close() to wait on.
+                Thread started = new Thread(() -> {});
+                started.start();
+                started.join();
+                try (var pool = java.util.concurrent.Executors.newThreadPerTaskExecutor(r -> started)) {
+                    pool.execute(() -> {});
+                } catch (RuntimeException e) {
+                    out.append(e.getClass().getSimpleName());
+                }
+                out.append(" closed");
                 return out.toString();
             }
 
@@ -337,6 +366,23 @@ final class JarPortJavaTest {
             public static Object caller() {
                 return StackWalker.getInstance().getCallerClass();
             }
+
+            // On Java 8 SequencedMap is named Map, so these two would be one method the JVM refuses, and the case on
+            // SequencedMap one a test of Map would get wrong: both are reported, never written wrong.
+            static String write(java.util.Map<?, ?> m) {
+                return "map";
+            }
+
+            static String write(java.util.SequencedMap<?, ?> m) {
+                return "sequenced";
+            }
+
+            static String kind(Object o) {
+                return switch (o) {
+                    case java.util.SequencedMap<?, ?> s -> "sequenced";
+                    default -> "other";
+                };
+            }
         }
         """;
 
@@ -388,8 +434,12 @@ final class JarPortJavaTest {
             }
         });
         JarPortTest.expect(!majors.isEmpty() && majors.values().stream().allMatch(m -> m == 52), "every class of the port is written for Java 8: " + majors);
-        JarPortTest.expect(unlinked.equals(List.of("not in Java 8: java.lang.StackWalker.getCallerClass()Ljava/lang/Class; (in d8.Walker)")),
-            "the one JDK member Java 8 has no answer for (the caller's class, which its stack traces do not hold) is reported, nothing else: " + unlinked);
+        JarPortTest.expect(unlinked.equals(List.of(
+                "not in Java 8: a pattern switch case on java.util.SequencedMap (in d8.Walker)",
+                "not in Java 8: java.lang.StackWalker.getCallerClass()Ljava/lang/Class; (in d8.Walker)",
+                "not in Java 8: two methods write that are one once Java 8's types name their parameters, (Ljava/util/Map;)Ljava/lang/String; (in d8.Walker)")),
+            "what Java 8 has no faithful answer for is reported, nothing else: the caller's class (its stack traces do not hold it), a case on "
+                + "SequencedMap (a test of Map would let a HashMap in), and overloads for Map and SequencedMap (one method there): " + unlinked);
         JarPortTest.expect(ported.keySet().stream().anyMatch(n -> n.matches("mmt/standin/m[0-9a-f]+/java/util/List\\.class")),
             "the JDK stand-ins the mod calls are carried in it, under a package of its own: " + ported.keySet());
 
