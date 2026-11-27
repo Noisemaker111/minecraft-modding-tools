@@ -1,7 +1,8 @@
 """Every offline check, in one list: what CI runs on each pull request and what to run before pushing.
 
-    python bench/run_tests.py                  the checks this branch's changes can affect (all of them in CI)
-    python bench/run_tests.py --all            all of them (builds the jar first), as CI runs them
+    python bench/run_tests.py                  the checks this branch's changes can affect
+    python bench/run_tests.py --base REF       the checks the changes since REF can affect, as CI runs them on a pull request
+    python bench/run_tests.py --all            all of them (builds the jar first)
     python bench/run_tests.py --only NAME,...  some of them (package runs first when one needs the jar)
     python bench/run_tests.py --list           the names
 
@@ -10,7 +11,8 @@ compiles its sources runs when one of them changed; the checks that use the pack
 carries changed; the python checks always run (about 10 s). A change to the porter's sources alone (what jar-port
 compiles) needs only jar-port and the self-test suite that runs it (port: mmt port --jar), as self-test has no game and
 no network to run the rest of them with. Agents reran the whole suite (about 3 minutes) 352 times in 36 hours while
-iterating; CI runs all of it once a pull request is ready (a draft's pushes start nothing).
+iterating. CI picks the same way, from what the pull request changes against its base (--base HEAD^1): running every
+check on Windows took 7.5 minutes of a 4-core runner for a porter-only change (#237, 2026-11-26).
 
 The self-test runs from the packaged jar, as users get it, not from the checkout. On Linux it runs with LC_ALL=C
 so a child's non-ASCII output is read through a non-UTF-8 console; Windows gives cp1252. No game, no network
@@ -265,7 +267,20 @@ READS = {
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
                                 + ["tools/tests/AgentWorldOpenTest.java"] + ASM_JARS,
 }
-# Files no packaged jar carries and no jar check reads: the docs, the bench scripts and cloud-run (the python check runs those), CI,
+# Files outside the jar that a check using the jar reads too: the performance experiments (each folder of bench/ holding an
+# experiment*.json, with the gates and worlds it names) and the kept runs.
+def experiment_files():
+    folders = {f.rsplit("/", 1)[0] + "/" for f in git_files() if f.startswith("bench/") and f.count("/") == 2 and f.rsplit("/", 1)[1].startswith("experiment")}
+    return [f for f in git_files() if f.startswith(tuple(folders))]
+
+
+ALSO_READS = {
+    "checkout-data": lambda: experiment_files() + ["coverage/perf-runs.json"],
+    "launcher": experiment_files,
+}
+# What decides which checks run and how: a change to these runs every check.
+RUNNER = ("bench/run_tests.py", "bench/port_tools.py", ".github/workflows/portable.yml")
+# Files no packaged jar carries and no jar check reads but those in ALSO_READS: the docs, the bench scripts and cloud-run (the python check runs those), CI,
 # the desktop app and the generated site.
 NOT_IN_JAR = ("docs/", "bench/", ".github/", ".claude/", "app/", "tools/cloud-run", "coverage/roadmap", "coverage/ledger.json", "coverage/measures.json",
               "coverage/perf-runs.json", "ROADMAP.md")
@@ -275,12 +290,13 @@ def git_files():
     return subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
 
 
-def changed_files():
-    """Files this branch changed against where it left origin/main, committed, staged, unstaged or new; None without git."""
-    base = subprocess.run(["git", "merge-base", "HEAD", "origin/main"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    if not base:
+def changed_files(base=None):
+    """Files this branch changed against base (else where it left origin/main), committed, staged, unstaged or new; None
+    without git or when base is not there."""
+    base = base or subprocess.run(["git", "merge-base", "HEAD", "origin/main"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    if not base or subprocess.run(["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"], cwd=ROOT, capture_output=True).returncode:
         return None
-    listed = subprocess.run(["git", "diff", "--name-only", base], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    listed = subprocess.run(["git", "diff", "--no-renames", "--name-only", base], cwd=ROOT, capture_output=True, text=True).stdout.split()
     new = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True).stdout.split()
     return sorted(set(listed) | set(new))
 
@@ -291,14 +307,19 @@ def in_jar(path):
 
 def affected(changed, names):
     """The checks of names that changed files can affect, and what self-test runs: None for every suite, else a list."""
+    if set(changed) & set(RUNNER):
+        return list(names), None
     reads = {n: set(r() if callable(r) else r) for n, r in READS.items()}
-    picked = [n for n in names if n == "python" or n in reads and reads[n] & set(changed)]
+    also = {n: set(r()) for n, r in ALSO_READS.items()}
+    picked = [n for n in names if n == "python" or n in reads and reads[n] & set(changed) or n in also and also[n] & set(changed)]
+    if any(CHECKS[n][0] for n in picked) and "package" in names and "package" not in picked:
+        picked.append("package")
     porter = {f for f in port_tools.sources() if f.startswith(port_tools.PORT)} | set(jar_port_tests())
     jar = [f for f in changed if in_jar(f)]
     if any(f not in porter for f in jar):
         return picked + [n for n in names if n not in READS and n not in picked and n != "python"], None
     if jar:
-        return picked + [n for n in ("package", "self-test") if n in names], ["port"]
+        return picked + [n for n in ("package", "self-test") if n in names and n not in picked], ["port"]
     return picked, None
 
 
@@ -384,7 +405,8 @@ def main(argv=None):
         stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", help="comma-separated check names")
-    ap.add_argument("--all", action="store_true", help="every check, as CI runs them (the default in CI)")
+    ap.add_argument("--all", action="store_true", help="every check (the default in CI without --base)")
+    ap.add_argument("--base", help="the checks the changes since this commit can affect (CI: a pull request's merge against its base, HEAD^1)")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args(argv)
     here = "nt" if WINDOWS else "posix"
@@ -402,11 +424,13 @@ def main(argv=None):
             wanted.insert(0, "package")
         names = [n for n in names if n in wanted]
     suites = None
-    changed = None if args.only or args.all or os.environ.get("CI") else changed_files()
+    changed = None if args.only or args.all or os.environ.get("CI") and not args.base else changed_files(args.base)
+    if args.base and changed is None and not (args.only or args.all):
+        print(f"{args.base} is not a commit here: running every check", flush=True)
     if changed is not None:
         names, suites = affected(changed, names)
         names = [n for n in CHECKS if n in names]
-        print(f"{len(changed)} files changed against origin/main: running {', '.join(names)}"
+        print(f"{len(changed)} files changed against {args.base or 'origin/main'}: running {', '.join(names)}"
               + (f" (self-test: {', '.join(suites)})" if suites else "") + "; --all runs every check", flush=True)
     started = time.monotonic()
     failed = run_all(names, suites)
