@@ -43,7 +43,7 @@ def base_classes(ref):
             t.extractall(src, filter="data")
         sources = port_tools.sources(root=src)
         javac = portboard.porter.java().replace("java.exe", "javac.exe") if portboard.porter.java().endswith("java.exe") else portboard.porter.java() + "c"
-        subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", ";".join(map(str, portboard.settings.ASM)) if sys.platform == "win32" else ":".join(map(str, portboard.settings.ASM)),
+        subprocess.run([javac, "-J" + port_tools.QUICK, "-nowarn", "-encoding", "UTF-8", "-cp", ";".join(map(str, portboard.settings.ASM)) if sys.platform == "win32" else ":".join(map(str, portboard.settings.ASM)),
                         "-d", str(classes)] + [str(src / n) for n in sources], check=True, capture_output=True)
     sep = ";" if sys.platform == "win32" else ":"
     return folder, sep.join([str(classes)] + [str(a) for a in portboard.settings.ASM])

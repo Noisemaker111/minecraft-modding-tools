@@ -237,12 +237,11 @@ final class PortJar {
             return classes;
         }
         Files.createDirectories(classes);
-        List<String> command = new ArrayList<>(List.of(
-            jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
+        List<String> command = jdk.javac(
             "--release", "25", "-encoding", "UTF-8",
             "-cp", home.resolve("tools/perf/lib/asm-9.9.jar") + File.pathSeparator + home.resolve("tools/perf/lib/asm-commons-9.9.jar"),
             "-d", classes.toString()
-        ));
+        );
         sources.forEach(p -> command.add(p.toString()));
         var result = Run.command(command, report.root, Map.of(), report.log("tools-compile"), 180);
         report.stage("tools-compile", result, Map.of());

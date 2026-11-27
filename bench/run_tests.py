@@ -50,8 +50,13 @@ CORES = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os
 PYTHON = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "bench").rglob("test_*.py") if p.name != "test_fingerprint.py")
 
 
-def java(*args):
-    return ["java", *args]
+def java(*args, home=None):
+    """A short-lived java (port_tools.QUICK): the JDK's at home, else the one on PATH."""
+    return [str(home / "bin" / "java") if home else "java", port_tools.QUICK, *args]
+
+
+def javac(*args, home=None):
+    return [str(home / "bin" / "javac") if home else "javac", "-J" + port_tools.QUICK, *args]
 
 
 class Together(list):
@@ -118,10 +123,21 @@ def fixture(check):
     return copy.relative_to(ROOT).as_posix()
 
 
+def stop_fixture_daemons():
+    """Stops the Gradle daemons the checks' copies of the demo mod started: left running, each held up to a gigabyte of the
+    machine for ten minutes after the checks ended, kept warm for a rerun."""
+    copies = [c for c in (ROOT / ".runs" / "checks").glob("*/prism-lab") if (c / ".mmt" / "portable" / "gradle-daemons").is_dir()]
+    if not copies or not (ROOT / JAR).is_file():
+        return
+    with ThreadPoolExecutor(len(copies)) as pool:
+        list(pool.map(lambda c: subprocess.run(java("-jar", JAR, "game-stop", "--root", str(c), "--json"), cwd=ROOT,
+                                               capture_output=True, timeout=120), copies))
+
+
 def checkout_data():
     out = ROOT / ".runs" / "checkout-tests"
     out.mkdir(parents=True, exist_ok=True)
-    yield ["javac", "-encoding", "UTF-8", "-cp", JAR, "-d", str(out), "tools/tests/CheckoutDataTest.java"]
+    yield javac("-encoding", "UTF-8", "-cp", JAR, "-d", str(out), "tools/tests/CheckoutDataTest.java")
     yield java("-cp", JAR + SEP + str(out), "CheckoutDataTest", ".")
 
 
@@ -132,9 +148,9 @@ def port_preflight():
     out = ROOT / ".runs" / "preflight-tests"
     asm = SEP.join(port_tools.ASM)
     home = jdk(25)
-    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *PREFLIGHT_TESTS]
+    yield javac("--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *PREFLIGHT_TESTS, home=home)
     for test in PREFLIGHT_TESTS:
-        yield [str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem]
+        yield java("-cp", str(out) + SEP + asm, Path(test).stem, home=home)
 
 
 # The porter's tests: every tools/tests file named for what it tests (JarPort*Test, Game*Test, ModNames*Test, SourceAnswers*Test), found
@@ -191,23 +207,23 @@ def jar_port():
     asm = SEP.join(port_tools.ASM)
     tests = jar_port_tests()
     home = jdk(25)
-    yield [str(home / "bin" / "javac"), "--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *tests]
-    yield Together([str(home / "bin" / "java"), "-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem)] for test in tests)
+    yield javac("--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", str(out), *port_tools.sources(), *tests, home=home)
+    yield Together(java("-cp", str(out) + SEP + asm, Path(test).stem, str(out / "scratch" / Path(test).stem), home=home) for test in tests)
 
 
 def console_accessor():
     out = ROOT / ".runs" / "console-tests"
     # Console is compiled by the game's own Java 8 JVM, so its source must stay at that level.
-    yield ["javac", "--release", "8", "-encoding", "UTF-8", "-d", str(out), "tools/agent/Console.java",
-           "tools/tests/ConsoleAccessorTest.java"]
+    yield javac("--release", "8", "-encoding", "UTF-8", "-d", str(out), "tools/agent/Console.java",
+                "tools/tests/ConsoleAccessorTest.java")
     yield java("-cp", str(out), "ConsoleAccessorTest", ".")
 
 
 def agent_world_open():
     out = ROOT / ".runs" / "agent-world-open-tests"
     asm = SEP.join(["tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar"])
-    yield ["javac", "-nowarn", "-encoding", "UTF-8", "-cp", asm, "-sourcepath", SEP.join(["tools/agent", "tools/cli", "tools"]), "-d", str(out),
-           "tools/agent/PortableAgent.java", "tools/tests/AgentWorldOpenTest.java"]
+    yield javac("-nowarn", "-encoding", "UTF-8", "-cp", asm, "-sourcepath", SEP.join(["tools/agent", "tools/cli", "tools"]), "-d", str(out),
+                "tools/agent/PortableAgent.java", "tools/tests/AgentWorldOpenTest.java")
     yield java("-cp", str(out) + SEP + asm, "AgentWorldOpenTest")
 
 
@@ -433,7 +449,10 @@ def main(argv=None):
         print(f"{len(changed)} files changed against {args.base or 'origin/main'}: running {', '.join(names)}"
               + (f" (self-test: {', '.join(suites)})" if suites else "") + "; --all runs every check", flush=True)
     started = time.monotonic()
-    failed = run_all(names, suites)
+    try:
+        failed = run_all(names, suites)
+    finally:
+        stop_fixture_daemons()
     print(f"{len(names) - len(failed)} of {len(names)} checks passed in {time.monotonic() - started:.0f} s"
           + (f"; failed: {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0

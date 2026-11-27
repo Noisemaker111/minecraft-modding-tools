@@ -69,8 +69,7 @@ final class FastLane {
         String cp = String.join(File.pathSeparator, classpath);
         if (!Files.exists(runnerStamp) || !Files.readString(runnerStamp).equals(sourceKey)) {
             var compile = Run.command(
-                List.of(
-                    jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
+                jdk.javac(
                     "--release",
                     Integer.toString(release),
                     "-cp",

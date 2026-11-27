@@ -76,7 +76,7 @@ def jar_tools():
         sources = [settings.ROOT / n for n in port_tools.sources(root=settings.ROOT)]
         javac = java().replace("java.exe", "javac.exe") if java().endswith("java.exe") else java() + "c"
         part = cachekeys.part_of(out)
-        subprocess.run([javac, "-nowarn", "-encoding", "UTF-8", "-cp", os.pathsep.join(map(str, settings.ASM)), "-d", str(part)] + [str(s) for s in sources],
+        subprocess.run([javac, "-J" + port_tools.QUICK, "-nowarn", "-encoding", "UTF-8", "-cp", os.pathsep.join(map(str, settings.ASM)), "-d", str(part)] + [str(s) for s in sources],
                        check=True)
         try:
             os.rename(part, out)
@@ -320,7 +320,7 @@ def fabric_apis(versions):
     """fabric_api of each release, read with one Java process."""
     missing = [v for v in dict.fromkeys(versions) if v not in settings.FABRIC_APIS]
     if missing:
-        done = subprocess.run([java(), "-Xmx1g", "-cp", jar_tools(), "Exposure", "--fabric-api", ",".join(missing)],
+        done = subprocess.run([java(), port_tools.QUICK, "-Xmx1g", "-cp", jar_tools(), "Exposure", "--fabric-api", ",".join(missing)],
                               capture_output=True, text=True)
         if done.returncode:
             # Exposure's own error names the release and the download or file; without it a cloud job said only "exit 1".

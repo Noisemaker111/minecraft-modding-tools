@@ -615,12 +615,9 @@ final class DataCheck {
         Files.createDirectories(classes);
         // The game's classes are as new as the Java it runs on, so compile with that Java's compiler when it has one.
         Path launchJavac = Path.of(launch.java()).resolveSibling(Runtimes.WINDOWS ? "javac.exe" : "javac");
-        String javac = Files.isRegularFile(launchJavac)
-            ? launchJavac.toString()
-            : Runtimes.ensureAtLeast(build.harness, 25)
-                .home()
-                .resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac"))
-                .toString();
+        Runtimes.Jdk jdk = Files.isRegularFile(launchJavac)
+            ? new Runtimes.Jdk(launchJavac.getParent().getParent(), 0)
+            : Runtimes.ensureAtLeast(build.harness, 25);
         Path argfile = classes.resolve("javac.args");
         Files.writeString(
             argfile,
@@ -628,7 +625,7 @@ final class DataCheck {
             StandardCharsets.UTF_8
         );
         List<String> command = new ArrayList<>(
-            List.of(javac, "-nowarn", "-encoding", "UTF-8", "-proc:none", "-d", classes.toString(), "@" + argfile)
+            jdk.javac("-nowarn", "-encoding", "UTF-8", "-proc:none", "-d", classes.toString(), "@" + argfile)
         );
         sources.forEach(p -> command.add(p.toString()));
         var compiled = Run.command(command, build.project.root, Map.of(), build.report.log("data-check-tools"), 180);
@@ -639,18 +636,15 @@ final class DataCheck {
         );
         // The helper mod is a speed-up only: when it does not compile against this game, the check runs without it.
         Path mod = classes.resolve("mod");
-        List<String> modCommand = new ArrayList<>(
-            List.of(
-                javac,
-                "-nowarn",
-                "-encoding",
-                "UTF-8",
-                "-proc:none",
-                "-d",
-                mod.toString(),
-                "@" + argfile,
-                build.harness.resolve(MOD.get(0)).toString()
-            )
+        List<String> modCommand = jdk.javac(
+            "-nowarn",
+            "-encoding",
+            "UTF-8",
+            "-proc:none",
+            "-d",
+            mod.toString(),
+            "@" + argfile,
+            build.harness.resolve(MOD.get(0)).toString()
         );
         var helper = Run.command(modCommand, build.project.root, Map.of(), build.report.log("data-check-mod"), 180);
         build.report.stage("data-check-mod", helper, Map.of());

@@ -844,11 +844,11 @@ final class StartCheck {
         Files.createDirectories(dir);
         Path work = Files.createTempDirectory(dir, "classes-");
         try {
-            String javac = Runtimes.ensureAtLeast(harness, 17).home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString();
+            Runtimes.Jdk jdk = Runtimes.ensureAtLeast(harness, 17);
             Path stubClasses = Files.createDirectories(work.resolve("stubs")), classes = Files.createDirectories(work.resolve("classes"));
-            List<String> first = new ArrayList<>(List.of(javac, "--release", "8", "-Xlint:-options", "-nowarn", "-encoding", "UTF-8", "-d", stubClasses.toString()));
+            List<String> first = jdk.javac("--release", "8", "-Xlint:-options", "-nowarn", "-encoding", "UTF-8", "-d", stubClasses.toString());
             stubs.forEach(p -> first.add(p.toString()));
-            List<String> second = new ArrayList<>(List.of(javac, "--release", "8", "-Xlint:-options", "-nowarn", "-encoding", "UTF-8", "-cp", stubClasses.toString(), "-d", classes.toString()));
+            List<String> second = jdk.javac("--release", "8", "-Xlint:-options", "-nowarn", "-encoding", "UTF-8", "-cp", stubClasses.toString(), "-d", classes.toString());
             sources.forEach(p -> second.add(p.toString()));
             for (List<String> command : List.of(first, second)) {
                 var result = Run.command(command, dir, Map.of(), context.report().log("no-game-agent-compile"), 120);

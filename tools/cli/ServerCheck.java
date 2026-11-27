@@ -844,19 +844,16 @@ final class ServerCheck {
         if (Files.exists(directory.resolve("ready"))) return directory.resolve("classes");
         Path classes = directory.resolve("classes");
         Files.createDirectories(classes);
-        List<String> command = new ArrayList<>(
-            List.of(
-                jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
-                "--release",
-                "21",
-                "-nowarn",
-                "-encoding",
-                "UTF-8",
-                "-cp",
-                String.join(File.pathSeparator, classpath),
-                "-d",
-                classes.toString()
-            )
+        List<String> command = jdk.javac(
+            "--release",
+            "21",
+            "-nowarn",
+            "-encoding",
+            "UTF-8",
+            "-cp",
+            String.join(File.pathSeparator, classpath),
+            "-d",
+            classes.toString()
         );
         sources.forEach(p -> command.add(p.toString()));
         var compiled = Run.command(command, build.project.root, Map.of(), build.report.log("server-check-tools"), 120);
