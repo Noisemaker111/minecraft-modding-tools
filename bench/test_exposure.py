@@ -913,38 +913,22 @@ with tempfile.TemporaryDirectory() as tmp:
           f"{left(before)} -> {left(narrow)} (one release), {left(whole)} (every release)")
     check(any("breaks left" in line for line in portboard.anyversion.any_version_lines(a)[:2]), "the count's lines say the breaks left under the headline")
 
-# Jars are read on every processor at once; the rows come back as one process would have given them.
+# ModNames reads the jars (on every processor, in one process); its rows come back and a failure fails the run.
 with tempfile.TemporaryDirectory() as tmp:
     folder = Path(tmp)
-    names = [f"mod{i:03}.jar" for i in range(150)]
-    for i, name in enumerate(names):
-        (folder / name).write_bytes(b"x" * (1 + (i * 37) % 97) * 1000)
-    (folder / "big.jar").write_bytes(b"x" * 2_000_000)
-    given = [folder / "big.jar"] + [folder / n for n in names]
-    portboard.settings.CORES = 16
-    dealt = portboard.porter.piles(given)
-    sizes = [sum(j.stat().st_size for j in pile) for pile in dealt]
-    check(len(dealt) == 4 and sorted(j.name for pile in dealt for j in pile) == sorted(j.name for j in given), "every jar is in exactly one of four piles")
-    check(max(sizes) - min(sizes) <= 2_000_000 and [folder / "big.jar"] in [pile[:1] for pile in dealt],
-          f"the piles weigh about the same, the biggest jar dealt first: {sizes}")
-    portboard.settings.CORES = 4
-    check(len(portboard.porter.piles(given)) == 1, "a 4-processor runner has none to spare: one pile")
-    portboard.settings.CORES = 64
-    check(len(portboard.porter.piles(given)) == 151 // portboard.settings.PILE and len(portboard.porter.piles(given[:5])) == 1, "a pile is not made for a handful of jars, however many processors there are")
+    given = [folder / f"mod{i:03}.jar" for i in range(5)]
     tool = folder / "tool.py"
     tool.write_text("import json, sys\nargs = sys.argv[1:]\nat = args.index('--report')\njars = args[at + 2:]\n"
-                    "if any('mod013' in j for j in jars) and 'fail' in args:\n    sys.exit(3)\n"
-                    "json.dump({'mods': [{'mod': j.replace(chr(92), '/').rsplit('/', 1)[1], 'heap': args[0]} for j in jars]}, open(args[at + 1], 'w'))\n", encoding="utf-8")
-    portboard.settings.CORES = 16
-    rows = portboard.porter.side_by_side([sys.executable, str(tool), "-Xmx10g"], given, folder / "report.json")
-    check([r["mod"] for r in rows] == [j.name for j in given], "rows come back in the order the jars were given, each once")
-    check(not list(folder.glob("report.*.json")), "the piles' own reports are removed")
+                    "if 'fail' in args:\n    sys.exit(3)\n"
+                    "json.dump({'mods': [{'mod': j.replace(chr(92), '/').rsplit('/', 1)[1]} for j in jars]}, open(args[at + 1], 'w'))\n", encoding="utf-8")
+    rows = portboard.porter.read_names([sys.executable, str(tool)], given, folder / "report.json")
+    check([r["mod"] for r in rows] == [j.name for j in given] and not (folder / "report.json").exists(), "ModNames' rows come back and its report is removed")
     try:
-        portboard.porter.side_by_side([sys.executable, str(tool), "fail"], given, folder / "report.json")
+        portboard.porter.read_names([sys.executable, str(tool), "fail"], given, folder / "report.json")
         failed = False
     except SystemExit:
         failed = True
-    check(failed, "one pile failing fails the run")
+    check(failed, "ModNames failing fails the run")
 
 # A mod's port is kept under everything the port reads, and only mods with no kept port go to JarPort: agents rerun the
 # scoreboard after every edit, and porting every mod again is most of a run.
@@ -1570,7 +1554,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 # Two sweep jobs from one release, side by side in one process, read the jars' names into reports of their own.
 with tempfile.TemporaryDirectory() as tmp:
-    saved = portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed
+    saved = portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.read_names, portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed
     portboard.settings.ROOT, portboard.settings.HOME = Path(tmp), Path(tmp) / "home"
     portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed = (lambda: "classes"), (lambda loader, version: True), (lambda kind, *names: Path(tmp) / kind)
     reports, both = [], threading.Barrier(2)
@@ -1579,7 +1563,7 @@ with tempfile.TemporaryDirectory() as tmp:
         reports.append(report)
         both.wait(5)
         return []
-    portboard.porter.side_by_side = named
+    portboard.porter.read_names = named
     try:
         jar = Path(tmp) / "m.jar"
         jar.write_bytes(b"x")
@@ -1589,7 +1573,7 @@ with tempfile.TemporaryDirectory() as tmp:
         for t in threads:
             t.join()
     finally:
-        portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.side_by_side, portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed = saved
+        portboard.settings.ROOT, portboard.settings.HOME, portboard.porter.read_names, portboard.porter.jar_tools, portboard.porter.shipped_obfuscated, portboard.cachekeys.keyed = saved
 check(len(set(reports)) == 2, f"two reads of one release's names at once write two reports: {reports}")
 
 # A sweep of an old commit (--at) runs in its unpacked tree, which has no reader of main's table: it compares with nothing

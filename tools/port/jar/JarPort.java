@@ -1434,15 +1434,7 @@ public final class JarPort {
     static final Pattern CLASS_IN_DESC = Pattern.compile("L([^;<]+)([;<])");
 
     static String mapDesc(String d, Map<String, String> names) {
-        if (d == null) {
-            return null;
-        }
-        Matcher m = CLASS_IN_DESC.matcher(d);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            m.appendReplacement(sb, Matcher.quoteReplacement("L" + names.getOrDefault(m.group(1), m.group(1)) + m.group(2)));
-        }
-        return m.appendTail(sb).toString();
+        return d == null ? null : Exposure.renameClasses(d, true, n -> names.getOrDefault(n, n));
     }
 
     record Decl(String owner, boolean game) {}

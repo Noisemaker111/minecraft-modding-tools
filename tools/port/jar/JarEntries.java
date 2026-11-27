@@ -173,7 +173,10 @@ final class JarEntries {
         return null;
     }
 
-    static final Pattern DIGEST = Pattern.compile("(?i)\\b[0-9a-f]{32}(?:[0-9a-f]{8})?(?:[0-9a-f]{24})?\\b");
+    /** A letter, digit or underscore: what a regular expression's word boundary (\b) tells a word by. */
+    static boolean word(char c) {
+        return c < 128 && (Character.isLetterOrDigit(c) || c == '_');
+    }
 
     /**
      * A jar that records the digest (MD5, SHA-1 or SHA-256, as hex) of a jar it carries in a text file beside it (a loader
@@ -206,18 +209,32 @@ final class JarEntries {
                 continue;
             }
             String text = new String(e.getValue(), StandardCharsets.ISO_8859_1);
-            Matcher m = DIGEST.matcher(text);
-            StringBuilder out = new StringBuilder();
-            boolean changed = false;
-            while (m.find()) {
-                String now = moved.get(m.group().toLowerCase(Locale.ROOT));
-                changed |= now != null;
-                String written = now == null ? m.group() : m.group().equals(m.group().toUpperCase(Locale.ROOT)) ? now.toUpperCase(Locale.ROOT) : now;
-                m.appendReplacement(out, written);
+            StringBuilder out = null;
+            int from = 0;
+            // Each whole word of hex digits as long as an MD5, SHA-1 or SHA-256 (32, 40 or 64; 56 too, as \b[0-9a-f]{32}([0-9a-f]{8})?([0-9a-f]{24})?\b
+            // read them before), read by hand: the pattern over every text file of a big
+            // mod was a twentieth of its port.
+            for (int i = 0, end = text.length(); i < end; ) {
+                if (Character.digit(text.charAt(i), 16) < 0) {
+                    i++;
+                    continue;
+                }
+                int start = i;
+                while (i < end && Character.digit(text.charAt(i), 16) >= 0) {
+                    i++;
+                }
+                int length = i - start;
+                if ((length == 32 || length == 40 || length == 56 || length == 64) && (start == 0 || !word(text.charAt(start - 1))) && (i == end || !word(text.charAt(i)))) {
+                    String found = text.substring(start, i), now = moved.get(found.toLowerCase(Locale.ROOT));
+                    if (now != null) {
+                        out = out == null ? new StringBuilder(text.length()) : out;
+                        out.append(text, from, start).append(found.equals(found.toUpperCase(Locale.ROOT)) ? now.toUpperCase(Locale.ROOT) : now);
+                        from = i;
+                    }
+                }
             }
-            if (changed) {
-                m.appendTail(out);
-                e.setValue(out.toString().getBytes(StandardCharsets.ISO_8859_1));
+            if (out != null) {
+                e.setValue(out.append(text, from, text.length()).toString().getBytes(StandardCharsets.ISO_8859_1));
             }
         }
     }

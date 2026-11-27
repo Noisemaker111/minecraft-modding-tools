@@ -1136,6 +1136,39 @@ public final class Exposure {
     }
 
     /**
+     * A descriptor or signature with each class it names (L...; and, with generics, L...< too) passed through rename, as
+     * a find-and-replace of L([^;]+); (or L([^;<]+)([;<])) gives it. Read by hand: the port maps descriptors millions of
+     * times, and compiling and running the pattern each time was a tenth of a port.
+     */
+    static String renameClasses(String d, boolean generics, java.util.function.UnaryOperator<String> rename) {
+        StringBuilder out = null;
+        int from = 0;
+        for (int at = d.indexOf('L'); at >= 0; ) {
+            int end = at + 1;
+            while (end < d.length() && d.charAt(end) != ';' && !(generics && d.charAt(end) == '<')) {
+                end++;
+            }
+            if (end == d.length()) {
+                break;
+            }
+            if (end == at + 1) {
+                at = d.indexOf('L', at + 1);
+                continue;
+            }
+            String name = d.substring(at + 1, end), renamed = rename.apply(name);
+            if (!renamed.equals(name)) {
+                if (out == null) {
+                    out = new StringBuilder(d.length() + 16);
+                }
+                out.append(d, from, at + 1).append(renamed);
+                from = end;
+            }
+            at = d.indexOf('L', end + 1);
+        }
+        return out == null ? d : out.append(d, from, d.length()).toString();
+    }
+
+    /**
      * What the JVM's verifier says of one class when it loads it, with no game running: the JDK's own copy of HotSpot's
      * verifier (java.lang.classfile), given the class hierarchy a release and a mod's classes make. It checks what a link
      * check cannot: that each value on the stack is of a type the instruction using it accepts (a mod's TranslatableComponent
@@ -1229,12 +1262,7 @@ public final class Exposure {
         }
 
         String desc(String d) {
-            Matcher m = Pattern.compile("L([^;]+);").matcher(d);
-            StringBuilder sb = new StringBuilder();
-            while (m.find()) {
-                m.appendReplacement(sb, Matcher.quoteReplacement("L" + cls(m.group(1)) + ";"));
-            }
-            return m.appendTail(sb).toString();
+            return renameClasses(d, false, this::cls);
         }
 
         /** {owner, name, desc} of a method in the new release, by the map or else unchanged (classes renamed). */

@@ -564,12 +564,7 @@ final class GameCode {
 
     /** A descriptor with each class name passed through rename. */
     static String mapDesc(String d, Object unused, java.util.function.UnaryOperator<String> rename) {
-        Matcher m = Pattern.compile("L([^;<]+)([;<])").matcher(d);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            m.appendReplacement(sb, Matcher.quoteReplacement("L" + rename.apply(m.group(1)) + m.group(2)));
-        }
-        return m.appendTail(sb).toString();
+        return Exposure.renameClasses(d, true, rename);
     }
 
     /** The class (jar names) that declares a member a reference names, or the owner when none of its classes does. */

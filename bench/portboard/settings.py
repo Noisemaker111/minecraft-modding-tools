@@ -44,14 +44,8 @@ ASM = [ROOT / a for a in port_tools.ASM]
 CLASSES = {}  # this run's porter: read once, so an edit made while a sweep runs does not mix two porters in it
 
 
-# Each process that reads jars (ModNames; JarPort ports on every processor in one process) starts cold and reads a
-# release first, so more piles stop paying: when JarPort ran in piles, 150 NeoForge mods took 144 s in one pile on 24
-# processors, 66 s in four and 75 s in nine.
-PILE = 36
-# A pile only pays with processors to spare for its start: on GitHub's 4-processor runners four piles took 104 s
-# where one had taken about 90.
-SPARE = 4
-# Processors this run may use; all runs every update side by side and gives each its share.
+# Processors this run may use (ModNames reads jars on this many threads); all runs every update side by side and gives
+# each its share.
 CORES = os.cpu_count() or 1
 
 
