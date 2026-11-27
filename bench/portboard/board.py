@@ -106,7 +106,24 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
     timed = timer(seconds)
     if (kind or only) and len(tos) > 1:
         raise SystemExit("--type and --mods answer one update at a time: give one --to")
-    pinned = timed("download", modrinth.fetch, loader, frm)
+    # The game's change maps and the releases' registry reports need no mod: they are made while the mods download, and
+    # the mods are read into Mojang's names once they are in (on GitHub's runners the download took up to 18 s first).
+    pool = ThreadPoolExecutor(4)
+    try:
+        return jars_with(pool, timed, seconds, loader, frm, tos, save, out, quiet, kind, only)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+def jars_with(pool, timed, seconds, loader, frm, tos, save, out, quiet, kind, only):
+    """jars, with pool to make its inputs side by side in."""
+    fetched = pool.submit(timed, "download", modrinth.fetch, loader, frm)
+    classes = porter.compile_tools()  # once, before the threads below that run it
+    # Every step of every target, so one GameDiff process builds the maps that are missing.
+    segments = list(dict.fromkeys((x, y) for to in tos for x, y in zip(porter.stops(loader, frm, to), porter.stops(loader, frm, to)[1:])))
+    mapped = pool.submit(timed, "map", porter.route_maps, segments, loader, classes)
+    reported = pool.submit(timed, "reports", porter.registry_reports, list(dict.fromkeys(v for to in tos for v in porter.stops(loader, frm, to))))
+    pinned = fetched.result()
     works = {to: settings.ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" for to in tos}
     if kind:
         last = works[tos[0]] / "last.json"
@@ -123,17 +140,9 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
         pinned = [p for p in pinned if p.name.split("--", 1)[0] in only]
     partial = (f"only the {len(pinned)} mods the last run held back with '{kind}'" if kind
                else f"only {', '.join(sorted(only))}" if only else None)
-    porter.compile_tools()  # once, before the threads below that run it
-    # Every step of every target, so one GameDiff process builds the maps that are missing.
-    segments = list(dict.fromkeys((x, y) for to in tos for x, y in zip(porter.stops(loader, frm, to), porter.stops(loader, frm, to)[1:])))
-    # Reading the jars' names, the game's change maps and the releases' registry reports need nothing from each other.
-    with ThreadPoolExecutor(3) as pool:
-        named = pool.submit(timed, "names", porter.mojang_names, loader, frm, pinned)
-        mapped = pool.submit(timed, "map", porter.route_maps, segments, loader, porter.compile_tools())
-        reported = pool.submit(timed, "reports", porter.registry_reports, list(dict.fromkeys(v for to in tos for v in porter.stops(loader, frm, to))))
-        mods, unread = named.result()
-        mapped.result()
-        reported.result()
+    mods, unread = timed("names", porter.mojang_names, loader, frm, pinned)
+    mapped.result()
+    reported.result()
     # A run of some mods only keeps its report apart, so a whole run's report is not replaced by part of it.
     written = {to: works[to] / ("report.json" if not partial else "report-part.json") for to in tos}
     for work in works.values():

@@ -56,28 +56,50 @@ public final class ModNames {
         }
         ModNames names = new ModNames(loader.equals("neoforge") ? Exposure.Intermediary.neoform(version) : new Exposure.Intermediary(version));
         Path dir = Files.createDirectories(Path.of(out));
+        // Every processor reads jars, biggest first, from the one name table: a jar's names do not depend on the jars
+        // beside it, and one thread took 55 s of a 4-processor runner's port check for 150 mods.
+        List<Path> order = new ArrayList<>(jars);
+        order.sort(Comparator.comparingLong((Path j) -> j.toFile().length()).reversed());
+        Map<Path, Map<String, Object>> done = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+        List<Thread> running = new ArrayList<>();
+        for (int t = Math.min(order.size(), Integer.getInteger("modnames.threads", Runtime.getRuntime().availableProcessors())); t > 0; t--) {
+            running.add(Thread.ofPlatform().start(() -> {
+                for (int j; (j = next.getAndIncrement()) < order.size(); ) {
+                    done.put(order.get(j), names.row(order.get(j), dir));
+                }
+            }));
+        }
+        for (Thread t : running) {
+            t.join();
+        }
         List<Object> rows = new ArrayList<>();
         for (Path jar : jars) {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("mod", jar.getFileName().toString());
-            try {
-                Counts n = new Counts();
-                written(dir.resolve(jar.getFileName().toString()), names.jar(Files.readAllBytes(jar), n));
-                row.put("classes", n.classes);
-                row.put("mixinStrings", n.strings);
-                row.put("widenerLines", n.widener);
-                row.put("nested", n.nested);
-            } catch (IOException | RuntimeException failed) {
-                Files.deleteIfExists(dir.resolve(jar.getFileName().toString()));
-                row.put("error", String.valueOf(failed));
-            }
-            rows.add(row);
+            rows.add(done.get(jar));
         }
         long failed = rows.stream().filter(r -> ((Map<?, ?>) r).containsKey("error")).count();
         System.out.printf("%d of %d jars in Mojang names for %s in %s%n", jars.size() - failed, jars.size(), version, dir);
         if (report != null) {
             Files.writeString(Path.of(report), Json.write(Map.of("version", version, "mods", rows)), StandardCharsets.UTF_8);
         }
+    }
+
+    /** One jar written into dir in Mojang names, and its report row: what was renamed, or why it could not be read. */
+    Map<String, Object> row(Path jar, Path dir) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("mod", jar.getFileName().toString());
+        try {
+            Counts n = new Counts();
+            written(dir.resolve(jar.getFileName().toString()), jar(Files.readAllBytes(jar), n));
+            row.put("classes", n.classes);
+            row.put("mixinStrings", n.strings);
+            row.put("widenerLines", n.widener);
+            row.put("nested", n.nested);
+        } catch (IOException | RuntimeException failed) {
+            dir.resolve(jar.getFileName().toString()).toFile().delete();
+            row.put("error", String.valueOf(failed));
+        }
+        return row;
     }
 
     static final class Counts {

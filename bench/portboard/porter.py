@@ -86,36 +86,14 @@ def jar_tools():
     return settings.CLASSES["path"]
 
 
-def piles(jars):
-    """The jars dealt into piles that take about as long, one per processor: every next-biggest jar goes on the lightest pile."""
-    count = max(1, min(settings.CORES // settings.SPARE, len(jars) // settings.PILE))
-    dealt = [[0, []] for _ in range(count)]
-    for jar in sorted(jars, key=lambda j: (-j.stat().st_size, j.name)):
-        pile = min(dealt, key=lambda d: d[0])
-        pile[0] += jar.stat().st_size
-        pile[1].append(jar)
-    return [pile for _, pile in dealt]
-
-
-def side_by_side(command, jars, report):
-    """Runs a tool that reads jars one at a time (ModNames) on every processor at once: a jar's result does not depend on
-    the jars beside it, and one process used one of this machine's processors (150 mods took 140 s on one of 24). Returns
-    the reports' rows in the order the jars were given."""
-    dealt = piles(jars)
-    if len(dealt) > 1:
-        # The piles share the memory one process had.
-        command = [f"-Xmx{max(3, settings.HEAP // len(dealt))}g" if c.startswith("-Xmx") else c for c in command]
-    parts = [report.with_name(f"{report.stem}.{i}{report.suffix}") for i in range(len(dealt))]
-    running = [subprocess.Popen(command + ["--report", str(part)] + [str(j) for j in pile], stdout=subprocess.DEVNULL) for part, pile in zip(parts, dealt)]
-    codes = [process.wait() for process in running]
-    if any(codes):
-        raise SystemExit(f"{' '.join(command[:1] + [c for c in command if c in ('JarPort', 'ModNames')])} failed on a pile of jars (exit {max(codes, key=abs)}); its output is above")
-    rows = {}
-    for part in parts:
-        for row in json.loads(part.read_text(encoding="utf-8"))["mods"]:
-            rows[row["mod"]] = row
-        part.unlink()
-    return [rows[j.name] for j in jars if j.name in rows]
+def read_names(command, jars, report):
+    """Runs ModNames on jars (it reads them on this run's processors, settings.CORES) and returns its report's rows."""
+    done = subprocess.run(command + ["--report", str(report)] + [str(j) for j in jars], stdout=subprocess.DEVNULL)
+    if done.returncode:
+        raise SystemExit(f"ModNames failed on {len(jars)} jars (exit {done.returncode}); its output is above")
+    rows = json.loads(report.read_text(encoding="utf-8"))["mods"]
+    report.unlink()
+    return rows
 
 
 def mojang_names(loader, version, jars):
@@ -133,7 +111,8 @@ def mojang_names(loader, version, jars):
         # Named for this call: the sweep's jobs run side by side in one process, two of them from the same release.
         report = settings.ROOT / ".runs" / "exposure" / f"names-{loader}-{version}-{os.getpid()}-{uuid.uuid4().hex[:12]}.json"
         report.parent.mkdir(parents=True, exist_ok=True)
-        rows = side_by_side([java(), f"-Xmx{min(4, settings.HEAP)}g", "-cp", jar_tools(), "ModNames", "--version", version, "--loader", loader, "--out", str(out)], missing, report)
+        rows = read_names([java(), f"-Xmx{min(4, settings.HEAP)}g", f"-Dmodnames.threads={settings.CORES}", "-cp", jar_tools(), "ModNames", "--version", version,
+                           "--loader", loader, "--out", str(out)], missing, report)
         failed = {m["mod"]: m["error"] for m in rows if "error" in m}
     return [out / j.name for j in jars if (out / j.name).is_file()], failed
 

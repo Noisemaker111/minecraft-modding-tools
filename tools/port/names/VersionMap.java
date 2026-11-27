@@ -709,19 +709,8 @@ public final class VersionMap {
             return t;
         }
 
-        static final Pattern CLASS_IN_DESC = Pattern.compile("L([^;]+);");
-
         static String remapDesc(String desc, Map<String, String> classes) {
-            Matcher m = CLASS_IN_DESC.matcher(desc);
-            StringBuilder sb = new StringBuilder();
-            while (m.find()) {
-                m.appendReplacement(
-                    sb,
-                    Matcher.quoteReplacement("L" + classes.getOrDefault(m.group(1), m.group(1)) + ";")
-                );
-            }
-            m.appendTail(sb);
-            return sb.toString();
+            return Exposure.renameClasses(desc, false, n -> classes.getOrDefault(n, n));
         }
     }
 
