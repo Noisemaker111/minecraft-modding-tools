@@ -1569,11 +1569,7 @@ final class Game {
         Path classes = dir.resolve("classes");
         Files.createDirectories(classes);
         var result = Run.command(
-            List.of(
-                Runtimes.ensureAtLeast(harness, 17)
-                    .home()
-                    .resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac"))
-                    .toString(),
+            Runtimes.ensureAtLeast(harness, 17).javac(
                 "--release",
                 "8",
                 "-cp",

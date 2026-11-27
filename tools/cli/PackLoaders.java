@@ -700,7 +700,7 @@ final class PackLoaders {
         List<String> javaTarget = release.equals("8") ? List.of("-source", "8", "-target", "8") : List.of("--release", release);
         List<String> stubSources = new ArrayList<>();
         for (String source : PROBE) if (source.contains("/stubs/")) stubSources.add(context.harness().resolve(source).toString());
-        List<String> compileStubs = new ArrayList<>(List.of(javac(context), "-nowarn", "-proc:none"));
+        List<String> compileStubs = context.java().javac("-nowarn", "-proc:none");
         compileStubs.addAll(javaTarget);
         compileStubs.addAll(List.of("-d", stubs.toString()));
         compileStubs.addAll(stubSources);
@@ -712,7 +712,7 @@ final class PackLoaders {
         List<String> compileProbe = null;
         List<String> refused = new ArrayList<>();
         for (Path candidate : layers) {
-            List<String> command = new ArrayList<>(List.of(javac(context), "-nowarn", "-proc:none"));
+            List<String> command = context.java().javac("-nowarn", "-proc:none");
             command.addAll(javaTarget);
             command.addAll(
                 List.of(
@@ -821,8 +821,7 @@ final class PackLoaders {
         Files.createDirectories(dir);
         Path classes = Files.createTempDirectory(dir, "classes-");
         try {
-            String javac = Runtimes.ensureAtLeast(context.harness(), 17).home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString();
-            var result = Run.command(List.of(javac, "--release", "8", "-nowarn", "-cp", asm.toString(), "-d", classes.toString(), source.toString()),
+            var result = Run.command(Runtimes.ensureAtLeast(context.harness(), 17).javac("--release", "8", "-nowarn", "-cp", asm.toString(), "-d", classes.toString(), source.toString()),
                 dir, Map.of(), context.report().log("spawn-agent-compile"), 120);
             context.report().stage("spawn-agent-compile", result, Map.of());
             if (result.exit() != 0) throw new IOException("Could not build the spawn-area agent: " + Run.tail(result.log()));
@@ -834,10 +833,6 @@ final class PackLoaders {
             PackCheck.deleteTree(classes);
         }
         return jar;
-    }
-
-    static String javac(Context context) {
-        return context.java().home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString();
     }
 
     static void jar(Path classes, Path target) throws IOException {

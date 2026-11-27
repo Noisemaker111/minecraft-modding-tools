@@ -30,6 +30,7 @@ public final class BuildSetupTest {
             root.resolve("settings.gradle"),
             "rootProject.name = 'build-setup'\ninclude 'neoforge'\nproject(':neoforge').name = 'NeoForge'\n"
         );
+        Files.writeString(root.resolve("gradle.properties"), LEAN_GRADLE);
         Files.createDirectories(root.resolve("neoforge/src/main/java/setup"));
         Files.writeString(
             root.resolve("neoforge/build.gradle"),
@@ -66,7 +67,31 @@ public final class BuildSetupTest {
             "mmt added a wrapper jar to the checkout's own files; it belongs in .mmt/wrapper/"
         );
         System.out.println("PASS a checkout with no wrapper jar, a renamed project, a publishing secret and NeoForged's old repository address builds: " + built);
+        discard(home, jar, root);
     }
+
+    /**
+     * A throwaway project's Gradle runs without the optimizing compiler (its daemon lives for a few small builds, and spent
+     * most of its CPU warming up: 72 CPU-seconds for the fast-lane test with it, 45 without).
+     */
+    static final String LEAN_GRADLE = "org.gradle.jvmargs=-Xmx512m -XX:TieredStopAtLevel=1\n";
+
+    /** Stops the Gradle daemon a throwaway project started (no later build can reuse it) and deletes the project. */
+    static void discard(Path home, Path jar, Path root) throws Exception {
+        String runtime = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java").toString();
+        Process stop = new ProcessBuilder(List.of(runtime, "-Dmmt.home=" + home, "-jar", jar.toString(), "game-stop", "--root", root.toString(), "--json"))
+            .directory(home.toFile())
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start();
+        if (!stop.waitFor(2, TimeUnit.MINUTES)) {
+            stop.destroyForcibly();
+        }
+        try (var walk = Files.walk(root)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+        }
+    }
+
 
     static boolean isWindows() {
         return System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("windows");

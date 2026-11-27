@@ -33,6 +33,7 @@ public final class FastLaneIsolationTest {
             root.resolve("settings.gradle"),
             "rootProject.name = 'fastlane-isolation'\ninclude 'a', 'b'\n"
         );
+        Files.writeString(root.resolve("gradle.properties"), LEAN_GRADLE);
         Files.writeString(
             root.resolve("build.gradle"),
             """
@@ -61,7 +62,8 @@ public final class FastLaneIsolationTest {
         require(run(home, jar, root), 1, 2, 1, "module B failure remains visible");
         Files.writeString(b, test("fromB", true));
         require(run(home, jar, root), 0, 2, 0, "restored module B");
-        System.out.println("PASS FastLane module isolation; fixture " + root);
+        System.out.println("PASS FastLane module isolation");
+        discard(home, jar, root);
         plain(home, jar, runs);
     }
 
@@ -76,6 +78,7 @@ public final class FastLaneIsolationTest {
             wrapper.resolve("gradle-wrapper.properties")
         );
         Files.writeString(root.resolve("settings.gradle"), "rootProject.name = 'fastlane-plain'\n");
+        Files.writeString(root.resolve("gradle.properties"), LEAN_GRADLE);
         Files.writeString(
             root.resolve("build.gradle"),
             """
@@ -109,7 +112,31 @@ public final class FastLaneIsolationTest {
             empty.output().contains("No successful logic check")
         ) throw new AssertionError("an empty run must say why; got exit " + empty.exit() + "\n" + empty.output());
         System.out.println("PASS plain project with no tests says so instead of a Gradle tail");
+        discard(home, jar, root);
     }
+
+    /**
+     * A throwaway project's Gradle runs without the optimizing compiler (its daemon lives for a few small builds, and spent
+     * most of its CPU warming up: 72 CPU-seconds for this test with it, 45 without).
+     */
+    static final String LEAN_GRADLE = "org.gradle.jvmargs=-Xmx512m -XX:TieredStopAtLevel=1\n";
+
+    /** Stops the Gradle daemon a throwaway project started (no later build can reuse it) and deletes the project. */
+    static void discard(Path home, Path jar, Path root) throws Exception {
+        String runtime = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java").toString();
+        Process stop = new ProcessBuilder(List.of(runtime, "-Dmmt.home=" + home, "-jar", jar.toString(), "game-stop", "--root", root.toString(), "--json"))
+            .directory(home.toFile())
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start();
+        if (!stop.waitFor(2, TimeUnit.MINUTES)) {
+            stop.destroyForcibly();
+        }
+        try (var walk = Files.walk(root)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+        }
+    }
+
 
     static String test(String name, boolean pass) {
         return (

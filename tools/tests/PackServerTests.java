@@ -112,7 +112,7 @@ public final class PackServerTests extends PackCheckFixtures {
             "}"));
         Path classes = scratch.resolve("spawn-classes");
         Runtimes.Jdk jdk = Runtimes.ensureAtLeast(harness, 17);
-        Process javac = new ProcessBuilder(jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(), "-d", classes.toString(), source.toString())
+        Process javac = new ProcessBuilder(jdk.javac("-d", classes.toString(), source.toString()))
             .inheritIO().start();
         expect(javac.waitFor() == 0, "the server-shaped class compiles");
         byte[] shipped = Files.readAllBytes(classes.resolve("net/minecraft/server/MinecraftServer.class"));
@@ -135,7 +135,7 @@ public final class PackServerTests extends PackCheckFixtures {
             expect(server.getField("ticking").getInt(start) == 4, "a wait with another shape is left as it was");
             String spare = "package net.minecraft.server; public class MinecraftServer { int t; public void prepareLevels(int r) { while (t < r * r) t++; } }";
             Files.writeString(source, spare);
-            javac = new ProcessBuilder(jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(), "-d", classes.toString(), source.toString())
+            javac = new ProcessBuilder(jdk.javac("-d", classes.toString(), source.toString()))
                 .inheritIO().start();
             expect(javac.waitFor() == 0, "the 1.20.5-shaped class compiles");
             expect(rewrite.invoke(null, (Object) Files.readAllBytes(classes.resolve("net/minecraft/server/MinecraftServer.class"))) == null,
