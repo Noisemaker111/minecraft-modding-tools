@@ -189,6 +189,13 @@ final class Downgrade {
             @Override
             public String map(String name) {
                 String to = types.get(name);
+                if (to == null && jdk(name) && declared.cls(name) == null) {
+                    to = inserted(name);
+                    if (to != null) {
+                        types.put(name, to);
+                        changed.merge("JDK interfaces Java " + target + " lacks named as the interface they extend", 1, Integer::sum);
+                    }
+                }
                 if (to == null) {
                     return name;
                 }
@@ -205,6 +212,39 @@ final class Downgrade {
             changed.merge("JDK classes Java " + target + " lacks named as their stand-ins", 1, Integer::sum);
         }
         return w.toByteArray();
+    }
+
+    /**
+     * The interface the release's Java has that a newer Java inserted a JDK interface below, when the newer one only adds
+     * methods to it: Java 21's SequencedMap between Map and LinkedHashMap, SequencedCollection below Collection,
+     * SequencedSet below Set. A value of the newer type is one of the older wherever it came from (the release's own
+     * LinkedHashMap, a game field that is a Map there), so the class names the older type, and a call to a method only
+     * the newer one declares is linked against the older as any other JDK call (a stand-in, or a break). It is the one
+     * interface of those above it the release's Java has that every other one is above (Set for SequencedSet, beside
+     * Collection); null when there is none (a class, or an interface with nothing but Object above it there).
+     */
+    String inserted(String name) {
+        Api now = Api.of(Runtime.version().feature());
+        Api.Cls cls = now.cls(name);
+        if (cls == null || !cls.itf()) {
+            return null;
+        }
+        List<String> kept = new ArrayList<>();
+        for (Api.Cls c : now.above(name)) {
+            if (!c.name().equals(name) && !c.name().equals("java/lang/Object") && declared.cls(c.name()) != null) {
+                kept.add(c.name());
+            }
+        }
+        for (String c : kept) {
+            Set<String> over = new HashSet<>();
+            for (Api.Cls a : now.above(c)) {
+                over.add(a.name());
+            }
+            if (over.containsAll(kept)) {
+                return c;
+            }
+        }
+        return null;
     }
 
     static String dotted(String internal) {
@@ -279,7 +319,10 @@ final class Downgrade {
             for (String i : ifaces == null ? new String[0] : ifaces) {
                 needClass(i);
             }
-            super.visit(major, access & ~Opcodes.ACC_RECORD, name, sig, sup, ifaces);
+            // A class implementing an interface named as the one it extends (inserted) and that one too lists it once:
+            // the JVM refuses a class naming one interface twice.
+            String[] distinct = ifaces == null ? null : new LinkedHashSet<>(List.of(ifaces)).toArray(String[]::new);
+            super.visit(major, access & ~Opcodes.ACC_RECORD, name, sig, sup, distinct);
         }
 
         @Override
@@ -876,7 +919,7 @@ final class Downgrade {
      */
     static final class Api {
 
-        record Cls(String name, String sup, String[] ifaces, Map<String, Integer> methods, Set<String> fields) {}
+        record Cls(String name, boolean itf, String sup, String[] ifaces, Map<String, Integer> methods, Set<String> fields) {}
 
         static final Map<Integer, Api> APIS = new ConcurrentHashMap<>();
         static final Path CT_SYM = Path.of(System.getProperty("java.home"), "lib", "ct.sym");
@@ -964,7 +1007,7 @@ final class Downgrade {
                     return null;
                 }
             }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-            return new Cls(name, r.getSuperName(), r.getInterfaces(), methods, fields);
+            return new Cls(name, (r.getAccess() & Opcodes.ACC_INTERFACE) != 0, r.getSuperName(), r.getInterfaces(), methods, fields);
         }
 
         /** The classes a reference on owner is looked up in, as the JVM resolves it: the class, its superclasses, its interfaces. */
