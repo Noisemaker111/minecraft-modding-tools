@@ -50,6 +50,7 @@ public final class JarPort {
     final MixinRetargets mixinRetargets = new MixinRetargets(this);
     final MixinMovedCode mixinMovedCode = new MixinMovedCode(this);
     final MixinPoints mixinPoints = new MixinPoints(this);
+    final StoodInMixins stoodInMixins = new StoodInMixins(this);
     final StandinClasses standIn = new StandinClasses(this);
     final NewerCode newerCode = new NewerCode(this);
     final RuleCode ruleCode = new RuleCode(this);
@@ -98,6 +99,7 @@ public final class JarPort {
         final Map<String, MixinRetargets.Injector> injectors = new HashMap<>(); // mixin class.handler+desc -> its @Inject, @Redirect...
         final Map<String, String> retargets = new HashMap<>(); // class.handler+desc + " " + annotation string -> what is written instead
         final Map<String, String[]> points = new HashMap<>(); // class.handler+desc + " " + an @At's value, target and ordinal -> those written instead
+        final Map<String, String> movedMixins = new HashMap<>(); // mixin class -> the game class it now targets (StoodInMixins), new names
         final Map<String, MixinRetargets.Adapter> adapters = new HashMap<>(); // class.handler+desc -> the handler re-declared for its target's new parameters
         final Set<String> staticized = new HashSet<>(); // class.handler+desc of handlers made static, as their targets now are
         final Map<String, Integer> argIndexes = new HashMap<>(); // class.handler+desc of a @ModifyArg -> the index its argument has in the call's new signature
@@ -1505,10 +1507,17 @@ public final class JarPort {
                         && mod.injectors.keySet().stream().anyMatch(k -> k.startsWith(rc.name + "."))) {
                         // The older game lacks the class and a stand-in answers it: code injected into the stand-in runs only
                         // where mods call it, never where the older game does its work (Patchouli's into 1.20's
-                        // GuiGraphics.renderTooltip, whose tooltips 1.19.4 draws in Screen; it failed in game). An accessor
-                        // reads the stand-in's own fields, which Mixin can apply to the one copy every port shares.
+                        // GuiGraphics.renderTooltip, whose tooltips 1.19.4 draws in Screen; it failed in game). It moves
+                        // there where it can (StoodInMixins). An accessor reads the stand-in's own fields, which Mixin can
+                        // apply to the one copy every port shares.
+                        if (targets.size() == 1 && stoodInMixins.move(mod, rc, t)) {
+                            break;
+                        }
                         mod.unlinked.add("mixin target class gone: " + Exposure.dotted(t) + ", only a stand-in has it (in " + Exposure.dotted(rc.name) + ")");
                     }
+                }
+                if (mod.movedMixins.containsKey(rc.name)) {
+                    continue;
                 }
                 mixinMembers.selfCasts(mod, rc.name, targets);
                 for (var f : rc.fields.entrySet()) {
@@ -1687,9 +1696,17 @@ public final class JarPort {
                     return av;
                 }
                 // @Mixin(targets = "a.b.C") names classes as text, which the class renamer does not touch.
+                String moved = mod.movedMixins.get(self[0]);
                 return new AnnotationVisitor(Opcodes.ASM9, av) {
                     @Override
                     public AnnotationVisitor visitArray(String name) {
+                        if (moved != null && ("value".equals(name) || "targets".equals(name))) {
+                            // A mixin moved to another game class (StoodInMixins) names only that one.
+                            AnnotationVisitor value = super.visitArray(name);
+                            value.visit(null, "value".equals(name) ? Type.getObjectType(inverse.getOrDefault(moved, moved)) : moved.replace('/', '.'));
+                            value.visitEnd();
+                            return null;
+                        }
                         AnnotationVisitor inner = super.visitArray(name);
                         return !"targets".equals(name) || inner == null ? inner : new AnnotationVisitor(Opcodes.ASM9, inner) {
                             @Override
@@ -1766,7 +1783,9 @@ public final class JarPort {
                 }
                 if (adapter != null && mv != null) {
                     int body = access & ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED) | Opcodes.ACC_PRIVATE;
-                    MethodVisitor code = super.visitMethod(body, name + "$mmt", desc, originalSignature, exceptions);
+                    boolean handed = adapter.selfFrom() >= 0;
+                    // A body handed the object it used as its own keeps its code and locals as a static method's.
+                    MethodVisitor code = super.visitMethod(handed ? body | Opcodes.ACC_STATIC : body, name + "$mmt", handed ? Split.bodyDesc(adapter, desc) : desc, handed ? null : originalSignature, exceptions);
                     mv = new Split(JarPort.this, mv, staticized ? new Staticize(code) : code, self[0], name, desc, access, adapter, mod.selfInterface);
                     mod.change("mixin handler re-declared for its target's new parameters");
                 }

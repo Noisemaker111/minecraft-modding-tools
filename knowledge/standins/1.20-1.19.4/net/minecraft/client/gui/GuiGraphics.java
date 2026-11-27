@@ -14,6 +14,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiComponent;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipPositioner;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -349,6 +350,12 @@ public class GuiGraphics {
         tooltips(font).hover(pose, style, x, y);
     }
 
+    // 1.20's every tooltip ends here, as 1.19.4's end in Screen.renderTooltipInternal with the same arguments and the
+    // screen's PoseStack: mods hook it (and invoke it) on GuiGraphics.
+    private void renderTooltipInternal(Font font, List components, int x, int y, ClientTooltipPositioner positioner) {
+        tooltips(font).internal(pose, components, x, y, positioner);
+    }
+
     private Tooltips tooltips(Font font) {
         if (tooltips == null) {
             tooltips = new Tooltips();
@@ -375,6 +382,10 @@ public class GuiGraphics {
 
         void hover(PoseStack pose, Style style, int x, int y) {
             renderComponentHoverEffect(pose, style, x, y);
+        }
+
+        void internal(PoseStack pose, List components, int x, int y, ClientTooltipPositioner positioner) {
+            renderTooltipInternal(pose, components, x, y, positioner);
         }
     }
 }
