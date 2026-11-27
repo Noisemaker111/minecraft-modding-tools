@@ -26,6 +26,9 @@ final class StandinClasses {
 
     final Map<String, byte[]> standins = new HashMap<>(); // stand-in class (internal, unrelocated) -> its bytes
 
+    /** The stand-ins' answers for old members, apart from the rules: a call they answer takes them even where the route links it elsewhere. */
+    final Map<String, List<JarPort.Fix>> answers = new HashMap<>();
+
     /**
      * Reads the stand-ins written for this update (knowledge/standins/FROM-TO/): Java sources, one class per old game
      * class, in the package mmt.standin + the old class's package. Where the game's own code has no answer for an old
@@ -138,6 +141,7 @@ final class StandinClasses {
                 }
                 JarPort.Fix answer = new JarPort.Fix("standin " + Exposure.dotted(old) + "." + member, Pattern.compile(Pattern.quote(member)), matched, target + "(" + args + ")");
                 port.fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
+                answers.computeIfAbsent(old, k -> new ArrayList<>()).add(answer);
                 if (receiver && matched != null && !member.equals("<init>")) {
                     port.superFixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
                 }

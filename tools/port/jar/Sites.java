@@ -267,6 +267,18 @@ final class Sites extends MethodVisitor {
         }
         String key = decl.owner() + "." + name + desc;
         boolean superCall = opcode == Opcodes.INVOKESPECIAL;
+        if (t != null && !superCall && (port.standIn.answers.containsKey(owner) || port.standIn.answers.containsKey(decl.owner()))) {
+            // A stand-in written for the old member answers it even where the route links it to a new one: it was
+            // written from both releases where the new member does not mean the old (1.21's addVertex ends the vertex
+            // before it, 1.20.6's vertex does not).
+            String opDesc = opcode == Opcodes.INVOKESTATIC ? desc : "(L" + owner + ";" + desc.substring(1);
+            String[] added = ruleAnswers.fix(port.standIn.answers, List.of(owner, decl.owner()), name, desc, opDesc, opcode != Opcodes.INVOKESTATIC);
+            if (added != null) {
+                invokeAdded(added);
+                mod.change("call answered by a stand-in");
+                return;
+            }
+        }
         if (t == null && moved != null) {
             List<String[]> now = new ArrayList<>();
             String[] m = port.route.method(decl.owner(), name, desc);
