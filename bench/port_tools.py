@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PORT = "tools/port"
 WITH = ("tools/cli/Json.java", "tools/cli/Route.java", "tools/cli/Versions.java")
 ASM = ("tools/perf/lib/asm-9.9.jar", "tools/perf/lib/asm-commons-9.9.jar")
+# A JVM that lives seconds (javac, a test) without HotSpot's optimizing compiler: its background compiling is thrown away
+# when the process ends, and was most of the CPU (compiling mmt's jar: 63 CPU-s with it, 13 without). Runtimes.QUICK.
+QUICK = "-XX:TieredStopAtLevel=1"
 
 
 def sources(*folders, root=ROOT):

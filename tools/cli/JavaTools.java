@@ -22,19 +22,7 @@ final class JavaTools {
         Path ready = classes.resolve("ready");
         if (!Files.exists(ready)) {
             Files.createDirectories(classes);
-            var command = new ArrayList<>(
-                List.of(
-                    jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
-                    "--release",
-                    "25",
-                    "-encoding",
-                    "UTF-8",
-                    "-cp",
-                    asm,
-                    "-d",
-                    classes.toString()
-                )
-            );
+            var command = jdk.javac("--release", "25", "-encoding", "UTF-8", "-cp", asm, "-d", classes.toString());
             sources.forEach(p -> command.add(p.toString()));
             var result = Run.command(command, build.project.root, Map.of(), build.report.log("tools-compile"), 120);
             build.report.stage("tools-compile", result, Map.of());

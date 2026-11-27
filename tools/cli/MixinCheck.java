@@ -282,10 +282,7 @@ final class MixinCheck {
         Path stubClasses = directory.resolve("stubs"), classes = directory.resolve("classes");
         Files.createDirectories(stubClasses);
         Files.createDirectories(classes);
-        String javac = jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString();
-        List<String> stubCommand = new ArrayList<>(
-            List.of(javac, "--release", "8", "-Xlint:-options", "-encoding", "UTF-8", "-d", stubClasses.toString())
-        );
+        List<String> stubCommand = jdk.javac("--release", "8", "-Xlint:-options", "-encoding", "UTF-8", "-d", stubClasses.toString());
         stubs.forEach(p -> stubCommand.add(p.toString()));
         var compiled = Run.command(
             stubCommand,
@@ -295,19 +292,16 @@ final class MixinCheck {
             120
         );
         if (compiled.exit() == 0) {
-            List<String> command = new ArrayList<>(
-                List.of(
-                    javac,
-                    "--release",
-                    "8",
-                    "-Xlint:-options",
-                    "-encoding",
-                    "UTF-8",
-                    "-cp",
-                    stubClasses.toString(),
-                    "-d",
-                    classes.toString()
-                )
+            List<String> command = jdk.javac(
+                "--release",
+                "8",
+                "-Xlint:-options",
+                "-encoding",
+                "UTF-8",
+                "-cp",
+                stubClasses.toString(),
+                "-d",
+                classes.toString()
             );
             sources.forEach(p -> command.add(p.toString()));
             compiled = Run.command(command, build.project.root, Map.of(), build.report.log("mixin-check-tools"), 120);

@@ -11,7 +11,28 @@ final class Runtimes {
         Path java() {
             return home.resolve("bin/" + (WINDOWS ? "java.exe" : "java"));
         }
+
+        /** javac without the optimizing compiler (QUICK): javac is a Java program that runs for seconds. */
+        List<String> javac(String... args) {
+            List<String> command = new ArrayList<>(List.of(home.resolve("bin/" + (WINDOWS ? "javac.exe" : "javac")).toString(), "-J" + QUICK));
+            command.addAll(List.of(args));
+            return command;
+        }
+
+        /** java for a run of seconds, a tool or a test, without the optimizing compiler (QUICK). Not for a game or a long port. */
+        List<String> quickJava(String... args) {
+            List<String> command = new ArrayList<>(List.of(java().toString(), QUICK));
+            command.addAll(List.of(args));
+            return command;
+        }
     }
+
+    /**
+     * HotSpot's optimizing compiler (C2) works on every hot method in background threads, as many as the machine has cores to
+     * spare, and a process that ends within seconds throws that work away: compiling mmt's own jar took 63 CPU-seconds with it
+     * and 13 without, in less wall time, on a 24-thread PC. Every short-lived JVM mmt starts goes without it.
+     */
+    static final String QUICK = "-XX:TieredStopAtLevel=1";
 
     static List<Jdk> installed(Path harness) throws IOException {
         LinkedHashSet<Path> paths = new LinkedHashSet<>();

@@ -160,17 +160,7 @@ final class Installation {
         Files.createDirectories(directory);
         Path classes = report.directory.resolve("package-classes");
         Files.createDirectories(classes);
-        List<String> command = new ArrayList<>(
-            List.of(
-                jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
-                "--release",
-                "17",
-                "-encoding",
-                "UTF-8",
-                "-d",
-                classes.toString()
-            )
-        );
+        List<String> command = jdk.javac("--release", "17", "-encoding", "UTF-8", "-d", classes.toString());
         try (var files = Files.walk(harness.resolve("tools/cli"))) {
             files
                 .filter(p -> p.toString().endsWith(".java") && !p.getFileName().toString().equals("Bootstrap.java"))
@@ -182,8 +172,7 @@ final class Installation {
         if (compile.exit() != 0) throw new IOException(Run.tail(compile.log()));
         // The entry point is built for Java 8 so `java -jar` on an old Java says which Java it needs instead of a class-version stack trace.
         var launcher = Run.command(
-            List.of(
-                command.get(0),
+            jdk.javac(
                 "--release",
                 "8",
                 "-nowarn",
@@ -463,9 +452,7 @@ final class Installation {
         Path classes = report.directory.resolve("test-classes");
         Files.createDirectories(classes);
         Path own = Path.of(Mmt.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-        List<String> javac = new ArrayList<>(
-            List.of(
-                jdk.home().resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
+        List<String> javac = jdk.javac(
                 "--release",
                 "17",
                 "-encoding",
@@ -480,7 +467,6 @@ final class Installation {
                 harness.resolve("tools/tests").toString() + File.pathSeparator + harness.resolve("tools").toString() + File.pathSeparator + harness.resolve("tools/agent").toString(),
                 "-d",
                 classes.toString()
-            )
         );
         for (Suite suite : suites) javac.add(harness.resolve("tools/tests/" + suite.main() + ".java").toString());
         Path bundledAsm = Game.bundledAsm(harness);
@@ -499,9 +485,7 @@ final class Installation {
             for (int i = 0; i < suites.size(); i++) {
                 Suite suite = suites.get(i);
                 Path log = logs.get(i);
-                List<String> command = new ArrayList<>(
-                    List.of(jdk.java().toString(), "-cp", own + File.pathSeparator + classes, suite.main())
-                );
+                List<String> command = jdk.quickJava("-cp", own + File.pathSeparator + classes, suite.main());
                 if (suite.wantsHarness()) command.add(harness.toString());
                 if (suite.wantsScratch()) command.add(report.directory.resolve("fixtures").toString());
                 runs.add(pool.submit(() -> Run.command(command, report.root, Map.of(), log, 120)));

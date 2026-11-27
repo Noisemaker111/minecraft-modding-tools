@@ -383,8 +383,7 @@ final class Performance {
         Path classes = Files.createTempDirectory(dir, "classes-");
         Path compiledSource = classes.resolve("PerfAgent.java");
         Files.writeString(compiledSource, Files.readString(source).replace("@BUILD_ID@", hash));
-        Path jdk = Runtimes.ensureAtLeast(home, 17).home();
-        Run.Result compile = Run.command(List.of(jdk.resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
+        Run.Result compile = Run.command(Runtimes.ensureAtLeast(home, 17).javac(
             "--release", "17", "-cp", asm.toString(), "-d", classes.toString(), compiledSource.toString()),
             home, Map.of(), receipt.log("perf-agent-compile"), 120);
         receipt.stage("perf-agent-compile", compile, Map.of());

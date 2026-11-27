@@ -103,9 +103,8 @@ public final class PerfTest {
         sources.add(fixture(scratch, "com/example/mod/ModBlock.java", "package com.example.mod; public class ModBlock extends net.minecraft.world.level.block.Block { "
             + "static volatile long sink; final long[] state = new long[4096]; "
             + "public void tick() { long end = System.nanoTime() + 6_000_000; while (System.nanoTime() < end) sink += Long.toHexString(sink + state.length).length(); } }"));
-        Path jdk = Runtimes.ensureAtLeast(home, 17).home();
-        List<String> javac = new ArrayList<>(List.of(jdk.resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
-            "--release", "17", "-d", scratch.toString()));
+        Runtimes.Jdk jdk = Runtimes.ensureAtLeast(home, 17);
+        List<String> javac = jdk.javac("--release", "17", "-d", scratch.toString());
         for (Path file : sources) javac.add(file.toString());
         Run.Result compilation = Run.command(javac, home, Map.of(), scratch.resolve("compile.log"), 30);
         check(compilation.exit() == 0, "fixture compilation: " + Run.tail(compilation.log()));
@@ -114,7 +113,7 @@ public final class PerfTest {
         Files.createDirectories(mod.resolve("com/example"));
         Files.move(scratch.resolve("com/example/mod"), mod.resolve("com/example/mod"));
         Files.writeString(mod.resolve("fabric.mod.json"), "{\"schemaVersion\":1,\"id\":\"examplemod\",\"name\":\"Example Mod\",\"version\":\"1\"}");
-        Process process = new ProcessBuilder(jdk.resolve("bin/" + (Runtimes.WINDOWS ? "java.exe" : "java")).toString(),
+        Process process = new ProcessBuilder(jdk.java().toString(),
             "-cp", scratch + File.pathSeparator + mod, "net.minecraft.client.Minecraft").redirectErrorStream(true).redirectOutput(scratch.resolve("fixture.log").toFile()).start();
         try {
             Thread.sleep(500);
@@ -200,7 +199,7 @@ public final class PerfTest {
      * timing probe. JFR's first allocation sample on that thread carries the 3 GB, and the probe's own bookkeeping allocates
      * inside the mod's method: neither is the mod's.
      */
-    static void allocationCharges(Path scratch, Path jdk, Path agent) throws Exception {
+    static void allocationCharges(Path scratch, Runtimes.Jdk jdk, Path agent) throws Exception {
         Path classes = scratch.resolve("allocation"), mod = scratch.resolve("allocation-mod");
         List<Path> sources = List.of(
             fixture(classes, "net/minecraft/server/Warm.java", "package net.minecraft.server; public class Warm { static volatile Object sink; "
@@ -215,8 +214,7 @@ public final class PerfTest {
             // about twice a second, and a capture that sampled none of it had no site to charge the copying to.
             fixture(classes, "com/example/alloc/Keeper.java", "package com.example.alloc; public class Keeper { static final int[][] RING = new int[60][]; static int next, tick; "
                 + "public static void keep() { if (tick++ % 4 != 0) return; RING[next] = new int[64 * 1024]; next = (next + 1) % RING.length; } }"));
-        List<String> javac = new ArrayList<>(List.of(jdk.resolve("bin/" + (Runtimes.WINDOWS ? "javac.exe" : "javac")).toString(),
-            "--release", "17", "-d", classes.toString()));
+        List<String> javac = jdk.javac("--release", "17", "-d", classes.toString());
         for (Path file : sources) javac.add(file.toString());
         Run.Result compilation = Run.command(javac, classes, Map.of(), classes.resolve("compile.log"), 30);
         check(compilation.exit() == 0, "allocation fixture compilation: " + Run.tail(compilation.log()));
@@ -224,7 +222,7 @@ public final class PerfTest {
         Files.move(classes.resolve("com/example/alloc"), mod.resolve("com/example/alloc"));
         Files.writeString(mod.resolve("fabric.mod.json"), "{\"schemaVersion\":1,\"id\":\"allocmod\",\"name\":\"Alloc Mod\",\"version\":\"1\"}");
         Path log = scratch.resolve("allocation.log");
-        Process process = new ProcessBuilder(jdk.resolve("bin/" + (Runtimes.WINDOWS ? "java.exe" : "java")).toString(), "-Xmx256m", "-XX:+UseG1GC", "-Xmn16m",
+        Process process = new ProcessBuilder(jdk.java().toString(), "-Xmx256m", "-XX:+UseG1GC", "-Xmn16m",
             "-cp", classes + File.pathSeparator + mod, "net.minecraft.server.Warm").redirectErrorStream(true).redirectOutput(log.toFile()).start();
         try {
             long deadline = System.nanoTime() + 60_000_000_000L;
