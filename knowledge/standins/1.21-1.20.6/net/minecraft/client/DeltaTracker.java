@@ -22,6 +22,15 @@ public interface DeltaTracker {
 
     DeltaTracker ONE = new Fixed(1.0F);
 
+    /**
+     * What a 1.20.6 hook handed the frame's partial tick (LayeredDraw.Layer.render(GuiGraphics, float), from the game
+     * renderer's pause-aware value) gives a 1.21 one that takes the DeltaTracker: the game's own, whose
+     * getGameTimeDeltaPartialTick(true) is that value.
+     */
+    static DeltaTracker from(float partialTick) {
+        return new Game(net.minecraft.client.Minecraft.getInstance());
+    }
+
     float getGameTimeDeltaTicks();
 
     float getGameTimeDeltaPartialTick(boolean runsNormally);

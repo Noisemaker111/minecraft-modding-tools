@@ -152,11 +152,13 @@ final class StandinClasses {
     /**
      * Whether a stand-in's public static method is from(T): the stand-in made from a value of a type of the new release,
      * which is what an override of a game method that now takes T is given where the old method took the stand-in's class
-     * (1.20's GuiGraphics, from the PoseStack 1.19.4's Screen.render passes). It answers no old member.
+     * (1.20's GuiGraphics, from the PoseStack 1.19.4's Screen.render passes; 1.21's DeltaTracker, from the float partial
+     * tick 1.20.6 passes). It answers no old member.
      */
     static boolean conversion(String standin, String desc, String name) {
         Type[] params = Type.getArgumentTypes(desc);
-        return name.equals("from") && params.length == 1 && params[0].getSort() == Type.OBJECT && Type.getReturnType(desc).getInternalName().equals(standin);
+        Type ret = Type.getReturnType(desc);
+        return name.equals("from") && params.length == 1 && ret.getSort() == Type.OBJECT && ret.getInternalName().equals(standin);
     }
 
     /** The from(T) of the stand-in for a class (old name), for a value of type got (new names), as a conversion step; or null. */
