@@ -1593,4 +1593,22 @@ with tempfile.TemporaryDirectory() as tmp:
             sys.modules["generated"] = kept_module
 check(none is None, "a tree with no reader of main's table compares with no table")
 
+# --type picks the mods a type of break holds back from this checkout's last whole run, and with none from main's row, so
+# an agent's partial run does not first port every mod on its own machine.
+with tempfile.TemporaryDirectory() as tmp:
+    last = Path(tmp) / "last.json"
+    row = {"heldBy": {"a--a-1.jar": ["call, game: redesigned"], "b--b-1.jar": ["field, game: linked"], "c--c-1.jar": ["call, game: split"]}}
+    check(portboard.board.held_with("call", last, "fabric", "1.20.1", "1.20.2", row) == {"a--a-1.jar", "c--c-1.jar"},
+          "with no local whole run, --type reads main's row")
+    last.write_text(json.dumps({"verdicts": {"b--b-1.jar": {"types": ["call, game: linked"]}, "a--a-1.jar": {"types": ["field, game: linked"]}}}),
+                    encoding="utf-8")
+    check(portboard.board.held_with("call", last, "fabric", "1.20.1", "1.20.2", row) == {"b--b-1.jar"},
+          "a local whole run answers before main's row")
+    last.unlink()
+    try:
+        portboard.board.held_with("call", last, "fabric", "1.20.1", "1.20.2", {"links": []})
+        check(False, "no local run and no row in main's table stops with what to run")
+    except SystemExit as stop:
+        check("makes one" in str(stop), f"the stop names the whole run to make: {stop}")
+
 print(f"exposure: {checks} checks passed")

@@ -99,7 +99,7 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
     run keeps its summary in .runs/exposure/jars-LOADER-FROM-TO/last.json; when the porter's inputs differ from the last
     run's, that one becomes before.json, and the run prints which mods newly link, stopped linking or changed their port
     against it, and against main's row of the same port (main's table, on the generated branch). kind: port only the mods
-    the last run held back with a type of break (its text, or part of it), the answer for those mods in seconds; only:
+    the last whole run (or main's table) held back with a type of break (its text, or part of it), the answer for those mods in seconds; only:
     port only these mods (Modrinth slugs); either way the summary is partial and is not kept. out: the summary's file, or
     a folder (one that is there, or any with several targets) that gets LOADER-FROM-TO.json for each."""
     seconds = {}
@@ -115,6 +115,20 @@ def jars(loader, frm, tos, save=False, out=None, quiet=False, kind=None, only=No
         pool.shutdown(wait=True, cancel_futures=True)
 
 
+def held_with(kind, last, loader, frm, to, row=None):
+    """The mods held back by a type of break (its text, or part of it): those of this checkout's last whole run of the
+    update, else those of main's row of it, so a partial run needs no local port of every mod first (one is about 800
+    CPU-seconds). Main's row is of main's commit: a mod only this branch's change holds back is not in it."""
+    if last.is_file():
+        verdicts = json.loads(last.read_text(encoding="utf-8")).get("verdicts", {})
+        return {mod for mod, v in verdicts.items() if any(kind in t for t in v.get("types", []))}
+    row = row if row is not None else mainrecord.main_row(loader, frm, to)
+    if not row or row.get("heldBy") is None:
+        raise SystemExit(f"--type needs a whole run of {loader} {frm} -> {to}: main's table has none (python bench/exposure.py jars "
+                         f"--loader {loader} --from {frm} --to {to} makes one)")
+    return {mod for mod, types in row["heldBy"].items() if any(kind in t for t in types)}
+
+
 def jars_with(pool, timed, seconds, loader, frm, tos, save, out, quiet, kind, only):
     """jars, with pool to make its inputs side by side in."""
     fetched = pool.submit(timed, "download", modrinth.fetch, loader, frm)
@@ -126,10 +140,7 @@ def jars_with(pool, timed, seconds, loader, frm, tos, save, out, quiet, kind, on
     pinned = fetched.result()
     works = {to: settings.ROOT / ".runs" / "exposure" / f"jars-{loader}-{frm}-{to}" for to in tos}
     if kind:
-        last = works[tos[0]] / "last.json"
-        if not last.is_file():
-            raise SystemExit(f"--type needs a run of the whole update first: python bench/exposure.py jars --loader {loader} --from {frm} --to {tos[0]}")
-        held = {mod for mod, v in json.loads(last.read_text(encoding="utf-8")).get("verdicts", {}).items() if any(kind in t for t in v.get("types", []))}
+        held = held_with(kind, works[tos[0]] / "last.json", loader, frm, tos[0])
         pinned = [p for p in pinned if p.name in held]
         if not pinned:
             raise SystemExit(f"no mod of the last run is held back by a type of break with '{kind}' in it")
