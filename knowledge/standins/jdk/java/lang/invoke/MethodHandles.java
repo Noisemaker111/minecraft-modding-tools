@@ -27,7 +27,18 @@ public final class MethodHandles {
         if (target.isArray()) {
             throw new IllegalArgumentException(target + " is an array class");
         }
-        return MethodHandles$Lookup.full(target);
+        // A Java that has privateLookupIn (and the modules it checks) answers it itself.
+        java.lang.reflect.Method own;
+        try {
+            own = java.lang.invoke.MethodHandles.class.getMethod("privateLookupIn", Class.class, java.lang.invoke.MethodHandles.Lookup.class);
+        } catch (NoSuchMethodException java8) {
+            return MethodHandles$Lookup.full(target);
+        }
+        try {
+            return (java.lang.invoke.MethodHandles.Lookup) MethodHandles$Lookup.call(own, null, target, caller);
+        } catch (ClassNotFoundException never) {
+            throw new IllegalStateException(never);
+        }
     }
 
     public static MethodHandle empty(MethodType type) {

@@ -21,6 +21,9 @@ import java.security.ProtectionDomain;
  * name from the lookup context defined by this Lookup object, as if resolved by an ldc instruction": loaded by the lookup
  * class's loader, not initialized, ClassNotFoundException when it has none such, IllegalAccessException when the class is
  * neither public nor in the lookup class's package with PACKAGE access.
+ *
+ * A Java that has these members (a release's players may run a newer Java than the release ships for) answers them
+ * itself: the Java 8 forms open the JDK's internals, which Java 17 and later refuse.
  */
 public final class MethodHandles$Lookup {
 
@@ -42,7 +45,46 @@ public final class MethodHandles$Lookup {
         }
     }
 
+    /** The JDK's own member of Lookup, on a Java that has it; null on Java 8. */
+    static Method jdks(String name, Class<?>... params) {
+        try {
+            return Lookup.class.getMethod(name, params);
+        } catch (NoSuchMethodException java8) {
+            return null;
+        }
+    }
+
+    /** What the JDK's own member returns, or throws as it threw it. */
+    static Object call(Method own, Object self, Object... args) throws IllegalAccessException, ClassNotFoundException {
+        try {
+            return own.invoke(self, args);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IllegalAccessException) {
+                throw (IllegalAccessException) cause;
+            }
+            if (cause instanceof ClassNotFoundException) {
+                throw (ClassNotFoundException) cause;
+            }
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            if (cause instanceof Error) {
+                throw (Error) cause;
+            }
+            throw new IllegalStateException(cause);
+        }
+    }
+
     public static Class<?> defineClass(Lookup self, byte[] bytes) throws IllegalAccessException {
+        Method own = jdks("defineClass", byte[].class);
+        if (own != null) {
+            try {
+                return (Class<?>) call(own, self, (Object) bytes);
+            } catch (ClassNotFoundException never) {
+                throw new IllegalStateException(never);
+            }
+        }
         if ((self.lookupModes() & Lookup.PACKAGE) == 0) {
             throw new IllegalAccessException(self + " does not have PACKAGE access");
         }
@@ -74,6 +116,10 @@ public final class MethodHandles$Lookup {
     }
 
     public static Class<?> findClass(Lookup self, String targetName) throws ClassNotFoundException, IllegalAccessException {
+        Method own = jdks("findClass", String.class);
+        if (own != null) {
+            return (Class<?>) call(own, self, targetName);
+        }
         Class<?> host = self.lookupClass();
         Class<?> found = Class.forName(targetName, false, host.getClassLoader());
         Class<?> element = found;

@@ -13,21 +13,28 @@ import org.objectweb.asm.commons.ClassRemapper;
  * The release's JVM refuses a class file newer than itself before reading any of it, so each class is written in the
  * release's class-file version, and what that JVM cannot run is rewritten the way javac writes it for that Java:
  *   string concatenation (Java 9's StringConcatFactory)   -> a StringBuilder chain in a helper of the class
- *   records (Java 16: Record, ObjectMethods)               -> plain classes with equals/hashCode/toString written out
+ *   records (Java 16: Record, ObjectMethods)               -> plain classes with equals/hashCode/toString written out,
+ *                                                             their component names kept for reflection (RECORD_COMPONENTS)
  *   nestmates (Java 11: NestHost/NestMembers)              -> the private members another class of the nest uses opened
  *                                                             to the package, a class's calls to its own private methods
  *                                                             made with invokespecial
- *   pattern switches (Java 21: typeSwitch, enumSwitch)     -> a helper that tests the labels in order
+ *   pattern switches (Java 21: typeSwitch, enumSwitch)     -> a helper that tests the labels in order (classes, arrays,
+ *                                                             strings, integers, enum constants)
+ *   JDK interfaces a newer Java inserted (SequencedMap)    -> the interface above them the older Java has (inserted)
  *   sealed classes (Java 17: PermittedSubclasses)          -> the attribute left out
  *   MatchException (Java 21)                               -> RuntimeException, which it extends
  * Each is done only where the release's Java lacks it. Every reference to the JDK is then linked against the JDK the
  * release runs, as the JDK's own record of each release's API (lib/ct.sym, what javac --release reads) declares it. A
  * method that only gained a narrower return type (ByteBuffer.flip() returning ByteBuffer from Java 9) is called as the
- * older Java declares it and cast; one the older Java lacks is redirected to a stand-in (knowledge/standins/java/: the
- * method written from the JDK's documented contract, carried in the mod under a package of its own); anything else is
- * reported as a break, never guessed.
+ * older Java declares it and cast; one the older Java lacks is redirected to a stand-in (knowledge/standins/jdk/: the
+ * method written from the JDK's documented contract, carried in the mod under a package of its own), and a static field
+ * it lacks (ProcessBuilder.Redirect.DISCARD) to the stand-in's method of the field's name; anything else is reported as a
+ * break, never guessed.
  */
 final class Downgrade {
+
+    /** The field a record lowered below Java 16 keeps its component names in; knowledge/standins/jdk/java/lang/Class.java reads it. */
+    static final String RECORD_COMPONENTS = "mmt$recordComponents";
 
     final int target; // the release's Java (8, 16, 17, 21 ...)
     final int major; // its class-file version (52 for Java 8)
@@ -264,6 +271,7 @@ final class Downgrade {
         final List<java.util.function.Consumer<ClassVisitor>> helpers = new ArrayList<>();
         final Map<String, String> made = new HashMap<>(); // what a helper does -> its name, so one is written once
         final String tag, home;
+        List<String> components; // a record's component names, in order, when the release's Java has no records
 
         Lowering(ClassVisitor next, Info info, Set<String> widen, String home, Set<String> used, Set<String> breaks, Map<String, Integer> changed) {
             super(Opcodes.ASM9, next);
@@ -322,6 +330,9 @@ final class Downgrade {
             // A class implementing an interface named as the one it extends (inserted) and that one too lists it once:
             // the JVM refuses a class naming one interface twice.
             String[] distinct = ifaces == null ? null : new LinkedHashSet<>(List.of(ifaces)).toArray(String[]::new);
+            if (target < 16 && (access & Opcodes.ACC_RECORD) != 0) {
+                components = new ArrayList<>();
+            }
             super.visit(major, access & ~Opcodes.ACC_RECORD, name, sig, sup, distinct);
         }
 
@@ -348,7 +359,11 @@ final class Downgrade {
 
         @Override
         public RecordComponentVisitor visitRecordComponent(String name, String desc, String sig) {
-            return target >= 16 ? super.visitRecordComponent(name, desc, sig) : null;
+            if (target >= 16) {
+                return super.visitRecordComponent(name, desc, sig);
+            }
+            components.add(name);
+            return null;
         }
 
         int opened(int access, String member) {
@@ -374,6 +389,13 @@ final class Downgrade {
 
         @Override
         public void visitEnd() {
+            if (components != null) {
+                // A record on a Java without records is a plain class; what reflection asks of it as a record
+                // (Class.isRecord, getRecordComponents: config and network serializers) the stand-ins read from here.
+                cv.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC, RECORD_COMPONENTS, "Ljava/lang/String;", null,
+                    String.join(";", components)).visitEnd();
+                change("record components kept for reflection (Java 16 records)");
+            }
             for (int i = 0; i < helpers.size(); i++) {
                 helpers.get(i).accept(cv);
             }
@@ -523,6 +545,15 @@ final class Downgrade {
             public void visitFieldInsn(int op, String owner, String name, String desc) {
                 next(op);
                 standinMember(owner, name + ":" + desc);
+                String getter = "()" + desc;
+                if (op == Opcodes.GETSTATIC && jdk(owner) && declared.cls(owner) != null && !declared.field(owner, name, desc)
+                    && standins.methods.contains(Standins.PREFIX + owner + "." + name + inStandin(getter))) {
+                    // A constant a later Java added (ProcessBuilder.Redirect.DISCARD): its stand-in is a method of its name.
+                    used.add(Standins.PREFIX + owner);
+                    super.visitMethodInsn(Opcodes.INVOKESTATIC, home + owner, name, inHome(getter), false);
+                    change("JDK constants Java " + target + " lacks read through stand-ins");
+                    return;
+                }
                 if (jdk(owner) && (declared.cls(owner) == null || !declared.field(owner, name, desc))) {
                     lacks(declared.cls(owner) == null ? "class " + dotted(owner) : dotted(owner) + "." + name + ":" + desc);
                 }
@@ -802,8 +833,9 @@ final class Downgrade {
             List<java.util.function.BiConsumer<MethodVisitor, Label>> tests = new ArrayList<>();
             Type selector = Type.getArgumentTypes(desc)[0];
             for (Object label : labels) {
-                if (label instanceof Type t && t.getSort() == Type.OBJECT) {
-                    needClass(t.getInternalName());
+                // A class or an array type (case double[] d): instanceof takes either, an array by its descriptor.
+                if (label instanceof Type t && (t.getSort() == Type.OBJECT || t.getSort() == Type.ARRAY)) {
+                    needType(t);
                     tests.add((m, miss) -> {
                         m.visitVarInsn(Opcodes.ALOAD, 0);
                         m.visitTypeInsn(Opcodes.INSTANCEOF, t.getInternalName());
@@ -1093,6 +1125,7 @@ final class Downgrade {
      * them, each in mmt.standin + the JDK class's name. For a class the older Java has, public static methods:
      *   R name(Owner self, A...)   the instance method Owner.name(A...)R   (also found for a call on a subtype of Owner)
      *   R name(A...)               the static method Owner.name(A...)R
+ *   T name()                   also the static field Owner.name of type T, when Owner has no such field
      *   Owner init(A...)           the constructor new Owner(A...)
      * For a class the older Java lacks (java.util.HexFormat on Java 8), the class itself, of the same kind (class,
      * interface, enum) with the members it answers: the mod names it in place of the JDK's.
