@@ -34,6 +34,9 @@ for f in [ROOT / "bench" / "run_tests.py", ROOT / "bench" / "portboard" / "porte
 
 sys.path.insert(0, str(ROOT / "bench"))
 import run_tests  # noqa: E402
+# Only the command lists are read, never run: a placeholder JDK home, so a machine whose JDK the runner can't find (one on
+# PATH through a version manager's shims) still checks them.
+run_tests.jdk = lambda feature: Path("jdk-home")
 for check in ("package", "self-test", "port-preflight", "jar-port", "checkout-data"):
     commands = run_tests.CHECKS[check][2]
     if callable(commands):
