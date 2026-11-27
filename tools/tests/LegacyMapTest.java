@@ -69,6 +69,45 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
         "    int mappedField -> b\n";
     static final String PG_EMPTY = "net.minecraft.world.level.block.Block -> bbb:\n";
 
+    /**
+     * The Fabric API a release gets is the newest build naming no game class the release lacks. The class list is read from
+     * the intermediary jar alone (a full name table per release ran a 23-release lookup out of memory), and must be the
+     * same names the full table reads from that jar.
+     */
+    static void fabricApiClassChecks() throws Exception {
+        String tiny = "tiny\t2\t0\tofficial\tintermediary\n" + INTER_B + "c\tccc\tnet/minecraft/class_8\n\tf\tI\ta\tfield_3\n";
+        java.nio.file.Path folder = java.nio.file.Files.createTempDirectory("mmt-inter");
+        java.nio.file.Path before = VersionMap.cache;
+        try {
+            VersionMap.cache = folder;
+            try (var zip = new java.util.zip.ZipOutputStream(java.nio.file.Files.newOutputStream(folder.resolve("intermediary-9.9-v2.jar")))) {
+                zip.putNextEntry(new java.util.zip.ZipEntry("mappings/mappings.tiny"));
+                zip.write(tiny.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            Set<String> classes = VersionMap.Tiny.classes("9.9");
+            check(classes.equals(new HashSet<>(VersionMap.Tiny.parse(tiny).classes.values())) && classes.equals(Set.of("net/minecraft/class_7", "net/minecraft/class_8")),
+                "a release's class list is the intermediary names the full table reads, and only those: " + classes);
+            check(Exposure.FabricApi.missingGameClass(jarNaming("net/minecraft/class_8"), classes) == null,
+                "a Fabric API build naming only the release's classes runs on it");
+            check("net/minecraft/class_99".equals(Exposure.FabricApi.missingGameClass(jarNaming("net/minecraft/class_99"), classes)),
+                "a build naming a class the release lacks is turned down, and the class is named");
+        } finally {
+            VersionMap.cache = before;
+            try (var files = java.nio.file.Files.walk(folder)) {
+                files.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            }
+        }
+    }
+
+    static byte[] jarNaming(String gameClass) throws java.io.IOException {
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var zip = new java.util.zip.ZipOutputStream(bytes)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("net/fabricmc/api/Uses.class"));
+            zip.write(("L" + gameClass + ";").getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+        }
+        return bytes.toByteArray();
+    }
+
     static void bridgeChecks() {
         check(
             Route.BRIDGE_STEP.equals(VersionMap.BRIDGE_STEP),
@@ -388,6 +427,7 @@ FD: bbb/b net/minecraft/block/Block/field_5_b
                 "the chain map port hands the typed fixer keeps its MCP identity and the moved member, pinned channel included");
         bridgeChecks();
         linkChecks();
+        fabricApiClassChecks();
         System.out.println(count + " legacy map checks passed");
     }
 }

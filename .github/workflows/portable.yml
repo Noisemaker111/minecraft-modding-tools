@@ -4,7 +4,9 @@ name: CI
 # board, perf A/B) are dispatched from cloud-*.yml with tools/cloud-run. No macOS: the code is not macOS-specific and
 # its JFR sampling flaked (29 of 69 runs).
 #
-# A pull request pays for this once. A draft's pushes start no job (the agent proves each commit on its own machine with
+# Each job runs the checks the pull request's changes can affect (bench/run_tests.py --base HEAD^1: anything the jar carries
+# runs every jar check; a porter-only change runs the porter's; docs and bench scripts run the python checks), and every
+# check when run by hand. A pull request pays for this once. A draft's pushes start no job (the agent proves each commit on its own machine with
 # python bench/run_tests.py, which picks the checks the change can affect); marking it ready starts both jobs, and a push
 # to a ready pull request starts them again. Each job's name is an expression, so that a draft's skipped job is never
 # listed as "linux" or "windows": GitHub counts a skipped job as passed, those two names are what main requires, and it
@@ -42,7 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      # The merge with main and its first parent, main: the checks run are the ones the pull request's changes can affect.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -63,7 +68,7 @@ jobs:
           key: ci-${{ runner.os }}-${{ hashFiles('fixtures/prism-lab/build.gradle', 'fixtures/prism-lab/settings.gradle', 'fixtures/prism-lab/gradle.properties', 'fixtures/prism-lab/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: ci-${{ runner.os }}-
       - name: Offline checks
-        run: python bench/run_tests.py --all
+        run: python bench/run_tests.py ${{ github.event_name == 'pull_request' && '--base HEAD^1' || '--all' }}
       - name: Stop Gradle before the cache save
         if: success() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         run: pkill -f GradleDaemon || true
@@ -97,6 +102,7 @@ jobs:
         with:
           # A space in the path: the Windows launcher broke on it before.
           path: portable workspace
+          fetch-depth: 2
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -118,7 +124,7 @@ jobs:
           restore-keys: ci-${{ runner.os }}-
       - name: Offline checks
         working-directory: portable workspace
-        run: python bench/run_tests.py --all
+        run: python bench/run_tests.py ${{ github.event_name == 'pull_request' && '--base HEAD^1' || '--all' }}
       - name: Stop Java so Windows can read its cache locks
         if: success() && github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         shell: pwsh
