@@ -1648,6 +1648,9 @@ public final class JarPort {
                 }
                 String where = Exposure.dotted(name);
                 String replaced = superName == null || (access & Opcodes.ACC_INTERFACE) != 0 ? null : links.successor(superName);
+                if (replaced != null && !targets.isEmpty() && replaced.startsWith(StandinClasses.STANDIN) && b.classes.containsKey(superName)) {
+                    replaced = null; // a mixin extends what its target extends, which still names the kept class
+                }
                 if (replaced != null) {
                     // Mixin wants a mixin to extend its target's superclass, which the new release names itself.
                     GameDiff.Cls target = targets.size() == 1 ? b.classes.get(cls(targets.get(0))) : null;
@@ -1655,7 +1658,7 @@ public final class JarPort {
                         replaced = target.sup;
                     }
                     mod.supers.put(name, new String[] { superName, replaced });
-                    mod.change("superclass the game removed replaced by the one its own subclasses extend now");
+                    mod.change(replaced.startsWith(StandinClasses.STANDIN) && b.classes.containsKey(superName) ? "superclass the update reshaped extended through its stand-in" : "superclass the game removed replaced by the one its own subclasses extend now");
                     if (links.becameInterface(superName) && (interfaces == null || !Arrays.asList(interfaces).contains(superName))) {
                         interfaces = interfaces == null ? new String[] { superName } : java.util.stream.Stream.concat(Arrays.stream(interfaces), java.util.stream.Stream.of(superName)).toArray(String[]::new);
                     }

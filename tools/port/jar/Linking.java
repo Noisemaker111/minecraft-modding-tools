@@ -60,11 +60,19 @@ final class Linking {
      * What a class that extended the game's class s extends in the new release, decided the way the game decided for its
      * own subclasses of s: the class most of them extend now (Gui, AbstractWidget and the rest of GuiComponent's extend
      * Object in 1.20, though the route map follows GuiComponent's members to GuiGraphics). Null when s is still there under
-     * its name, or when its subclasses extend what s became (a rename).
+     * its name, or when its subclasses extend what s became (a rename). A class still there whose stand-in is written as
+     * the old class on top of the new one (extends it, with the old constructors) is that stand-in: a mod's subclass
+     * keeps its old super(...) and the members the new class kept (1.20.1's ImageButton, drawn from a texture sheet,
+     * which 1.20.2 draws from sprites with no constructor taking the sheet).
      */
     String successor(String s) {
         String found = successors.computeIfAbsent(s, k -> {
             GameDiff.Cls old = port.a.classes.get(k);
+            String over = StandinClasses.STANDIN + k;
+            GameDiff.Cls written = port.b.classes.get(over);
+            if (old != null && written != null && k.equals(written.sup) && port.b.classes.containsKey(k) && StandinClasses.extendable(port.standIn.standins.get(over))) {
+                return over;
+            }
             if (old == null || port.b.classes.containsKey(k) && !becameInterface(k)) {
                 return "";
             }
