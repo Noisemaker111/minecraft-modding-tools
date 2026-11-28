@@ -163,10 +163,10 @@ def jar_port_tests(folder=ROOT / "tools" / "tests"):
     return sorted({p.relative_to(ROOT).as_posix() for pattern in JAR_PORT_TESTS for p in folder.glob(pattern)})
 
 
-def knowledge_read(tests):
-    """The files under knowledge/ that the tests name (a file, or a folder and all in it): stand-ins a test compiles and runs."""
-    named = {m for t in tests for m in re.findall(r'"(knowledge/[\w/.$-]+)"', (ROOT / t).read_text(encoding="utf-8"))}
-    return [f for f in git_files() if any(f == n or f.startswith(n.rstrip("/") + "/") for n in named)]
+def standins_tests_read():
+    """The stand-in sources a jar-port test compiles itself, found by the knowledge/standins/ paths its source names."""
+    named = {m for test in jar_port_tests() for m in re.findall(r'"(knowledge/standins/[^"]+)"', (ROOT / test).read_text(encoding="utf-8"))}
+    return [f for f in git_files() if any(f.startswith(n) for n in named)]
 
 
 class Unavailable(Exception):
@@ -284,7 +284,7 @@ READS = {
     # What jscpd reads (.jscpd.json): the tools' and the bench's own code.
     "copies": lambda: [f for f in git_files() if f.endswith((".java", ".py")) and f.startswith(("tools/", "bench/"))] + [".jscpd.json", "bench/copies.json"],
     "port-preflight": lambda: port_tools.sources() + PREFLIGHT_TESTS + ASM_JARS,
-    "jar-port": lambda: port_tools.sources() + jar_port_tests() + ASM_JARS + knowledge_read(jar_port_tests()),
+    "jar-port": lambda: port_tools.sources() + jar_port_tests() + ASM_JARS + standins_tests_read(),
     "console-accessor": ["tools/agent/Console.java", "tools/tests/ConsoleAccessorTest.java"],
     # Compiled with tools/agent, tools/cli and tools on its source path: any of them may be compiled in.
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]

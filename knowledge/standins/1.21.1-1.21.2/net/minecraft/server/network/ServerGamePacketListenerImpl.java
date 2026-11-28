@@ -27,7 +27,7 @@ public final class ServerGamePacketListenerImpl {
         ServerPlayer player = self.player;
         Set<Relative> sent = new HashSet<>();
         for (Object relative : relatives) {
-            sent.add((Relative) relative);
+            sent.add(Relative.valueOf(((Enum) relative).name()));
         }
         double px = sent.contains(Relative.X) ? x - player.getX() : x;
         double py = sent.contains(Relative.Y) ? y - player.getY() : y;
