@@ -176,6 +176,10 @@ final class StandinClasses {
      * a mod can call, no public instance method) whose every public static method but isInstance takes that type first,
      * and every game class that was the old class in the old release and is still there is that type in the new one (at
      * least one). A holder on a type the game's classes did not move to answers no reference to the class itself.
+     * Its init methods (the old constructors) return that type instead: where no game class was the old one, a holder
+     * whose constructors make the new type says the class became it (1.20.1's ClientboundCustomPayloadPacket, a final
+     * class 1.20.2 replaced with the one in network.protocol.common); and so does the game's own methods taking the new
+     * type where they took the old class.
      */
     String becameType(String old, byte[] bytes) {
         ClassModel cm = ClassFile.of().parse(bytes);
@@ -183,6 +187,7 @@ final class StandinClasses {
             return null;
         }
         String type = null;
+        boolean makes = false;
         for (MethodModel mm : cm.methods()) {
             int flags = mm.flags().flagsMask();
             String n = mm.methodName().stringValue();
@@ -201,6 +206,15 @@ final class StandinClasses {
             if (n.equals("isInstance")) {
                 continue;
             }
+            Type ret = Type.getReturnType(mm.methodType().stringValue());
+            if (n.equals("init") && ret.getSort() == Type.OBJECT) {
+                if (type != null && !type.equals(ret.getInternalName())) {
+                    return null;
+                }
+                type = ret.getInternalName();
+                makes = true;
+                continue;
+            }
             Type[] params = Type.getArgumentTypes(mm.methodType().stringValue());
             if (params.length == 0 || params[0].getSort() != Type.OBJECT || type != null && !type.equals(params[0].getInternalName())) {
                 return null;
@@ -210,7 +224,7 @@ final class StandinClasses {
         if (type == null || type.startsWith(STANDIN) || !port.b.classes.containsKey(type)) {
             return null;
         }
-        boolean moved = false;
+        boolean moved = makes;
         for (GameDiff.Cls c : port.a.classes.own()) {
             if (c.library || c.name.equals(old) || !port.b.classes.containsKey(c.name) || !Linking.isA(port.a, c.name, old)) {
                 continue;
@@ -219,6 +233,26 @@ final class StandinClasses {
                 return null;
             }
             moved = true;
+        }
+        if (!moved) {
+            // No game class was the old one: the game's own methods that kept their name and took the old class take
+            // the new type now (1.20.1's DispenseItemBehavior.dispense(BlockSource, ...), on 1.20.2's dispenser.BlockSource).
+            String was = "L" + old + ";", now = "L" + type + ";";
+            for (GameDiff.Cls c : port.a.classes.own()) {
+                GameDiff.Cls kept = c.library ? null : port.b.classes.get(c.name);
+                if (kept == null) {
+                    continue;
+                }
+                for (GameDiff.Meth m : c.methods.values()) {
+                    if (m.desc.contains(was) && kept.methods.containsKey(m.name + port.desc(m.desc.replace(was, now)))) {
+                        moved = true;
+                        break;
+                    }
+                }
+                if (moved) {
+                    break;
+                }
+            }
         }
         return moved ? type : null;
     }
@@ -491,7 +525,7 @@ final class StandinClasses {
                     boolean takesOuter = ic.methods.values().stream().anyMatch(m -> m.name.equals("<init>") && m.desc.startsWith("(L" + outer + ";"));
                     int innerFlags = ic.flags & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED | Opcodes.ACC_FINAL | Opcodes.ACC_INTERFACE
                         | Opcodes.ACC_ABSTRACT | Opcodes.ACC_ENUM | Opcodes.ACC_ANNOTATION);
-                    w.visitInnerClass(n, outer, n.substring(n.lastIndexOf('$') + 1), innerFlags | (takesOuter && (ic.flags & Opcodes.ACC_INTERFACE) == 0 ? 0 : Opcodes.ACC_STATIC));
+                    w.visitInnerClass(n, outer, n.substring(n.lastIndexOf('$') + 1), open(innerFlags) | (takesOuter && (ic.flags & Opcodes.ACC_INTERFACE) == 0 ? 0 : Opcodes.ACC_STATIC));
                 }
                 for (GameDiff.Fld f : c.fields.values()) {
                     w.visitField(open(f.flags), f.name, f.desc, null, null).visitEnd();
