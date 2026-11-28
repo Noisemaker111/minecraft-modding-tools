@@ -24,6 +24,10 @@ import net.minecraft.world.item.consume_effects.ApplyStatusEffectsConsumeEffect;
  * instance its item was made with. So these answers are read from the item whose default food is this one; a food no
  * item was made with has none of them (no effects, no remainder, the default 1.6 seconds).
  *
+ * Known difference: these read the item's default components, not a stack's. A stack whose own CONSUMABLE or
+ * USE_REMAINDER was changed (a data pack's or a command's) still answers with its item's: the old methods are asked of the
+ * FoodProperties alone, and 1.21.2's food no longer leads back to the stack it came from.
+ *
  * Agrees with NeoForge's 1.21.1 -> 1.21.2 primer (https://github.com/neoforged/.github/blob/main/primers/1.21.2/index.md, CC BY 4.0): "FoodProperties is now a ConsumableListener", "effects -> ConsumeEffect", "usingConvertsTo -> DataComponents#USE_REMAINDER", and "The Consumable data component ... effectively functions as FoodProperties used to previously".
  */
 public final class FoodProperties {

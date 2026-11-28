@@ -19,13 +19,21 @@ import java.util.Set;
  * entity has createCommandSourceStackForNameResolution(ServerLevel), the same stack with CommandSource.NULL and level 0.
  * A plain entity's CommandSource in 1.21.1 dropped every message (sendSystemMessage did nothing), as NULL does.
  *
- * And 1.21.1's teleportTo(ServerLevel, x, y, z, Set<RelativeMovement>, yRot, xRot): it moved the entity (or, in another
- * level, a copy made there) to the absolute place and rotation; ServerPlayer's moved the player in its level with the
- * relatives chosen, and to another level through teleportTo(level, x, y, z, yRot, xRot), which first made the player its
- * own camera. 1.21.2's takes a Set<Relative> and a last boolean, whether to make the player its own camera (ServerPlayer
- * calls setCamera(this) when true; Entity's ignores it), and carries both cases through teleport(TeleportTransition). So
- * the old call is the new one with the Relative of each relative's name and the camera reset only when the level changes,
- * as 1.21.1 did.
+ * And 1.21.1's teleportTo(ServerLevel, x, y, z, Set<RelativeMovement>, yRot, xRot) always took an absolute target:
+ * - any other entity: in its level moveTo(x, y, z, yRot, xRot), which set the place and rotation and left the velocity
+ *   alone; in another level a copy (restoreFrom, velocity too) moved the same way. The relatives were not read.
+ * - a ServerPlayer in its level: connection.teleport(x, y, z, yRot, xRot, relatives) put the player at the absolute place,
+ *   and the relatives chose only what the packet sent as offsets; the client (ClientPacketListener.handleMovePlayer) kept
+ *   its velocity on a relative axis and zeroed it on an absolute one. In another level: teleportTo(level, x, y, z, yRot,
+ *   xRot), which made the player its own camera and moved it with no relatives and zero velocity.
+ * Both set the head to yRot.
+ * 1.21.2's teleportTo(..., Set<Relative>, yRot, xRot, setCamera) goes through teleport(TeleportTransition), where
+ * PositionMoveRotation.calculateAbsolute adds the current value on every axis and angle the set names, so an old relative
+ * passed through would move an entity at X=100 asked to X=20 to X=120. Its velocity is the current one on each axis whose
+ * DELTA_X, DELTA_Y or DELTA_Z is named, else the transition's (zero). So the old call is the new one with the target and
+ * angles absolute (no X, Y, Z, Y_ROT or X_ROT) and the velocity each case kept: all three DELTAs for another entity, the
+ * DELTA of each axis the old set named for a player in its level, none for a player changing level, which is also when the
+ * camera is reset; then the head is set to yRot (1.21.2's ServerPlayer adds it to the head when Y_ROT is named, else sets it).
  *
  * Agrees with NeoForge's 1.21.1 -> 1.21.2 primer (https://github.com/neoforged/.github/blob/main/primers/1.21.2/index.md, CC BY 4.0): "RelativeMovement -> Relative, expanded to contain delta movement".
  */
@@ -43,10 +51,25 @@ public final class Entity {
     }
 
     public static boolean teleportTo(net.minecraft.world.entity.Entity self, ServerLevel level, double x, double y, double z, Set relatives, float yRot, float xRot) {
-        Set<Relative> moved = new HashSet<>();
-        for (Object relative : relatives) {
-            moved.add(Relative.valueOf(((Enum) relative).name()));
+        boolean player = self instanceof ServerPlayer;
+        boolean sameLevel = level == self.level();
+        Set<Relative> kept = new HashSet<>();
+        if (!player) {
+            kept.add(Relative.DELTA_X);
+            kept.add(Relative.DELTA_Y);
+            kept.add(Relative.DELTA_Z);
+        } else if (sameLevel) {
+            for (Object relative : relatives) {
+                String name = ((Enum) relative).name();
+                if (name.equals("X") || name.equals("Y") || name.equals("Z")) {
+                    kept.add(Relative.valueOf("DELTA_" + name));
+                }
+            }
         }
-        return self.teleportTo(level, x, y, z, moved, yRot, xRot, self instanceof ServerPlayer && level != self.level());
+        boolean moved = self.teleportTo(level, x, y, z, kept, yRot, xRot, player && !sameLevel);
+        if (moved) {
+            self.setYHeadRot(yRot);
+        }
+        return moved;
     }
 }

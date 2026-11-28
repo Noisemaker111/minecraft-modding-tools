@@ -21,6 +21,12 @@ import net.minecraft.world.item.ItemStack;
  * of each listed item, of(stacks...) the ingredient of their items, and of(tag) the ingredient of the tag's set, taken as
  * 1.21.1's getOrCreateTag took it (the bound set, or the kept one tags bind on load).
  *
+ * Known difference: 1.21.1 matched only a stack's item (Ingredient.test asked stack.is(item)) but showed the stacks it was
+ * made of, components and all, through getItems() (a tipped-arrow recipe showed the lingering potion it needs). 1.21.2's
+ * vanilla Ingredient keeps items only, so these stacks have no components: the matching is the same, the display loses
+ * them. NeoForge 21.2 can carry a display beside the matching (CustomDisplayIngredient), but this file is read for every
+ * loader and a NeoForge-only copy of the class cannot sit beside it (both folders compile together), so it is not used.
+ *
  * Agrees with NeoForge's 1.21.1 -> 1.21.2 primer (https://github.com/neoforged/.github/blob/main/primers/1.21.2/index.md, CC BY 4.0): "getItems -> items", "of(ItemStack...), of(Stream<ItemStack>) is removed", and "of(TagKey) -> of(HolderSet), need to resolve tag key".
  */
 public final class Ingredient {
