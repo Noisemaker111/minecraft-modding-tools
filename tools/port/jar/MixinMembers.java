@@ -443,6 +443,47 @@ final class MixinMembers {
         return null;
     }
 
+    /**
+     * A constructor the update gave other parameters (1.20's ServerLevel took a RandomSequences 1.19.4's does not), named
+     * with its old descriptor: followed as a method whose parameters changed ('s') to the new class's constructor the
+     * route map gives, or else to its one constructor whose parameters are the old ones with one or two added or dropped,
+     * in their order (one at least on both sides: a class's no-argument constructor is no reshaped one). Null where the new
+     * class keeps the old descriptor, or no one constructor is found.
+     */
+    Found constructorMoved(List<String> owners, boolean named, String mdesc, String text) {
+        for (String o : owners) {
+            GameDiff.Cls was = port.a.classes.get(o), now = port.b.classes.get(port.cls(o));
+            if (was == null || now == null || !was.methods.containsKey("<init>" + mdesc) || now.methods.containsKey("<init>" + port.desc(mdesc))) {
+                continue;
+            }
+            String[] moved = port.route.method(o, "<init>", mdesc);
+            GameDiff.Meth found = moved[1].equals("<init>") ? now.methods.get("<init>" + moved[2]) : null;
+            if (found == null) {
+                Type[] old = Type.getArgumentTypes(port.desc(mdesc));
+                List<GameDiff.Meth> fits = now.methods.values().stream().filter(k -> k.name.equals("<init>")).filter(k -> {
+                    Type[] args = Type.getArgumentTypes(k.desc);
+                    return Math.min(old.length, args.length) > 0 && Math.abs(old.length - args.length) <= 2 && (inOrder(old, args) || inOrder(args, old));
+                }).toList();
+                found = fits.size() == 1 ? fits.get(0) : null;
+            }
+            if (found == null) {
+                return null;
+            }
+            String report = "mixin target changed signature: " + Exposure.dotted(o) + ".<init>" + mdesc;
+            return new Found(text, report, null, 's', port.cls(o), "<init>", found.desc, (named ? "L" + port.cls(o) + ";" : "") + "<init>" + found.desc);
+        }
+        return null;
+    }
+
+    /** Whether every type of few stands in many in their order. */
+    static boolean inOrder(Type[] few, Type[] many) {
+        int j = 0;
+        for (int i = 0; i < many.length && j < few.length; i++) {
+            j += many[i].equals(few[j]) ? 1 : 0;
+        }
+        return j == few.length;
+    }
+
     /** Whether a constructor takes exactly the arguments a handler captures before its CallbackInfo, as Mixin wants. */
     static boolean takesExactly(String desc, List<Type> first) {
         return Arrays.asList(Type.getArgumentTypes(desc)).equals(first);
@@ -468,6 +509,10 @@ final class MixinMembers {
             }
         }
         if (name.equals("<init>") || name.equals("<clinit>")) {
+            Found reshaped = mdesc == null || name.equals("<clinit>") ? null : constructorMoved(owner != null ? List.of(owner) : targets, owner != null, mdesc, text);
+            if (reshaped != null) {
+                return reshaped;
+            }
             return mdesc == null ? keep(text) : new Found((owner == null ? "" : "L" + port.cls(owner) + ";") + name + port.desc(mdesc), null, null, 'm', owner == null ? null : port.cls(owner), name, port.desc(mdesc), null);
         }
         if (owner != null && !port.a.classes.containsKey(owner) && !port.b.classes.containsKey(owner) && mdesc != null) {
@@ -531,13 +576,39 @@ final class MixinMembers {
             // Only its parameters changed: the route map's new signature, or the one method of that name on both sides.
             GameDiff.Meth now = !moved[2].equals(mapped) && Exposure.declaring(port.b, port.cls(o), 'm', moved[1], moved[2]) != null
                 ? Exposure.declaring(port.b, port.cls(o), 'm', moved[1], moved[2]).methods.get(moved[1] + moved[2])
-                : sameName.size() == 1 && named(port.a, o, name).size() == 1 ? sameName.get(0) : null;
+                : sameName.size() == 1 && named(port.a, o, name).size() == 1 ? sameName.get(0) : alike(sameName, d);
             String prefix = owner == null ? "" : "L" + port.cls(o) + ";";
             return now == null
                 ? new Found(text, report, null, 's', port.cls(o), moved[1], null, null)
                 : new Found(text, report, null, 's', port.cls(o), now.name, now.desc, prefix + now.name + (mdesc == null ? "" : now.desc));
         }
         return keep(text);
+    }
+
+    /**
+     * Of a name's several methods in the new release, the one that takes what the old method d (old names) took, in its
+     * order, but where the old type is a class the new release does not have (1.20's drawBar(GuiGraphics, int, int,
+     * BossEvent) and drawBar(GuiGraphics, int, int, BossEvent, int, int) are 1.19.4's two drawBar(PoseStack, ...)); null
+     * unless exactly one does.
+     */
+    GameDiff.Meth alike(List<GameDiff.Meth> sameName, String d) {
+        Type[] was = Type.getArgumentTypes(d);
+        GameDiff.Meth out = null;
+        for (GameDiff.Meth n : sameName) {
+            Type[] now = Type.getArgumentTypes(n.desc);
+            boolean fits = now.length == was.length && Type.getReturnType(port.desc(d)).equals(Type.getReturnType(n.desc));
+            for (int i = 0; i < was.length && fits; i++) {
+                fits = Type.getType(port.desc(was[i].getDescriptor())).equals(now[i])
+                    || was[i].getSort() == Type.OBJECT && port.a.classes.containsKey(was[i].getInternalName()) && !port.b.classes.containsKey(was[i].getInternalName());
+            }
+            if (fits) {
+                if (out != null) {
+                    return null;
+                }
+                out = n;
+            }
+        }
+        return out;
     }
 
     /** Every method of that name a call on owner reaches through its superclasses in one release. */
