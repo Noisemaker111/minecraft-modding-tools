@@ -52,4 +52,22 @@ public final class Input {
         net.minecraft.world.entity.player.Input k = self.keyPresses;
         self.keyPresses = new net.minecraft.world.entity.player.Input(k.forward(), k.backward(), k.left(), value, k.jump(), k.shift(), k.sprint());
     }
+
+    public static boolean jumping(ClientInput self) {
+        return self.keyPresses.jump();
+    }
+
+    public static boolean shiftKeyDown(ClientInput self) {
+        return self.keyPresses.shift();
+    }
+
+    public static void jumping(ClientInput self, boolean value) {
+        net.minecraft.world.entity.player.Input k = self.keyPresses;
+        self.keyPresses = new net.minecraft.world.entity.player.Input(k.forward(), k.backward(), k.left(), k.right(), value, k.shift(), k.sprint());
+    }
+
+    public static void shiftKeyDown(ClientInput self, boolean value) {
+        net.minecraft.world.entity.player.Input k = self.keyPresses;
+        self.keyPresses = new net.minecraft.world.entity.player.Input(k.forward(), k.backward(), k.left(), k.right(), k.jump(), value, k.sprint());
+    }
 }
