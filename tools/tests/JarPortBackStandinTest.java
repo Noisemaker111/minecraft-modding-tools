@@ -269,6 +269,7 @@ final class JarPortBackStandinTest {
         reference(scratch);
         movedMixin(scratch);
         storedLocal(scratch);
+        overloads(scratch);
         JarPortTest.finish("JarPortBackStandinTest");
     }
 
@@ -457,6 +458,68 @@ final class JarPortBackStandinTest {
         JarPortTest.expect(unlinked.equals(List.of("mixin target changed signature: net.minecraft.g5.Panel.shade(Lnet/minecraft/g5/Gfx;I)V"))
                 && paint.contains("paint(Lnet/minecraft/g5/Pose;I)V"),
             "a STORE @ModifyVariable follows where the older method stores its locals alike, and stays reported where it stores another first: " + unlinked + " " + paint);
+    }
+
+    /**
+     * A hook on one of two methods of a name that took the newer release's Gfx (tint(Gfx, int) and tint(Gfx, int, int)),
+     * which the older release has as tint(Pose, int) and tint(Pose, int, int) and the change map does not list: it moves
+     * to the one taking the same arguments where it does not take a Pose for the Gfx.
+     */
+    static void overloads(Path scratch) throws Exception {
+        Path dir = Files.createDirectories(scratch.resolve("overloads"));
+        Map<String, byte[]> newer = JarPortBackTest.compile(dir.resolve("newer"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Gfx.java", NEWER_GFX,
+            "net/minecraft/g5/Panel.java", """
+                package net.minecraft.g5;
+                public class Panel {
+                    public void tint(Gfx g, int x) {
+                        g.fill(x);
+                    }
+                    public void tint(Gfx g, int x, int y) {
+                        g.fill(x + y);
+                    }
+                }
+                """), null);
+        Map<String, byte[]> older = JarPortBackTest.compile(dir.resolve("older"), Map.of("net/minecraft/g5/Pose.java", POSE, "net/minecraft/g5/Comp.java", OLDER_COMP,
+            "net/minecraft/g5/Panel.java", """
+                package net.minecraft.g5;
+                public class Panel {
+                    public void tint(Pose p, int x) {
+                        Comp.fill(p, x);
+                    }
+                    public void tint(Pose p, int x, int y) {
+                        Comp.fill(p, x + y);
+                    }
+                }
+                """), null);
+        GameDiff.Snap a = GameDiff.read("2.0", new ArrayList<>(newer.values()), null, null);
+        GameDiff.Snap b = GameDiff.read("1.0", new ArrayList<>(older.values()), null, null);
+        b.loaderVersion = "1.0.1";
+        Path map = dir.resolve("route.json");
+        Files.writeString(map, """
+            {"classes": [{"from": "net.minecraft.g5.Gfx", "to": "net.minecraft.g5.Comp"}]}
+            """);
+        JarPort port = new JarPort(a, b, map);
+        port.oldCode = new GameCode(newer::get, null, newer);
+        port.newCode = new GameCode(older::get, null, older);
+        String ci = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
+        org.objectweb.asm.ClassWriter w = JarPortRetypeTest.writer("n11/TintMixin", "java/lang/Object");
+        org.objectweb.asm.AnnotationVisitor target = w.visitAnnotation("Lorg/spongepowered/asm/mixin/Mixin;", false);
+        org.objectweb.asm.AnnotationVisitor value = target.visitArray("value");
+        value.visit(null, org.objectweb.asm.Type.getObjectType("net/minecraft/g5/Panel"));
+        value.visitEnd();
+        target.visitEnd();
+        JarPortFixesTest.handler(w, JarPortFixesTest.INJECT, "onTint", "(" + ci + ")V", "tint(Lnet/minecraft/g5/Gfx;II)V", "HEAD", null, null);
+        w.visitEnd();
+        Map<String, byte[]> files = new HashMap<>();
+        files.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n11\"\n".getBytes(StandardCharsets.UTF_8));
+        files.put("n11/TintMixin.class", w.toByteArray());
+        files.put("n11.mixins.json", "{\"package\": \"n11\", \"mixins\": [\"TintMixin\"]}".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> runs = new ArrayList<>();
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(files), "overloads.jar", runs));
+        List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        String tint = JarPortFixesTest.strings(ported.get("n11/TintMixin.class")).getOrDefault("onTint(" + ci + ")V", "");
+        JarPortTest.expect(unlinked.isEmpty() && tint.contains("tint(Lnet/minecraft/g5/Pose;II)V") && !tint.contains("tint(Lnet/minecraft/g5/Pose;I)V"),
+            "a hook on one of a name's methods moves to the older one taking the same arguments but the Gfx: " + unlinked + " " + tint);
     }
 
     /** Each method's code as the members it names in order ("static" first for a static one), and "@Mixin" the target class. */
