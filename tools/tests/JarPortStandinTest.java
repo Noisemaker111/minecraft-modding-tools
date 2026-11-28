@@ -140,6 +140,7 @@ final class JarPortStandinTest {
 
         nested(port);
         became(scratch);
+        reshaped(scratch);
 
         // A jar whose fabric.mod.json gives a key twice (Physics Mod's "environment"), which Fabric Loader reads with the last
         // value winning: the types are carried and listed, the key given once with that value.
@@ -344,6 +345,238 @@ final class JarPortStandinTest {
             }
             JarPortTest.expect(trace.equals("true;false"), "the ported mod asks the stand-in on the game's object: " + trace);
         }
+    }
+
+    /**
+     * Classes an update reshaped rather than dropped, as 1.20.2 did to 1.20.1's: s9.Sheet is still there but its constructor
+     * now takes a long (ImageButton, which takes sprites now), so its stand-in is the old class written on the new one and a
+     * mod's subclass extends the stand-in, keeping its old super(...) and the members the new class kept (value()); s9.Packet
+     * is gone for s9.NewPacket, which no game class was before, and its holder's init makes one (ClientboundCustomPayloadPacket);
+     * s9.Source is gone and s9.Behaviour.run takes s9.Src where it took Source (core.BlockSource, now core.dispenser's record);
+     * and the stand-in for Holder.peek() reaches a closed nested class of the new game, which compiles and is opened.
+     */
+    static void reshaped(Path scratch) throws Exception {
+        GameDiff.Snap a = new GameDiff.Snap("1.0"), b = new GameDiff.Snap("2.0");
+        b.loaderVersion = "2.0.1";
+        JarPortTest.snap(a, "s9/Sheet", 0, null, "<init>(I)V", "value()I");
+        JarPortTest.snap(b, "s9/Sheet", 0, null, "<init>(J)V", "value()I");
+        JarPortTest.snap(a, "s9/Packet", Opcodes.ACC_FINAL, null, "<init>(I)V", "size()I");
+        JarPortTest.snap(b, "s9/NewPacket", Opcodes.ACC_FINAL, null, "<init>(J)V", "size()I");
+        JarPortTest.snap(a, "s9/Source", Opcodes.ACC_INTERFACE, null, "at()I");
+        JarPortTest.snap(b, "s9/Src", Opcodes.ACC_FINAL, null, "<init>(I)V", "pos()I");
+        JarPortTest.snap(a, "s9/Behaviour", 0, null, "<init>()V", "run(Ls9/Source;)I");
+        JarPortTest.snap(b, "s9/Behaviour", 0, null, "<init>()V", "run(Ls9/Src;)I");
+        JarPortTest.snap(a, "s9/Holder", 0, null, "<init>()V", "peek()I");
+        GameDiff.Cls holder = JarPortTest.snap(b, "s9/Holder", 0, null, "<init>()V");
+        holder.fields.put("cache", new GameDiff.Fld(holder, "cache", "Ls9/Holder$Cache;", Opcodes.ACC_PRIVATE));
+        JarPortTest.snap(b, "s9/Holder$Cache", 0, null, "<init>()V", "get()I").flags &= ~Opcodes.ACC_PUBLIC;
+        Path kb = scratch.resolve("reshaped-kb");
+        Path book = Files.createDirectories(kb).resolve("fixes.json");
+        Files.writeString(book, "{\"rules\": []}");
+        Path dir = kb.resolve("standins/1.0-2.0/s9");
+        write(dir.resolve("Sheet.java"), """
+            package mmt.standin.s9;
+            public class Sheet extends s9.Sheet {
+                public Sheet(int half) {
+                    super((long) half * 2);
+                }
+                public static s9.Sheet init(int half) {
+                    return new Sheet(half);
+                }
+            }
+            """);
+        write(dir.resolve("Packet.java"), """
+            package mmt.standin.s9;
+            public final class Packet {
+                private Packet() {}
+                public static s9.NewPacket init(int size) {
+                    return new s9.NewPacket((long) size + 100);
+                }
+            }
+            """);
+        write(dir.resolve("Source.java"), """
+            package mmt.standin.s9;
+            public final class Source {
+                private Source() {}
+                public static int at(s9.Src self) {
+                    return self.pos();
+                }
+            }
+            """);
+        write(dir.resolve("Holder.java"), """
+            package mmt.standin.s9;
+            public final class Holder {
+                private Holder() {}
+                public static int peek(s9.Holder self) {
+                    return self.cache.get();
+                }
+            }
+            """);
+        Path map = scratch.resolve("route-reshaped.json");
+        Files.writeString(map, "{}");
+        JarPort port = new JarPort(a, b, map);
+        port.fixes(book);
+        Map<String, byte[]> modFiles = new HashMap<>(Map.of("n9/MySheet.class", mySheet(), "n9/Uses.class", uses(), "n9/Peeks.class", peeks()));
+        modFiles.put("META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"n9\"\n".getBytes(StandardCharsets.UTF_8));
+        List<Map<String, Object>> runs = new ArrayList<>();
+        Map<String, byte[]> ported = JarPortTest.entries(port.port(JarPortTest.jar(modFiles), "reshaped.jar", runs));
+        List<String> unlinked = Json.array(runs.get(0).get("unlinked")).stream().map(String::valueOf).toList();
+        JarPortTest.expect(unlinked.isEmpty(), "reshaped classes' stand-ins answer every reference: " + unlinked);
+        String at = new String(ported.getOrDefault("META-INF/accesstransformer.cfg", new byte[0]), StandardCharsets.UTF_8);
+        JarPortTest.expect(at.contains("public s9.Holder$Cache") && at.contains("public s9.Holder cache"),
+            "the closed nested class and field a stand-in reaches are opened: " + at);
+        Map<String, byte[]> classes = new HashMap<>(reshapedGame());
+        Map<String, byte[]> all = new HashMap<>(ported);
+        all.putAll(types(ported, false));
+        for (var e : all.entrySet()) {
+            if (e.getKey().endsWith(".class")) {
+                classes.put(e.getKey().substring(0, e.getKey().length() - 6), e.getValue());
+            }
+        }
+        String trace;
+        try {
+            ClassLoader loader = loader(classes);
+            Class<?> uses = loader.loadClass("n9.Uses");
+            Object sub = loader.loadClass("n9.MySheet").getConstructor(int.class).newInstance(3);
+            Object made = uses.getMethod("sheet", int.class).invoke(null, 4);
+            Object packet = uses.getMethod("packet", int.class).invoke(null, 5);
+            Object src = loader.loadClass("s9.Src").getConstructor(int.class).newInstance(9);
+            trace = sub.getClass().getMethod("twice").invoke(sub) + ";" + made.getClass().getMethod("value").invoke(made) + ";"
+                + packet.getClass().getName() + " " + packet.getClass().getMethod("size").invoke(packet) + ";"
+                + uses.getMethod("at", Object.class).invoke(null, src) + ";" + uses.getMethod("run", Object.class).invoke(null, src);
+        } catch (ReflectiveOperationException | LinkageError failed) {
+            trace = "failed: " + (failed.getCause() == null ? failed : failed.getCause());
+        }
+        JarPortTest.expect(trace.equals("12;8;s9.NewPacket 105;9;10"),
+            "the subclass, the made sheet, the packet and the source run on the new release through their stand-ins: " + trace);
+    }
+
+    /** class n9.MySheet extends Sheet: MySheet(int half) { super(half); } int twice() { return super.value() * 2; } */
+    static byte[] mySheet() {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
+        w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, "n9/MySheet", null, "s9/Sheet", null);
+        MethodVisitor init = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(I)V", null, null);
+        init.visitCode();
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitVarInsn(Opcodes.ILOAD, 1);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Sheet", "<init>", "(I)V", false);
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        MethodVisitor twice = w.visitMethod(Opcodes.ACC_PUBLIC, "twice", "()I", null, null);
+        twice.visitCode();
+        twice.visitVarInsn(Opcodes.ALOAD, 0);
+        twice.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Sheet", "value", "()I", false);
+        twice.visitInsn(Opcodes.ICONST_2);
+        twice.visitInsn(Opcodes.IMUL);
+        twice.visitInsn(Opcodes.IRETURN);
+        twice.visitMaxs(0, 0);
+        return end(w);
+    }
+
+    /**
+     * class n9.Uses, written for the old release: static Sheet sheet(int h) { return new Sheet(h); }, static Packet make(int n)
+     * { return new Packet(n); }, static Object packet(int n) { return make(n); }, static int at(Object o) { return ((Source)
+     * o).at(); }, static int run(Object o) { return new Behaviour().run((Source) o); }
+     */
+    static byte[] uses() {
+        ClassWriter w = start("n9/Uses");
+        MethodVisitor sheet = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "sheet", "(I)Ls9/Sheet;", null, null);
+        sheet.visitCode();
+        sheet.visitTypeInsn(Opcodes.NEW, "s9/Sheet");
+        sheet.visitInsn(Opcodes.DUP);
+        sheet.visitVarInsn(Opcodes.ILOAD, 0);
+        sheet.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Sheet", "<init>", "(I)V", false);
+        sheet.visitInsn(Opcodes.ARETURN);
+        sheet.visitMaxs(0, 0);
+        MethodVisitor make = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "make", "(I)Ls9/Packet;", null, null);
+        make.visitCode();
+        make.visitTypeInsn(Opcodes.NEW, "s9/Packet");
+        make.visitInsn(Opcodes.DUP);
+        make.visitVarInsn(Opcodes.ILOAD, 0);
+        make.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Packet", "<init>", "(I)V", false);
+        make.visitInsn(Opcodes.ARETURN);
+        make.visitMaxs(0, 0);
+        MethodVisitor packet = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "packet", "(I)Ljava/lang/Object;", null, null);
+        packet.visitCode();
+        packet.visitVarInsn(Opcodes.ILOAD, 0);
+        packet.visitMethodInsn(Opcodes.INVOKESTATIC, "n9/Uses", "make", "(I)Ls9/Packet;", false);
+        packet.visitInsn(Opcodes.ARETURN);
+        packet.visitMaxs(0, 0);
+        MethodVisitor at = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "at", "(Ljava/lang/Object;)I", null, null);
+        at.visitCode();
+        at.visitVarInsn(Opcodes.ALOAD, 0);
+        at.visitTypeInsn(Opcodes.CHECKCAST, "s9/Source");
+        at.visitMethodInsn(Opcodes.INVOKEINTERFACE, "s9/Source", "at", "()I", true);
+        at.visitInsn(Opcodes.IRETURN);
+        at.visitMaxs(0, 0);
+        MethodVisitor run = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "run", "(Ljava/lang/Object;)I", null, null);
+        run.visitCode();
+        run.visitTypeInsn(Opcodes.NEW, "s9/Behaviour");
+        run.visitInsn(Opcodes.DUP);
+        run.visitMethodInsn(Opcodes.INVOKESPECIAL, "s9/Behaviour", "<init>", "()V", false);
+        run.visitVarInsn(Opcodes.ALOAD, 0);
+        run.visitTypeInsn(Opcodes.CHECKCAST, "s9/Source");
+        run.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "s9/Behaviour", "run", "(Ls9/Source;)I", false);
+        run.visitInsn(Opcodes.IRETURN);
+        run.visitMaxs(0, 0);
+        return end(w);
+    }
+
+    /** class n9.Peeks: static int peek(Holder h) { return h.peek(); } (linked and opened, not run: the test's loader applies no access transformer). */
+    static byte[] peeks() {
+        ClassWriter w = start("n9/Peeks");
+        MethodVisitor peek = w.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "peek", "(Ls9/Holder;)I", null, null);
+        peek.visitCode();
+        peek.visitVarInsn(Opcodes.ALOAD, 0);
+        peek.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "s9/Holder", "peek", "()I", false);
+        peek.visitInsn(Opcodes.IRETURN);
+        peek.visitMaxs(0, 0);
+        return end(w);
+    }
+
+    /** The new release of reshaped(): Sheet(long) and value(), NewPacket(long) and size(), Src(int) and pos(), Behaviour.run(Src) = pos + 1. */
+    static Map<String, byte[]> reshapedGame() {
+        Map<String, byte[]> out = new HashMap<>();
+        out.put("s9/Sheet", holding("s9/Sheet", 0, "J", "value"));
+        out.put("s9/NewPacket", holding("s9/NewPacket", Opcodes.ACC_FINAL, "J", "size"));
+        out.put("s9/Src", holding("s9/Src", Opcodes.ACC_FINAL, "I", "pos"));
+        ClassWriter behaviour = start("s9/Behaviour");
+        MethodVisitor run = behaviour.visitMethod(Opcodes.ACC_PUBLIC, "run", "(Ls9/Src;)I", null, null);
+        run.visitCode();
+        run.visitVarInsn(Opcodes.ALOAD, 1);
+        run.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "s9/Src", "pos", "()I", false);
+        run.visitInsn(Opcodes.ICONST_1);
+        run.visitInsn(Opcodes.IADD);
+        run.visitInsn(Opcodes.IRETURN);
+        run.visitMaxs(0, 0);
+        out.put("s9/Behaviour", end(behaviour));
+        return out;
+    }
+
+    /** A class holding one value of type desc (I or J), given to its constructor and read back as an int by getter. */
+    static byte[] holding(String name, int flags, String desc, String getter) {
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
+        w.visit(Opcodes.V21, Opcodes.ACC_PUBLIC | flags, name, null, "java/lang/Object", null);
+        w.visitField(Opcodes.ACC_PRIVATE, "v", desc, null, null).visitEnd();
+        MethodVisitor init = w.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(" + desc + ")V", null, null);
+        init.visitCode();
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        init.visitVarInsn(Opcodes.ALOAD, 0);
+        init.visitVarInsn(desc.equals("J") ? Opcodes.LLOAD : Opcodes.ILOAD, 1);
+        init.visitFieldInsn(Opcodes.PUTFIELD, name, "v", desc);
+        init.visitInsn(Opcodes.RETURN);
+        init.visitMaxs(0, 0);
+        MethodVisitor get = w.visitMethod(Opcodes.ACC_PUBLIC, getter, "()I", null, null);
+        get.visitCode();
+        get.visitVarInsn(Opcodes.ALOAD, 0);
+        get.visitFieldInsn(Opcodes.GETFIELD, name, "v", desc);
+        if (desc.equals("J")) {
+            get.visitInsn(Opcodes.L2I);
+        }
+        get.visitInsn(Opcodes.IRETURN);
+        get.visitMaxs(0, 0);
+        return end(w);
     }
 
     /** class n9.Asks, written for the old release: static boolean ask(Object o, int level) { return ((Source) o).has(level); } */
