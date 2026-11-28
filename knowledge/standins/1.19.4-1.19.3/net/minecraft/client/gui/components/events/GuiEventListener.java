@@ -18,6 +18,7 @@ import mmt.standin.net.minecraft.client.gui.navigation.ScreenAxis;
 import mmt.standin.net.minecraft.client.gui.navigation.ScreenDirection;
 import mmt.standin.net.minecraft.client.gui.navigation.ScreenPosition;
 import mmt.standin.net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.gui.components.AbstractSelectionList;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.screens.Screen;
@@ -29,13 +30,17 @@ import net.minecraft.client.gui.screens.Screen;
  *
  * Read from both releases: 1.19.4 added keyboard navigation. Its GuiEventListener defaults are no next path,
  * getCurrentFocusPath a leaf of the listener when it is focused, an empty rectangle and tab group 0; AbstractWidget
- * answers its own bounds and a leaf of itself where it is active, visible and not focused; Screen answers the whole
- * screen; a ContainerEventHandler first asks its focused child, then steps by tab order or towards the arrow's direction
+ * answers its own bounds and a leaf of itself where it is active, visible and not focused; AbstractSelectionList answers
+ * its own bounds (x0, y0, x1 - x0, y1 - y0); Screen answers the whole screen (no other class 1.19.3 has answers its own
+ * rectangle in 1.19.4: coverage/changes/1.19.3__1.19.4.json); a ContainerEventHandler first asks its focused child, then steps by tab order or towards the arrow's direction
  * among its children (1.19.4's code as it reads). 1.19.3 has none of these methods: its focus moves by changeFocus.
  *
  * A listener written for 1.19.4 or later declares its own of these: a mod's call of one on any listener runs the
  * listener's own where its class has one, as the JVM's dispatch would in 1.19.4, and 1.19.4's default otherwise; the
- * same call made from inside that listener's own (a super call) runs the default.
+ * same call made from inside that listener's own (a super call) runs the default. Only names 1.19.3's game does not have
+ * are looked up so: a Fabric port runs in intermediary names, where the game's own methods (AbstractWidget.isFocused)
+ * and fields go by other names, so those are called and read in code, which the port renames, and the protected bounds
+ * of AbstractSelectionList (1.19.3 has no public getter for them) are opened by the port's access widener.
  *
  * Not the same: isFocused on a 1.19.3 container (which keeps no focus flag of its own, unlike 1.19.4's
  * AbstractContainerEventHandler) is whether it has a focused child. 1.19.3 never asks for a navigation step itself, so
@@ -120,6 +125,9 @@ public final class GuiEventListener {
         if (self instanceof AbstractWidget widget) {
             return new ScreenRectangle(widget.getX(), widget.getY(), widget.getWidth(), widget.getHeight());
         }
+        if (self instanceof AbstractSelectionList list) {
+            return new ScreenRectangle(list.x0, list.y0, list.x1 - list.x0, list.y1 - list.y0);
+        }
         if (self instanceof Screen screen) {
             return new ScreenRectangle(0, 0, screen.width, screen.height);
         }
@@ -127,6 +135,9 @@ public final class GuiEventListener {
     }
 
     public static boolean isFocused(net.minecraft.client.gui.components.events.GuiEventListener self) {
+        if (self instanceof AbstractWidget widget) {
+            return widget.isFocused();
+        }
         Object own = own(self, "isFocused", boolean.class, new Class<?>[0]);
         if (own != NONE) {
             return (Boolean) own;

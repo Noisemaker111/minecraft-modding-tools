@@ -277,7 +277,9 @@ READS = {
     # What jscpd reads (.jscpd.json): the tools' and the bench's own code.
     "copies": lambda: [f for f in git_files() if f.endswith((".java", ".py")) and f.startswith(("tools/", "bench/"))] + [".jscpd.json", "bench/copies.json"],
     "port-preflight": lambda: port_tools.sources() + PREFLIGHT_TESTS + ASM_JARS,
-    "jar-port": lambda: port_tools.sources() + jar_port_tests() + ASM_JARS + [f for f in git_files() if f.startswith("knowledge/standins/jdk/")],
+    # The stand-ins the jar-port tests compile as they read: the JDK's, and 1.19.4's navigation on 1.19.3 (JarPortNavStandinTest).
+    "jar-port": lambda: port_tools.sources() + jar_port_tests() + ASM_JARS
+                        + [f for f in git_files() if f.startswith(("knowledge/standins/jdk/", "knowledge/standins/1.19.4-1.19.3/net/minecraft/client/gui/"))],
     "console-accessor": ["tools/agent/Console.java", "tools/tests/ConsoleAccessorTest.java"],
     # Compiled with tools/agent, tools/cli and tools on its source path: any of them may be compiled in.
     "agent-world-open": lambda: [f for f in git_files() if f.startswith(("tools/agent/", "tools/cli/")) or f.count("/") == 1 and f.startswith("tools/") and f.endswith(".java")]
