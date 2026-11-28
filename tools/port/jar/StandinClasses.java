@@ -26,6 +26,9 @@ final class StandinClasses {
 
     final Map<String, byte[]> standins = new HashMap<>(); // stand-in class (internal, unrelocated) -> its bytes
 
+    /** The stand-ins' answers for old members, apart from the rules: a call they answer takes them even where the route links it elsewhere. */
+    final Map<String, List<JarPort.Fix>> answers = new HashMap<>();
+
     /**
      * Reads the stand-ins written for this update (knowledge/standins/FROM-TO/): Java sources, one class per old game
      * class, in the package mmt.standin + the old class's package. Where the game's own code has no answer for an old
@@ -138,6 +141,7 @@ final class StandinClasses {
                 }
                 JarPort.Fix answer = new JarPort.Fix("standin " + Exposure.dotted(old) + "." + member, Pattern.compile(Pattern.quote(member)), matched, target + "(" + args + ")");
                 port.fixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
+                answers.computeIfAbsent(old, k -> new ArrayList<>()).add(answer);
                 if (receiver && matched != null && !member.equals("<init>")) {
                     port.superFixes.computeIfAbsent(old, k -> new ArrayList<>()).add(0, answer);
                 }
@@ -148,11 +152,15 @@ final class StandinClasses {
     /**
      * Whether a stand-in's public static method is from(T): the stand-in made from a value of a type of the new release,
      * which is what an override of a game method that now takes T is given where the old method took the stand-in's class
-     * (1.20's GuiGraphics, from the PoseStack 1.19.4's Screen.render passes). It answers no old member.
+     * (1.20's GuiGraphics, from the PoseStack 1.19.4's Screen.render passes; 1.21's DeltaTracker, from the float partial
+     * tick 1.20.6 passes). A holder for a class both releases have returns that class (1.21's ModContainer, from the
+     * Minecraft 1.20.6's config screen factories are handed). It answers no old member.
      */
     static boolean conversion(String standin, String desc, String name) {
         Type[] params = Type.getArgumentTypes(desc);
-        return name.equals("from") && params.length == 1 && params[0].getSort() == Type.OBJECT && Type.getReturnType(desc).getInternalName().equals(standin);
+        Type ret = Type.getReturnType(desc);
+        return name.equals("from") && params.length == 1 && ret.getSort() == Type.OBJECT
+            && (ret.getInternalName().equals(standin) || ret.getInternalName().equals(standin.substring(STANDIN.length())));
     }
 
     /** The from(T) of the stand-in for a class (old name), for a value of type got (new names), as a conversion step; or null. */
